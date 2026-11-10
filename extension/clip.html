@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>research_brain</title>
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="stylesheet" href="clip.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <img src="icons/icon32.png" alt="" width="16" height="16">
+    <span class="brand">research_brain</span>
+    <span id="modeLbl"></span>
+    <span class="grow"></span>
+    <button class="link" id="gearBtn" title="Server settings">Settings</button>
+  </header>
+
+  <section id="settings" hidden>
+    <label for="serverIn">Server address</label>
+    <div class="row">
+      <input id="serverIn" spellcheck="false" placeholder="http://127.0.0.1:8765">
+      <button class="btn" id="serverSave">Save</button>
+    </div>
+    <p class="hint">Only this computer is allowed (<code>127.0.0.1</code> or <code>localhost</code>). Shortcuts can be changed at <code>chrome://extensions/shortcuts</code>.</p>
+  </section>
+
+  <div id="offline" class="banner" hidden>
+    <b>research_brain isn't running.</b> Start it with <code>./run.sh</code>, then
+    <button class="btn" id="retryBtn">Try again</button>
+  </div>
+
+  <!-- Home: this page, annotate, count, open app -->
+  <section id="home" hidden>
+    <div class="src" id="homeSrc"></div>
+    <div class="paper" id="homePaper"></div>
+    <div class="acts">
+      <button class="btn primary wide" id="saveLinkBtn" type="button" hidden>Save to research_brain (link + text)</button>
+      <div class="hint" id="saveLinkHint" hidden>Saves the article’s link, full text and citation details as you see them here, without the PDF file. You can add the PDF later.</div>
+      <button class="btn wide" id="savePdfBtn" type="button" hidden>Save PDF to research_brain</button>
+      <div class="hint" id="savePdfHint" hidden>Downloads this PDF in your browser, with your own access to this site, and saves it to research_brain on this computer.</div>
+      <button class="btn primary wide" id="annotateBtn" type="button">Annotate this page</button>
+      <div class="hint" id="annotateHint"></div>
+    </div>
+    <div class="stats">
+      <span id="noteCount" class="count"></span>
+      <span class="grow"></span>
+      <button class="link" id="quickBtn" type="button">Quick note</button>
+      <button class="link" id="openAppHome" type="button">Open research_brain</button>
+    </div>
+  </section>
+
+  <!-- Quick clip (context menu, Alt+Shift+S with a selection, or "Quick note") -->
+  <section id="form" hidden>
+    <div class="src" id="src"></div>
+
+    <label for="quote">Quote</label>
+    <textarea id="quote" rows="3" spellcheck="false" placeholder="Selected text"></textarea>
+    <div id="quotePrev" class="prev"></div>
+    <p class="hint" id="pdfHint" hidden>In Chrome's PDF viewer, select text, then right-click and choose “Add to research_brain”.</p>
+
+    <label for="locator">Locator</label>
+    <input id="locator" placeholder="p.4, Eq. 7 or Sec 3.2">
+
+    <label for="note">Your note</label>
+    <textarea id="note" rows="4" placeholder="What this means to you, questions, connections"></textarea>
+    <div id="notePrev" class="prev"></div>
+
+    <label for="search">File under</label>
+    <input id="search" type="search" placeholder="Search your library" spellcheck="false" autocomplete="off">
+    <div id="targets" role="listbox" aria-label="File under"></div>
+
+    <div id="err" class="banner" hidden></div>
+
+    <footer>
+      <span id="tools"></span>
+      <span class="grow"></span>
+      <button class="link" id="openApp" type="button">Open research_brain</button>
+      <button class="btn primary" id="saveBtn" type="button" title="Save (⌘↵)">Save</button>
+    </footer>
+  </section>
+
+  <section id="done" hidden>
+    <div class="ok-title">Saved</div>
+    <div class="ok-sub" id="doneSub"></div>
+    <div class="row">
+      <a class="btn primary" id="openFrag" href="#" target="_blank">Open in research_brain</a>
+      <button class="btn" id="anotherBtn">Clip another</button>
+      <button class="btn" id="donePdfBtn" type="button" hidden>Save PDF too</button>
+    </div>
+  </section>
+
+  <p class="noai" id="noAi">No AI in this extension. Everything you save goes only to research_brain on this computer.</p>
+</div>
+<script src="vendor/katex/katex.min.js"></script>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/latex-editor.js"></script>
+<script src="clip.js"></script>
+</body>
+</html>

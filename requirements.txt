@@ -1,0 +1,11 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pyyaml>=6.0
+requests>=2.31
+numpy>=1.26
+scikit-learn>=1.4
+pypdf>=4.0
+pypdfium2>=4.30
+watchdog>=4.0
+mcp>=2.3,<3   # Research mode's MCP server can also run on the SDK (RB_AGENT_MCP_SDK=1); 2.x API (mcp.server.mcpserver)

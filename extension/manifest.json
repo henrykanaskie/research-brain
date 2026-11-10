@@ -1,0 +1,70 @@
+{
+  "manifest_version": 3,
+  "name": "research_brain annotator",
+  "short_name": "rb annotator",
+  "version": "0.2.0",
+  "description": "Highlight and write notes on research pages, saved with citations to research_brain on this computer. No AI.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA62O+h+5uhl8QiDVSVVLru6Rx3wB6UAVCwshG8QzVSChR3D1GVLuJ8CsD5VAbvqoZmUUiwRtmtdNTTcw4cHj0Vu0hSlB09Thxc9s1Lrc5XNITIvSwyPhOYguY4AI5ZtBx2p1BIcT8HoV6d8VrL/2Wa30nzE10uBCm6f2ELRysr2ITJrDel6/xZw3bNeIFGESTf+FVJITl4eCxHtD5TYQOUtisLSaWNSRMJo6g9LAMLoZUoViAfJavJWdVBFYyLVxbs86dInAp6+l7dqMmLca27YNFYsVsG7TmM+IW4x8ZsDCBCjFL/q1RIcLtFVZENylLAwvMuoIXz67YSuwcJYj0zwIDAQAB",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self' data:"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "research_brain (Alt+Shift+S)",
+    "default_popup": "clip.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "note.html"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "use_dynamic_url": true
+    }
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "Open the research_brain popup (clips the current selection)"
+    },
+    "toggle-annotate": {
+      "suggested_key": {
+        "default": "Alt+Shift+A",
+        "mac": "Alt+Shift+A"
+      },
+      "description": "Turn annotate mode on or off for this page"
+    }
+  }
+}

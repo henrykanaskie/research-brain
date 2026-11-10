@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- research_brain server, started at login and restarted if it crashes.
+     Template: scripts/install_launchd.sh replaces __REPO__ and __HOME__ and copies it to
+     ~/Library/LaunchAgents/. Edit the copy there only if you know launchd; reinstall to reset. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.research_brain.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/run.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd starts with a bare PATH; include the usual homes of python3 and the claude CLI. -->
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>RB_NO_OPEN</key>
+    <string>1</string>
+    <!-- the same vault the nightly backup snapshots (the installer's vault option or RB_VAULT) -->
+    <key>RB_VAULT</key>
+    <string>__VAULT__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Restart only after a crash. run.sh exits 0 when the port is already taken, which must not loop. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/research_brain.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/research_brain.log</string>
+</dict>
+</plist>

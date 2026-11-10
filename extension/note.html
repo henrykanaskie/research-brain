@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write a note</title>
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="stylesheet" href="note.css">
+</head>
+<body>
+<div id="app">
+  <div class="q" id="quote"></div>
+  <label for="note" class="sr">Your note</label>
+  <textarea id="note" rows="3" placeholder="Your note. Type \ for LaTeX, or wrap math in $…$"></textarea>
+  <div id="prev" class="prev"></div>
+  <div id="err" hidden></div>
+  <div class="foot">
+    <span id="tools"></span>
+    <span class="where" id="where"></span>
+    <span class="grow"></span>
+    <button class="btn ghost" id="cancel" type="button" title="Cancel (Esc)">Cancel</button>
+    <button class="btn primary" id="save" type="button">Save</button>
+  </div>
+</div>
+<script src="vendor/katex/katex.min.js"></script>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/latex-editor.js"></script>
+<script src="note.js"></script>
+</body>
+</html>

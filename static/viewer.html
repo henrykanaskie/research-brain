@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>research brain viewer</title>
+<link rel="icon" type="image/svg+xml" href="/static/brain.svg">
+<script>
+  // Apply the saved theme before first paint.
+  // The main app stores it JSON-encoded ("\"dark\"" or "null"); accept that and a bare value.
+  try { let t = localStorage.getItem("rb.theme"); try { t = JSON.parse(t); } catch (e) { } if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) { }
+</script>
+<link rel="stylesheet" href="/static/vendor/fonts/fonts.css">
+<link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
+<script defer src="/static/vendor/katex/katex.min.js"></script>
+<script defer src="/static/vendor/katex/contrib/auto-render.min.js"></script>
+<script defer src="/static/vendor/marked.min.js"></script>
+<script defer src="/static/latex-editor.js"></script>
+<script src="/static/commands.js"></script>
+<style>
+:root{
+  --ground:#EEEFEB; --sheet:#F7F7F4; --ink:#15181B; --ink-2:#61676C; --rule:#D5D7D1;
+  --red:#BD3A2C; --red-wash:rgba(189,58,44,.09); --machine:#4A6487;
+  --rule-strong:#C3C6BF; --tint:rgba(21,24,27,.05); --paper:#FFFFFF; --page-dim:none;
+  --serif:"STIX Two Text","STIX Two Math",Cambria,Georgia,serif;
+  --sans:"Archivo",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --display:"Bodoni Moda",Didot,Georgia,serif;
+  --side-w:380px; --bar-h:56px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#121518; --sheet:#171B1F; --ink:#E5E6E1; --ink-2:#969CA0; --rule:#2A2F34;
+    --red:#EC6A58; --red-wash:rgba(236,106,88,.13); --machine:#8DA3C4;
+    --rule-strong:#444C55; --tint:rgba(228,231,234,.07); --page-dim:brightness(.9); color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121518; --sheet:#171B1F; --ink:#E5E6E1; --ink-2:#969CA0; --rule:#2A2F34;
+  --red:#EC6A58; --red-wash:rgba(236,106,88,.13); --machine:#8DA3C4;
+  --rule-strong:#444C55; --tint:rgba(228,231,234,.07); --page-dim:brightness(.9); color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ground);color:var(--ink);font:13px/1.5 var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased}
+a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--rule-strong);text-underline-offset:2px}
+a:hover{text-decoration-color:var(--ink)}
+button{font:inherit;color:inherit}
+.num{font-variant-numeric:tabular-nums}
+kbd{font:11px var(--sans);color:var(--ink-2);border:1px solid var(--rule);border-radius:3px;padding:0 4px;background:var(--sheet)}
+
+/* Top bar */
+#bar{position:fixed;inset:0 0 auto 0;height:var(--bar-h);display:flex;align-items:center;gap:12px;padding:0 16px 0 24px;
+  background:var(--sheet);border-bottom:1px solid var(--rule);z-index:20}
+#bar .back{text-decoration:none;color:var(--ink-2);white-space:nowrap}
+#bar .back:hover{color:var(--ink)}
+#title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 13px/1.2 var(--sans);color:var(--ink-2);
+  opacity:0;transition:opacity .15s}
+body.side-hidden #title{opacity:1}
+.ctl{display:flex;align-items:center;gap:4px}
+.btn{background:transparent;border:1px solid transparent;color:var(--ink);height:32px;min-width:32px;padding:0 12px;
+  border-radius:3px;cursor:pointer;font:500 13px/30px var(--sans)}
+.btn:hover{background:var(--tint)}
+.btn:focus-visible,#pageIn:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:var(--sheet)}
+.btn.primary:hover{background:var(--ink);opacity:.86}
+.btn.ghost{border-color:var(--rule)}
+.btn.on{background:var(--tint)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.sym{padding:0;width:32px;font-size:16px;font-weight:400;color:var(--ink-2)}
+.btn.sym:hover{color:var(--ink)}
+#zoomVal{width:44px;text-align:center;color:var(--ink-2)}
+#pageIn{width:36px;height:32px;background:transparent;border:1px solid transparent;color:var(--ink);border-radius:3px;
+  text-align:center;font:500 13px var(--sans);font-variant-numeric:tabular-nums}
+#pageIn:hover{background:var(--tint)}
+#pageIn:focus{outline:none;background:var(--sheet);border-color:var(--rule-strong)}
+#pageTot{color:var(--ink-2);margin:0 2px}
+.divider{width:1px;height:16px;background:var(--rule);margin:0 4px}
+
+/* Layout */
+#main{position:fixed;inset:var(--bar-h) 0 0 0;display:flex}
+#viewer{flex:1;overflow:auto;position:relative;outline:none}
+body.side-hidden #side{display:none}
+#pages{display:flex;flex-direction:column;align-items:center;gap:40px;padding:40px 32px 96px}
+.page{position:relative;background:var(--paper);flex:none;border:1px solid var(--rule);box-sizing:content-box}
+.page::after{content:attr(data-label);position:absolute;left:0;right:0;bottom:-26px;text-align:center;
+  font:12px var(--sans);color:var(--ink-2);opacity:.7;font-variant-numeric:tabular-nums}
+.page canvas{position:absolute;inset:0;width:100%;height:100%;display:block;filter:var(--page-dim)}
+.page .spin{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:13px var(--sans);color:#9AA2AB}
+.page.flash{animation:pflash 1.2s ease-out}
+@keyframes pflash{0%{outline:2px solid var(--red);outline-offset:3px}100%{outline:2px solid transparent;outline-offset:3px}}
+
+/* PDF.js text layer: equivalent to pdfjs-dist 4.10 pdf_viewer.css .textLayer rules */
+.textLayer{position:absolute;text-align:initial;inset:0;overflow:clip;opacity:1;line-height:1;
+  -webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;transform-origin:0 0;caret-color:CanvasText;z-index:2}
+.textLayer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0% 0%}
+.textLayer > :not(.markedContent),.textLayer .markedContent span:not(.markedContent){z-index:1}
+.textLayer span.markedContent{top:0;height:0}
+.textLayer span[role="img"]{user-select:none;cursor:default}
+.textLayer ::selection{background:rgba(30,80,160,.22)}
+.textLayer br::selection{background:transparent}
+.textLayer .endOfContent{display:block;position:absolute;inset:100% 0 0;z-index:0;cursor:default;user-select:none}
+.textLayer.selecting .endOfContent{top:0}
+/* Saved fragments: red wash + 1px red underline (always on white paper, so use the light red) */
+.textLayer span.rb-hl{background:rgba(178,58,51,.10);box-shadow:inset 0 -1px 0 #B23A33;cursor:pointer}
+.textLayer span.rb-flash{animation:sflash 1.6s ease-out}
+@keyframes sflash{0%,40%{background:rgba(178,58,51,.32)}100%{background:rgba(178,58,51,.10)}}
+@media (prefers-reduced-motion: reduce){.page.flash,.textLayer span.rb-flash{animation:none}}
+
+/* Sidebar */
+#side{width:var(--side-w);flex:none;border-left:1px solid var(--rule);background:var(--sheet);display:flex;flex-direction:column;min-height:0}
+#side footer{border-top:1px solid var(--rule)}
+#fragList{flex:1;overflow:auto;padding:28px 0 32px}
+#paperHead{padding:0 28px 28px}
+#paperHead h1{margin:0;font:600 27px/1.15 var(--serif);letter-spacing:-.012em;color:var(--ink);text-wrap:balance}
+#paperHead .by{margin-top:10px;color:var(--ink-2);font-size:13px;line-height:1.5}
+#paperHead .by span+span::before{content:"";display:inline-block;width:12px}
+#fragHead{display:flex;align-items:baseline;gap:8px;padding:20px 28px 8px;border-top:1px solid var(--rule)}
+#fragHead h2{margin:0;font:600 13px var(--sans);color:var(--ink)}
+#fragCount{color:var(--ink-2);font-variant-numeric:tabular-nums}
+.frag{padding:14px 28px 16px;cursor:pointer;transition:background .12s}
+.frag:hover{background:var(--tint)}
+.frag.active{background:var(--red-wash)}
+.frag .meta{display:flex;gap:12px;align-items:baseline;color:var(--ink-2);margin-bottom:8px;font-size:12.5px}
+.frag .loc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;color:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums}
+.frag .open{opacity:0;transition:opacity .12s} .frag:hover .open,.frag.active .open{opacity:1}
+.frag .pg{flex:none;font-variant-numeric:tabular-nums}
+.frag .open{flex:none;text-decoration:none;color:var(--ink-2)} .frag .open:hover{color:var(--ink);text-decoration:underline}
+.frag .q{font:15px/1.5 var(--serif);color:var(--ink);border-left:2px solid var(--red);padding-left:10px;margin:0 0 6px;
+  display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.frag .b{font:14.5px/1.5 var(--serif);color:var(--red);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  overflow:hidden;word-break:break-word;white-space:pre-wrap}
+.frag .b:empty{display:none}
+.empty{color:var(--ink-2);padding:24px 28px 48px;line-height:1.6;max-width:30em}
+#side footer{padding:14px 28px 18px;color:var(--ink-2);font-size:12px;line-height:1.8}
+
+/* Selection control and popover */
+/* Same toolbar as the Chrome extension's annotate mode: "Highlight" and "Highlight + note" */
+#selBar{position:fixed;z-index:40;display:none;background:var(--ink);border-radius:3px;overflow:hidden;white-space:nowrap}
+#selBar button{background:none;color:var(--sheet);border:none;padding:0 12px;height:30px;font:500 13px var(--sans);cursor:pointer;vertical-align:top}
+#selBar button+button{border-left:1px solid rgba(127,127,127,.35)}
+#selBar button:hover{background:rgba(255,255,255,.10)}
+#selBar kbd{font:500 11px var(--sans);opacity:.55;margin-left:2px;background:none;border:none;padding:0;color:inherit;box-shadow:none}
+#pop{position:fixed;z-index:50;display:none;width:460px;max-width:calc(100vw - 20px);max-height:calc(100vh - var(--bar-h) - 20px);overflow:auto;
+  background:var(--sheet);border:1px solid var(--rule-strong);border-radius:4px;padding:20px 24px 20px}
+#pop .ph{display:flex;align-items:baseline;gap:10px;margin-bottom:4px}
+#pop .ph b{font:600 17px/1.2 var(--sans);letter-spacing:-.01em}
+#pop .ph span{color:var(--ink-2);font-variant-numeric:tabular-nums}
+#pop label{display:block;font:500 12.5px var(--sans);color:var(--ink-2);margin:16px 0 6px}
+#pop label .aside{font-weight:400;color:var(--ink-2);opacity:.85}
+#pop textarea,#pop input{width:100%;background:var(--ground);border:1px solid transparent;border-radius:3px;color:var(--ink);
+  padding:8px 10px;font:15px/1.5 var(--serif);resize:vertical;transition:border-color .12s,background .12s}
+#pop input{font:13px var(--sans);height:32px}
+#pop textarea:hover,#pop input:hover{border-color:var(--rule)}
+#pop textarea#pQuote{border-left:2px solid var(--red)}
+#pop textarea:focus,#pop input:focus{outline:none;background:var(--sheet);border-color:var(--rule-strong);box-shadow:0 0 0 3px var(--tint)}
+#pop textarea#pQuote:focus{border-left-color:var(--red)}
+.prev{margin-top:8px;padding:2px 10px;background:transparent;font:15px/1.5 var(--serif);color:var(--ink);max-height:120px;overflow:auto;word-break:break-word}
+.prev:empty{display:none}
+#pop .pf{display:flex;align-items:center;gap:8px;margin-top:20px}
+#pop .pf .hint{flex:1;color:var(--ink-2);font-size:12px;display:flex;gap:2px;align-items:center}
+#pTools .le-sym-btn{display:none;margin-left:-4px}
+#pTools .le-sym-btn.cur{display:inline-block}
+#pop textarea{min-height:0}
+#pErr{color:var(--red);margin-top:8px;display:none}
+
+/* Status, toast */
+#status{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:30px}
+#status .box{max-width:480px;background:var(--sheet);border:1px solid var(--rule);padding:20px 24px;font:14px/1.6 var(--sans)}
+#status .box h3{margin:0 0 6px;font:600 16px var(--sans);color:var(--ink)}
+#status .box.err h3{color:var(--red)}
+#status .box p{margin:6px 0;color:var(--ink-2)}
+#status .box code{font:12.5px var(--mono);color:var(--ink)}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);opacity:0;z-index:60;background:var(--ink);color:var(--sheet);
+  padding:7px 14px;border-radius:3px;transition:opacity .15s;pointer-events:none}
+#toast.show{opacity:1}
+#toast.err{background:var(--red);color:#fff}
+.katex{font-size:1.02em}
+::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--rule);border-radius:5px;border:2px solid transparent;background-clip:padding-box}
+@media (max-width:860px){ :root{--side-w:280px} #bar .hide-sm{display:none} }
+</style>
+</head>
+<body>
+<div id="bar">
+  <a class="back" id="backLink" href="/" title="Back to the graph">Back to graph</a>
+  <div id="title">Loading</div>
+  <div class="ctl">
+    <button class="btn sym" id="zOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
+    <span id="zoomVal" class="num">100%</span>
+    <button class="btn sym" id="zIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
+    <button class="btn" id="zFit" title="Fit width (0)">Fit width</button>
+  </div>
+  <span class="divider hide-sm"></span>
+  <div class="ctl">
+    <button class="btn sym" id="pPrevBtn" title="Previous page (k)" aria-label="Previous page">‹</button>
+    <input id="pageIn" value="1" aria-label="Page number">
+    <span id="pageTot" class="num">of –</span>
+    <button class="btn sym" id="pNextBtn" title="Next page (j)" aria-label="Next page">›</button>
+  </div>
+  <span class="divider"></span>
+  <button class="btn on" id="sideBtn" title="Show or hide the side panel">Notes</button>
+  <button class="btn" id="themeBtn" title="Theme: follows system">System</button>
+</div>
+
+<div id="main">
+  <div id="viewer" tabindex="-1">
+    <div id="pages"></div>
+    <div id="status"><div class="box"></div></div>
+  </div>
+  <aside id="side">
+    <div id="fragList">
+      <div id="paperHead"><h1 id="pTitle"></h1><div class="by" id="pBy"></div></div>
+      <div id="fragHead"><h2>Fragments</h2><span id="fragCount"></span></div>
+      <div id="fragItems"><div class="empty">Loading</div></div>
+    </div>
+    <footer>Select text on a page to add a fragment. <kbd>j</kbd> <kbd>k</kbd> move between pages, <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> zoom.</footer>
+  </aside>
+</div>
+
+<div id="selBar" role="toolbar" aria-label="Selection"><button id="hlBtn" type="button" title="Highlight (H)">Highlight <kbd>H</kbd></button><button id="clipBtn" type="button" title="Highlight and write a note (N)">Highlight + note <kbd>N</kbd></button></div>
+
+<div id="pop" role="dialog" aria-label="New fragment">
+  <div class="ph"><b>New fragment</b><span id="pPage"></span></div>
+  <label for="pQuote">Quote <span class="aside">(edit freely; write math as LaTeX)</span></label>
+  <textarea id="pQuote" rows="3" spellcheck="false"></textarea>
+  <div id="pPrev" class="prev"></div>
+  <label for="pLoc">Locator</label>
+  <input id="pLoc" placeholder="p.4, Eq. 7">
+  <label for="pBody">Your note</label>
+  <textarea id="pBody" rows="4" placeholder="What this means to you, questions, connections"></textarea>
+  <div id="pBodyPrev" class="prev"></div>
+  <div id="pErr"></div>
+  <div class="pf">
+    <span class="hint" id="pTools"></span>
+    <button class="btn ghost" id="pCancel" type="button">Cancel</button>
+    <button class="btn primary" id="pSave" type="button" title="Save (⌘↵)">Save</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+const PDFJS_VER = "4.10.38";
+// Vendored copy (static/vendor/pdfjs/ holds pdfjs-dist ${PDFJS_VER}), so the viewer works offline.
+const PDFJS = new URL("/static/vendor/pdfjs", location.origin).href;
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const viewer = $("#viewer"), pagesEl = $("#pages");
+
+const ID = decodeURIComponent(location.pathname.replace(/\/+$/, "").split("/").pop() || "");
+const S = {
+  note: null, pdf: null, lib: null,
+  scale: 1, fit: true, baseW: 612,
+  pages: [],            // {num, div, w, h, renderedScale, busy, again, task, tl, waiters:[]}
+  frags: [], activeFrag: null, current: 1,
+  sel: null,            // {text, page}
+};
+
+/* ── utilities ──────────────────────────────────────── */
+function toast(msg, err = false) {
+  const t = $("#toast"); t.textContent = msg; t.className = "show" + (err ? " err" : "");
+  clearTimeout(toast._t); toast._t = setTimeout(() => (t.className = err ? "err" : ""), err ? 4200 : 2200);
+}
+function showStatus(title, html, isErr = true) {
+  const st = $("#status"); st.style.display = "flex";
+  st.querySelector(".box").className = "box" + (isErr ? " err" : "");
+  st.querySelector(".box").innerHTML = `<h3>${esc(title)}</h3>${html}`;
+}
+function math(el) {
+  if (!el) return;
+  if (window.renderMathInElement) {
+    try {
+      window.renderMathInElement(el, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true }, { left: "\\[", right: "\\]", display: true },
+          { left: "$", right: "$", display: false }, { left: "\\(", right: "\\)", display: false },
+        ],
+        throwOnError: false, ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+      });
+    } catch (e) { /* leave raw text */ }
+  } else if (!math._pending) {
+    // KaTeX (defer) not ready yet — retry once it is.
+    math._pending = true;
+    window.addEventListener("load", () => { math._pending = false; document.querySelectorAll("[data-math]").forEach(math); }, { once: true });
+  }
+}
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  let data = null; try { data = await r.json(); } catch { }
+  if (!r.ok) { const e = new Error((data && data.detail) || `HTTP ${r.status}`); e.status = r.status; throw e; }
+  return data;
+}
+
+/* ── load note + PDF ────────────────────────────────── */
+async function init() {
+  $("#backLink").href = `/#note=${encodeURIComponent(ID)}`;
+  if (!ID || ID === "viewer") { showStatus("No note id", "<p>Open the viewer as <code>/viewer/&lt;note-id&gt;</code>.</p>"); return; }
+
+  const notePromise = api(`/api/notes/${encodeURIComponent(ID)}`).catch((e) => e);
+  let lib;
+  try {
+    lib = await import(`${PDFJS}/build/pdf.min.mjs`);
+    lib.GlobalWorkerOptions.workerSrc = `${PDFJS}/build/pdf.worker.min.mjs`;
+    S.lib = lib;
+  } catch (e) {
+    console.error(e);
+    const why = String((e && e.message) || e).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+    showStatus("Couldn't load the PDF renderer", `<p>PDF.js ${PDFJS_VER} should load from <code>static/vendor/pdfjs/</code>, but it didn't. Stop the app, start it again with <code>./run.sh</code>, then reload this page with Cmd+Shift+R.</p><p class="why">Browser said: ${why}</p>`);
+  }
+
+  const note = await notePromise;
+  if (note instanceof Error) {
+    $("#title").textContent = ID; $("#pTitle").textContent = ID;
+    renderFrags();
+    if (note.status === 404) showStatus("Note not found", `<p>No note with id <code>${esc(ID)}</code>.</p><p><a href="/">Back to the graph</a></p>`);
+    else showStatus("Couldn't reach research_brain", `<p>${esc(note.message)}</p><p>Is the server running? Start it with <code>./run.sh</code>.</p>`);
+    return;
+  }
+  S.note = note;
+  document.title = `${note.title || ID} (research brain)`;
+  $("#title").textContent = note.title || ID;
+  $("#title").title = note.title || "";
+  $("#pTitle").textContent = note.title || ID;
+  const by = [];
+  if (note.authors && note.authors.length) by.push(note.authors.length > 3 ? `${note.authors.slice(0, 3).join(", ")} et al.` : note.authors.join(", "));
+  if (note.venue) by.push(note.venue);
+  if (note.year) by.push(String(note.year));
+  $("#pBy").innerHTML = by.map((x) => `<span>${esc(x)}</span>`).join("");
+  S.frags = (note.fragments || []).slice();
+  sortFrags(); renderFrags();
+  if (!lib) return;
+
+  if (note.has_pdf === false) { noPdf(); return; }
+  try {
+    S.pdf = await lib.getDocument({
+      url: `/pdf/${encodeURIComponent(ID)}`,
+      cMapUrl: `${PDFJS}/cmaps/`, cMapPacked: true,
+      standardFontDataUrl: `${PDFJS}/standard_fonts/`,
+      isEvalSupported: false, // never compile font code with eval (the CSP forbids it too)
+    }).promise;
+  } catch (e) {
+    console.error(e);
+    if (e && (e.name === "MissingPDFException" || e.status === 404 || /404|Missing PDF/i.test(e.message))) noPdf();
+    else showStatus("Couldn't open the PDF", `<p>${esc(e && e.message || e)}</p>`);
+    return;
+  }
+  await setupPages();
+}
+function noPdf() {
+  showStatus("No PDF attached", `<p>This note (<code>${esc(ID)}</code>) has no PDF yet.</p>
+    <p>Attach one from the note's panel in the graph, then reload this page. <a href="/#note=${encodeURIComponent(ID)}">Open the note</a></p>`, false);
+  $("#pageTot").textContent = "of 0";
+}
+
+/* ── page placeholders, layout, lazy render ─────────── */
+let io;
+async function setupPages() {
+  const n = S.pdf.numPages;
+  const p1 = await S.pdf.getPage(1);
+  const v1 = p1.getViewport({ scale: 1 });
+  S.baseW = v1.width;
+  for (let i = 1; i <= n; i++) {
+    const div = document.createElement("div");
+    div.className = "page"; div.dataset.page = i; div.dataset.label = String(i);
+    div.innerHTML = `<div class="spin">Page ${i}</div>`;
+    pagesEl.appendChild(div);
+    S.pages.push({ num: i, div, w: v1.width, h: v1.height, renderedScale: null, busy: false, again: false, waiters: [], visible: false });
+  }
+  $("#pageTot").textContent = `of ${n}`;
+  S.scale = fitScale(); layout();
+
+  io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      const p = S.pages[+e.target.dataset.page - 1];
+      p.visible = e.isIntersecting;
+      if (p.visible) renderPage(p); else release(p);
+    }
+  }, { root: viewer, rootMargin: "900px 0px" });
+  S.pages.forEach((p) => io.observe(p.div));
+
+  applyHash(true);
+  window.addEventListener("hashchange", () => applyHash(false));
+
+  // Correct sizes of pages that differ from page 1 (in background).
+  (async () => {
+    let changed = false;
+    for (let i = 2; i <= n; i++) {
+      try {
+        const vp = (await S.pdf.getPage(i)).getViewport({ scale: 1 });
+        const p = S.pages[i - 1];
+        if (Math.abs(vp.width - p.w) > 0.5 || Math.abs(vp.height - p.h) > 0.5) { p.w = vp.width; p.h = vp.height; changed = true; }
+      } catch { }
+      if (changed && i % 10 === 0) { keepAnchor(layout); changed = false; }
+    }
+    if (changed) keepAnchor(layout);
+  })();
+}
+function fitScale() {
+  const avail = viewer.clientWidth - 48 - 14;
+  return Math.max(0.3, Math.min(4, avail / S.baseW));
+}
+function layout() {
+  for (const p of S.pages) {
+    p.div.style.width = `${Math.floor(p.w * S.scale)}px`;
+    p.div.style.height = `${Math.floor(p.h * S.scale)}px`;
+    p.div.style.setProperty("--scale-factor", S.scale);
+  }
+  $("#zoomVal").textContent = `${Math.round(S.scale * 100)}%`;
+  $("#zFit").classList.toggle("on", S.fit);
+}
+function keepAnchor(fn) {
+  // Keep the current page + relative offset stable across a re-layout.
+  const p = S.pages[S.current - 1];
+  const rel = p ? (viewer.scrollTop - p.div.offsetTop) / p.div.offsetHeight : 0;
+  const relX = viewer.scrollWidth > viewer.clientWidth ? (viewer.scrollLeft + viewer.clientWidth / 2) / viewer.scrollWidth : 0.5;
+  fn();
+  if (p) viewer.scrollTop = p.div.offsetTop + rel * p.div.offsetHeight;
+  if (viewer.scrollWidth > viewer.clientWidth) viewer.scrollLeft = relX * viewer.scrollWidth - viewer.clientWidth / 2;
+}
+let rerenderT;
+function setScale(s, fit = false) {
+  s = Math.max(0.3, Math.min(5, s));
+  S.fit = fit;
+  if (Math.abs(s - S.scale) < 1e-3) { layout(); return; }
+  keepAnchor(() => { S.scale = s; layout(); });
+  clearTimeout(rerenderT);
+  rerenderT = setTimeout(() => S.pages.forEach((p) => p.visible && renderPage(p)), 140);
+}
+function release(p) {
+  if (p.busy || p.renderedScale == null) return;
+  if (p.task) try { p.task.cancel(); } catch { }
+  p.div.innerHTML = `<div class="spin">Page ${p.num}</div>`;
+  p.renderedScale = null; p.tl = null;
+}
+async function renderPage(p) {
+  if (p.busy) { p.again = true; return; }
+  if (p.renderedScale === S.scale) return;
+  p.busy = true; p.again = false;
+  const scale = S.scale;
+  try {
+    const page = await S.pdf.getPage(p.num);
+    const vp = page.getViewport({ scale });
+    let dpr = window.devicePixelRatio || 1;
+    const maxPx = 16777216; // keep canvases under ~16 MP
+    if (vp.width * vp.height * dpr * dpr > maxPx) dpr = Math.sqrt(maxPx / (vp.width * vp.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(vp.width * dpr); canvas.height = Math.floor(vp.height * dpr);
+    const ctx = canvas.getContext("2d", { alpha: false });
+    p.task = page.render({ canvasContext: ctx, viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null });
+    await p.task.promise;
+    p.task = null;
+
+    const tl = document.createElement("div");
+    tl.className = "textLayer";
+    const textLayer = new S.lib.TextLayer({
+      textContentSource: page.streamTextContent({ includeMarkedContent: true }),
+      container: tl, viewport: vp,
+    });
+    await textLayer.render();
+    const eoc = document.createElement("div"); eoc.className = "endOfContent"; tl.appendChild(eoc);
+    tl.addEventListener("mousedown", () => tl.classList.add("selecting"));
+
+    if (scale !== S.scale && !p.again) p.again = true;
+    p.div.replaceChildren(canvas, tl);
+    p.tl = tl; p.index = null;
+    p.renderedScale = scale;
+    applyHighlights(p);
+    const w = p.waiters; p.waiters = []; w.forEach((f) => f());
+  } catch (e) {
+    if (!e || e.name !== "RenderingCancelledException") console.error(`page ${p.num}:`, e);
+  } finally {
+    p.busy = false;
+    if (p.again && p.visible) renderPage(p);
+  }
+}
+document.addEventListener("mouseup", () => document.querySelectorAll(".textLayer.selecting").forEach((t) => t.classList.remove("selecting")));
+function whenRendered(p, ms = 5000) {
+  if (p.renderedScale === S.scale && p.tl) return Promise.resolve(true);
+  return new Promise((res) => { const t = setTimeout(() => res(false), ms); p.waiters.push(() => { clearTimeout(t); res(true); }); });
+}
+
+/* ── navigation ─────────────────────────────────────── */
+function goPage(n, smooth = false) {
+  if (!S.pages.length) return;
+  n = Math.max(1, Math.min(S.pages.length, n | 0));
+  const p = S.pages[n - 1];
+  viewer.scrollTo({ top: p.div.offsetTop - 26, behavior: smooth ? "smooth" : "auto" });
+  setCurrent(n);
+}
+function setCurrent(n) {
+  if (n === S.current && $("#pageIn").value == n) return;
+  S.current = n;
+  if (document.activeElement !== $("#pageIn")) $("#pageIn").value = n;
+  const h = `#page=${n}`;
+  if (location.hash !== h) history.replaceState(null, "", h);
+}
+let scrollRaf = 0;
+viewer.addEventListener("scroll", () => {
+  if (scrollRaf) return;
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0;
+    const y = viewer.scrollTop + viewer.clientHeight * 0.35;
+    let lo = 0, hi = S.pages.length - 1, best = 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (S.pages[m].div.offsetTop <= y) { best = m; lo = m + 1; } else hi = m - 1; }
+    if (S.pages.length) setCurrent(best + 1);
+    if (S.sel) placeClipBtn();
+  });
+});
+function applyHash(initial) {
+  const h = new URLSearchParams(location.hash.slice(1));
+  const frag = h.get("frag");
+  if (frag) { const f = S.frags.find((x) => x.id === frag); if (f) { jumpToFrag(f); return; } }
+  const pg = parseInt(h.get("page"), 10);
+  if (pg) goPage(pg); else if (initial) setCurrent(1);
+}
+window.addEventListener("resize", () => { if (S.fit && S.pages.length) setScale(fitScale(), true); });
+
+$("#zIn").onclick = () => setScale(S.scale * 1.2);
+$("#zOut").onclick = () => setScale(S.scale / 1.2);
+$("#zFit").onclick = () => setScale(fitScale(), true);
+$("#pPrevBtn").onclick = () => goPage(S.current - 1);
+$("#pNextBtn").onclick = () => goPage(S.current + 1);
+$("#pageIn").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { goPage(parseInt(e.target.value, 10) || 1); e.target.blur(); viewer.focus(); }
+  if (e.key === "Escape") { e.preventDefault(); e.target.value = S.current; e.target.blur(); }
+});
+$("#pageIn").addEventListener("blur", (e) => (e.target.value = S.current));
+$("#sideBtn").onclick = () => {
+  document.body.classList.toggle("side-hidden");
+  $("#sideBtn").classList.toggle("on", !document.body.classList.contains("side-hidden"));
+  try { localStorage.setItem("rb.viewer.side", document.body.classList.contains("side-hidden") ? "0" : "1"); } catch { }
+  if (S.fit && S.pages.length) setScale(fitScale(), true);
+};
+// Theme: system → light → dark
+const THEMES = ["system", "light", "dark"];
+function applyTheme(t) {
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  const lbl = { system: "System", light: "Light", dark: "Dark" }[t];
+  $("#themeBtn").textContent = lbl; $("#themeBtn").title = `Theme: ${lbl.toLowerCase()} (click to change)`;
+}
+let theme = "system";
+try { let t = localStorage.getItem("rb.theme"); try { t = JSON.parse(t); } catch { } if (THEMES.includes(t)) theme = t; } catch { }
+applyTheme(theme);
+$("#themeBtn").onclick = () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % 3]; applyTheme(theme);
+  // same JSON encoding as the main app's LS helper, so the two pages share the setting
+  try { theme === "system" ? localStorage.removeItem("rb.theme") : localStorage.setItem("rb.theme", JSON.stringify(theme)); } catch { }
+};
+try { if (localStorage.getItem("rb.viewer.side") === "0") { document.body.classList.add("side-hidden"); $("#sideBtn").classList.remove("on"); } } catch { }
+
+// Pinch / ctrl+wheel zoom
+viewer.addEventListener("wheel", (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  setScale(S.scale * Math.exp(-e.deltaY * 0.01));
+}, { passive: false });
+
+/* Keyboard: commands go through the shared registry (/static/commands.js), so "?" lists them and ⌘K finds them. */
+const popIsOpen = () => $("#pop").style.display === "block";
+function stepFrag(d) {
+  const list = S.frags.filter((f) => f.page);
+  if (!list.length) { toast("No saved fragments in this paper yet"); return; }
+  let i = list.findIndex((f) => f.id === S.activeFrag);
+  if (i < 0) { // start from the page you are on
+    i = d > 0 ? list.findIndex((f) => f.page >= S.current) - 1 : list.findIndex((f) => f.page > S.current);
+    if (d > 0 && i < -1) i = -1;
+    if (d < 0 && i < 0) i = list.length;
+  }
+  jumpToFrag(list[(i + d + list.length) % list.length]);
+}
+function addNoteFromSelection() {
+  const s = S.sel || currentSelection();
+  if (!s) { toast("Select a passage or equation on a page first"); return; }
+  S.sel = s; placeClipBtn(); openPop(s);
+}
+const RBC = window.RB && window.RB.commands;
+if (RBC) {
+  const idle = () => !popIsOpen();
+  const V = [
+    ["viewer.nextPage", () => goPage(S.current + 1)], ["viewer.prevPage", () => goPage(S.current - 1)],
+    ["viewer.zoomIn", () => setScale(S.scale * 1.2)], ["viewer.zoomOut", () => setScale(S.scale / 1.2)], ["viewer.fit", () => setScale(fitScale(), true)],
+    ["viewer.nextFrag", () => stepFrag(1)], ["viewer.prevFrag", () => stepFrag(-1)],
+    ["viewer.goPage", () => { const i = $("#pageIn"); i.focus(); i.select(); }],
+    ["viewer.side", () => $("#sideBtn").click()],
+    ["viewer.back", () => { location.href = $("#backLink").href; }],
+    ["viewer.addNote", addNoteFromSelection],
+  ];
+  for (const [id, run] of V) RBC.register({ id, run, when: idle });
+  RBC.register({ id: "viewer.addNote", allowInInput: false });
+  RBC.register({ id: "viewer.highlight", group: "Viewer", title: "Highlight the selection", keys: ["H"], allowInInput: false,
+    run: highlightSelection, when: idle,
+    description: "Saves the selected passage as a highlight (a fragment with no note). N does the same and opens a note.",
+    aliases: ["highlight", "mark", "annotate", "quote"] });
+  RBC.register({ id: "viewer.save", run: () => saveFrag(), when: popIsOpen });
+  RBC.layer({ id: "viewer.pop", order: 100, isOpen: popIsOpen, close: closePop });
+  RBC.layer({ id: "viewer.page-input", order: 60, isOpen: (c) => c && c.target === $("#pageIn"), close: () => { $("#pageIn").value = S.current; $("#pageIn").blur(); } });
+  RBC.layer({ id: "viewer.selection", order: 50, isOpen: (c) => !(c && c.typing) && !!S.sel, close: () => { hideClipBtn(); window.getSelection().removeAllRanges(); } });
+  RBC.layer({ id: "viewer.leave", order: 1, isOpen: (c) => !(c && c.typing) && window.getSelection().isCollapsed, close: () => { location.href = $("#backLink").href; } });
+  const tip = (sel, id) => { const n = $(sel); if (n) RBC.tooltip(n, id, (n.getAttribute("title") || n.textContent.trim()).replace(/\s*\([^)]*\)$/, "")); };
+  tip("#zIn", "viewer.zoomIn"); tip("#zOut", "viewer.zoomOut"); tip("#zFit", "viewer.fit");
+  tip("#pPrevBtn", "viewer.prevPage"); tip("#pNextBtn", "viewer.nextPage"); tip("#sideBtn", "viewer.side"); tip("#backLink", "viewer.back");
+  tip("#clipBtn", "viewer.addNote"); tip("#hlBtn", "viewer.highlight"); tip("#pSave", "viewer.save");
+} else {
+  document.addEventListener("keydown", (e) => {
+    if (popIsOpen()) {
+      if (e.key === "Escape") { e.preventDefault(); closePop(); }
+      else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveFrag(); }
+      return;
+    }
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key) {
+      case "+": case "=": setScale(S.scale * 1.2); break;
+      case "-": case "_": setScale(S.scale / 1.2); break;
+      case "0": setScale(fitScale(), true); break;
+      case "j": case "ArrowRight": goPage(S.current + 1); break;
+      case "k": case "ArrowLeft": goPage(S.current - 1); break;
+      case "Escape": hideClipBtn(); return;
+      case "h": if (S.sel) highlightSelection(); else return; break;
+      case "n": if (S.sel) openPop(S.sel); else return; break;
+      default: return;
+    }
+    e.preventDefault();
+  });
+}
+
+/* ── text matching / highlights ─────────────────────── */
+const DASHES = /[‐-―−]/g;
+function normChar(s) { return s.normalize("NFKC").toLowerCase().replace(DASHES, "-").replace(/[‘’]/g, "'").replace(/[“”]/g, '"'); }
+const DROP = /[\s­$]/; // whitespace, soft hyphen, latex $ delimiters
+const DROP2 = /[{}^_\\]/;      // LaTeX braces/scripts — dropped on both sides for matching
+function pageIndex(p) {
+  if (p.index) return p.index;
+  const spans = [...p.tl.querySelectorAll('span[role="presentation"]')];
+  let str = ""; const owner = [];
+  spans.forEach((sp, i) => {
+    const t = normChar(sp.textContent || "");
+    for (const ch of t) { if (DROP.test(ch) || DROP2.test(ch)) continue; str += ch; owner.push(i); }
+  });
+  return (p.index = { spans, str, owner });
+}
+function normQuery(q) {
+  let s = normChar(q || "");
+  // strip LaTeX command names so a user-cleaned quote has a chance to match raw PDF text
+  s = s.replace(/\\[a-z]+\s*/g, "");
+  return [...s].filter((ch) => !DROP.test(ch) && !DROP2.test(ch)).join("");
+}
+function findSpans(p, quote) {
+  if (!p.tl) return null;
+  const { spans, str, owner } = pageIndex(p);
+  if (!str) return null;
+  const pstr = str;
+  const q = normQuery(quote);
+  if (q.length < 4) return null;
+  const hit = (a, b) => [owner[a], owner[Math.max(a, b - 1)]];
+  let i = pstr.indexOf(q);
+  if (i >= 0) return range(spans, hit(i, i + q.length));
+  if (q.length >= 20) {
+    const k = Math.min(40, Math.floor(q.length / 3));
+    const head = q.slice(0, k), tail = q.slice(-k);
+    const hi = pstr.indexOf(head);
+    if (hi >= 0) {
+      const ti = pstr.indexOf(tail, hi + k);
+      if (ti >= 0 && ti + k - hi <= q.length * 1.6 + 30) return range(spans, hit(hi, ti + k));
+      return range(spans, hit(hi, hi + k));
+    }
+    const ti = pstr.indexOf(tail);
+    if (ti >= 0) return range(spans, hit(ti, ti + k));
+  }
+  return null;
+}
+function range(spans, [a, b]) { return a == null ? null : spans.slice(a, b + 1); }
+function applyHighlights(p) {
+  if (!p.tl) return;
+  p.tl.querySelectorAll(".rb-hl").forEach((s) => { s.classList.remove("rb-hl"); delete s.dataset.frag; });
+  for (const f of S.frags) {
+    if (f.page !== p.num || !f.quote) continue;
+    const sp = findSpans(p, f.quote);
+    if (sp) sp.forEach((s) => { s.classList.add("rb-hl"); s.dataset.frag = f.id; });
+  }
+}
+async function jumpToFrag(f) {
+  S.activeFrag = f.id;
+  document.querySelectorAll(".frag").forEach((el) => el.classList.toggle("active", el.dataset.id === f.id));
+  if (!f.page || !S.pages.length) { toast(f.page ? "PDF not loaded" : "This fragment has no page number"); return; }
+  const p = S.pages[Math.min(f.page, S.pages.length) - 1];
+  goPage(p.num);
+  await whenRendered(p);
+  const sp = f.quote ? findSpans(p, f.quote) : null;
+  if (sp && sp.length) {
+    const r = sp[0].getBoundingClientRect(), vr = viewer.getBoundingClientRect();
+    viewer.scrollBy({ top: r.top - vr.top - viewer.clientHeight * 0.3, behavior: "smooth" });
+    sp.forEach((s) => { s.classList.add("rb-hl"); s.classList.remove("rb-flash"); void s.offsetWidth; s.classList.add("rb-flash"); });
+  } else {
+    p.div.classList.remove("flash"); void p.div.offsetWidth; p.div.classList.add("flash");
+  }
+}
+// Clicking an existing highlight selects its sidebar card.
+pagesEl.addEventListener("click", (e) => {
+  const sp = e.target.closest && e.target.closest(".rb-hl");
+  if (!sp || !window.getSelection().isCollapsed) return;
+  const el = document.querySelector(`.frag[data-id="${CSS.escape(sp.dataset.frag)}"]`);
+  if (el) { document.querySelectorAll(".frag").forEach((x) => x.classList.toggle("active", x === el)); el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+});
+
+/* ── sidebar ────────────────────────────────────────── */
+// Quotes saved from the math editor are bare TeX (no $). Render them as math when they look like TeX
+// and not like prose; otherwise as text with inline $…$ math. Bodies are markdown + math.
+const isBareTex = (q) => !/\$/.test(q) && /\\[a-zA-Z]+|[_^]\{/.test(q) && !looksLikeProse(q.replace(/\\[a-zA-Z]+/g, ""));
+function richQuote(q) {
+  const LE = window.LatexEditor;
+  if (!LE) return esc(q);
+  try { return isBareTex(q) ? LE.render(q, { mode: "math", inline: true }) : LE.render(q, { mode: "markdown", inline: true }); }
+  catch { return esc(q); }
+}
+function richBody(b) {
+  const LE = window.LatexEditor;
+  if (!b) return "";
+  if (!LE) return esc(b);
+  try { return LE.render(b, { mode: "markdown", inline: true }); } catch { return esc(b); }
+}
+function sortFrags() { S.frags.sort((a, b) => (a.page ?? 1e9) - (b.page ?? 1e9)); }
+function renderFrags() {
+  const list = $("#fragItems");
+  $("#fragCount").textContent = S.frags.length ? String(S.frags.length) : "";
+  if (!S.frags.length) {
+    list.innerHTML = `<div class="empty">No fragments yet. Select a passage or equation on a page, then choose “Highlight” or “Highlight + note”.</div>`;
+    return;
+  }
+  list.innerHTML = S.frags.map((f) => `
+    <div class="frag${f.id === S.activeFrag ? " active" : ""}" data-id="${esc(f.id)}" data-math>
+      <div class="meta"><span class="loc">${esc(f.locator || f.title || "fragment")}</span>
+        ${f.page && !new RegExp(`^p\\.?\\s*${f.page}$`, "i").test((f.locator || "").trim()) ? `<span class="pg">Page ${esc(f.page)}</span>` : ""}
+        <a class="open" href="/#note=${encodeURIComponent(f.id)}" title="Open this fragment in the graph">Open</a></div>
+      ${f.quote ? `<div class="q">${richQuote(f.quote)}</div>` : ""}
+      <div class="b">${richBody(f.body)}</div>
+    </div>`).join("");
+  list.querySelectorAll(".frag").forEach((el) => {
+    if (!window.LatexEditor) math(el);
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("a")) return;
+      const f = S.frags.find((x) => x.id === el.dataset.id);
+      if (f) jumpToFrag(f);
+    });
+  });
+}
+
+/* ── selection → "+ Note" → popover ─────────────────── */
+const clipBtn = $("#selBar"), pop = $("#pop"); // the selection toolbar (Highlight / Highlight + note)
+function cleanSel(t) {
+  return t.replace(/­/g, "").replace(/([A-Za-z])-\s*\n\s*([a-z])/g, "$1$2").replace(/\s+/g, " ").trim();
+}
+function currentSelection() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const rg = sel.getRangeAt(0);
+  const startEl = rg.startContainer.nodeType === 1 ? rg.startContainer : rg.startContainer.parentElement;
+  const pageDiv = startEl && startEl.closest(".page");
+  if (!pageDiv || !pagesEl.contains(pageDiv)) return null;
+  const text = cleanSel(sel.toString());
+  if (!text) return null;
+  return { text, page: +pageDiv.dataset.page, range: rg };
+}
+function placeClipBtn() {
+  if (!S.sel) return;
+  const rects = [...S.sel.range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+  const r = rects[rects.length - 1] || S.sel.range.getBoundingClientRect();
+  const vr = viewer.getBoundingClientRect();
+  if (r.bottom < vr.top || r.top > vr.bottom) { clipBtn.style.display = "none"; return; }
+  clipBtn.style.display = "block";
+  const bw = clipBtn.offsetWidth || 220;
+  clipBtn.style.left = `${Math.max(8, Math.min(window.innerWidth - bw - 8, r.right - bw / 2))}px`;
+  clipBtn.style.top = `${Math.max(vr.top + 4, Math.min(window.innerHeight - 34, r.bottom + 8))}px`;
+}
+function hideClipBtn() { S.sel = null; clipBtn.style.display = "none"; }
+function onSelEnd() {
+  if (pop.style.display === "block") return;
+  setTimeout(() => {
+    const s = currentSelection();
+    if (s) { S.sel = s; placeClipBtn(); } else hideClipBtn();
+  }, 0);
+}
+pagesEl.addEventListener("mouseup", onSelEnd);
+document.addEventListener("keyup", (e) => { if (e.shiftKey || e.key === "Shift") onSelEnd(); });
+document.addEventListener("selectionchange", () => {
+  if (S.sel && window.getSelection().isCollapsed && pop.style.display !== "block") hideClipBtn();
+});
+clipBtn.addEventListener("mousedown", (e) => e.preventDefault()); // keep the selection alive
+$("#clipBtn").addEventListener("click", () => { if (S.sel) openPop(S.sel); });
+$("#hlBtn").addEventListener("click", () => highlightSelection());
+
+function openPop(sel) {
+  const r = clipBtn.getBoundingClientRect();
+  pop.dataset.page = sel.page;
+  $("#pPage").textContent = `Page ${sel.page}`;
+  $("#pQuote").value = sel.text;
+  $("#pLoc").value = `p.${sel.page}`;
+  $("#pBody").value = "";
+  $("#pErr").style.display = "none";
+  $("#pSave").disabled = false; $("#pSave").textContent = "Save";
+  attachEditors(sel.text);
+  clipBtn.style.display = "none";
+  pop.style.display = "block";
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let left = Math.min(window.innerWidth - pw - 10, Math.max(10, r.left - pw / 2 + 30));
+  let top = r.top + 4;
+  if (top + ph > window.innerHeight - 10) top = Math.max(58, window.innerHeight - ph - 10);
+  pop.style.left = `${left}px`; pop.style.top = `${top}px`;
+  clampPop();
+  $("#pBody").focus();
+}
+// Keep the popover inside the viewport as previews grow or shrink.
+function clampPop() {
+  if (pop.style.display !== "block") return;
+  const min = 64, h = pop.offsetHeight, top = parseFloat(pop.style.top) || min;
+  if (top + h > window.innerHeight - 12) pop.style.top = `${Math.max(min, window.innerHeight - h - 12)}px`;
+}
+if (window.ResizeObserver) new ResizeObserver(clampPop).observe(pop);
+window.addEventListener("resize", clampPop);
+function closePop() {
+  if (ED.quote) ED.quote.closeSymbols(); if (ED.body) ED.body.closeSymbols();
+  pop.style.display = "none"; hideClipBtn(); viewer.focus({ preventScroll: true });
+}
+/* LaTeX input (shared /static/latex-editor.js): autocomplete on "\", Tab slots, Cmd+M, Symbols palette, live preview.
+   The quote uses "math" mode when the selection looks like an equation (the whole field is then TeX), and
+   "markdown" mode when it is prose, so a sentence isn't rendered as one big equation and LaTeX typed into it
+   gets wrapped in $…$. */
+const ED = { quote: null, body: null, quoteMode: null };
+const looksLikeProse = (t) => /\b[a-z]{3,}\s+[a-z]{2,}\s+[a-z]{3,}\b/i.test(t || "");
+function attachEditors(quote) {
+  const LE = window.LatexEditor;
+  if (!LE) { if (!attachEditors.warned) { attachEditors.warned = true; console.warn("latex-editor.js not loaded; plain text fields"); } return; }
+  const mode = looksLikeProse(quote) ? "markdown" : "math";
+  if (ED.quote && ED.quoteMode !== mode) { ED.quote.detach(); ED.quote = null; }
+  if (!ED.quote) {
+    ED.quote = LE.attach($("#pQuote"), {
+      preview: $("#pPrev"), mode, toolbar: $("#pTools"),
+      // Only show a preview once there is math to see; plain prose needs none.
+      render: (src, m) => (m === "math" || /\$|\\\(|\\\[/.test(src) ? LE.render(src, { mode: m }) : ""),
+    });
+    ED.quoteMode = mode;
+    const b = $("#pTools").lastElementChild; if (b) b.dataset.for = "quote";
+  }
+  if (!ED.body) {
+    ED.body = LE.attach($("#pBody"), {
+      preview: $("#pBodyPrev"), mode: "markdown", toolbar: $("#pTools"),
+      render: (src) => (/\$|\\\(|\\\[|[*_`#]/.test(src) ? LE.render(src, { mode: "markdown" }) : ""),
+    });
+    const b = $("#pTools").lastElementChild; if (b) b.dataset.for = "body";
+  }
+  ED.quote.render(); ED.body.render();
+  // One "Symbols" control in the footer, acting on whichever field was focused last (the note by default).
+  const showSym = (ctl) => {
+    const which = ctl === ED.quote ? "quote" : "body";
+    document.querySelectorAll("#pTools .le-sym-btn").forEach((b) => b.classList.toggle("cur", b.dataset.for === which));
+  };
+  if (!attachEditors.wired) {
+    attachEditors.wired = true;
+    $("#pQuote").addEventListener("focus", () => showSym(ED.quote));
+    $("#pBody").addEventListener("focus", () => showSym(ED.body));
+  }
+  showSym(ED.body);
+}
+$("#pCancel").onclick = closePop;
+$("#pSave").onclick = () => saveFrag();
+document.addEventListener("mousedown", (e) => {
+  if (pop.style.display === "block" && !pop.contains(e.target) && !(e.target.closest && e.target.closest(".le-pal, .le-pop"))) {
+    // click outside: close only if nothing typed in the note
+    if (!$("#pBody").value.trim()) closePop();
+  }
+});
+
+// "Highlight": save the selection as a fragment with an empty note (no popover).
+async function highlightSelection() {
+  const s = S.sel || currentSelection();
+  if (!s) { toast("Select a passage or equation on a page first"); return; }
+  hideClipBtn();
+  const payload = { type: "fragment", parent: ID, quote: s.text, locator: `p.${s.page}`, page: s.page, body: "" };
+  try {
+    const n = await api("/api/notes", { method: "POST", body: JSON.stringify(payload) });
+    addSavedFrag(n, payload);
+    window.getSelection().removeAllRanges();
+    toast(`Highlighted at p.${s.page}`);
+  } catch (e) {
+    toast(e.status ? `Couldn't save the highlight: ${e.message}` : "Couldn't reach research_brain. Start it with ./run.sh, then try again.", true);
+  }
+}
+function addSavedFrag(n, payload) {
+  const f = { id: n.id, title: n.title, quote: n.quote ?? payload.quote, locator: n.locator ?? payload.locator, page: n.page ?? payload.page, body: n.body ?? payload.body };
+  S.frags.push(f); sortFrags(); S.activeFrag = f.id; renderFrags();
+  const p = S.pages[(f.page || 0) - 1]; if (p) applyHighlights(p);
+  const el = document.querySelector(`.frag[data-id="${CSS.escape(f.id)}"]`); if (el) el.scrollIntoView({ block: "nearest" });
+  return f;
+}
+
+async function saveFrag() {
+  const btn = $("#pSave");
+  if (btn.disabled) return;
+  const page = +pop.dataset.page || null;
+  const payload = {
+    type: "fragment", parent: ID,
+    quote: $("#pQuote").value.trim(), locator: $("#pLoc").value.trim(),
+    page, body: $("#pBody").value.trim(),
+  };
+  if (!payload.quote && !payload.body) { showPopErr("Add a quote or a note."); return; }
+  btn.disabled = true; btn.textContent = "Saving";
+  try {
+    const n = await api("/api/notes", { method: "POST", body: JSON.stringify(payload) });
+    const f = { id: n.id, title: n.title, quote: n.quote ?? payload.quote, locator: n.locator ?? payload.locator, page: n.page ?? page, body: n.body ?? payload.body };
+    S.frags.push(f); sortFrags(); S.activeFrag = f.id; renderFrags();
+    const p = S.pages[(f.page || 0) - 1]; if (p) applyHighlights(p);
+    const el = document.querySelector(`.frag[data-id="${CSS.escape(f.id)}"]`); if (el) el.scrollIntoView({ block: "nearest" });
+    window.getSelection().removeAllRanges();
+    closePop();
+    toast(f.locator ? `Saved fragment at ${f.locator}` : "Saved fragment");
+  } catch (e) {
+    showPopErr(e.status ? `Couldn't save the fragment: ${e.message}` : "Couldn't reach research_brain. Start it with ./run.sh, then try again.");
+    btn.disabled = false; btn.textContent = "Save";
+  }
+}
+function showPopErr(m) { const el = $("#pErr"); el.textContent = m; el.style.display = "block"; }
+
+init().catch((e) => { console.error(e); showStatus("Something went wrong", `<p>${esc(e && e.message || e)}</p>`); });
+</script>
+</body>
+</html>

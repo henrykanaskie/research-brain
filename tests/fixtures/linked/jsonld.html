@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Neural surrogate models for plasma sheaths</title>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@graph": [
+  {"@type": "WebSite", "name": "Open Plasma Letters"},
+  {"@type": "ScholarlyArticle", "headline": "Neural surrogate models for plasma sheaths",
+   "author": [{"@type": "Person", "name": "Grace Hopper"}, {"@type": "Person", "givenName": "Alan", "familyName": "Turing"}],
+   "datePublished": "2021-09-14", "identifier": [{"@type": "PropertyValue", "propertyID": "DOI", "value": "10.5555/opl.2021.042"}],
+   "isPartOf": {"@type": "Periodical", "name": "Open Plasma Letters"},
+   "abstract": "We train neural networks to replace particle-in-cell sheath simulations and recover the floating potential within two percent at a thousandth of the cost."}
+]}
+</script>
+</head><body>
+<div class="topbar">Open Plasma Letters &middot; Browse &middot; Submit</div>
+<div id="wrap"><div class="col-main">
+  <div class="post">
+    <h1>Neural surrogate models for plasma sheaths</h1>
+    <p class="byline">Grace Hopper and Alan Turing</p>
+    <h2>Background</h2>
+    <p>Particle-in-cell simulations of plasma sheaths resolve the Debye length and electron plasma frequency, which makes them expensive for design studies that need thousands of evaluations across wall materials and bias voltages.</p>
+    <p>Surrogate models trade some accuracy for speed. Here we ask how much accuracy is lost when a neural network replaces the full kinetic simulation of a floating wall.</p>
+    <h2>Training data</h2>
+    <p>We generated twelve thousand one-dimensional sheath simulations with secondary electron emission, sampling the wall material, the ion mass and the electron temperature uniformly over the ranges relevant to Hall thruster channels.</p>
+    <p>Each simulation reports the floating potential, the sheath width and the ion impact energy, which form the targets for the network. The inputs are normalised by the Debye length and the electron thermal speed.</p>
+    <h2>Results and discussion</h2>
+    <p>The network recovers the floating potential within two percent and the sheath width within five percent on held-out materials, at roughly one thousandth of the cost of the kinetic simulation on the same hardware.</p>
+  </div>
+  <div class="comments"><h3>Comments</h3><p>Great paper! Lots of people liked this one and left comments about it below the article for everyone.</p></div>
+</div><div class="col-side"><p>Most read this week: a list of other papers that have nothing to do with sheaths at all, honestly.</p></div></div>
+</body></html>

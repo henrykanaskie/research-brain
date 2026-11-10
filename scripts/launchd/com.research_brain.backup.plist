@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- research_brain nightly vault snapshot (git commit inside vault/) at 02:30.
+     If the Mac is asleep at 02:30, launchd runs it once when it wakes.
+     Template: scripts/install_launchd.sh replaces __REPO__, __VAULT__ and __HOME__. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.research_brain.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/vault_backup.sh</string>
+    <string>__VAULT__</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/research_brain-backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/research_brain-backup.log</string>
+</dict>
+</plist>

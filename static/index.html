@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>research brain</title>
+  <script>
+    // apply saved theme before first paint
+    try { var t = JSON.parse(localStorage.getItem('rb.theme')); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="icon" type="image/svg+xml" href="/static/brain.svg">
+  <link rel="stylesheet" href="/static/vendor/fonts/fonts.css">
+  <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- command registry first: other scripts call RB.commands.register as soon as they load -->
+  <script src="/static/commands.js"></script>
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand" title="research brain"><svg class="brand-mark" viewBox="0 0 40 34" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M19 3.5 C16.5 1.8 13 2.3 11.8 4.6 C9.2 3.9 6.6 5.8 6.9 8.4 C4.4 9.2 3.3 12 4.4 14.2 C2.4 15.8 2.5 19 4.6 20.4 C3.6 22.9 5 25.6 7.6 26 C7.8 28.8 10.6 30.6 13.2 29.6 C14.8 31.6 17.6 31.6 19 30"/>
+  <path d="M19 3.5 V30"/>
+  <path d="M11.8 4.6 C12.6 6.4 14.6 7 16 6.4" stroke-width="1.3"/>
+  <path d="M6.9 8.4 C8.6 9.6 9.4 11.4 8.8 13.2" stroke-width="1.3"/>
+  <path d="M4.4 14.2 C6.8 14.6 9.8 15.6 11.4 14.4 C12.8 13.4 14.8 13.6 16 15" stroke-width="1.3"/>
+  <path d="M4.6 20.4 C7 20.6 8.6 19.6 9.6 18.4" stroke-width="1.3"/>
+  <path d="M7.6 26 C8.8 24 11.2 23.2 13 24.2 C14.6 25 16.2 24 16.4 22.2" stroke-width="1.3"/>
+  <path d="M13.2 29.6 C12.6 28.2 12.8 27 13.6 26.4" stroke-width="1.3"/>
+  <path d="M12.6 19.6 C14 18.8 15.8 19.2 16.4 20.2" stroke-width="1.3"/>
+  <g stroke-width="1.4">
+    <path d="M19 6 H24 L27 3 H30"/>
+    <path d="M19 9.5 H27"/>
+    <path d="M19 17 H23 L26 20 H33"/>
+    <path d="M19 23 H25 L28 26 H30"/>
+    <path d="M19 28.5 H22"/>
+    <path d="M23 17 L26 14 H32"/>
+  </g>
+  <g stroke-width="1.3">
+    <circle cx="31.6" cy="3" r="1.6"/><circle cx="28.6" cy="9.5" r="1.6"/><circle cx="33.6" cy="14" r="1.6"/>
+    <circle cx="31.6" cy="26" r="1.6"/><circle cx="23.6" cy="28.5" r="1.6"/>
+  </g>
+  <circle cx="34.6" cy="20" r="1.7" fill="var(--red)" stroke="var(--red)"/>
+</svg><span class="brand-name">research brain</span></div>
+
+    <div class="tb-group grow">
+      <div class="search">
+        <svg class="search-icon" width="13" height="13" viewBox="0 0 13 13" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.25" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8.7 8.7 12 12" stroke="currentColor" stroke-width="1.2"/></svg>
+        <input id="search-input" type="search" placeholder="Search your library" spellcheck="false" aria-label="Search" title="Highlights matching nodes. Enter opens the first match.">
+        <span id="search-count" class="search-count"></span>
+        <kbd class="kbd-hint">/</kbd>
+      </div>
+    </div>
+
+    <div class="tb-group">
+      <div class="menu-wrap">
+        <button id="btn-add-menu" class="btn" aria-haspopup="true" aria-expanded="false" aria-controls="add-menu">Add
+          <svg class="chev" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true"><path d="M1.5 3.2 4.5 6 7.5 3.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+        <div id="add-menu" class="menu" hidden>
+          <form id="lookup-form" class="lookup" autocomplete="off">
+            <label for="lookup-input" class="menu-label">Paper by DOI, arXiv id or title</label>
+            <div class="lookup-row">
+              <input id="lookup-input" type="text" placeholder="2106.09685 or 10.1063/5.0010332" spellcheck="false">
+              <button id="btn-lookup" class="btn btn-primary" type="submit">Add</button>
+            </div>
+          </form>
+          <div class="menu-sep"></div>
+          <button id="btn-add-pdf" class="menu-item" type="button">Import a PDF<span class="menu-hint">or drop one on the window</span></button>
+          <input id="pdf-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+          <button id="btn-new-note" class="menu-item" type="button">Write a note<span class="menu-hint">your own idea or synthesis</span></button>
+          <button id="btn-zotero" class="menu-item" type="button">Import from Zotero<span class="menu-hint">papers, notes and highlights</span></button>
+        </div>
+      </div>
+
+      <div class="menu-wrap">
+        <button id="btn-view-menu" class="btn btn-text" aria-haspopup="true" aria-expanded="false" aria-controls="view-menu">View
+          <svg class="chev" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true"><path d="M1.5 3.2 4.5 6 7.5 3.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+        <div id="view-menu" class="menu menu-right" hidden>
+          <label class="menu-check" title="Show links that were found by text similarity"><input id="sim-toggle" type="checkbox" checked> Show similarity links</label>
+          <label class="menu-check" title="Show which papers cite which (from Semantic Scholar references)"><input id="cites-toggle" type="checkbox" checked> Show citation links</label>
+          <label class="menu-check" title="Quiet signals travel along random connections"><input id="ambient-toggle" type="checkbox" checked> Ambient activity</label>
+          <div class="threshold" title="Hide similarity links scoring below this">
+            <span class="menu-label">Minimum similarity</span>
+            <div class="threshold-row">
+              <input id="sim-threshold" type="range" min="0" max="1" step="0.01" value="0.45" aria-label="Minimum similarity">
+              <span id="sim-threshold-val" class="val">0.45</span>
+            </div>
+          </div>
+          <div class="menu-sep"></div>
+          <button id="btn-export" class="menu-item" type="button">Export<span class="menu-hint">a read-only site of your search matches or all notes</span></button>
+          <button id="btn-shortcuts" class="menu-item has-kbd" type="button">Shortcuts<kbd class="menu-kbd">?</kbd></button>
+          <div class="menu-sep"></div>
+          <span class="menu-label">Appearance</span>
+          <div class="theme" role="group" aria-label="Appearance">
+            <button type="button" data-theme="system" title="Follow the system setting">System</button>
+            <button type="button" data-theme="light">Light</button>
+            <button type="button" data-theme="dark">Dark</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="status" class="status" tabindex="0"><span class="dot"></span><span class="status-text">Checking</span></div>
+      <button id="btn-review" class="btn" title="Recall your own summaries and fragment notes from memory" hidden>Review <span class="review-n tnum"></span></button>
+      <button id="btn-chat" class="btn btn-primary needs-claude" title="Ask a question across all your papers and notes">Ask your library</button>
+    </div>
+  </header>
+
+  <main id="stage">
+    <div id="graph"></div>
+    <div id="legend" class="legend">
+      <div><span class="lg lg-paper"></span>Paper</div>
+      <div title="A red core means you have written about it; size grows with how much you have written and opened it"><span class="lg lg-mine"></span>Has your notes</div>
+      <div><span class="lg lg-note"></span>Standalone note</div>
+      <div><span class="lg lg-link"></span>Your link</div>
+      <div><span class="lg lg-sim"></span>Similar</div>
+      <div class="legend-count" id="legend-count"></div>
+    </div>
+    <div class="graph-tools">
+      <button id="btn-zoom-fit" class="btn btn-sm" title="Fit the whole graph in view">Fit</button>
+    </div>
+
+    <div id="empty-state" class="empty-state" hidden>
+      <div class="empty-card">
+        <svg class="empty-figure" width="132" height="54" viewBox="0 0 132 54" aria-hidden="true">
+          <line x1="18" y1="30" x2="66" y2="14" stroke="var(--red)" stroke-width="1.2"/>
+          <line x1="66" y1="14" x2="112" y2="34" stroke="var(--machine)" stroke-width=".8" stroke-dasharray="3 3"/>
+          <line x1="18" y1="30" x2="30" y2="46" stroke="var(--ink)" stroke-opacity=".35" stroke-width=".75"/>
+          <circle cx="18" cy="30" r="8" fill="var(--ink)"/>
+          <circle cx="66" cy="14" r="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+          <circle cx="112" cy="34" r="6" fill="var(--ink)"/>
+          <circle cx="30" cy="46" r="3" fill="var(--red)"/>
+        </svg>
+        <h1>Start your library</h1>
+        <p>Drop a PDF here, or add a paper by DOI, arXiv id or title.</p>
+        <form id="empty-lookup-form" class="empty-lookup" autocomplete="off">
+          <input id="empty-lookup-input" type="text" placeholder="10.48550/arXiv.1706.03762, 2106.09685, or a title" spellcheck="false" aria-label="DOI, arXiv id or title">
+          <button class="btn btn-primary" type="submit">Add paper</button>
+        </form>
+        <div class="empty-actions">
+          <button class="btn btn-text" data-action="pick-pdf">Choose a PDF</button>
+          <button class="btn btn-text" data-action="new-note">Write a note</button>
+        </div>
+        <p class="empty-hint">Press <kbd>?</kbd> for shortcuts.</p>
+      </div>
+    </div>
+  </main>
+
+  <aside id="panel" class="panel" hidden aria-label="Note">
+    <div id="panel-resizer" class="resizer" title="Drag to resize, double-click to reset"></div>
+    <div class="panel-head">
+      <span id="panel-type" class="kind"></span>
+      <div class="spacer"></div>
+      <span id="save-indicator" class="save-ind" aria-live="polite"></span>
+      <button id="btn-panel-close" class="btn btn-icon" title="Close (Esc)" aria-label="Close">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>
+      </button>
+    </div>
+    <div id="panel-body" class="panel-body"></div>
+  </aside>
+
+  <aside id="chat" class="chat" hidden aria-label="Ask your library">
+    <div class="chat-head">
+      <span class="chat-title">Ask your library</span>
+      <div class="spacer"></div>
+      <button id="btn-chat-clear" class="btn btn-text btn-sm" title="Start a new conversation">New conversation</button>
+      <button id="btn-chat-close" class="btn btn-icon" title="Close (Esc)" aria-label="Close">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>
+      </button>
+    </div>
+    <div id="chat-log" class="chat-log"></div>
+    <form id="chat-form" class="chat-form" autocomplete="off">
+      <div id="chat-preview" class="md live"></div>
+      <div class="chat-row">
+        <textarea id="chat-input" rows="2" placeholder="Ask about your papers and notes" aria-label="Question"></textarea>
+        <button id="btn-chat-send" class="btn btn-primary needs-claude" type="submit">Ask</button>
+      </div>
+    </form>
+  </aside>
+
+  <section id="explain" class="explain" hidden aria-label="Why are these connected?">
+    <div class="explain-head">
+      <span class="explain-title">Why are these connected?</span>
+      <div class="spacer"></div>
+      <button id="btn-explain-refresh" class="btn btn-text btn-sm needs-claude" title="Ask Claude again instead of using the saved answer">Ask again</button>
+      <button id="btn-explain-close" class="btn btn-icon" title="Close (Esc)" aria-label="Close">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>
+      </button>
+    </div>
+    <div id="explain-pair" class="explain-pair"></div>
+    <div id="explain-body" class="explain-body"></div>
+  </section>
+
+  <div id="drop-overlay" class="drop-overlay" hidden>
+    <div class="drop-box">
+      <div class="drop-text">Drop a PDF to add it</div>
+      <div class="drop-sub">Metadata is looked up on Semantic Scholar.</div>
+    </div>
+  </div>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div id="modal-title" class="modal-title"></div>
+      <div id="modal-text" class="modal-text"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel" class="btn">Cancel</button>
+        <button id="modal-ok" class="btn btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tasks" class="tasks"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/katex/katex.min.js"></script>
+  <script src="/static/vendor/force-graph.min.js"></script>
+  <script src="/static/latex-editor.js"></script>
+  <script src="/static/wikilinks.js"></script>
+  <script src="/static/app.js"></script>
+  <script src="/static/live.js"></script>
+  <script src="/static/zotero.js"></script>
+  <script src="/static/export.js"></script>
+  <script src="/static/review.js"></script>
+  <script src="/static/views.js"></script>
+  <script src="/static/topics.js"></script>
+  <script src="/static/research.js"></script>
+  <script src="/static/memory.js"></script>
+  <script src="/static/settings.js"></script>
+  <script src="/static/shortcuts.js"></script>
+</body>
+</html>
