@@ -134,7 +134,7 @@ def env(tmp_path_factory):
         site.html("/paper.html", PAPER_HTML.replace("{extra}", ""))
         site.pages["/probe.pdf"] = (_pdf_bytes(), "application/pdf")
         # a publisher article page (citation_* tags, numbered sections) whose PDF is on the same site
-        article = (ROOT / "tests" / "fixtures" / "linked" / "publisher.html").read_text().replace("https://pubs.example.org", site.base)
+        article = (ROOT / "tests" / "fixtures" / "linked" / "publisher.html").read_text(encoding="utf-8").replace("https://pubs.example.org", site.base)
         site.html("/doi/10.1063/1.4945558", article)
         site.pages["/doi/pdf/10.1063/1.4945558"] = (_pdf_bytes("Breathing modes zqk article PDF"), "application/pdf")
         site.pages["/linked.pdf"] = (_pdf_bytes("Linked PDF zqw text only", pages=2), "application/pdf")
@@ -142,7 +142,7 @@ def env(tmp_path_factory):
         # a copy of the extension whose host permission names the test server's port
         ext = tmp / "extension"
         shutil.copytree(EXT_SRC, ext)
-        m = json.loads((ext / "manifest.json").read_text())
+        m = json.loads((ext / "manifest.json").read_text(encoding="utf-8"))
         # In real use `activeTab` grants the current tab when you click the button or press Alt+Shift+A. Playwright
         # can't press the toolbar button, so the test copy also gets the local test site as a host permission
         # (the shipped manifest has none; tests/test_annotate.py checks that).
@@ -152,8 +152,8 @@ def env(tmp_path_factory):
         # the shipped UI lives in a closed shadow root (page scripts can't read your notes); Playwright
         # can only look inside open ones
         ann = ext / "annotate.js"
-        assert 'attachShadow({ mode: "closed" })' in ann.read_text()
-        ann.write_text(ann.read_text().replace('attachShadow({ mode: "closed" })', 'attachShadow({ mode: "open" })'))
+        assert 'attachShadow({ mode: "closed" })' in ann.read_text(encoding="utf-8")
+        ann.write_text(ann.read_text(encoding="utf-8").replace('attachShadow({ mode: "closed" })', 'attachShadow({ mode: "open" })'))
 
         pw = sync_playwright().start()
         stack.callback(pw.stop)
@@ -546,7 +546,7 @@ def test_popup_saves_an_article_as_link_and_text(env):
     n = _note_by_url(env, url)
     assert n["type"] == "paper" and n["source"] == "linked" and n["has_text"] and not n["has_pdf"]
     assert n["doi"] == "10.1063/1.4945558" and n["authors"][:2] == ["Ada Physicist", "David J. Bohm"] and n["year"] == 2016
-    text = (env["vault"] / "text" / f"{n['id']}.txt").read_text()
+    text = (env["vault"] / "text" / f"{n['id']}.txt").read_text(encoding="utf-8")
     assert "[[section 3.2 Frequency scaling]]" in text and "cookies" not in text
     assert not (env["vault"] / "pdfs" / f"{n['id']}.pdf").exists()
     # one click later: the PDF, fetched in the page with the browser's own access, attached to the same paper
@@ -557,7 +557,7 @@ def test_popup_saves_an_article_as_link_and_text(env):
     expect(pop.locator("#doneSub .kind")).to_have_text("Saved with its PDF.")
     n2 = api(env, "GET", f"/api/notes/{n['id']}")
     assert n2["has_pdf"] and n2["source"] == "pdf"
-    assert "[[page 1]]" in (env["vault"] / "text" / f"{n['id']}.txt").read_text()  # the PDF's pages win
+    assert "[[page 1]]" in (env["vault"] / "text" / f"{n['id']}.txt").read_text(encoding="utf-8")  # the PDF's pages win
     # coming back to the page: the popup knows the paper
     pop.goto(f"chrome-extension://{env['ext_id']}/clip.html?tab={tid}")
     expect(pop.locator("#homePaper .lab")).to_have_text("In your library")
@@ -594,7 +594,7 @@ def test_popup_saves_a_pdf_tab_as_link_and_text(env):
     expect(pop.locator("#done")).to_be_visible(timeout=60_000)
     n = _note_by_url(env, url)
     assert n["source"] == "linked" and not n["has_pdf"] and n["url"] == url
-    text = (env["vault"] / "text" / f"{n['id']}.txt").read_text()
+    text = (env["vault"] / "text" / f"{n['id']}.txt").read_text(encoding="utf-8")
     assert "[[page 1]]" in text and "[[page 2]]" in text and "Linked PDF zqw text only" in text
     assert not (env["vault"] / "pdfs" / f"{n['id']}.pdf").exists()
     tab.close()
@@ -604,7 +604,7 @@ def test_popup_saves_a_pdf_tab_as_link_and_text(env):
 def test_extension_id_is_the_pinned_one(env):
     """Chrome derives the unpacked extension's id from manifest "key"; the server allows exactly that origin."""
     from app.security import Policy, extension_id_from_key
-    key = json.loads((EXT_SRC / "manifest.json").read_text())["key"]
+    key = json.loads((EXT_SRC / "manifest.json").read_text(encoding="utf-8"))["key"]
     assert env["ext_id"] == extension_id_from_key(key)
     assert env["ext_id"] in Policy().extension_ids
 

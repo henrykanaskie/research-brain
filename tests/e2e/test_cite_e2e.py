@@ -133,7 +133,7 @@ def test_picker_copies_cite_citation_and_bibliography(server, page):
     expect(page.locator("#cite-picker")).to_have_count(0)
     # keys are now saved with the papers
     assert _call(server["base"], "GET", f"/api/notes/{server['ids'][0]}")["_extra"]["citekey"] == "boeuf2018kinetic"
-    assert "citekey: boeuf2018kinetic" in (server["tmp"] / "vault" / "notes" / f"{server['ids'][0]}.md").read_text()
+    assert "citekey: boeuf2018kinetic" in (server["tmp"] / "vault" / "notes" / f"{server['ids'][0]}.md").read_text(encoding="utf-8")
 
     # bibliography: formatted html + plain text together (Word / Google Docs take the html)
     page.keyboard.press("Alt+c")
@@ -187,6 +187,7 @@ def test_panel_cite_button_note_and_topic(server, page):
     # edit the key from the menu
     btn.click()
     key = page.locator(".ct-menu .ct-key input")
+    expect(key).to_have_value("wirz2021ion")  # the saved key has arrived
     key.fill("wirz:grid")
     key.press("Enter")
     page.wait_for_function(f"fetch('/api/cite/keys', {{method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{ids: ['{ids[2]}']}})}}).then(r => r.json()).then(r => r.latex === '\\\\cite{{wirz:grid}}')")
@@ -199,7 +200,7 @@ def test_panel_cite_button_note_and_topic(server, page):
     btn.click()
     with page.expect_download() as dl:
         page.locator(".ct-menu").get_by_role("menuitem", name="Download .bib").click()
-    text = Path(dl.value.path()).read_text()
+    text = Path(dl.value.path()).read_text(encoding="utf-8")
     assert text.startswith("@inproceedings{wirz:grid,") and "booktitle = {AIAA Propulsion and Energy Forum}" in text
 
     # a note: the bibliography of the papers it links with [[ ]]
@@ -220,7 +221,7 @@ def test_panel_cite_button_note_and_topic(server, page):
     with page.expect_download() as dl:
         tools.get_by_role("button", name="Export .bib").click()
     assert dl.value.suggested_filename == "thrusters.bib"
-    bib = Path(dl.value.path()).read_text()
+    bib = Path(dl.value.path()).read_text(encoding="utf-8")
     assert "@article{boeuf2018kinetic," in bib and "@inproceedings{wirz:grid," in bib
 
 
@@ -239,17 +240,17 @@ def test_settings_citations_auto_export(server, page):
     expect(page.locator("#library-settings .ls-msg")).to_contain_text("Wrote 3 entries")
     expect(sec.locator("#ls-auto-exports li")).to_have_count(1)
     expect(sec.locator("#ls-auto-exports li .w")).to_contain_text("written")
-    assert "@article{boeuf2018kinetic," in target.read_text()
+    assert "@article{boeuf2018kinetic," in target.read_text(encoding="utf-8")
     if SHOTS:
         page.screenshot(path=f"{SHOTS}/cite-settings.png")
     # a change to a paper rewrites the file (the background exporter)
     _call(server["base"], "PUT", f"/api/notes/{server['ids'][1]}", {"title": "Neural operators for edge turbulence"})
     page.wait_for_function("() => true")
     for _ in range(100):
-        if "edge turbulence" in target.read_text():
+        if "edge turbulence" in target.read_text(encoding="utf-8"):
             break
         page.wait_for_timeout(100)
-    assert "Neural operators for edge turbulence" in target.read_text()
+    assert "Neural operators for edge turbulence" in target.read_text(encoding="utf-8")
     sec.locator("#ls-auto-exports").get_by_role("button", name="Remove").click()
     expect(page.locator("#library-settings .ls-msg")).to_contain_text("left where it is")
     assert target.exists()

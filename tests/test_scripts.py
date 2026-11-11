@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pytest
 
+# these run the bash scripts for macOS and Linux; on Windows `research-brain backup` (tests/test_platforms.py) does the job
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="bash scripts for macOS and Linux")
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 BACKUP = SCRIPTS / "vault_backup.sh"
@@ -57,7 +60,7 @@ def test_backup_inits_ignores_and_commits(tmp_path):
     r = _backup(vault, env)
     assert r.returncode == 0, r.stderr
     assert (vault / ".git").is_dir()
-    ignore = (vault / ".gitignore").read_text().splitlines()
+    ignore = (vault / ".gitignore").read_text(encoding="utf-8").splitlines()
     for pat in ("pdfs/", ".index/", ".trash/", "exports/"):
         assert pat in ignore
     files = set(_git(vault, "ls-files").split())
@@ -95,7 +98,7 @@ def test_backup_keeps_user_gitignore_and_restores_rules(tmp_path):
     assert _backup(vault, env).returncode == 0
     (vault / ".gitignore").write_text("*.tmp\n")  # user trimmed it
     assert _backup(vault, env).returncode == 0
-    ignore = (vault / ".gitignore").read_text().splitlines()
+    ignore = (vault / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert ignore[0] == "*.tmp" and {"pdfs/", ".index/", ".trash/"} <= set(ignore)
 
 
@@ -150,7 +153,7 @@ def test_install_launchd_dry_run(tmp_path):
     assert server["EnvironmentVariables"]["RB_VAULT"] == str(vault)
     assert backup["ProgramArguments"] == ["/bin/bash", f"{ROOT}/scripts/vault_backup.sh", str(vault)]
     assert f"launchctl bootstrap gui/{os.getuid()} {agents}/com.research_brain.server.plist" in r.stdout
-    assert "__" not in (agents / "com.research_brain.server.plist").read_text()
+    assert "__" not in (agents / "com.research_brain.server.plist").read_text(encoding="utf-8")
 
     r = subprocess.run(["bash", str(INSTALL), "--uninstall"], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr

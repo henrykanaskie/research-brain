@@ -86,13 +86,13 @@ def test_import_linked_creates_a_paper_with_text_and_no_pdf(env):
     assert not server.store.pdf_path(n["id"]).exists()
     assert lookups == []  # the page's own metadata was enough: Semantic Scholar wasn't asked
     # the note file says source: linked; the graph shows it as a paper (same dot) with its link
-    md = server.store.note_path(n["id"]).read_text()
+    md = server.store.note_path(n["id"]).read_text(encoding="utf-8")
     assert "source: linked" in md
     node = next(x for x in c.get("/api/graph").json()["nodes"] if x["id"] == n["id"])
     assert node["type"] == "paper" and node["source"] == "linked" and node["url"] == HALL_URL
     # an ordinary note's file doesn't grow a source line
     other = c.post("/api/notes", json={"title": "Plain note"}).json()
-    assert "source:" not in server.store.note_path(other["id"]).read_text()
+    assert "source:" not in server.store.note_path(other["id"]).read_text(encoding="utf-8")
 
 
 def test_import_linked_validation_and_caps(env, monkeypatch):
@@ -314,7 +314,7 @@ def test_upgrade_attaches_the_pdf_and_page_text_wins(env):
     assert n["id"] == nid and n["attached"] and n["has_pdf"] and n["source"] == "pdf" and n["viewer"] == f"/viewer/{nid}"
     t = _text(server, nid)
     assert "[[page 1]]" in t and "[[section" not in t
-    assert "source: pdf" in server.store.note_path(nid).read_text()
+    assert "source: pdf" in server.store.note_path(nid).read_text(encoding="utf-8")
     node = next(x for x in c.get("/api/graph").json()["nodes"] if x["id"] == nid)
     assert node["source"] == "pdf" and node["has_pdf"] and node["url"] == ""
     # passages now cite pages and open the viewer, not the article

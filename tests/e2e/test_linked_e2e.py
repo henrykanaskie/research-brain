@@ -62,7 +62,7 @@ def extract(browser, fixture: str, url: str) -> dict:
 
     def route(r):
         if r.request.url == url:
-            r.fulfill(status=200, content_type="text/html; charset=utf-8", body=(FIX / fixture).read_text())
+            r.fulfill(status=200, content_type="text/html; charset=utf-8", body=(FIX / fixture).read_text(encoding="utf-8"))
         else:
             if r.request.resource_type in ("fetch", "xhr", "websocket", "eventsource"):
                 external.append(r.request.url)  # the page's own images may try to load; scripts must not fetch

@@ -187,7 +187,7 @@ def test_new_note_autosave(ctx, server):
     expect(page.locator("#save-indicator")).to_have_text("Saved")
     wait_saved(page, server, nid, "body", "Ions reach the Bohm speed.")
     assert api(server, "GET", f"/api/notes/{nid}")["title"] == "Sheath notes"
-    assert (server["vault"] / "notes" / f"{nid}.md").read_text().count("Bohm speed") == 1
+    assert (server["vault"] / "notes" / f"{nid}.md").read_text(encoding="utf-8").count("Bohm speed") == 1
     # the empty state is gone and the node is on the graph
     expect(page.locator("#empty-state")).to_be_hidden()
     page.wait_for_function("(id) => window.__rb.S.nodes.has(id)", arg=nid)
@@ -379,7 +379,7 @@ def test_export_from_view_menu(ctx, server):
     expect(modal).to_contain_text("Export ready")
     path = Path(modal.locator(".ex-path").inner_text())
     assert path.is_file() and path.name == "index.html"
-    html = path.read_text()
+    html = path.read_text(encoding="utf-8")
     assert "Langmuir probe analysis" in html and "Transformer attention" not in html
     modal.locator("button", has_text="Done").click()
     expect(modal).to_have_count(0)

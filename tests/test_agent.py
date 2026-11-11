@@ -119,7 +119,7 @@ def test_ask_stream_guard_kills_on_unexpected_tool(fake_cli, monkeypatch):
         list(claude_cli.ask_stream("q", "ctx"))
     with pytest.raises(claude_cli.ToolGuardError):
         claude_cli.ask("q", "ctx")
-    args = json.loads((fake_cli / "args.json").read_text())
+    args = json.loads((fake_cli / "args.json").read_text(encoding="utf-8"))
     assert "--no-chrome" in args and "--strict-mcp-config" in args and "mcp__claude-in-chrome__*" in args
 
 
@@ -195,7 +195,7 @@ def test_remember_rejects_bad_sources_and_size(mem):
 def test_remember_appends_with_label_date_sources(mem):
     e = mem.remember("Krypton line ratios gave an electron temperature of 4.2 eV near the plume.",
                      ["[[kr-cr-2021]] p. 7", "bohm-2009"])
-    raw = (mem.root / "findings.md").read_text()
+    raw = (mem.root / "findings.md").read_text(encoding="utf-8")
     assert "Added via AI" in raw and "[[kr-cr-2021]] p. 7" in raw and e["id"] in raw
     assert e["sources"] == [{"id": "kr-cr-2021", "page": 7}, {"id": "bohm-2009", "page": None}]
     with pytest.raises(M.MemoryError):  # duplicate
@@ -209,7 +209,7 @@ def test_findings_roll_into_summary(tmp_path, monkeypatch):
     mem = M.Memory(tmp_path / "memory", note_exists=lambda i: True)
     for i in range(12):
         mem.remember(f"Finding number {i} says the discharge behaves in a particular and repeatable way.", ["bohm-2009"])
-    raw = (mem.root / "findings.md").read_text()
+    raw = (mem.root / "findings.md").read_text(encoding="utf-8")
     assert len(raw.encode()) <= 1500 + 200
     entries, summary = mem.findings()
     assert summary and "Finding number 0" in summary[0]
@@ -220,7 +220,8 @@ def test_memory_writes_stay_inside(mem):
     for name in ("../x.md", "core.md/../../x", "/etc/passwd", "notes.md"):
         with pytest.raises(M.MemoryError):
             mem._write(name, "x")
-    assert sorted(p.name for p in mem.root.iterdir()) == [".lock", "agents", "findings.md"]
+    # .lock exists where file locking uses fcntl (macOS, Linux); Windows has no such file
+    assert sorted(p.name for p in mem.root.iterdir() if p.name != ".lock") == ["agents", "findings.md"]
     assert (mem.root / "agents" / "README.md").exists()
 
 
@@ -428,7 +429,7 @@ def test_memory_endpoints_edit_delete(srv):
     assert r.status_code == 200 and r.json()["edited"]
     assert requests.put(base + f"/api/memory/findings/{f['id']}", json={"text": "```code```"}).status_code == 400
     assert requests.put(base + "/api/memory/findings/f-0000000000", json={"text": "x y z"}).status_code == 404
-    raw = (srv["vault"] / "memory" / "findings.md").read_text()
+    raw = (srv["vault"] / "memory" / "findings.md").read_text(encoding="utf-8")
     assert "near the plume" in raw and "Added via AI" in raw
     assert requests.delete(base + f"/api/memory/findings/{f['id']}").status_code == 200
     assert requests.delete(base + f"/api/memory/findings/{f['id']}").status_code == 404

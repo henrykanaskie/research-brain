@@ -136,11 +136,11 @@ def test_legacy_vault_kept_then_moved_safely(dirs, monkeypatch):
     assert paths.resolve().legacy
     dst = paths.move_legacy_vault()
     assert dst == dirs / "data" / "profiles" / "default"
-    assert (dst / "notes" / "a.md").read_text().startswith("---") and (dst / "pdfs" / "a.pdf").exists()
+    assert (dst / "notes" / "a.md").read_text(encoding="utf-8").startswith("---") and (dst / "pdfs" / "a.pdf").exists()
     assert not legacy.exists() and list(dirs.glob("vault.moved-*"))  # renamed, not deleted
     r = paths.resolve()
     assert not r.legacy and r.vault == dst
-    assert "moved legacy vault" in (dirs / "data" / "storage.log").read_text()
+    assert "moved legacy vault" in (dirs / "data" / "storage.log").read_text(encoding="utf-8")
     with pytest.raises(paths.MoveError):
         paths.move_legacy_vault()  # nothing left to move
 
@@ -183,7 +183,7 @@ def test_old_vault_is_backed_up_then_migrated(tmp_path):
     (v / ".index" / "review.json").write_text('{"a": 1}')
     res = migrate.run(v, log=lambda m: None)
     assert res["from"] == 0 and res["to"] == migrate.SCHEMA_VERSION and res["applied"] == [1]
-    assert json.loads((v / "state" / "review.json").read_text()) == {"a": 1}
+    assert json.loads((v / "state" / "review.json").read_text(encoding="utf-8")) == {"a": 1}
     assert not (v / ".index" / "review.json").exists()
     names = zipfile.ZipFile(res["backup"]).namelist()
     assert "notes/a.md" in names and not any(n.startswith(("pdfs/", ".index/")) for n in names)
@@ -234,7 +234,7 @@ def test_profiles_api_and_switch(dirs, monkeypatch):
     monkeypatch.setattr(server.storage_api, "_terminate", lambda: killed.append(1))
     assert c.post("/api/profiles/switch", json={"name": "default"}).json()["restarting"] is False  # already open
     r = c.post("/api/profiles/switch", json={"name": "thesis"}).json()
-    assert r["restarting"] and json.loads(restart.read_text()) == {"profile": "thesis"}
+    assert r["restarting"] and json.loads(restart.read_text(encoding="utf-8")) == {"profile": "thesis"}
     time.sleep(0.9)
     assert killed == [1]
 
@@ -257,7 +257,7 @@ def test_settings_and_ui_state(dirs, monkeypatch):
     assert c.put("/api/settings", json={"save_mode": "link"}).json()["save_mode"] == "link"
     assert c.put("/api/ui-state", json={"state": {"panelW": 420, "theme": "dark"}}).json()["state"] == {"panelW": 420, "theme": "dark"}
     assert c.put("/api/ui-state", json={"state": {"theme": None, "lastNote": "a"}}).json()["state"] == {"panelW": 420, "lastNote": "a"}
-    assert json.loads((dirs / "v" / "state" / "ui.json").read_text()) == {"panelW": 420, "lastNote": "a"}
+    assert json.loads((dirs / "v" / "state" / "ui.json").read_text(encoding="utf-8")) == {"panelW": 420, "lastNote": "a"}
     assert c.put("/api/ui-state", json={"state": {"../x": 1}}).status_code == 400
     assert c.put("/api/ui-state", json={"state": {"big": "x" * 300_000}}).status_code == 413
     assert c.get("/api/ui-state").json()["state"]["panelW"] == 420
@@ -305,8 +305,8 @@ def test_add_by_arxiv_fetches_open_access_pdf_in_background(dirs, monkeypatch):
     st = _wait(lambda: (lambda s: s if s["state"] == "found" else None)(c.get(f"/api/notes/{nid}/acquire").json()))
     assert st["source"] == "arxiv" and st["has_pdf"] and len(st["sha256"]) == 64
     note = c.get(f"/api/notes/{nid}").json()
-    assert note["has_pdf"] and "Transformers attend" in (dirs / "v" / "text" / f"{nid}.txt").read_text()
-    assert json.loads((dirs / "v" / "state" / "acquire.json").read_text())[nid]["state"] == "found"
+    assert note["has_pdf"] and "Transformers attend" in (dirs / "v" / "text" / f"{nid}.txt").read_text(encoding="utf-8")
+    assert json.loads((dirs / "v" / "state" / "acquire.json").read_text(encoding="utf-8"))[nid]["state"] == "found"
 
 
 def test_semantic_scholar_then_unpaywall_and_metadata_only_fallback(dirs, monkeypatch):
@@ -576,9 +576,9 @@ EXT = ROOT / "extension"
 
 
 def test_extension_save_pdf_action():
-    html = (EXT / "clip.html").read_text()
-    js = (EXT / "clip.js").read_text()
-    grab = (EXT / "grab_pdf.js").read_text()
+    html = (EXT / "clip.html").read_text(encoding="utf-8")
+    js = (EXT / "clip.js").read_text(encoding="utf-8")
+    grab = (EXT / "grab_pdf.js").read_text(encoding="utf-8")
     assert "Save PDF to research_brain" in html and 'id="savePdfBtn"' in html
     assert "No AI in this extension. Everything you save goes only to research_brain on this computer." in html
     assert "/api/import/pdf-bytes" in js and '"Content-Type": "application/pdf"' in js
@@ -588,7 +588,7 @@ def test_extension_save_pdf_action():
     assert re.findall(r"\bfetch\(([^,]+),", grab) == ["target.href"]
     assert 'credentials: "include"' in grab and "No AI in this extension." in grab
     assert not re.search(r"XMLHttpRequest|WebSocket|sendBeacon|chrome\.runtime\.sendMessage", grab)
-    m = json.loads((EXT / "manifest.json").read_text())
+    m = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
     assert "grab_pdf.js" not in json.dumps(m.get("web_accessible_resources", []))
 
 

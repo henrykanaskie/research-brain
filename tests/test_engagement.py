@@ -59,12 +59,12 @@ def test_unparseable_frontmatter_is_not_overwritten(tmp_path, monkeypatch):
     b = c.post("/api/notes", json={"type": "note", "title": "Other"}).json()
     c.post(f"/api/notes/{a['id']}/link", json={"target": b["id"]})
     p = server.store.note_path(a["id"])
-    broken = p.read_text().replace("summary: fine", "summary: oops: a colon")
+    broken = p.read_text(encoding="utf-8").replace("summary: fine", "summary: oops: a colon")
     p.write_text(broken)
     r = c.put(f"/api/notes/{a['id']}", json={"body": "typed in the app"})
     assert r.status_code == 409 and "frontmatter" in r.json()["detail"]
     c.delete(f"/api/notes/{b['id']}")  # would rewrite a's links list
-    assert p.read_text() == broken
+    assert p.read_text(encoding="utf-8") == broken
 
 
 def test_delete_forgets_opens(tmp_path, monkeypatch):

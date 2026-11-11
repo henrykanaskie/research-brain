@@ -441,7 +441,7 @@ def test_apply_crossref_beats_page_and_page_never_overwrites_crossref(tmp_path):
     got = st.get(n["id"])
     assert got["meta_source"] == "crossref" and got["title"].startswith("Kinetic simulation")
     # the record round-trips through the note file
-    assert md.legacy_from_csl(st.s._parse(n["id"], st.note_path(n["id"]).read_text())["csl"])["year"] == 2020
+    assert md.legacy_from_csl(st.s._parse(n["id"], st.note_path(n["id"]).read_text(encoding="utf-8"))["csl"])["year"] == 2020
 
 
 def test_zotero_metadata_is_not_overwritten_but_gaps_are_filled(tmp_path):

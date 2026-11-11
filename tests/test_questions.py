@@ -17,7 +17,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-FX = json.loads((ROOT / "tests" / "fixtures" / "questions" / "plasma_corpus.json").read_text())
+FX = json.loads((ROOT / "tests" / "fixtures" / "questions" / "plasma_corpus.json").read_text(encoding="utf-8"))
 
 Q_TITLE = FX["questions"]["breathing_crm"]["title"]
 Q_BODY = FX["questions"]["breathing_crm"]["body"]
@@ -101,11 +101,11 @@ def test_question_is_a_note(server):
     r = c.put(f"/api/notes/{q['id']}", json={"answer": "Maybe, via $T_e$. See [[Some paper]].", "question_status": "parked"})
     assert r.status_code == 200 and r.json()["question_status"] == "parked" and "T_e" in r.json()["answer"]
     assert c.put(f"/api/notes/{q['id']}", json={"question_status": "maybe"}).status_code == 400
-    raw = srv.store.note_path(q["id"]).read_text()
+    raw = srv.store.note_path(q["id"]).read_text(encoding="utf-8")
     assert "type: question" in raw and "question_status: parked" in raw and "answer:" in raw
     # other notes don't grow the question properties
     n = c.post("/api/notes", json={"type": "note", "title": "Plain"}).json()
-    raw = srv.store.note_path(n["id"]).read_text()
+    raw = srv.store.note_path(n["id"]).read_text(encoding="utf-8")
     assert "question_status" not in raw and "answer" not in raw and "last_seen" not in raw
     assert c.put(f"/api/notes/{n['id']}", json={"question_status": "open"}).json()["question_status"] == ""
     # the answer's [[links]] are wikilinks (unresolved here)
@@ -190,7 +190,7 @@ def test_dedupe_and_dismissed_never_returns(server):
         assert r.status_code == 200 and r.json()["item"]["verdict"] == "dismissed"
     # the passage's text changes a little (re-extracted PDF), the note is edited: still never comes back
     tp = srv.store.text_path(ids["breathing"])
-    tp.write_text(tp.read_text().replace("The breathing mode is a large-amplitude", "The breathing mode is a strong, large-amplitude"))
+    tp.write_text(tp.read_text(encoding="utf-8").replace("The breathing mode is a large-amplitude", "The breathing mode is a strong, large-amplitude"))
     c.put(f"/api/notes/{ids['breathing']}", json={"venue": "Edited"})
     c.put(f"/api/notes/{ids['note:idea_te']}", json={"body": FX["notes"]["idea_te"]["body"] + " Worth a test."})
     assert c.post(f"/api/questions/{q['id']}/rescan").json()["added"] == 0
@@ -219,7 +219,7 @@ def test_daily_cap(server):
     assert [i["score"] for i in ev["items"]] == sorted((i["score"] for i in ev["items"]), reverse=True)  # best first
     # the next day, more arrive
     p = srv.store.root / "state" / "questions" / f"{q['id']}.json"
-    data = json.loads(p.read_text())
+    data = json.loads(p.read_text(encoding="utf-8"))
     yesterday = (dt.datetime.now().astimezone() - dt.timedelta(days=1)).isoformat(timespec="seconds")
     for i in data["items"]:
         i["found_at"] = yesterday
@@ -420,10 +420,10 @@ def test_privacy_question_never_reaches_an_agent(server):
         # the audit log has no question ids; neither has the memory map that goes to Research
         log = srv.store.root / "state" / "ai_log.jsonl"
         if log.exists():
-            assert q["id"] not in log.read_text()
+            assert q["id"] not in log.read_text(encoding="utf-8")
         core = srv.store.root / "memory" / "core.md"
         if core.exists():
-            assert q["id"] not in core.read_text() and Q_TITLE not in core.read_text()
+            assert q["id"] not in core.read_text(encoding="utf-8") and Q_TITLE not in core.read_text(encoding="utf-8")
         # once the user marks the question shareable, the summary may use the agent (the check is privacy's)
         c.post(f"/api/notes/{q['id']}/privacy", json={"private": False})
         fb.replies = ["Two pieces support it."]

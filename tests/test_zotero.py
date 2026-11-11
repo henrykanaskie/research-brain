@@ -362,7 +362,7 @@ def test_import_everything(env, zdir):
 
     # PDF copied into the vault, text extracted for Claude
     assert attn["has_pdf"] and attn["has_text"]
-    assert "multi-head self attention" in server.store.text_path(attn["id"]).read_text()
+    assert "multi-head self attention" in server.store.text_path(attn["id"]).read_text(encoding="utf-8")
     assert client.get(f"/pdf/{attn['id']}").headers["content-type"] == "application/pdf"
 
     # graph works after a bulk import (index rebuilt lazily once)

@@ -171,7 +171,7 @@ def test_security_headers_and_csp(live):
     assert not [s for d in ("img-src", "connect-src", "script-src", "font-src") for s in csp[d] if s.startswith("http")]
     # every inline script of the app's pages is allowed by its hash (and nothing else inline)
     for page in ("index.html", "viewer.html"):
-        src = (ROOT / "static" / page).read_text()
+        src = (ROOT / "static" / page).read_text(encoding="utf-8")
         for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)</script>", src):
             digest = base64.b64encode(hashlib.sha256(m.group(1).encode()).digest()).decode()
             assert f"'sha256-{digest}'" in csp["script-src"], page
@@ -257,7 +257,7 @@ def test_plain_aliases_from_older_versions_still_load(app_env):
     n = c.get("/api/notes/old").json()
     assert not n.get("_yaml_error") and n["critiques"][0]["text"] == "fine"
     c.put("/api/notes/old", json={"summary": "edited"})
-    assert "*id" not in (Path(server.VAULT) / "notes" / "old.md").read_text()  # written without aliases
+    assert "*id" not in (Path(server.VAULT) / "notes" / "old.md").read_text(encoding="utf-8")  # written without aliases
 
 
 # ---------------------------------------------------------------- untrusted PDFs
@@ -418,7 +418,7 @@ def test_claude_cli_gets_no_settings_hooks_or_claude_md(tmp_path, monkeypatch):
     monkeypatch.setenv("RB_AGENT_DEV_TOKEN", "secret-dev-token")
     monkeypatch.setattr(claude_cli, "_stream_strict_ok", None)
     assert claude_cli.ask("q", "ctx") == "hello"
-    got = json.loads(out.read_text())
+    got = json.loads(out.read_text(encoding="utf-8"))
     argv = got["argv"]
     assert argv[argv.index("--setting-sources") + 1] == ""  # no user/project settings, hooks or CLAUDE.md
     assert argv[argv.index("--tools") + 1] == ""
@@ -542,7 +542,7 @@ def test_renderer_neutralises_xss(tmp_path, le):
 
 @pytest.mark.skipif(not NODE, reason="node is not installed")
 def test_app_js_safe_url():
-    src = (ROOT / "static" / "app.js").read_text()
+    src = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
     fn = re.search(r"function safeUrl\(href\) \{[\s\S]*?\n  \}", src).group(0)
     js = fn + "\nconst cases = " + json.dumps(["javascript:x", "java\tscript:x", "\x01javascript:x", " data:x",
                                                  "vbscript:x", "https://a.b", "mailto:a@b", "#x", "/viewer/a",
@@ -561,7 +561,7 @@ def test_exported_site_escapes_note_content(app_env):
     out = Path(r.json()["path"]) if "path" in r.json() else None
     root = out or next((Path(server.VAULT) / "exports").iterdir())
     for page in root.rglob("*.html"):
-        html = page.read_text()
+        html = page.read_text(encoding="utf-8")
         assert "<script>alert" not in html and "<img src=x" not in html and 'href="javascript:' not in html, page
 
 

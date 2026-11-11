@@ -86,6 +86,21 @@ class MetaIndex:
             except OSError:
                 pass
 
+    def _reset_in_place(self) -> None:
+        try:
+            conn = self._connect()
+            try:
+                names = [r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' "
+                    "AND name NOT LIKE 'notes_fts_%'")]
+                for n in names:
+                    conn.execute(f'DROP TABLE IF EXISTS "{n}"')
+                conn.execute("PRAGMA user_version = 0")
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass
+
     def _open(self) -> None:
         """Open (or create) the database and load it into memory; delete-and-rebuild on any problem."""
         with self.lock:
@@ -115,6 +130,8 @@ class MetaIndex:
                     if self.path.exists():
                         print(f"[research_brain] rebuilding {self.path.name} ({e})")
                     self._delete_files()
+                    if self.path.exists():  # Windows: another connection holds it open, so empty it in place
+                        self._reset_in_place()
                     self.rebuilds += 1
             self.sync(force=True)
             self._external.clear()  # the startup catch-up isn't news to anyone

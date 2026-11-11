@@ -106,7 +106,7 @@ def test_clip_selector_round_trip_and_page_fragments(env):
     assert parent["type"] == "note" and parent["title"] == "Sheaths, explained"
 
     # stored in the file (frontmatter), and read back after a cold start
-    md = (Path(server.VAULT) / "notes" / f"{frag['id']}.md").read_text()
+    md = (Path(server.VAULT) / "notes" / f"{frag['id']}.md").read_text(encoding="utf-8")
     assert "selector:" in md and "the sheath edge" in md
     assert c.get(f"/api/notes/{frag['id']}").json()["selector"] == sel
 
@@ -120,7 +120,7 @@ def test_clip_selector_round_trip_and_page_fragments(env):
     r3 = c.post("/api/clip", json={"quote": "x y z", "url": "https://other.example/a", "selector": {"exact": "  "}})
     assert r3.json()["fragment"]["selector"] is None
     assert c.get(f"/api/notes/{parent['id']}").json()["selector"] is None
-    plain = (Path(server.VAULT) / "notes" / f"{parent['id']}.md").read_text()
+    plain = (Path(server.VAULT) / "notes" / f"{parent['id']}.md").read_text(encoding="utf-8")
     assert "selector" not in plain  # not written for notes without one
 
     # GET /api/fragments?url — same page (hash and trailing slash ignored), oldest first, with selectors
@@ -323,12 +323,12 @@ def test_extension_has_no_ai_and_only_talks_to_localhost():
             assert ALLOWED_URL.match(u), f"{p.relative_to(ROOT)} references a non-local host: {u}"
         assert "fonts.googleapis" not in text and "cdn." not in low, p
     # the vendored editor really has no network or AI code either
-    le = (EXT / "vendor" / "latex-editor.js").read_text()
+    le = (EXT / "vendor" / "latex-editor.js").read_text(encoding="utf-8")
     assert not re.search(r"\bfetch\(|XMLHttpRequest|WebSocket|sendBeacon", le)
 
 
 def test_extension_manifest_permissions_are_minimal():
-    m = json.loads((EXT / "manifest.json").read_text())
+    m = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
     assert set(m["permissions"]) <= {"activeTab", "scripting", "storage", "contextMenus"}
     assert set(m["host_permissions"]) == {"http://127.0.0.1:8765/*", "http://localhost:8765/*"}
     assert "content_scripts" not in m  # annotate.js is injected on demand only
@@ -352,15 +352,15 @@ def test_extension_manifest_permissions_are_minimal():
 
 def test_extension_says_no_ai():
     footer = "No AI in this extension. Everything you save goes only to research_brain on this computer."
-    assert footer in (EXT / "clip.html").read_text()
-    readme = (EXT / "README.md").read_text()
+    assert footer in (EXT / "clip.html").read_text(encoding="utf-8")
+    readme = (EXT / "README.md").read_text(encoding="utf-8")
     assert "No AI" in readme and "127.0.0.1" in readme
     assert "Alt+Shift+A" in readme and "| " in readme  # shortcuts table
     # background.js only fetches the local server (and its own bundled files)
-    bg = (EXT / "background.js").read_text()
+    bg = (EXT / "background.js").read_text(encoding="utf-8")
     targets = re.findall(r"fetch\((base \+ path|chrome\.runtime\.getURL\(`vendor/fonts/\$\{file\}`\))", bg)
     assert len(targets) == len(re.findall(r"\bfetch\(", bg)) == 2, re.findall(r"fetch\([^\n]{0,40}", bg)
     # annotate.js / note.js / clip.js never fetch directly except clip.js to st.server
     for name in ("annotate.js", "note.js"):
-        assert "fetch(" not in (EXT / name).read_text(), name
-    assert re.findall(r"fetch\(([^,]+),", (EXT / "clip.js").read_text()) == ["st.server + path"]
+        assert "fetch(" not in (EXT / name).read_text(encoding="utf-8"), name
+    assert re.findall(r"fetch\(([^,]+),", (EXT / "clip.js").read_text(encoding="utf-8")) == ["st.server + path"]

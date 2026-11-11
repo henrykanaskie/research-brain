@@ -17,7 +17,7 @@ import pytest
 from rb_testserver import run_server
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = json.loads((ROOT / "tests" / "fixtures" / "questions" / "plasma_corpus.json").read_text())
+FIXTURE = json.loads((ROOT / "tests" / "fixtures" / "questions" / "plasma_corpus.json").read_text(encoding="utf-8"))
 
 try:
     from playwright.sync_api import Error as PWError
@@ -144,7 +144,7 @@ def test_question_evidence_triage_badge_list(server, browser):
     page.wait_for_function(f"document.querySelector('#oq-evidence .oq-grp[data-v=dismissed] .oq-ev[data-eid=\"{third}\"]')")
     # the S / A / D keys did not trigger the panel's other shortcuts (write summary, ask, ...)
     assert page.locator("#chat").is_hidden()
-    data = json.loads((vault / "state" / "questions" / f"{qid}.json").read_text())
+    data = json.loads((vault / "state" / "questions" / f"{qid}.json").read_text(encoding="utf-8"))
     verdicts = {i["id"]: i["verdict"] for i in data["items"]}
     assert verdicts[first] == "supports" and verdicts[second] == "against" and verdicts[third] == "dismissed"
 

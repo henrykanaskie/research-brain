@@ -176,7 +176,7 @@ def run(vault: Path, *, target: int = SCHEMA_VERSION, log: Callable[[str], None]
             fn(vault)
             applied.append(v)
             meta.setdefault("migrations", []).append(
-                {"from": v - 1, "to": v, "at": _now(), "what": desc, "backup": str(bk.relative_to(vault))})
+                {"from": v - 1, "to": v, "at": _now(), "what": desc, "backup": bk.relative_to(vault).as_posix()})
             meta.update(schema=v, app_version=__version__)
             _write_meta(vault, meta)  # after each step, so an interrupted run resumes where it stopped
         return {"from": have, "to": target, "backup": str(bk), "applied": applied}

@@ -120,7 +120,7 @@ def test_grading_and_persistence(env, tmp_path):
     day["d"] = dt.date(2026, 11, 10)
     r = c.post(f"/api/review/{a}/grade", json={"grade": 4}).json()
     assert r["interval"] == 6 and r["due"] == "2026-11-16"
-    data = json.loads((tmp_path / "vault/state/review.json").read_text())
+    data = json.loads((tmp_path / "vault/state/review.json").read_text(encoding="utf-8"))
     st = data["items"][a]
     assert st["kind"] == "summary" and st["reps"] == 2 and len(st["history"]) == 2
     assert st["history"][0]["grade"] == 4 and st["history"][0]["recalled"] == "something like aaa"
@@ -152,7 +152,7 @@ def test_items_disappear_with_source(env, tmp_path):
     day["d"] += dt.timedelta(days=30)
     q = c.get("/api/review/queue").json()
     assert q["items"] == [] and q["total"] == 0
-    data = json.loads((tmp_path / "vault/state/review.json").read_text())
+    data = json.loads((tmp_path / "vault/state/review.json").read_text(encoding="utf-8"))
     assert set(data["items"]) == {n["id"]}  # deleted sources pruned; emptied one keeps its history
     assert c.post(f"/api/review/{p['id']}/grade", json={"grade": 4}).status_code == 404
 
@@ -205,7 +205,7 @@ def test_critique_migration(env, tmp_path):
     c, server, day = env
     p = note(c, type="paper", title="Old", summary="s")
     path = tmp_path / "vault/notes" / f"{p['id']}.md"
-    raw = path.read_text()
+    raw = path.read_text(encoding="utf-8")
     raw = raw.replace("---\n", "---\ncritique:\n  text: old critique\n  at: '2025-01-01T10:00:00+00:00'\n"
                                 "  summary_snapshot: older summary\n", 1)
     path.write_text(raw)
@@ -214,4 +214,4 @@ def test_critique_migration(env, tmp_path):
     c.post(f"/api/notes/{p['id']}/critique")
     n = c.get(f"/api/notes/{p['id']}").json()
     assert len(n["critiques"]) == 2 and n["critiques"][0]["text"] == "old critique"
-    assert "critiques:" in path.read_text()
+    assert "critiques:" in path.read_text(encoding="utf-8")

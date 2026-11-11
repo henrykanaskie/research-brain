@@ -59,7 +59,7 @@ def test_status_defaults_and_validation(client, server):
     assert client.put(f"/api/notes/{p['id']}", json={"status": "skimmed"}).status_code == 400
     # a file written before this feature (no status key) reads as ""
     path = server.store.note_path(p["id"])
-    raw = path.read_text().replace("status: reading\n", "")
+    raw = path.read_text(encoding="utf-8").replace("status: reading\n", "")
     path.write_text(raw)
     assert client.get(f"/api/notes/{p['id']}").json()["status"] == ""
     # the meta index mirrors the field (graph nodes carry it)
@@ -135,7 +135,7 @@ def test_topic_file_persistence(client, server):
     a = paper(client, "Plasma sheath")
     slug = client.post("/api/topics", json={"name": "Sheaths", "members": [a]}).json()["slug"]
     path = server.store.root / "topics" / f"{slug}.md"
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert text.startswith("---\nname: Sheaths\n") and f"- [[{a}]]" in text
     # hand-edit (e.g. in Obsidian): add a member line and a description
     b = paper(client, "Bohm criterion")
@@ -253,7 +253,7 @@ def test_recommendation_fusion(client, server, monkeypatch):
     assert r1["reason"].startswith("Similar to ")
     assert sorted(calls["recs"][0]["pos"]) == ["P1", "P2", "P3"] and calls["recs"][0]["neg"] == []
     # references were cached with a TTL: a second refresh doesn't refetch them
-    cache = json.loads((server.store.index_dir / "refs-cache.json").read_text())
+    cache = json.loads((server.store.index_dir / "refs-cache.json").read_text(encoding="utf-8"))
     assert set(cache) == {"P1", "P2", "P3"} and all("at" in v for v in cache.values())
     n = len(calls["refs"])
     client.post(f"/api/topics/{slug}/queue/refresh?wait=1")
@@ -276,7 +276,7 @@ def test_dismiss_feeds_negatives_and_is_never_shown(client, server, monkeypatch)
     client.post(f"/api/topics/{slug}/queue/refresh?wait=1")
     assert calls["recs"][-1]["neg"] == ["R1"]
     assert "R1" not in [i["s2_id"] for i in client.get(f"/api/topics/{slug}/queue").json()["items"]]
-    text = (server.store.root / "topics" / f"{slug}.md").read_text()
+    text = (server.store.root / "topics" / f"{slug}.md").read_text(encoding="utf-8")
     assert "dismissed:" in text and "R1" in text and "Wall erosion modelling" in text
 
 

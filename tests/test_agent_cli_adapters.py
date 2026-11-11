@@ -221,7 +221,7 @@ def fake(tmp_path, monkeypatch, settings_dir):
 
 
 def _rec(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _alive(pid: int | None) -> bool:

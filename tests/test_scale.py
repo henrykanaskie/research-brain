@@ -91,7 +91,7 @@ def test_search_ranking_and_shape(small):
 def test_external_edit_is_reflected(small):
     client, server = small
     p = server.store.notes_dir / "syn-00003.md"
-    p.write_text(p.read_text().replace("study 3", "study 3 zanzibarian"), encoding="utf-8")
+    p.write_text(p.read_text(encoding="utf-8").replace("study 3", "study 3 zanzibarian"), encoding="utf-8")
     assert [r["id"] for r in client.get("/api/search", params={"q": "zanzibar"}).json()] == ["syn-00003"]
     assert "zanzibarian" in client.get("/api/notes/syn-00003").json()["title"]
     assert any("zanzibarian" in n["title"] for n in client.get("/api/graph").json()["nodes"])

@@ -68,14 +68,14 @@ def test_defaults_inheritance_and_settings(lib):
     P.refresh()
     assert P.is_private(f2) and P.is_private_id(f2["id"])
     # the private flag round-trips through the file (an extra property, so other tools keep it)
-    raw = s.note_path(paper["id"]).read_text()
+    raw = s.note_path(paper["id"]).read_text(encoding="utf-8")
     assert "private: true" in raw
     s.update(paper["id"], {"private": None})
-    assert "private:" not in s.note_path(paper["id"]).read_text()
+    assert "private:" not in s.note_path(paper["id"]).read_text(encoding="utf-8")
     # settings live in the library (vault/state/privacy.json), not the browser
     P.save_settings(private_by_default=["paper", "question"])
     P.refresh()
-    assert json.loads((s.root / "state" / "privacy.json").read_text())["private_by_default"] == ["paper", "question"]
+    assert json.loads((s.root / "state" / "privacy.json").read_text(encoding="utf-8"))["private_by_default"] == ["paper", "question"]
     assert P.is_private(s.get(paper["id"])) and P.is_private(s.get(frag["id"]))  # fragment inherits from paper
     assert not P.is_private(s.get(note["id"])) and P.is_private(s.get(q["id"]))
     P.configure(s)  # a fresh start reads the file again
@@ -190,7 +190,7 @@ def test_audit_log_and_rotation(lib, monkeypatch):
     b = FakeBackend()
     e = P.log_send(b, "chat", [paper["id"], note["id"]], 1234)
     assert e["items"] == [paper["id"], note["id"]] and e["private_items"] == [note["id"]] and e["chars"] == 1234
-    line = (s.root / "state" / "ai_log.jsonl").read_text()
+    line = (s.root / "state" / "ai_log.jsonl").read_text(encoding="utf-8")
     assert "Idea" not in line and set(json.loads(line)) >= {"at", "agent", "model", "purpose", "items", "chars"}
     monkeypatch.setattr(P, "LOG_MAX_BYTES", 600)
     for i in range(10):
@@ -398,14 +398,14 @@ def test_exports_exclude_private_by_default(server):
     assert r.status_code == 201, r.text
     out = r.json()
     assert out["private_skipped"] == 2 and out["notes"] == 1
-    html = "".join(p.read_text() for p in Path(out["path"]).rglob("*.html"))
+    html = "".join(p.read_text(encoding="utf-8") for p in Path(out["path"]).rglob("*.html"))
     assert "Pulsed cathode idea" not in html and "anomalous electron" not in html and "My unpublished draft" not in html
     assert idea["id"] not in html and "a private note" in html
     r = c.post("/api/export", json={"ids": [idea["id"]]})
     assert r.status_code == 400 and "private" in r.json()["detail"]
     r = c.post("/api/export", json={"ids": None, "include_private": True}).json()
     assert r["notes"] == 3 and r["private_skipped"] == 0
-    html = "".join(p.read_text() for p in Path(r["path"]).rglob("*.html"))
+    html = "".join(p.read_text(encoding="utf-8") for p in Path(r["path"]).rglob("*.html"))
     assert "Pulsed cathode idea" in html
 
 

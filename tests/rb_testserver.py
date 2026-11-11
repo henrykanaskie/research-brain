@@ -85,15 +85,19 @@ def run_server(vault, *, env: dict | None = None, app: str = "app.server:app", c
     full_env.update({"RB_VAULT": str(vault), "RB_FAKE_CLAUDE": "1", "RB_EMBEDDER": "tfidf", "RB_PORT": str(port),
                      "RB_UI_RESTORE": "0", "RB_DATA_DIR": str(vault.parent / "rb-data")})
     full_env.update(env or {})
-    log = open(log_path, "w")
-    args = [sys.executable, "-m", "uvicorn", app, "--fd", str(sock.fileno()), "--log-level", "warning"]
+    log = open(log_path, "w", encoding="utf-8")
+    if os.name == "nt":  # Windows can't hand a socket to a child: let it bind the (just freed) port itself
+        sock.close()
+        args = [sys.executable, "-m", "uvicorn", app, "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"]
+    else:
+        args = [sys.executable, "-m", "uvicorn", app, "--fd", str(sock.fileno()), "--log-level", "warning"]
     if graceful_timeout is not None:  # a backstop: open responses can't hold up teardown for longer
         args += ["--timeout-graceful-shutdown", str(graceful_timeout)]
     try:
         proc = subprocess.Popen(
             args,
             cwd=str(cwd or ROOT), env=full_env, stdout=log, stderr=subprocess.STDOUT,
-            pass_fds=(sock.fileno(),), preexec_fn=_die_with_parent if os.name == "posix" else None)
+            **({"pass_fds": (sock.fileno(),), "preexec_fn": _die_with_parent} if os.name == "posix" else {}))
     finally:
         sock.close()  # the child holds its own copy of the listening socket
     srv = Server(proc, port, log_path)

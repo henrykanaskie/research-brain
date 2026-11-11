@@ -117,7 +117,7 @@ def test_obsidian_empty_and_null_properties(store):
     meta["year"] = None
     meta["page"] = None
     path.write_text("---\n" + obsidian_dump(meta) + "---\n" + body, encoding="utf-8")
-    assert "authors: []" in path.read_text() and re.search(r"^year:$", path.read_text(), re.M)
+    assert "authors: []" in path.read_text(encoding="utf-8") and re.search(r"^year:$", path.read_text(encoding="utf-8"), re.M)
     assert store.get(n["id"]) == store._parse(n["id"], store._dump(store.get(n["id"])))
     got = store.get(n["id"])
     assert got["year"] is None and got["authors"] == [] and got["tags"] == []
@@ -139,10 +139,10 @@ def test_unknown_frontmatter_survives_app_edits(tmp_path):
     s = Store(tmp_path)
     n = s.create({"type": "note", "title": "Sheath notes"})
     p = s.note_path(n["id"])
-    raw = p.read_text()
+    raw = p.read_text(encoding="utf-8")
     p.write_text(raw.replace("---\n", "---\naliases:\n  - Bohm sheath\nrating: 4\nreviewed: 2026-11-09\n", 1))
     s.update(n["id"], {"body": "edited in the app"})
-    out = p.read_text()
+    out = p.read_text(encoding="utf-8")
     assert "Bohm sheath" in out and "rating: 4" in out and "reviewed:" in out
     got = s.get(n["id"])
     assert got["body"] == "edited in the app" and got["_extra"]["rating"] == 4

@@ -287,7 +287,7 @@ def test_embed_eval_tfidf(tmp_path, capsys):
     rc = embed_eval.main(["--vault", str(tmp_path / "v"), "--pairs", str(pairs), "--out", str(out),
                           "--models", "tfidf", "not-a-real/model-xyz"])
     assert rc == 0
-    res = out.read_text()
+    res = out.read_text(encoding="utf-8")
     assert "| tfidf | 1.000 |" in res
     assert "not-a-real/model-xyz | skipped" in res
     printed = capsys.readouterr()

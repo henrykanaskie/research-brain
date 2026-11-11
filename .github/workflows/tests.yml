@@ -59,7 +59,7 @@ jobs:
           RB_FAKE_CLAUDE: "1"
           RB_EMBEDDER: tfidf
           PYTHONUTF8: "0"
-        run: python -m pytest -q tests --ignore=tests/e2e -rs -p no:cacheprovider
+        run: python -m pytest -q tests --ignore=tests/e2e -rfEs -p no:cacheprovider
       - name: Install as a command and start it
         shell: bash
         run: |

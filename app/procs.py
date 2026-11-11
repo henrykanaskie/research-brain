@@ -76,7 +76,13 @@ def resolve(cmd: list[str]) -> list[str]:
     if not WINDOWS or not cmd:
         return list(cmd)
     exe = cmd[0]
-    if not exe.lower().endswith((".cmd", ".bat")):
+    low = exe.lower()
+    if not low.endswith((".cmd", ".bat", ".exe", ".com")):
+        # a Python script (RB_*_BIN may point at one): Windows ignores #! lines, so run it with Python
+        if low.endswith(".py") or _python_shebang(exe):
+            return [_python_shebang(exe) or sys.executable, exe, *cmd[1:]]
+        return list(cmd)
+    if not low.endswith((".cmd", ".bat")):
         return list(cmd)
     shim = Path(exe)
     try:
@@ -99,6 +105,21 @@ def resolve(cmd: list[str]) -> list[str]:
             f"{shim.name} is a batch file research_brain can't run safely with this request on Windows. "
             "Install the agent's standalone .exe if it has one, or reinstall it with npm.")
     return list(cmd)
+
+
+def _python_shebang(path: str) -> str:
+    """The interpreter a `#!...python...` first line names, when that file exists ("" otherwise)."""
+    try:
+        with open(path, "rb") as f:
+            first = f.readline(512).decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+    if not first.startswith("#!") or "python" not in first.lower():
+        return ""
+    interp = first[2:].strip().split()[0] if first[2:].strip() else ""
+    if interp.endswith("env"):
+        return sys.executable
+    return interp if os.path.isfile(interp) else sys.executable
 
 
 def popen_kwargs() -> dict:

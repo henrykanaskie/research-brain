@@ -155,7 +155,7 @@ def test_keys_are_persisted_on_first_export_and_never_change(server):
     n = srv.store.get(a["id"])
     assert cite.stored_key(n) == "boeuf2018kinetic"
     assert n["updated"] == before  # bookkeeping doesn't count as an edit
-    assert "citekey: boeuf2018kinetic" in srv.store.note_path(a["id"]).read_text()
+    assert "citekey: boeuf2018kinetic" in srv.store.note_path(a["id"]).read_text(encoding="utf-8")
     # an older paper with the same base key arrives later: the exported key doesn't move
     b = add(srv, title="Kinetic theory", authors=["J. Boeuf"], year=2018)
     srv.store.set_fields(b["id"], created="2000-01-01T00:00:00")
@@ -222,9 +222,9 @@ def test_styles_vendored_with_licence():
     for sid in ("american-physics-society", "american-institute-of-physics", "ieee",
                 "american-institute-of-aeronautics-and-astronautics", "nature", "apa", "chicago-author-date"):
         assert sid in ids and not ids[sid]["error"], sid
-        assert "creativecommons.org/licenses/by-sa/3.0" in (cite.STYLES_DIR / f"{sid}.csl").read_text()
+        assert "creativecommons.org/licenses/by-sa/3.0" in (cite.STYLES_DIR / f"{sid}.csl").read_text(encoding="utf-8")
     assert (cite.LOCALES_DIR / "locales-en-US.xml").exists()
-    assert "CC BY-SA 3.0" in (cite.CSL_DIR / "LICENSE.md").read_text()
+    assert "CC BY-SA 3.0" in (cite.CSL_DIR / "LICENSE.md").read_text(encoding="utf-8")
 
 
 def test_aps_output():
@@ -402,7 +402,7 @@ def test_ris_and_csl_json():
 
 
 # ---------------------------------------------------------------------------------------------- user styles
-STYLE_OK = (cite.STYLES_DIR / "american-physics-society.csl").read_text().replace(
+STYLE_OK = (cite.STYLES_DIR / "american-physics-society.csl").read_text(encoding="utf-8").replace(
     "<title>American Physical Society</title>", "<title>My lab style</title>")
 
 
@@ -467,7 +467,7 @@ def test_auto_export_path_validation(server, tmp_path):
     assert client.post("/api/cite/auto-exports", json={"path": "relative.bib"}).status_code == 400
     assert client.post("/api/cite/auto-exports", json={"path": str(good), "scope": "topic:nope"}).status_code == 404
     assert client.post("/api/cite/auto-exports", json={"path": str(good), "flavor": "x"}).status_code == 400
-    assert not (tmp_path / "elsewhere.bib").exists() and mine.read_text().startswith("@article{x")
+    assert not (tmp_path / "elsewhere.bib").exists() and mine.read_text(encoding="utf-8").startswith("@article{x")
 
 
 def test_auto_export_rewrites_on_change(server, tmp_path):
@@ -480,7 +480,7 @@ def test_auto_export_rewrites_on_change(server, tmp_path):
     assert r.status_code == 201, r.text
     e = r.json()
     assert e["written"] and not e["error"] and e["entries"] == 1
-    text = target.read_text()
+    text = target.read_text(encoding="utf-8")
     assert text.startswith(bibexport.HEADER) and "@misc{alpha2001alpha," in text
     assert os.listdir(target.parent) == ["library.bib"]  # no temp files left behind
     assert client.post("/api/cite/auto-exports", json={"path": str(target)}).status_code == 409
@@ -494,11 +494,11 @@ def test_auto_export_rewrites_on_change(server, tmp_path):
     srv.store.update(a["id"], {"title": "Alpha paper, revised", "venue": "Physics of Plasmas"})
     b = add(srv, title="Beta paper", authors=["Bob Beta"], year=2002)
     exp.run_all()
-    text = target.read_text()
+    text = target.read_text(encoding="utf-8")
     assert "@article{alpha2001alpha," in text and "Alpha paper, revised" in text and "@misc{beta2002beta," in text
     srv.store.delete(b["id"])
     exp.run_all()
-    assert "beta2002beta" not in target.read_text()
+    assert "beta2002beta" not in target.read_text(encoding="utf-8")
 
     # the background thread picks changes up by itself
     exp.INTERVAL = 0.1
@@ -506,10 +506,10 @@ def test_auto_export_rewrites_on_change(server, tmp_path):
     try:
         add(srv, title="Gamma paper", authors=["Gus Gamma"], year=2003)
         for _ in range(100):
-            if "gamma2003gamma" in target.read_text():
+            if "gamma2003gamma" in target.read_text(encoding="utf-8"):
                 break
             time.sleep(0.05)
-        assert "gamma2003gamma" in target.read_text()
+        assert "gamma2003gamma" in target.read_text(encoding="utf-8")
     finally:
         exp.stop()
 
@@ -517,7 +517,7 @@ def test_auto_export_rewrites_on_change(server, tmp_path):
     tt = tmp_path / "out" / "topic.bib"
     client.post("/api/topics", json={"name": "Greek", "members": [a["id"]]})
     assert client.post("/api/cite/auto-exports", json={"path": str(tt), "scope": "topic:greek", "flavor": "biblatex"}).status_code == 201
-    assert "alpha2001alpha" in tt.read_text() and "gamma" not in tt.read_text()
+    assert "alpha2001alpha" in tt.read_text(encoding="utf-8") and "gamma" not in tt.read_text(encoding="utf-8")
     # the file was replaced by a symlink behind our back: refuse, don't follow
     os.unlink(tt)
     os.symlink(tmp_path / "victim.bib", tt)

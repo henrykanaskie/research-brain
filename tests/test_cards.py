@@ -188,7 +188,7 @@ def test_extraction_drops_hallucinated_dedups_and_caps(tmp_path, monkeypatch):
     assert q["locator"] == {"quote": good_q, "verified": True, "page": 2}  # PDF text: pages, no sections
     assert q["status"] == "suggested" and q["origin"] == "ai" and q["id"].startswith("c_") and len(q["id"]) == 10
     assert abs(q["quantity"]["canonical_unit_value"] - 232090.4) < 1 and q["quantity"]["canonical_unit"] == "K"
-    stored = json.loads((tmp_path / "cards" / "hall-2020.json").read_text())
+    stored = json.loads((tmp_path / "cards" / "hall-2020.json").read_text(encoding="utf-8"))
     assert [c["id"] for c in stored["cards"]] == [c["id"] for c in res["added"]] and stored["extractions"]
     # running again finds only duplicates
     res2 = cards.extract(cs, note, PAPER_A, None, ask=lambda i, c: reply)
@@ -276,7 +276,7 @@ def test_extract_endpoint_privacy_and_log(server):
     assert "Magnetic shielding" in sent and "PAPER TEXT" in sent
     for secret in ("MY-PRIVATE-SUMMARY", "MY-OWN-NOTES", "SECRET-IDEA", note["id"], "Someone, Some Journal"):
         assert secret not in sent, secret
-    log = [json.loads(x) for x in (srv.store.root / "state" / "ai_log.jsonl").read_text().splitlines()]
+    log = [json.loads(x) for x in (srv.store.root / "state" / "ai_log.jsonl").read_text(encoding="utf-8").splitlines()]
     assert any(e["purpose"] == "card-extraction" and pid in e["items"] for e in log), log
     # a private paper is never sent
     agent.prompts.clear()
@@ -351,7 +351,7 @@ def test_review_endpoints(server):
     assert got["counts"] == {"suggested": 0, "confirmed": 1, "edited": 1, "rejected": 1}
     # the file is plain JSON, one per paper; deleting the paper moves it to the trash
     f = srv.store.root / "cards" / f"{pid}.json"
-    assert json.loads(f.read_text())["paper"] == pid
+    assert json.loads(f.read_text(encoding="utf-8"))["paper"] == pid
     c.delete(f"/api/notes/{pid}")
     assert not f.exists() and list(srv.store.trash_dir.glob(f"{pid}-cards-*.json"))
 

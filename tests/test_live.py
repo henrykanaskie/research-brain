@@ -59,7 +59,7 @@ def test_external_edit_pushes_event_but_own_save_does_not(srv):
         # an outside edit (as Obsidian would make)
         t0 = time.monotonic()
         p = vault / "notes" / f"{note['id']}.md"
-        p.write_text(p.read_text().replace("saved from the app", "edited in Obsidian"), encoding="utf-8")
+        p.write_text(p.read_text(encoding="utf-8").replace("saved from the app", "edited in Obsidian"), encoding="utf-8")
         got = None
         for ev, data in it:
             if ev == "notes-changed":

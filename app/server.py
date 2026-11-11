@@ -436,6 +436,9 @@ class ExplainIn(BaseModel):
     refresh: bool = False
 
 
+PASSAGE_HEAD_RE = re.compile(r"(?m)^\[\[")  # (a backslash can't sit inside an f-string before Python 3.12)
+
+
 class AIUsageIn(BaseModel):
     level: str | None = None              # light | balanced | thorough
     light_model_small_jobs: bool | None = None
@@ -2386,7 +2389,7 @@ def _research_sse(body: ResearchIn):
                     if ev.get("is_error"):
                         s["note"] = agent_mod._short(txt, 140)
                     elif s["tool"] == "search":
-                        s["note"] = f"{len(re.findall(r'(?m)^\[\[', txt))} passages"
+                        s["note"] = f"{len(re.findall(PASSAGE_HEAD_RE, txt))} passages"
                     elif s["tool"] == "remember":
                         s["note"] = agent_mod._short(txt, 140)
                     yield live.sse("step", s)

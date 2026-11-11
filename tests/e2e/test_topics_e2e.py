@@ -87,7 +87,7 @@ def test_park_topic_queue_accept_filter(server, browser):
         _call(base, "PUT", f"/api/notes/{n['id']}", {"status": status})
         if s2:
             p = server["vault"] / "notes" / f"{n['id']}.md"
-            p.write_text(p.read_text().replace("s2_id: ''", f"s2_id: {s2}"))
+            p.write_text(p.read_text(encoding="utf-8").replace("s2_id: ''", f"s2_id: {s2}"))
         ids.append(n["id"])
     shots = os.environ.get("RB_E2E_SHOTS")
     page = browser.new_page(viewport={"width": 1400, "height": 900}, bypass_csp=True)  # see test_e2e.ctx

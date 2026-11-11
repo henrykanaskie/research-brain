@@ -77,17 +77,17 @@ def test_export_selected_notes(lib):
     assert sorted(p.name for p in (site / "notes").iterdir()) == sorted([f"{paper['id']}.html", f"{note['id']}.html"])
     assert not list(site.parent.glob(".*partial"))
 
-    index = (site / "index.html").read_text()
+    index = (site / "index.html").read_text(encoding="utf-8")
     assert "Hall thruster breathing mode" in index and "Plasma notes" in index
     assert "Secret draft" not in index
     assert f'href="notes/{paper["id"]}.html"' in index
 
-    page = (site / "notes" / f"{paper['id']}.html").read_text()
+    page = (site / "notes" / f"{paper['id']}.html").read_text(encoding="utf-8")
     assert "Ionization front" in page and "p. 4, Eq. 7" in page and f'id="{frag["id"]}"' in page
     assert "fake Claude" not in page  # critiques are not exported
     assert "Secret draft" not in page  # manual link to a non-exported note is dropped entirely
 
-    npage = (site / "notes" / f"{note['id']}.html").read_text()
+    npage = (site / "notes" / f"{note['id']}.html").read_text(encoding="utf-8")
     data = re.search(r'<script type="application/json" id="rb-data">(.*?)</script>', npage, re.S).group(1)
     import json
     links = json.loads(data)["links"]
@@ -106,14 +106,14 @@ def test_export_is_self_contained(lib):
     c, *_ = lib
     site = Path(c.post("/api/export", json={"ids": None}).json()["path"])
     for html in site.rglob("*.html"):
-        for tag, url in _refs(html.read_text()):
+        for tag, url in _refs(html.read_text(encoding="utf-8")):
             if tag in ("script", "link"):
                 assert not re.match(r"^(https?:)?//", url), f"{html.name}: {url}"
                 assert (html.parent / url).resolve().is_file(), f"{html.name}: {url} missing"
             elif tag == "a" and not re.match(r"^(https?:|mailto:|#)", url):
                 target = (html.parent / url.split("#")[0]).resolve()
                 assert target.is_file(), f"{html.name}: broken link {url}"
-    css = (site / "assets" / "katex" / "katex.min.css").read_text()
+    css = (site / "assets" / "katex" / "katex.min.css").read_text(encoding="utf-8")
     for font in re.findall(r"url\((fonts/[^)]+)\)", css):
         assert (site / "assets" / "katex" / font).is_file()
     assert (site / "assets" / "fonts" / "fonts.css").is_file()
@@ -134,8 +134,8 @@ def test_export_all_and_pdfs(lib):
     site = Path(out["path"])
     assert out["notes"] == 3 and out["pdfs"] == 1
     assert (site / "pdfs" / f"{paper['id']}.pdf").read_bytes().startswith(b"%PDF")
-    assert f'href="../pdfs/{paper["id"]}.pdf"' in (site / "notes" / f"{paper['id']}.html").read_text()
-    assert "<title>Lab reading list</title>" in (site / "index.html").read_text()
+    assert f'href="../pdfs/{paper["id"]}.pdf"' in (site / "notes" / f"{paper['id']}.html").read_text(encoding="utf-8")
+    assert "<title>Lab reading list</title>" in (site / "index.html").read_text(encoding="utf-8")
     assert not (site / "notes" / f"{frag['id']}.html").exists()  # fragments live on their parent's page
     # second export in the same second gets its own folder
     again = Path(c.post("/api/export", json={"ids": None}).json()["path"])
@@ -147,7 +147,7 @@ def test_export_lone_fragment_and_errors(lib):
     c, server, paper, note, secret, frag = lib
     out = c.post("/api/export", json={"ids": [frag["id"]]}).json()
     site = Path(out["path"])
-    page = (site / "notes" / f"{frag['id']}.html").read_text()
+    page = (site / "notes" / f"{frag['id']}.html").read_text(encoding="utf-8")
     assert "Quote" in page and "p. 4, Eq. 7" in page
     assert "Hall thruster breathing mode" not in page  # parent not exported
     assert c.post("/api/export", json={"ids": ["no-such-note"]}).status_code == 404

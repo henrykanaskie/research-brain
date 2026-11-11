@@ -270,7 +270,13 @@
       };
       key.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKey(); } });
       key.addEventListener('blur', saveKey);
-      post('/api/cite/keys', scope).then((r) => { key.value = key.dataset.was = r.keys[n.id] || ''; }).catch(() => {});
+      key.addEventListener('input', () => { key.dataset.typed = '1'; });
+      // the saved key arrives after the menu opens: never write it over what the user already started typing
+      post('/api/cite/keys', scope).then((r) => {
+        const k = r.keys[n.id] || '';
+        key.dataset.was = k;
+        if (!key.dataset.typed) key.value = k;
+      }).catch(() => {});
       kids.push(el('div', { class: 'menu-sep' }), el('label', { class: 'ct-key', title: 'Edit to use your own key; it is saved in the note’s citekey property' }, 'Key', key));
     } else {
       kids.push(el('div', { class: 'menu-label', text: 'Papers this note links to with [[ ]]' }),
