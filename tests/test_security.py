@@ -101,7 +101,9 @@ def test_host_header_allowlist(live, host, ok):
 def test_rb_host_is_allowed(tmp_path):
     with run_server(tmp_path / "vault", env={"RB_HOST": "100.101.102.103", "RB_WATCH": "0"}) as srv:
         st, _, _ = raw_request(srv.port, f"GET /api/status HTTP/1.1\nHost: 100.101.102.103:{srv.port}\nConnection: close\n")
-        assert st == 200
+        # the Host is accepted; a request naming another host than loopback must come from a paired device
+        # (tests/test_pairing.py), so it gets 401 rather than 421
+        assert st == 401
         st, _, _ = raw_request(srv.port, f"GET /api/status HTTP/1.1\nHost: 100.101.102.104:{srv.port}\nConnection: close\n")
         assert st == 421
 

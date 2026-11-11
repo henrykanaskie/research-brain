@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath
 from . import __version__
 
 MANIFEST = "research_brain-export.json"
-TOP_DIRS = ("notes", "pdfs", "text", "state", "memory", "topics", "cards")
+TOP_DIRS = ("notes", "pdfs", "text", "state", "memory", "topics", "cards", "attachments")
 SKIP_DIRS = {".index", ".trash", "exports", "backups", ".git"}
 MAX_ENTRIES = int(os.environ.get("RB_IMPORT_MAX_ENTRIES", "200000"))
 MAX_TOTAL = int(os.environ.get("RB_IMPORT_MAX_GB", "50")) << 30

@@ -103,11 +103,9 @@ def is_local(scope, headers: dict) -> bool:
     peer = _ip(client)
     if peer is None:
         return False
-    host = (headers.get("host") or "").strip().lower()
-    if host.startswith("["):
-        host = host[1:host.find("]")] if "]" in host else host
-    else:
-        host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    from .security import split_authority  # same parsing as the Host allowlist ("LOCALHOST.:8765" -> "localhost")
+    auth = split_authority(headers.get("host") or "")
+    host = auth[0] if auth else ""
     if peer.is_loopback:
         return host in ("127.0.0.1", "localhost", "::1") or host.startswith("127.")
     server = _ip((scope.get("server") or ("", 0))[0] or "")

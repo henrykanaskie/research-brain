@@ -590,3 +590,16 @@ def test_extension_save_pdf_action():
     assert not re.search(r"XMLHttpRequest|WebSocket|sendBeacon|chrome\.runtime\.sendMessage", grab)
     m = json.loads((EXT / "manifest.json").read_text())
     assert "grab_pdf.js" not in json.dumps(m.get("web_accessible_resources", []))
+
+
+def test_zip_includes_photo_attachments(tmp_path):
+    """Photos captured on a phone live in vault/attachments/ and must survive a backup round trip."""
+    from app import vaultzip
+    v = tmp_path / "v"
+    _vault(v)
+    (v / "attachments").mkdir()
+    (v / "attachments" / "x1.jpg").write_bytes(b"\xff\xd8\xff\xe0 jpeg")
+    vaultzip.export_zip(v, tmp_path / "lib.zip")
+    assert "attachments/x1.jpg" in zipfile.ZipFile(tmp_path / "lib.zip").namelist()
+    vaultzip.import_zip(tmp_path / "lib.zip", tmp_path / "new")
+    assert (tmp_path / "new" / "attachments" / "x1.jpg").read_bytes().startswith(b"\xff\xd8")
