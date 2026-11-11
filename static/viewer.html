@@ -109,7 +109,14 @@ body.side-hidden #side{display:none}
 @media (prefers-reduced-motion: reduce){.page.flash,.textLayer span.rb-flash{animation:none}}
 
 /* Sidebar */
-#side{width:var(--side-w);flex:none;border-left:1px solid var(--rule);background:var(--sheet);display:flex;flex-direction:column;min-height:0}
+#side{width:var(--side-w);flex:none;border-left:1px solid var(--rule);background:var(--sheet);display:flex;flex-direction:column;min-height:0;position:relative}
+/* drag the side panel's left edge to resize it (Notes and Ask); double-click resets it */
+#sideGrip{position:absolute;left:-5px;top:0;bottom:0;width:10px;cursor:col-resize;z-index:5;touch-action:none;background:none;border:0;padding:0}
+#sideGrip::after{content:"";position:absolute;left:4px;top:0;bottom:0;width:2px;background:transparent;transition:background .15s}
+#sideGrip:hover::after,#sideGrip:focus-visible::after,body.side-resizing #sideGrip::after{background:var(--red)}
+#sideGrip:focus-visible{outline:none}
+body.side-resizing{cursor:col-resize;user-select:none}
+body.side-resizing #viewer{pointer-events:none}
 #side footer{border-top:1px solid var(--rule)}
 #fragList{flex:1;overflow:auto;padding:28px 0 32px}
 #paperHead{padding:0 28px 28px}
@@ -265,6 +272,7 @@ a.cite{color:var(--machine)}
     <div id="status"><div class="box"></div></div>
   </div>
   <aside id="side">
+    <div id="sideGrip" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0" title="Drag to resize. Double-click to reset."></div>
     <div id="sideTabs" role="tablist" aria-label="Side panel">
       <button type="button" role="tab" id="tabNotes" aria-selected="true" aria-controls="fragList">Notes</button>
       <button type="button" role="tab" id="tabAsk" aria-selected="false" aria-controls="askPane">Ask<span id="askAgent">AI</span><i class="ag-dot" aria-hidden="true"></i></button>
@@ -1074,7 +1082,12 @@ function answerHTML(text, sources) {
 }
 /* hold back an unclosed $…$ / $$…$$ while streaming, so half an equation isn't shown as raw TeX */
 function partial(text) {
-  const t = String(text || "");
+  let t = String(text || "");
+  // an unclosed \( or \[ at the end: hold it back too
+  for (const [o, c] of [["\\[", "\\]"], ["\\(", "\\)"]]) {
+    const at = t.lastIndexOf(o);
+    if (at >= 0 && t.indexOf(c, at) < 0) t = t.slice(0, at);
+  }
   const dd = t.split("$$").length - 1;
   if (dd % 2) return t.slice(0, t.lastIndexOf("$$"));
   const single = t.replace(/\$\$[\s\S]*?\$\$/g, "").replace(/\\\$/g, "").split("$").length - 1;
@@ -1221,6 +1234,63 @@ ASK.thread = loadThread();
 try { if (localStorage.getItem("rb.viewer.tab") === "ask") setTab("ask"); } catch { }
 loadAgent();
 
+
+/* ── side panel width: drag its left edge (or focus it and use ← →); remembered per browser ─────────── */
+(() => {
+  const grip = $("#sideGrip"), side = $("#side");
+  if (!grip || !side) return;
+  const KEY = "rb.viewer.sideW";
+  const MIN = 280;
+  const max = () => Math.max(MIN, Math.min(1100, window.innerWidth - 320));  // always leave room for the page
+  const refit = () => { if (S.fit && S.pages.length) setScale(fitScale(), true); };
+  const apply = (w, save) => {
+    const v = Math.round(Math.min(max(), Math.max(MIN, w)));
+    document.documentElement.style.setProperty("--side-w", v + "px");
+    grip.setAttribute("aria-valuenow", String(v));
+    if (save) { try { localStorage.setItem(KEY, String(v)); } catch { } }
+    return v;
+  };
+  grip.setAttribute("aria-valuemin", String(MIN));
+  try { const w = +localStorage.getItem(KEY); if (w) apply(w, false); } catch { }
+  let startX = 0, startW = 0, raf = 0, last = 0;
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    startX = e.clientX; startW = side.getBoundingClientRect().width; last = startW;
+    grip.setPointerCapture(e.pointerId);
+    document.body.classList.add("side-resizing");
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (!document.body.classList.contains("side-resizing")) return;
+    last = startW + (startX - e.clientX);  // dragging left widens the panel
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; apply(last, false); });
+  });
+  const end = () => {
+    if (!document.body.classList.contains("side-resizing")) return;
+    document.body.classList.remove("side-resizing");
+    apply(last, true);
+    refit();
+  };
+  grip.addEventListener("pointerup", end);
+  grip.addEventListener("pointercancel", end);
+  grip.addEventListener("lostpointercapture", end);
+  grip.addEventListener("dblclick", () => {
+    document.documentElement.style.removeProperty("--side-w");
+    try { localStorage.removeItem(KEY); } catch { }
+    refit();
+  });
+  grip.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault(); e.stopPropagation();
+    const step = e.shiftKey ? 80 : 24;
+    apply(side.getBoundingClientRect().width + (e.key === "ArrowLeft" ? step : -step), true);
+    refit();
+  });
+  window.addEventListener("resize", () => {  // a smaller window: keep the panel from crowding out the page
+    const w = side.getBoundingClientRect().width;
+    if (w > max()) apply(max(), false);
+  });
+})();
 init().catch((e) => { console.error(e); showStatus("Something went wrong", `<p>${esc(e && e.message || e)}</p>`); });
 </script>
 </body>

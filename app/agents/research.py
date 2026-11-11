@@ -77,7 +77,8 @@ SYSTEM = (
     "[[note-id]] p. N (or [[note-id]] when there is no page). Use only ids and pages you saw; never invent them. "
     "Label general knowledge that isn't from the library. If the library doesn't cover it, say so and say what "
     "to add. End with one short line in italics saying what you searched and what turned up. Typeset math with "
-    "$...$ and $$...$$. Inside JSON, escape newlines as \\n and quotes as \\\".")
+    "$...$ and $$...$$. Inside JSON, escape newlines as \\n, quotes as \\\" and every LaTeX backslash as \\\\ "
+    '(so $\\alpha$ is written "$\\\\alpha$").')
 
 RETRY = ("Your last reply wasn't one valid JSON action. Reply again with exactly one JSON object, for example "
          '{"action": "search", "queries": ["..."]} or {"action": "answer", "text": "..."}, and nothing else.')
@@ -87,6 +88,34 @@ RETRY = ("Your last reply wasn't one valid JSON action. Reply again with exactly
 _FENCE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)```", re.S)
 
 
+# LaTeX commands that start like a JSON escape (\\n, \\r, \\t): written with one backslash inside a JSON
+# string they would decode as a newline, return or tab ("\\theta" -> tab + "heta"). \\b and \\f never belong
+# in prose, and any other letter is an invalid JSON escape, so those are always LaTeX.
+_TEX_NRT = frozenset("""
+nabla nu neq ne neg newline nonumber not notin ni nolimits nexists nleq ngeq nmid nparallel nsubseteq nearrow
+nwarrow natural rho right rangle rm rceil rfloor rvert rVert rbrace rbrack rightarrow rightleftharpoons ref rlap
+root rtimes theta tau times text textbf textit textrm texttt textsf textsc textup textnormal textstyle tilde to
+top tfrac tan tanh triangle triangleq triangleleft triangleright therefore tbinom tiny tt twoheadrightarrow
+thicksim thickapprox""".split())
+_ESC_RE = re.compile(r"\\\\|\\([A-Za-z]+)")
+
+
+def fix_tex_escapes(s: str) -> str:
+    """Double the single backslashes of LaTeX commands so a JSON decoder keeps them: "$\\alpha$" (invalid
+    JSON) and "$\\frac{a}{b}$" (a form feed) both come back as LaTeX. Real escapes (\\n, \\", \\uXXXX, \\\\) stay."""
+    def sub(m):
+        w = m.group(1)
+        if w is None:
+            return m.group(0)
+        c = w[0]
+        if c == "u" and re.fullmatch(r"[0-9A-Fa-f]{4}", m.string[m.start() + 2:m.start() + 6]):
+            return m.group(0)
+        if c in "nrt" and w not in _TEX_NRT:
+            return m.group(0)
+        return "\\" + m.group(0)
+    return _ESC_RE.sub(sub, s)
+
+
 def extract_action(text: str) -> dict | None:
     """The first JSON object with an "action" key in `text` (inside a code fence or not, with prose
     around it), or None."""
@@ -94,6 +123,7 @@ def extract_action(text: str) -> dict | None:
     if not text:
         return None
     cands = [m.group(1) for m in _FENCE.finditer(text)] + [text]
+    cands = [fix_tex_escapes(c) for c in cands] + cands  # LaTeX written with single backslashes first
     dec = json.JSONDecoder()
     for c in cands:
         for m in re.finditer(r"\{", c):
@@ -107,7 +137,7 @@ def extract_action(text: str) -> dict | None:
     if '"action"' in text and "\n" in text:
         start = text.find("{")
         if start >= 0:
-            fixed = text[start:].replace("\r", "").replace("\n", "\\n")
+            fixed = fix_tex_escapes(text[start:]).replace("\r", "").replace("\n", "\\n")
             try:
                 obj, _ = dec.raw_decode(fixed)
                 if isinstance(obj, dict) and isinstance(obj.get("action"), str):

@@ -197,14 +197,20 @@
     if (!done) throw new Error('The stream ended early');
     return done;
   }
-  /** Markdown for a half-written answer: hold back an unclosed trailing $…$ / $$…$$ so KaTeX only
-   *  ever sees balanced math (the open segment shows as plain text until it closes). */
+  /** Markdown for a half-written answer: hold back an unclosed trailing $…$, $$…$$, \(…\) or \[…\] so
+   *  KaTeX only ever sees balanced math (the open segment shows as plain text until it closes). */
   function partialMD(src) {
     const s = String(src || '');
     let i = 0, open = -1, openLen = 0;
     while (i < s.length) {
       const ch = s[i];
-      if (ch === '\\') { i += 2; continue; }
+      if (ch === '\\') {
+        const nx = s[i + 1];
+        if (open === -1 && (nx === '(' || nx === '[')) { open = i; openLen = nx === '(' ? -1 : -2; }
+        else if ((openLen === -1 && nx === ')') || (openLen === -2 && nx === ']')) open = -1;
+        i += 2; continue;
+      }
+      if (openLen < 0 && open !== -1) { i++; continue; } // $ inside \(…\) / \[…\] is TeX, not a delimiter
       if (ch === '`') { // skip code spans/fences: $ inside code isn't math
         const m = /^`+/.exec(s.slice(i))[0];
         const close = s.indexOf(m, i + m.length);

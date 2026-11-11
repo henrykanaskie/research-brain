@@ -270,6 +270,20 @@ def test_extract_action_variants():
     assert extract_action("no json") is None and extract_action("") is None
 
 
+def test_research_answers_keep_latex_written_with_single_backslashes():
+    """Agents often write LaTeX in a JSON answer with one backslash: "\\alpha" is invalid JSON and "\\frac",
+    "\\theta", "\\nabla" would silently decode as a form feed, a tab and a newline."""
+    from app.agents.research import extract_action
+    raw = (r'{"action":"answer","text":"$\alpha + \frac{a}{b} = \theta \nabla$, $\nu \times \tau \rho \beta$'
+           r'\nNext line \u00e9 \\gamma \"q\" \text{x} \right \tNot math"}')
+    text = extract_action(raw)["text"]
+    for cmd in ("\\alpha", "\\frac{a}{b}", "\\theta", "\\nabla", "\\nu", "\\times", "\\tau", "\\rho", "\\beta",
+                "\\gamma", "\\text{x}", "\\right"):
+        assert cmd in text, cmd
+    assert "\nNext line é" in text and '"q"' in text and "\tNot math" in text  # real escapes still work
+    assert "\f" not in text and "\x08" not in text
+
+
 # ---------------------------------------------------------------- local model servers
 class _Fake(BaseHTTPRequestHandler):
     seen: list = []

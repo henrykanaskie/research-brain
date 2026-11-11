@@ -395,3 +395,58 @@ def test_viewer_ask_tab_about_a_selection(ctx, server, tmp_path):
     page.wait_for_function("window.__rb.S.chatPaper && window.__rb.S.chat.length === 2")
     expect(page.locator("#chat-log .msg-sel")).to_contain_text("Bohm criterion")
     assert not errors, errors
+
+
+def test_viewer_side_panel_resizes_and_remembers(ctx, server, tmp_path):
+    """Drag the side panel's edge to resize Notes / Ask; the width is kept; arrows and double-click work."""
+    from test_e2e import _pdf_bytes
+    clear_vault(server)
+    pdf = tmp_path / "sheath.pdf"
+    pdf.write_bytes(_pdf_bytes())
+    page = open_app(ctx, server)
+    import_pdf_with_shortcut(page, pdf)
+    page.wait_for_function("window.__rb.S.cur && window.__rb.S.cur.has_pdf", timeout=30_000)
+    nid = page.evaluate("window.__rb.S.cur.id")
+    v = ctx.new_page()
+    errors = []
+    v.on("pageerror", lambda e: errors.append(str(e)))
+    v.goto(f"{server['base']}/viewer/{nid}")
+    expect(v.locator(".page[data-page='1']")).to_be_visible(timeout=30_000)
+    side = v.locator("#side")
+    w0 = side.bounding_box()["width"]
+    g = v.locator("#sideGrip").bounding_box()
+    x, y = g["x"] + g["width"] / 2, g["y"] + 300
+    v.mouse.move(x, y)
+    v.mouse.down()
+    v.mouse.move(x - 220, y, steps=10)
+    v.mouse.up()
+    w1 = side.bounding_box()["width"]
+    assert abs(w1 - (w0 + 220)) < 4
+    v.reload()
+    expect(v.locator(".page[data-page='1']")).to_be_visible(timeout=30_000)
+    assert abs(side.bounding_box()["width"] - w1) < 2  # remembered
+    v.locator("#sideGrip").focus()
+    v.keyboard.press("ArrowRight")  # narrower
+    assert side.bounding_box()["width"] < w1 - 10
+    v.locator("#sideGrip").dblclick()
+    assert abs(side.bounding_box()["width"] - w0) < 2  # back to the default
+    assert not errors, errors
+
+
+def test_every_math_delimiter_is_typeset_and_streaming_holds_back_open_math(ctx, server):
+    """$…$, $$…$$, \\(…\\) and \\[…\\] all become KaTeX; while an answer streams, a half-written equation
+    in any of them is held back instead of flashing raw TeX."""
+    page = open_app(ctx, server)
+    out = page.evaluate(r"""() => {
+      const rb = window.__rb, n = (h) => (h.match(/class="katex"/g) || []).length;
+      const full = 'Inline $a^2$, \\(b_1\\), and display $$\\frac{1}{2}$$ then \\[\\nabla\\cdot E = \\rho\\]. `$code$`';
+      return {
+        full: n(rb.renderMD(full)), code: rb.renderMD(full).includes('<code>$code$</code>'),
+        openParen: rb.partialMD('So \\(\\frac{a}{'), openBracket: rb.partialMD('Then \\[x = \\sum_'),
+        dollarInParen: rb.partialMD('So \\(a$b\\) done'), openDollar: rb.partialMD('Price $x + \\alpha'),
+      };
+    }""")
+    assert out["full"] == 4 and out["code"]
+    for k in ("openParen", "openBracket", "openDollar"):
+        assert "stream-tail" in out[k] and "katex" not in out[k], k
+    assert "katex" in out["dollarInParen"] and "stream-tail" not in out["dollarInParen"]
