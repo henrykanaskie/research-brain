@@ -1,0 +1,15 @@
+/* Cite tab of the popup (cite.js) */
+#cite{padding-bottom:4px}
+#citeList{margin:6px -10px 0;max-height:220px;overflow:auto}
+#citeList .opt .dot{border-radius:3px}
+#citeList .opt.sel .dot{border:4px solid var(--red)}
+#citeList .opt.on{background:var(--tint)}
+#citeList .opt .key{font:11px var(--mono);color:var(--ink-2);margin-left:6px}
+.cite-row{display:flex;align-items:center;gap:8px;margin-top:10px}
+.cite-row .hint{flex:1;margin:0}
+.cite-row select{height:28px;max-width:200px;border:1px solid var(--rule);border-radius:3px;background:var(--field);color:var(--ink);font:12.5px var(--sans)}
+.cite-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.cite-acts .btn{height:30px;padding:0 10px;font-size:12.5px}
+#citeHint.ok{color:var(--ink)}
+#citeHint.err{color:var(--red)}
+#cite .stats{margin-top:10px}

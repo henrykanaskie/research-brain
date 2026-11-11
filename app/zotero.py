@@ -12,6 +12,8 @@ Mapping:
     child notes (HTML)    -> the paper's body, converted to simple Markdown
     PDF annotations       -> fragments under the paper (quote = highlighted text, body = comment,
                              locator = "p. <pageLabel>", page = pageIndex + 1)
+    citation key          -> the paper's `citekey` (Zotero 7's field, "Citation Key:" in Extra, or Better
+                             BibTeX's better-bibtex.sqlite), so LaTeX citation keys stay the same (app/cite.py)
 Each imported note/fragment stores `zotero_key` (item or annotation key), so re-imports are idempotent.
 """
 from __future__ import annotations
@@ -401,6 +403,45 @@ def _doi(fields: dict[str, str]) -> str:
     return clean_doi(m.group(1)) if m else ""
 
 
+_CITEKEY_EXTRA = re.compile(r"^\s*(?:citation\s*key|bibtex)\s*:\s*(\S+)\s*$", re.I | re.M)
+
+
+def _citekey(fields: dict[str, str], bbt: str = "") -> str:
+    """The item's citation key: Zotero 7's own field, a Better BibTeX key pinned in Extra
+    ("Citation Key: smith2020deep"), or the key Better BibTeX generated (its database)."""
+    k = (fields.get("citationKey") or "").strip()
+    if not k:
+        m = _CITEKEY_EXTRA.search(fields.get("extra", ""))
+        k = m.group(1) if m else ""
+    k = k or (bbt or "").strip()
+    return k if re.fullmatch(r"[A-Za-z0-9_:.+/\-]{1,100}", k) else ""
+
+
+def _bbt_keys(zdir: Path) -> dict[tuple[int, str], str]:
+    """{(libraryID, itemKey): citationKey} from Better BibTeX's better-bibtex.sqlite, if it is there.
+    Read from a temporary copy, like zotero.sqlite; any problem just means no keys."""
+    db = zdir / "better-bibtex.sqlite"
+    if not db.is_file():
+        return {}
+    tmp = Path(tempfile.mkdtemp(prefix="rb_bbt_"))
+    try:
+        shutil.copyfile(db, tmp / db.name)
+        conn = sqlite3.connect(f"file:{(tmp / db.name).as_posix()}?mode=ro", uri=True)
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(citationkey)")}
+            if not {"itemKey", "citationKey"} <= cols:
+                return {}
+            lib = "libraryID" if "libraryID" in cols else "1"
+            return {(int(r[0] or 1), str(r[1])): str(r[2]) for r in
+                    conn.execute(f"SELECT {lib}, itemKey, citationKey FROM citationkey") if r[1] and r[2]}
+        finally:
+            conn.close()
+    except (OSError, sqlite3.DatabaseError):
+        return {}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def read_library(zdir: Path) -> dict:
     """Everything the importer needs, read from a snapshot of zotero.sqlite."""
     with snapshot(zdir) as conn:
@@ -418,6 +459,7 @@ def read_library(zdir: Path) -> dict:
         tags = _tags(conn, tables, set(items))
         collections = _collections(conn, tables, items)
         libraries = _libraries(conn, tables, items)
+    bbt = _bbt_keys(zdir)
     out = []
     for iid, it in items.items():
         f = fields.get(iid, {})
@@ -430,7 +472,8 @@ def read_library(zdir: Path) -> dict:
             arxiv=_arxiv(f), url=f.get("url", "").strip(), abstract=f.get("abstractNote", "").strip(),
             venue=next((f[k].strip() for k in VENUE_FIELDS if f.get(k, "").strip()), ""),
             tags=tags.get(iid, []), notes=notes.get(iid, []), annotations=anns.get(iid, []),
-            pdf=next((a["file"] for a in pdfs if a["file"]), None), has_pdf_attachment=bool(pdfs))
+            pdf=next((a["file"] for a in pdfs if a["file"]), None), has_pdf_attachment=bool(pdfs),
+            citekey=_citekey(f, bbt.get((it["library_id"] or 1, it["key"]), "")))
         out.append(it)
     return {"items": out, "collections": collections, "libraries": libraries}
 
@@ -741,7 +784,7 @@ def import_item(store, lib: _Library, it: dict, include_pdfs: bool, include_anno
         fields = {"type": "paper", "title": it["title"], "authors": it["authors"], "year": it["year"],
                   "venue": it["venue"], "doi": it["doi"], "arxiv": it["arxiv"], "url": it["url"],
                   "abstract": it["abstract"], "tags": it["tags"], "body": "\n\n".join(it["notes"]),
-                  "zotero_key": it["key"]}
+                  "zotero_key": it["key"], "meta_source": "zotero"}  # Zotero's metadata: never overwritten (app/metadata.py)
         note = store.create({k: v for k, v in fields.items() if v not in (None, "", [])})
         lib.add(note)
         nid, result = note["id"], "created"
@@ -768,6 +811,12 @@ def import_item(store, lib: _Library, it: dict, include_pdfs: bool, include_anno
             note = store.set_fields(nid, **fill)
             lib.add(note)
             changed = "zotero_key" not in fill or len(fill) > 1
+    if it.get("citekey"):  # keep Zotero's / Better BibTeX's citation key (app/cite.py), unless one is set
+        from . import cite
+        cur = store.get(nid)
+        if not cite.stored_key(cur):
+            cite.set_citekey(store, nid, it["citekey"])
+            changed = changed or result != "created"
     if include_pdfs and it["pdf"] and not store.pdf_path(nid).exists():
         pdf_added = _copy_pdf(store, nid, it["pdf"])
     sync = {"updated": 0, "removed": 0, "kept": []}
@@ -803,7 +852,7 @@ def get_job(job_id: str) -> dict | None:
 
 
 def start_import(store, collection_key: str | None, include_pdfs: bool, include_annotations: bool,
-                 library_id: int | None = None) -> str:
+                 library_id: int | None = None, on_item=None) -> str:
     """Read the library synchronously (so a missing library or bad collection fails the request),
     then import in a background thread. `library_id` limits the import to one library (your own, or a
     group); None = every library. Raises ZoteroError, KeyError (unknown library or collection) or
@@ -841,6 +890,11 @@ def start_import(store, collection_key: str | None, include_pdfs: bool, include_
                 job["current"] = it["title"]
                 try:
                     r = import_item(store, lib, it, include_pdfs, include_annotations)
+                    if on_item is not None:  # e.g. fill missing DOI-based fields from Crossref (app/metadata.py)
+                        try:
+                            on_item(r["id"], r["result"])
+                        except Exception as e:
+                            print(f"[research_brain] after-import hook for {r['id']} failed: {e!r}")
                     job[r["result"]] += 1
                     job["fragments"] += r["fragments"]
                     job["pdfs"] += int(r["pdf"])

@@ -12,7 +12,8 @@ citation. PDFs open in research_brain's own viewer, where the same highlight and
   The server address setting accepts only `127.0.0.1` or `localhost`. All requests go through
   `background.js`, which allows only these paths: `/api/status`, `/api/match`, `/api/fragments`,
   `/api/clip` (the popup also uses `/api/search`, `/api/import/url`, `/api/import/pdf-bytes`,
-  `/api/import/linked` and `/api/import/linked/prefs`).
+  `/api/import/linked`, `/api/import/linked/prefs` and, for the Cite tab, `/api/cite/search`, `/api/cite/styles`,
+  `/api/cite/settings`, `/api/cite/keys` and `/api/cite/format`).
 - **It loads nothing from the internet.** KaTeX, the LaTeX editor, marked and the fonts are bundled
   in `vendor/`.
 - **PDF import downloads on your machine, not in the extension.** "Annotate this PDF in
@@ -50,6 +51,13 @@ citation. PDFs open in research_brain's own viewer, where the same highlight and
 
 `note.html` (the note popover) is the only web-accessible file, with `use_dynamic_url`, so pages can't
 fingerprint the extension by its id.
+
+## Citing from the popup
+
+Click **Cite** in the popup's header: search your library, pick papers, and copy `\cite{key}`, an in-text
+citation or a bibliography in your default style (formatted text and plain text on the clipboard, so Word and
+Google Docs keep the formatting). On Overleaf `\cite{…}` is the main button (⌘/Ctrl+Enter), on Google Docs the
+formatted citation. It reads only the tab's address to choose that; nothing is injected into the page.
 
 ## Install
 

@@ -1,0 +1,5 @@
+{"ISBN:9780306307515": {"url": "https://openlibrary.org/books/OL123M/Introduction_to_plasma_physics_and_controlled_fusion",
+ "key": "/books/OL123M", "title": "Introduction to Plasma Physics and Controlled Fusion", "subtitle": "Volume 1: Plasma Physics",
+ "authors": [{"url": "https://openlibrary.org/authors/OL1A/Francis_F._Chen", "name": "Francis F. Chen"}],
+ "number_of_pages": 421, "identifiers": {"isbn_13": ["9780306307515"], "isbn_10": ["0306307510"], "openlibrary": ["OL123M"]},
+ "publishers": [{"name": "Plenum Press"}], "publish_places": [{"name": "New York"}], "publish_date": "1984"}}

@@ -38,7 +38,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from . import __version__, acquire, migrate, paths, profiles, scholar, vaultzip
+from . import __version__, acquire, metadata, migrate, paths, profiles, scholar, vaultzip
 
 UPLOAD_MAX_MB = int(os.environ.get("RB_UPLOAD_MAX_MB", "150"))
 UI_STATE_MAX = 256 * 1024
@@ -375,16 +375,24 @@ def _ingest(tmp: Path, source_url: str, doi: str, title: str, keep_pdf: bool = T
     owner = ctx.hashes.owner(sha)
     if owner:
         return _viewer(owner, duplicate=True, existing=True)
+    info: dict = {}
     try:
-        text, meta_title = extract(tmp)
+        text, meta_title = extract(tmp, info=info)
     except Exception as e:
         raise HTTPException(400, f"Couldn't read that PDF: {e}")
+    declared = metadata.ids_from_pdf_info(info)  # XMP / document info: the PDF's own DOI beats its text's
+
+    def pdf_ids() -> dict:
+        ids = scholar.find_ids_in_text(text)
+        ids.update({k: v for k, v in declared.items() if v and k in ids})
+        return ids
     if target is not None:
         _attach(target["id"], tmp, text)  # the PDF's page text replaces a linked article's section text
         if not target["doi"] and not target["arxiv"]:
-            ids = scholar.find_ids_in_text(text)
+            ids = pdf_ids()
             if ids["doi"] or ids["arxiv"]:
                 store.set_fields(target["id"], doi=ids["doi"], arxiv=ids["arxiv"])
+                _resolve(target["id"], ids)
         if source_url and not target["url"]:
             store.set_fields(target["id"], url=source_url)
         return _viewer(target["id"], attached=True)
@@ -394,7 +402,7 @@ def _ingest(tmp: Path, source_url: str, doi: str, title: str, keep_pdf: bool = T
             _attach(nid, tmp, text)
         else:
             _link_text(nid, text, source_url)
-    ids = scholar.find_ids_in_text(text)
+    ids = pdf_ids()
     if doi:
         k, v = scholar.parse_identifier(doi)
         if k == "doi":
@@ -414,6 +422,7 @@ def _ingest(tmp: Path, source_url: str, doi: str, title: str, keep_pdf: bool = T
         keep(have["id"])
         if not have["doi"] and not have["arxiv"] and (ids["doi"] or ids["arxiv"]):
             store.set_fields(have["id"], doi=ids["doi"], arxiv=ids["arxiv"])
+        _resolve(have["id"], ids)
         return _viewer(have["id"], duplicate=True, attached=keep_pdf, linked=not keep_pdf)
     stem = Path(unquote(urlsplit(source_url).path)).stem.replace("_", " ") if source_url else ""
     guess = (title or "").strip()[:300] or meta_title or ctx.guess_title(text) or stem or "Untitled paper"
@@ -441,8 +450,9 @@ def _ingest(tmp: Path, source_url: str, doi: str, title: str, keep_pdf: bool = T
         if dup["has_pdf"]:
             return _viewer(dup["id"], duplicate=True, existing=True)
         keep(dup["id"])
+        _resolve(dup["id"], meta)
         return _viewer(dup["id"], duplicate=True, attached=keep_pdf, linked=not keep_pdf)
-    note = ctx.create_paper(meta)
+    note = ctx.create_paper(meta, meta_hint={"url": source_url}, wait=metadata.WAIT_ON_IMPORT)
     keep(note["id"])
     if not keep_pdf:
         on_linked_added(note["id"], meta)
@@ -496,6 +506,21 @@ class LinkedIn(BaseModel):
     kind: str = "html"           # html: [[section …]] markers; pdf: [[page N]] markers
     references: list[str] = []   # the article's reference list (used to link `cites` to library papers)
     pdf_url: str = ""            # the page's citation_pdf_url, kept for "Get the PDF"
+    # more of the page's citation metadata (all optional; extension/extract.js): fed to the metadata resolver
+    # (app/metadata.py) as identifiers and as the "page" record that fills what the authoritative record lacks
+    pmid: str = ""
+    isbn: str = ""
+    osti: str = ""
+    ntrs: str = ""
+    volume: str = ""
+    issue: str = ""
+    pages: str = ""
+    issn: list[str] = []
+    publisher: str = ""
+    journal_abbrev: str = ""
+    conference: str = ""
+    genre: str = ""              # a CSL type the page implies: article-journal, paper-conference, report, thesis...
+    date: str = ""               # the full publication date the page gives (YYYY-MM-DD or YYYY/MM/DD)
 
 
 def _line(v, n: int) -> str:
@@ -598,6 +623,13 @@ def _import_linked(body: LinkedIn) -> dict:
             "abstract": _CTRL_RE.sub("", (body.abstract or "").replace("\r", "")).strip()[:20000]}
     pdf_url = _clean_source_url(body.pdf_url)
     refs = [r for r in (_line(x, 1000) for x in (body.references or [])[:3000]) if r]
+    ids = {"doi": doi, "arxiv": arxiv, "pmid": _line(body.pmid, 20), "isbn": _line(body.isbn, 30),
+           "osti": _line(body.osti, 20), "ntrs": _line(body.ntrs, 20)}
+    page_rec = dict(page, volume=_line(body.volume, 40), issue=_line(body.issue, 40), pages=_line(body.pages, 60),
+                    issn=[_line(x, 20) for x in (body.issn or [])[:4]], publisher=_line(body.publisher, 300),
+                    journal_abbrev=_line(body.journal_abbrev, 200), conference=_line(body.conference, 300),
+                    genre=_line(body.genre, 40), date=_line(body.date, 40), pmid=ids["pmid"], isbn=ids["isbn"],
+                    osti=ids["osti"], ntrs=ids["ntrs"])
     if not (text or page["abstract"] or title or doi or arxiv):
         raise HTTPException(400, "Nothing to save: no text, title or identifier came with the page")
 
@@ -623,6 +655,7 @@ def _import_linked(body: LinkedIn) -> dict:
                 n["source"] = "linked"
             store.save(n)
         added = _cites_from_references(nid, refs)
+        _resolve(nid, ids, page=page_rec, url=url)
         if ctx.publish:
             ctx.publish({"type": "notes-changed", "ids": [nid]})
         return _viewer(nid, duplicate=True, existing=bool(have["has_pdf"]), text_attached=wrote, cites_added=added,
@@ -640,7 +673,7 @@ def _import_linked(body: LinkedIn) -> dict:
     if not meta.get("title"):
         first = next((ln for ln in text.splitlines() if ln.strip() and not ln.startswith("[[")), "")
         meta["title"] = _line(first, 200) or urlsplit(url).hostname or "Untitled article"
-    note = ctx.create_paper(meta)
+    note = ctx.create_paper(meta, meta_hint={"page": page_rec, "ids": ids, "url": url}, wait=metadata.WAIT_ON_IMPORT)
     nid = note["id"]
     with store.lock:
         n = store.get(nid)
@@ -654,6 +687,13 @@ def _import_linked(body: LinkedIn) -> dict:
         ctx.publish({"type": "notes-changed", "ids": [nid]})
     return _viewer(nid, text_attached=bool(text), cites_added=added, save_mode=app_settings()["save_mode"],
                    pdf_url=pdf_url)
+
+
+def _resolve(nid: str, ids: dict | None = None, page: dict | None = None, url: str = "") -> None:
+    """A paper already in the library got new identifiers or page metadata: resolve it in the background
+    (fills what it lacks; a paper resolved recently is left alone)."""
+    ids = {k: v for k, v in (ids or {}).items() if k in ("doi", "arxiv", "pmid", "isbn", "osti", "ntrs") and v}
+    metadata.schedule(ctx.store, nid, publish=ctx.publish, ids=ids, page=page, url=url)
 
 
 @router.post("/api/import/linked", status_code=201)

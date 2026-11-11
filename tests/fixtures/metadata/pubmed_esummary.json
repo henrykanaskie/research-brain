@@ -1,0 +1,9 @@
+{"header": {"type": "esummary", "version": "0.3"}, "result": {"uids": ["31415926"], "31415926": {
+ "uid": "31415926", "pubdate": "2019 Nov 12", "epubdate": "2019 Sep 3", "source": "Plasma Med",
+ "authors": [{"name": "Smith JA", "authtype": "Author", "clusterid": ""}, {"name": "de Vries H", "authtype": "Author", "clusterid": ""},
+             {"name": "Cold Plasma Consortium", "authtype": "CollectiveName", "clusterid": ""}],
+ "lastauthor": "de Vries H", "title": "Cold atmospheric plasma for wound healing: a randomized trial.",
+ "volume": "9", "issue": "4", "pages": "211-230", "lang": ["eng"], "issn": "1947-5764", "essn": "1947-5772",
+ "pubtype": ["Journal Article", "Randomized Controlled Trial"],
+ "articleids": [{"idtype": "pubmed", "idtypen": 1, "value": "31415926"}, {"idtype": "pmc", "idtypen": 8, "value": "PMC6789012"}],
+ "fulljournalname": "Plasma medicine", "sortpubdate": "2019/11/12 00:00"}}}

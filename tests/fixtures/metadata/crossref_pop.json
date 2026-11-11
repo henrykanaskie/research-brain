@@ -1,0 +1,9 @@
+{"status": "ok", "message-type": "work", "message": {
+ "publisher": "AIP Publishing", "issue": "6", "short-container-title": [], "DOI": "10.1063/5.0012345",
+ "type": "journal-article", "title": ["Sheath formation at a floating wall"], "subtitle": ["a kinetic study"],
+ "volume": "27", "page": "063505",
+ "author": [{"given": "Irving", "family": "Langmuir", "sequence": "first", "affiliation": []},
+            {"given": "Lewi", "family": "Tonks", "sequence": "additional", "affiliation": []}],
+ "container-title": ["Physics of Plasmas"], "issued": {"date-parts": [[2020, 6]]},
+ "ISSN": ["1070-664X", "1089-7674"], "URL": "http://dx.doi.org/10.1063/5.0012345"
+}}

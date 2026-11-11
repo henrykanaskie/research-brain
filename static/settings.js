@@ -233,10 +233,13 @@
     agentSec.append(agentList, el('p', { class: 'ls-p', text: 'Whatever you pick gets no tools: it can’t run commands, open files or browse. It only reads the text research_brain sends it and writes an answer.' }));
     renderAgents(agentList, say);
 
+    // Citations (static/cite.js): default style, copy format, your .csl styles, auto-updating .bib files
+    const citeSec = window.__rbCite ? window.__rbCite.settingsSection(say) : null;
+
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
     const card = el('div', { class: 'modal-card ls-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-title' },
       el('div', { class: 'modal-title', id: 'ls-title', text: 'Library settings' }),
-      libSec, agentSec, profSec, modeSec, oaSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
+      libSec, agentSec, profSec, citeSec, modeSec, oaSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
     const wrap = el('div', { class: 'modal', id: 'library-settings' }, card);
     wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
     document.body.appendChild(wrap);
@@ -244,6 +247,7 @@
     setTimeout(() => {
       if (focus === 'profiles') profSec.scrollIntoView({ block: 'nearest' });
       if (focus === 'agent') agentSec.scrollIntoView({ block: 'start' });
+      if (focus === 'citations' && citeSec) citeSec.scrollIntoView({ block: 'start' });
       (focus === 'profiles' && !prof.pinned ? newName : done).focus();
     }, 0);
   }
@@ -390,7 +394,7 @@
   const exportBtn = document.getElementById('btn-export');
   if (exportBtn && !document.getElementById('btn-library-settings')) {
     const item = el('button', { id: 'btn-library-settings', class: 'menu-item', type: 'button' }, 'Library settings',
-      el('span', { class: 'menu-hint', text: 'AI agent, profiles, open-access PDFs, backup' }));
+      el('span', { class: 'menu-hint', text: 'AI agent, profiles, citations, open-access PDFs, backup' }));
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       const m = document.getElementById('view-menu'); if (m) { m.hidden = true; const b = document.getElementById('btn-view-menu'); if (b) b.setAttribute('aria-expanded', 'false'); }

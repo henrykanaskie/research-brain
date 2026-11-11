@@ -506,7 +506,7 @@
     } });
     return [
       h('h2', null, nameIn), desc,
-      h('div', { class: 'td-tools' }, showBtn, refreshBtn),
+      h('div', { class: 'td-tools' }, showBtn, refreshBtn, ...(window.__rbCite ? window.__rbCite.topicTools(slug) : [])),
       qb,
       h('div', { class: 'td-sec' },
         h('div', { class: 'sec-head' }, h('span', { class: 'sec-title' }, 'Papers', h('span', { class: 'n', text: String(d.count) }))),

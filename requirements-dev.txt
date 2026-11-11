@@ -5,3 +5,4 @@ httpx>=0.27
 reportlab>=4.0
 playwright>=1.44
 pytest-timeout>=2.3
+bibtexparser==1.4.3  # tests/test_cite.py parses the .bib exports back (round-trip)

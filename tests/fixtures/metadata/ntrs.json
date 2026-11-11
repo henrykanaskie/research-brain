@@ -1,0 +1,8 @@
+{"id": 20200002395, "title": "Performance of a 12.5 kW Magnetically Shielded Hall Thruster on Krypton",
+ "abstract": "We report thrust and efficiency on krypton.", "stiType": "CONFERENCE_PAPER", "stiTypeDetails": "Conference Paper",
+ "authorAffiliations": [
+   {"sequence": 1, "meta": {"author": {"name": "Hofer, Richard R."}, "organization": {"name": "Jet Propulsion Laboratory"}}},
+   {"sequence": 0, "meta": {"author": {"name": "Kamhawi, Hani"}, "organization": {"name": "NASA Glenn Research Center"}}}],
+ "publications": [{"publicationDate": "2020-01-06T00:00:00.0000000+00:00"}],
+ "meetings": [{"name": "AIAA Propulsion and Energy Forum", "location": "New Orleans, LA"}],
+ "sourceIdentifiers": [], "otherReportNumbers": ["E-19876"], "center": {"code": "GRC", "name": "Glenn Research Center"}}

@@ -675,6 +675,8 @@
       aliases: ['highlight', 'web', 'chrome', 'browser', 'save quote'] },
     { id: 'extension.save', title: 'Save the clip', keys: ['Mod+Enter'], description: 'In the clipper window: saves the quote and your note.' },
     { id: 'extension.close', title: 'Close the clipper', keys: ['Esc'], description: 'In the clipper window.' },
+    { id: 'extension.cite', title: 'Cite from the browser', description: 'In the research_brain popup, click Cite: search your library and copy \\cite{key}, a citation or a bibliography (\\cite first on Overleaf, formatted on Google Docs).',
+      aliases: ['cite', 'citation', 'overleaf', 'google docs', 'bibliography', 'latex'] },
   ];
   for (const d of DOCS) register(Object.assign({ group: d.id.startsWith('viewer.') ? 'Viewer' : 'Extension', passive: true }, d));
 

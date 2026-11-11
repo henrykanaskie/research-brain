@@ -1,0 +1,22 @@
+{"status": "ok", "message-type": "work", "message-version": "1.0.0", "message": {
+ "indexed": {"date-parts": [[2024, 3, 1]]}, "publisher": "American Physical Society (APS)",
+ "issue": "6", "license": [], "content-domain": {"domain": [], "crossmark-restriction": false},
+ "short-container-title": ["Phys. Rev. E"], "DOI": "10.1103/PhysRevE.101.063204", "type": "journal-article",
+ "created": {"date-parts": [[2020, 6, 8]], "date-time": "2020-06-08T14:20:11Z", "timestamp": 1591626011000},
+ "source": "Crossref", "is-referenced-by-count": 12,
+ "title": ["Kinetic simulation of the <mml:math xmlns:mml=\"http://www.w3.org/1998/Math/MathML\" alttext=\"E\\times B\"><mml:mi>E</mml:mi><mml:mo>×</mml:mo><mml:mi>B</mml:mi></mml:math> electron drift instability in Hall thrusters"],
+ "prefix": "10.1103", "volume": "101",
+ "author": [
+  {"given": "Johannes D.", "family": "van der Berg", "sequence": "first", "affiliation": []},
+  {"given": "MARTIN", "family": "KING", "suffix": "Jr.", "sequence": "additional", "affiliation": []},
+  {"given": "J.-P.", "family": "Boeuf", "sequence": "additional", "affiliation": [], "ORCID": "http://orcid.org/0000-0002-1825-0097"}
+ ],
+ "member": "16", "container-title": ["Physical Review E"], "language": "en",
+ "link": [], "deposited": {"date-parts": [[2020, 6, 8]]}, "score": 1,
+ "issued": {"date-parts": [[2020, 6, 8]]}, "references-count": 40,
+ "journal-issue": {"issue": "6", "published-print": {"date-parts": [[2020, 6]]}},
+ "URL": "http://dx.doi.org/10.1103/physreve.101.063204", "relation": {},
+ "ISSN": ["2470-0045", "2470-0053"], "issn-type": [{"value": "2470-0045", "type": "print"}, {"value": "2470-0053", "type": "electronic"}],
+ "published": {"date-parts": [[2020, 6, 8]]}, "published-online": {"date-parts": [[2020, 6, 8]]},
+ "article-number": "063204"
+}}

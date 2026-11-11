@@ -17,6 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # tests/rb_testserver.
 # No background open-access PDF downloads after imports (app/acquire.py) unless a test turns them on and
 # mocks the downloader; inherited by servers started with rb_testserver.run_server.
 os.environ.setdefault("RB_ACQUIRE", "0")
+# No background metadata lookups (app/metadata.py: Crossref, arXiv, ...) unless a test turns them on and
+# replaces the network (tests/test_metadata.py); also inherited by the test servers.
+os.environ.setdefault("RB_METADATA", "0")
 # Never read or write the real per-user data folder (settings.json, profiles, storage.log) from tests.
 os.environ.setdefault("RB_DATA_DIR", tempfile.mkdtemp(prefix="rb-test-data-"))
 os.environ.setdefault("RB_LEGACY_VAULT", os.path.join(os.environ["RB_DATA_DIR"], "no-legacy-vault"))

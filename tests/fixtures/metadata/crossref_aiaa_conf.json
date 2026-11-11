@@ -1,0 +1,10 @@
+{"status": "ok", "message-type": "work", "message": {
+ "publisher": "American Institute of Aeronautics and Astronautics", "DOI": "10.2514/6.2023-1234",
+ "type": "proceedings-article", "title": ["Erosion Modeling of Boron Nitride Walls in Magnetically Shielded Hall Thrusters"],
+ "author": [{"given": "Ada", "family": "Physicist", "sequence": "first", "affiliation": []},
+            {"name": "NASA Glenn Electric Propulsion Team", "sequence": "additional", "affiliation": []}],
+ "container-title": ["AIAA SCITECH 2023 Forum"], "event": {"name": "AIAA SCITECH 2023 Forum", "location": "National Harbor, MD & Online"},
+ "issued": {"date-parts": [[2023, 1, 19]]}, "published-online": {"date-parts": [[2023, 1, 19]]},
+ "ISBN": ["9781624106996"], "URL": "http://dx.doi.org/10.2514/6.2023-1234",
+ "abstract": "<jats:p>We model wall erosion with <jats:italic>ab initio</jats:italic> sputtering yields.</jats:p>"
+}}

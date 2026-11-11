@@ -39,6 +39,8 @@ Every request first passes the checks in app/security.py (SECURITY.md has the re
   "has_pdf": true | false,
   "has_text": true | false,                  // extracted full text available for Claude
   "source": "" | "linked" | "pdf",           // papers: "linked" = link + text, no PDF file kept (see "Linked papers")
+  "_extra": {"citekey": "string", ...},      // frontmatter properties the app doesn't model; `citekey` = the paper's
+                                             // citation key once copied/exported or set (see "Citing")
   "created": "ISO8601",
   "updated": "ISO8601",
   "critique": {"text": "markdown", "at": "ISO8601", "summary_snapshot": "string"} | null,   // the latest
@@ -541,3 +543,53 @@ Logic in `app/paths.py`, `app/profiles.py`, `app/migrate.py`, `app/acquire.py`, 
   folder is stripped. The imported library is migrated to the current schema.
 - Every vault has `state/meta.json` `{"schema", "app_version", "created", "migrations": [...]}`. On start, older
   schemas are migrated after a zip backup to `vault/backups/`; a newer schema stops the server with a message.
+
+## ADDED: Citing (CSL formatting, citation keys, .bib/RIS/CSL-JSON, auto-export)
+Logic in `app/cite.py` (CSL records, keys, citeproc-py formatting) and `app/bibexport.py` (BibTeX, BibLaTeX, RIS,
+CSL-JSON); endpoints in `app/cite_api.py`. Frontend: `static/cite.js` (picker `cite.pick` on **Alt+C**, the panel's
+Cite menu, topic tools, Library settings › Citations) and `extension/cite.js` (the popup's Cite tab).
+- **Record:** `cite.csl_for(note)` = the note's `csl` property (CSL-JSON, written by the metadata resolvers or by
+  hand; normalised) or, without one, a CSL item built from `title`, `authors` ("First Last" / "Last, First"),
+  `year`, `venue`, `doi`, `arxiv` (`number` + `archive: "arXiv"`), `url`, `abstract`.
+- **Keys:** the note's `citekey` property if set (imported from Zotero 7's citation-key field, `Citation Key:` in
+  Extra, or Better BibTeX's `better-bibtex.sqlite`); otherwise `<family><year><first non-stopword>`, lower-case
+  ASCII, disambiguated `a`, `b`, … (oldest note first, then id). Keys handed out by `/api/cite/keys`, the exports
+  and auto-exports are written to the note (`citekey`, without touching `updated`), so they never change.
+- **Scopes** (every format/keys/export call): `ids` (fragments stand for their paper), `topic=<slug>` (its papers),
+  `note=<id>` (papers the note links with `[[ ]]` or manual links; a paper includes itself), `all=1` (every paper;
+  exports only). At most 5000 items.
+- `GET /api/cite/styles` → `{"styles": [{"id", "title", "short", "kind": "builtin"|"user", "class", "format",
+  "bibliography", "error"}], "default", "copy", "user_dir"}`. Built-in ids: `american-physics-society` (default),
+  `american-institute-of-physics`, `ieee`, `american-institute-of-aeronautics-and-astronautics`, `nature`, `apa`,
+  `chicago-author-date`. User styles: `user:<file stem>` from `<vault>/styles/*.csl`.
+- `POST /api/cite/styles` body `{"filename", "content"}` (the .csl text) → 201 style entry. 400 for: not XML, a
+  DOCTYPE or entity declaration, not a CSL `<style>`, a dependent style, > 1 MB, or a style citeproc-py can't read.
+  `DELETE /api/cite/styles/{id}` removes a user style (404 for built-ins).
+- `POST /api/cite/format` body `{ids?|topic?|note?, "style"?: id (default: settings), "mode": "citation"|"bibliography",
+  "format": "html"|"text"}` → `{"html"?, "text", "entries": [{"id", "html"?, "text"}], "style", "ids"}`. Citation =
+  one in-text citation for all items; bibliography = the reference list (numbered in the order given for numeric
+  styles; topic/note scopes are ordered by key). HTML is reduced to `div.csl-bib-body > div.csl-entry` with `i b em
+  strong sup sub span br` only. 404 unknown style; 422 `{"detail"}` when the style can't format (never a 500).
+- `POST /api/cite/keys` body `{ids?|topic?|note?}` → `{"keys": {id: key}, "ids", "latex": "\\cite{a,b}", "pandoc":
+  "[@a; @b]"}` (keys are saved). `PUT /api/cite/keys/{id}` body `{"citekey"}` → `{"id","citekey"}`; keys match
+  `[A-Za-z0-9_:.+/-]{1,100}` (400); 409 when another note already owns it.
+- `GET /api/cite/search?q=&limit=` → papers only `[{"id","title","year","authors" (≤3),"more_authors","venue","citekey"}]`
+  (the library's full-text search, recent papers for an empty q; `citekey` is the key it has or would get).
+- `GET /api/cite/settings` → `{"style", "copy": "formatted"|"citekey"}`; `PUT` the same (partial; 400 unknown style or
+  copy). Stored in `<data dir>/settings.json` (`cite_style`, `cite_copy`).
+- `GET /api/export/bibtex?ids=a,b|topic=|note=|all=1&flavor=bibtex|biblatex` (default biblatex),
+  `GET /api/export/ris?…`, `GET /api/export/csl-json?…` (CSL-JSON with `id` = key) → a download (`Content-Disposition:
+  attachment`, `inline=1` for inline). 400 without a scope or with a bad flavor; 404 unknown topic/note. Types:
+  article-journal → `@article`, paper-conference → `@inproceedings`, book → `@book`, chapter → `@incollection`,
+  thesis → `@phdthesis`/`@mastersthesis` (genre), report → `@techreport` (BibLaTeX `@report`, `type = {techreport}`),
+  arXiv preprints → `@misc` with `eprint`, `archiveprefix`/`primaryclass` (BibLaTeX `eprinttype`/`eprintclass`) and,
+  for BibTeX, `howpublished = {arXiv:…}`; webpages → `@misc` (BibLaTeX `@online`).
+- `GET /api/cite/auto-exports` → `{"exports": [{"id", "scope": "all"|"topic:<slug>", "flavor", "path", "written"
+  (ISO or ""), "error", "entries"}]}`. `POST` body `{"path", "scope", "flavor"}` → 201 (written right away; `error`
+  says why not). `DELETE /api/cite/auto-exports/{id}` stops it (the file is left). Kept per library in
+  `<data dir>/settings.json` (`cite_auto_exports`, keyed by the vault's path), never inside the vault. A background
+  thread rewrites each file when the store changes, a topic file changes or the file watcher reports an outside
+  edit (`RB_AUTO_EXPORT=0` turns the thread off); a file is only written when its text changed. Path rules (400):
+  absolute, `*.bib`, no `..`, its folder exists, not a symlink, not in the app's folder or the library's internal
+  folders, and new/empty or starting with `% Written by research brain`.
+

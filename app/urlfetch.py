@@ -18,7 +18,11 @@ Runs on the user's own machine, but a local server that fetches arbitrary URLs i
 - the body is streamed and cut off at max_bytes (Content-Length is checked first when present);
 - the first bytes must contain the PDF magic "%PDF".
 
-Tests replace `resolve` and `_open`, so no network is needed.
+fetch() is the same guard for small metadata API requests (app/metadata.py): https only, a fixed list of
+allowed host names checked on every hop, pinned public addresses, a byte and time cap. fetch_local() is
+the one way to reach a helper on this computer (Zotero's translation-server): 127.0.0.1 and a port only.
+
+Tests replace `resolve`, `_open`, `_request` and `_request_local`, so no network is needed.
 """
 from __future__ import annotations
 
@@ -108,31 +112,31 @@ def _tls_context() -> ssl.SSLContext:
 
 
 class _PinnedHTTP(http.client.HTTPConnection):
-    def __init__(self, addr: str, port: int):
-        super().__init__(_bracket(addr), port, timeout=TIMEOUT[1])
-        self._addr = addr
+    def __init__(self, addr: str, port: int, timeout: tuple = TIMEOUT):
+        super().__init__(_bracket(addr), port, timeout=timeout[1])
+        self._addr, self._timeouts = addr, timeout
 
     def connect(self):
-        self.sock = _connect(self._addr, self.port)
+        self.sock = _connect(self._addr, self.port, self._timeouts)
 
 
 class _PinnedHTTPS(http.client.HTTPSConnection):
-    def __init__(self, addr: str, port: int, server_hostname: str):
-        super().__init__(_bracket(addr), port, timeout=TIMEOUT[1], context=_tls_context())
-        self._addr, self._sni = addr, server_hostname
+    def __init__(self, addr: str, port: int, server_hostname: str, timeout: tuple = TIMEOUT):
+        super().__init__(_bracket(addr), port, timeout=timeout[1], context=_tls_context())
+        self._addr, self._sni, self._timeouts = addr, server_hostname, timeout
 
     def connect(self):
-        raw = _connect(self._addr, self.port)
+        raw = _connect(self._addr, self.port, self._timeouts)
         self.sock = self._context.wrap_socket(raw, server_hostname=self._sni)  # SNI + cert check for the name
 
 
-def _connect(addr: str, port: int) -> socket.socket:
-    sock = socket.create_connection((addr, port), timeout=TIMEOUT[0])
+def _connect(addr: str, port: int, timeout: tuple = TIMEOUT) -> socket.socket:
+    sock = socket.create_connection((addr, port), timeout=timeout[0])
     peer = sock.getpeername()[0]
     if not _public(peer) or ipaddress.ip_address(peer.split("%", 1)[0]) != ipaddress.ip_address(addr.split("%", 1)[0]):
         sock.close()
         raise FetchError("Local and private network addresses can't be imported", 403)
-    sock.settimeout(TIMEOUT[1])
+    sock.settimeout(timeout[1])
     return sock
 
 
@@ -269,3 +273,161 @@ def download_pdf(url: str, max_bytes: int | None = None) -> tuple[Path, str]:
             except Exception:
                 pass
     raise FetchError(f"Too many redirects (more than {MAX_REDIRECTS})", 502)
+
+
+# ---------------------------------------------------------------- small API requests (app/metadata.py)
+# The same guard for JSON/XML metadata lookups: the request may only go to `allowed_hosts` (exact host
+# names; every redirect hop is checked against the list too), the host must resolve to public addresses
+# only (pinned connection, as above), nothing is decompressed, the body is capped at `max_bytes` and the
+# whole exchange at `total_timeout` seconds. Non-2xx answers are returned, not raised, so a caller can
+# tell "not found" (404) from "unreachable" (FetchError).
+API_TIMEOUT = (6, 15)
+
+
+class Fetched:
+    def __init__(self, status: int, headers: dict, body: bytes, url: str):
+        self.status, self.headers, self.body, self.url = status, headers, body, url
+
+    def header(self, name: str) -> str:
+        return self.headers.get(name.lower(), "")
+
+
+def _request(url: str, addr: str, method: str, headers: dict, body: bytes | None, timeout: tuple):
+    """One request to the already-checked address `addr` (replaced in tests). Returns _Response."""
+    u = urlsplit(url)
+    host = u.hostname or ""
+    port = u.port or (443 if u.scheme == "https" else 80)
+    conn = (_PinnedHTTPS(addr, port, host, timeout) if u.scheme == "https" else _PinnedHTTP(addr, port, timeout))
+    path = (u.path or "/") + (f"?{u.query}" if u.query else "")
+    host_hdr = _bracket(host) + (f":{u.port}" if u.port else "")
+    try:
+        conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+        hdrs = {"Host": host_hdr, "User-Agent": UA, "Accept": "*/*", **headers,
+                "Accept-Encoding": "identity", "Connection": "close"}
+        if body is not None:
+            hdrs["Content-Length"] = str(len(body))
+        for k, v in hdrs.items():
+            conn.putheader(k, v)
+        conn.endheaders(body)
+        return _Response(conn, conn.getresponse())
+    except BaseException:
+        conn.close()
+        raise
+
+
+def _read_capped(r, max_bytes: int, deadline: float) -> bytes:
+    enc = _header(r, "content-encoding").strip().lower()
+    if enc and enc != "identity":
+        raise FetchError("The server sent a compressed response", 415)
+    clen = _header(r, "content-length")
+    if clen and clen.isdigit() and int(clen) > max_bytes:
+        raise FetchError(f"The response is larger than {max_bytes} bytes", 413)
+    out, size = [], 0
+    for chunk in r.iter_content(1 << 15):
+        if time.monotonic() > deadline:
+            raise FetchError("The request took too long", 504)
+        size += len(chunk)
+        if size > max_bytes:
+            raise FetchError(f"The response is larger than {max_bytes} bytes", 413)
+        out.append(chunk)
+    return b"".join(out)
+
+
+def fetch(url: str, *, allowed_hosts, accept: str = "application/json", headers: dict | None = None,
+          method: str = "GET", data: bytes | None = None, max_bytes: int = 4 << 20,
+          total_timeout: float = 25.0, timeout: tuple = API_TIMEOUT, max_redirects: int = MAX_REDIRECTS) -> Fetched:
+    """A small GET (or POST) to a fixed set of public API hosts. Raises FetchError when the URL, a redirect
+    target or an address isn't allowed, or the server can't be reached; returns the answer otherwise."""
+    allowed = {h.lower() for h in allowed_hosts}
+    deadline = time.monotonic() + total_timeout
+    cur, meth, body = url, method, data
+    hdrs = {"Accept": accept, **(headers or {})}
+    for hop in range(max_redirects + 1):
+        host = (urlsplit(cur).hostname or "").lower()
+        if host not in allowed:
+            raise FetchError(f"{host or 'That address'} isn't one of the hosts this lookup may contact", 403)
+        if urlsplit(cur).scheme != "https":
+            raise FetchError("Metadata lookups use https only", 403)
+        addrs = check_url(cur)
+        r, last = None, None
+        for addr in _pick(addrs):
+            if time.monotonic() > deadline:
+                break
+            try:
+                r = _request(cur, addr, meth, hdrs, body, timeout)
+                break
+            except FetchError:
+                raise
+            except Exception as e:
+                last = e
+        if r is None:
+            raise FetchError(f"Couldn't reach {host}: {last or 'timed out'}", 502)
+        try:
+            if r.status_code in (301, 302, 303, 307, 308):
+                loc = _header(r, "location")
+                if not loc:
+                    raise FetchError("The server sent a redirect without a location", 502)
+                if hop == max_redirects:
+                    raise FetchError(f"Too many redirects (more than {max_redirects})", 502)
+                cur = urljoin(cur, loc)
+                if r.status_code == 303 or (r.status_code in (301, 302) and meth == "POST"):
+                    meth, body = "GET", None
+                continue
+            try:
+                payload = _read_capped(r, max_bytes, deadline)
+            except (socket.timeout, TimeoutError):
+                raise FetchError(f"{host} stopped sending data", 504)
+            except (OSError, http.client.HTTPException) as e:
+                if isinstance(e, FetchError):
+                    raise
+                raise FetchError(f"Couldn't read the answer from {host}: {e}", 502)
+            return Fetched(r.status_code, {k.lower(): str(v) for k, v in (r.headers or {}).items()}, payload, cur)
+        finally:
+            try:
+                r.close()
+            except Exception:
+                pass
+    raise FetchError(f"Too many redirects (more than {max_redirects})", 502)
+
+
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
+
+
+def _request_local(port: int, path: str, method: str, headers: dict, body: bytes | None, timeout: tuple):
+    """One request to 127.0.0.1:<port> (replaced in tests)."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout[1])
+    try:
+        conn.request(method, path, body=body, headers={"User-Agent": UA, "Accept-Encoding": "identity",
+                                                       "Connection": "close", **headers})
+        return _Response(conn, conn.getresponse())
+    except BaseException:
+        conn.close()
+        raise
+
+
+def fetch_local(port: int, path: str, *, method: str = "GET", data: bytes | None = None, headers: dict | None = None,
+                max_bytes: int = 4 << 20, total_timeout: float = 20.0, timeout: tuple = (0.5, 15)) -> Fetched:
+    """A request to a helper service on THIS computer (Zotero's translation-server): always 127.0.0.1, a
+    port the user configured, no redirects followed. Nothing else is reachable through it."""
+    if not isinstance(port, int) or not (1 <= port <= 65535):
+        raise FetchError("Invalid local port", 400)
+    if not path.startswith("/") or "//" in path or "@" in path:
+        raise FetchError("Invalid local path", 400)
+    deadline = time.monotonic() + total_timeout
+    try:
+        r = _request_local(port, path, method, headers or {}, data, timeout)
+    except FetchError:
+        raise
+    except Exception as e:
+        raise FetchError(f"Nothing answered on 127.0.0.1:{port} ({e.__class__.__name__})", 502)
+    try:
+        payload = _read_capped(r, max_bytes, deadline)
+        return Fetched(r.status_code, {k.lower(): str(v) for k, v in (r.headers or {}).items()}, payload,
+                       f"http://127.0.0.1:{port}{path}")
+    except (socket.timeout, TimeoutError):
+        raise FetchError(f"127.0.0.1:{port} stopped sending data", 504)
+    finally:
+        try:
+            r.close()
+        except Exception:
+            pass

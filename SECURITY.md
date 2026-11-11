@@ -98,6 +98,20 @@ Every request passes these checks before any endpoint runs:
   reach research_brain.
 - **Vault zip import** (app/vaultzip.py) refuses absolute paths, `..`, symlinks and zip bombs (entry
   count, sizes and compression ratio are capped).
+- **Citation styles** (`.csl` files you add in Library settings › Citations, or drop into `<vault>/styles/`;
+  app/cite.py): parsed with `defusedxml` with DTDs, entity declarations and external references forbidden (so no
+  XXE file reads and no "billion laughs"), at most 1 MB, and only a CSL `<style>` root is accepted; citeproc-py's
+  own parser then runs with network access off. A style file is data, never code: it can only change how
+  citations look. Formatted output is reduced to a few inline tags (`i b em strong sup sub span br` inside
+  `div.csl-entry`) before it reaches the page or the clipboard. Style ids are file stems from a fixed folder, so a
+  style name can't point elsewhere.
+- **Auto-updating .bib files** (app/cite_api.py): each auto-export writes exactly one file, chosen by you: an
+  absolute `*.bib` path without `..` whose folder already exists, outside the app's program folder and the
+  library's internal folders. Symbolic links are refused (checked when added and again before every write), and
+  an existing file is only replaced if research brain wrote it (it starts with `% Written by research brain`), so
+  a `.bib` you wrote by hand is never overwritten. Writes go to a temporary file in the same folder, then an atomic
+  rename; the file keeps its permissions. The list of auto-exports lives in the per-user `settings.json`, not in the
+  library, so a library zip from someone else can't make your computer write anywhere.
 
 ## The web pages (XSS)
 
@@ -216,6 +230,8 @@ folded into a summary.
   click the toolbar button or press the shortcut.
 - Saving an article as link + text injects `extract.js` into the tab you are on, only when you click the button. It
   reads that page's metadata and text and fetches nothing; the popup sends the result only to this computer.
+- The popup's Cite tab only reads the current tab's URL (to pick `\cite` on Overleaf, formatted text on Google
+  Docs); it injects nothing and sends the URL nowhere. Copies go to your clipboard only.
 - No `externally_connectable`, so web pages can't message it; every message handler checks that the
   sender is the extension itself; the background relays only four API paths for the injected script.
 - The annotation UI lives in a closed shadow root, so the page's scripts can't read the notes it shows.
@@ -239,7 +255,9 @@ folded into a summary.
 `requirements.txt` gives the ranges; `constraints.txt` pins the exact, tested version of every runtime
 package, and `run.sh` installs with it (falling back to the ranges only if a pin has no build for your
 Python or OS). All front-end code (KaTeX, marked, force-graph, PDF.js, fonts) is vendored in
-`static/vendor/` at fixed versions. The `mcp` SDK is only used with `RB_AGENT_MCP_SDK=1`.
+`static/vendor/` at fixed versions. The `mcp` SDK is only used with `RB_AGENT_MCP_SDK=1`. Citation formatting uses
+`citeproc-py` (with `lxml`) and `defusedxml`; the CSL styles and the en-US locale are vendored in `app/csl/`
+(CC BY-SA 3.0), so formatting never downloads anything.
 
 ## What is still up to you (limitations)
 
@@ -270,6 +288,9 @@ URL import pinning and content checks, the Claude CLI's flags, working folder an
 arguments, renderer XSS (both copies of the renderer, under Node), exported-site escaping and file
 permissions. `tests/e2e/test_csp_e2e.py` runs the app and the PDF viewer in Chromium with the CSP enforced
 and fails on any violation. `tests/test_agent.py` covers the tool guard against a fake `claude`.
+`tests/test_cite.py` covers style-file validation (XXE, entity expansion, size, dependent styles), HTML
+sanitising of formatted citations, and auto-export path rules (relative paths, `..`, missing folders, the app
+folder, symlinks, hand-written .bib files).
 
 
 The exact command line, lockdown method, version verified and remaining risk for each command-line agent (Codex, Gemini, Copilot, OpenCode, Qwen Code, Cursor) are in [docs/agents.md](docs/agents.md).

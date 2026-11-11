@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2401.00001v1</id>
+    <published>2024-01-02T10:00:00Z</published>
+    <title>Neural surrogates for collisional-radiative models of krypton</title>
+    <summary>We train a network to replace a collisional-radiative model.</summary>
+    <author><name>Ada Physicist</name></author>
+    <author><name>Hans Peter de Vries</name></author>
+    <arxiv:primary_category term="physics.plasm-ph" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>

@@ -53,6 +53,10 @@ FIELDS_DEFAULTS: dict[str, Any] = {
     "saved_because": "",      # the user's one-line "why I kept this"
     "selector": None,         # web highlights: W3C TextQuoteSelector {exact, prefix, suffix} for re-anchoring, or None
     "source": "",             # papers: "linked" = link + full text only (no PDF file kept), "pdf" = has the PDF; "" = older/none
+    "csl": None,              # papers: the bibliographic record as CSL-JSON (app/metadata.py), or None
+    "meta_source": "",        # where `csl` came from: crossref, datacite, arxiv, pubmed, openlibrary, osti, ntrs,
+                              # translation-server, s2, page, zotero ("" = never resolved)
+    "meta_checked": "",       # when the metadata was last resolved (ISO time)
 }
 SOURCES = ("", "linked", "pdf")
 TYPES = ("paper", "note", "fragment")
@@ -236,6 +240,7 @@ class Store:
         if not isinstance(note["critique"], dict):
             note["critique"] = None
         note["selector"] = normalize_selector(note.get("selector"))
+        note["csl"] = _plain(note["csl"]) if isinstance(note.get("csl"), dict) and note["csl"] else None
         hist = note["critiques"] if isinstance(note["critiques"], list) else []
         hist = [c for c in hist if isinstance(c, dict) and c.get("text")]
         # migrate: a note written before critique history has only `critique`; it becomes the first entry
@@ -251,7 +256,7 @@ class Store:
             except (TypeError, ValueError):
                 note[k] = None
         for k in ("title", "venue", "doi", "arxiv", "s2_id", "url", "abstract", "summary", "created", "updated",
-                  "parent", "quote", "locator", "zotero_key", "status", "saved_because"):
+                  "parent", "quote", "locator", "zotero_key", "status", "saved_because", "meta_source", "meta_checked"):
             v = note[k]
             # Obsidian's Date & time properties are written unquoted, so YAML reads them as dates;
             # isoformat() keeps the "T" that str() would drop.
@@ -281,6 +286,9 @@ class Store:
             meta.pop("selector", None)
         if not meta.get("source"):
             meta.pop("source", None)
+        for k in ("csl", "meta_source", "meta_checked"):
+            if not meta.get(k):
+                meta.pop(k, None)
         if not meta.get("critiques"):
             meta.pop("critiques")
         for k, v in (note.get("_extra") or {}).items():
@@ -303,12 +311,14 @@ class Store:
         except KeyError:
             return False
 
-    def save(self, note: dict) -> dict:
+    def save(self, note: dict, touch: bool = True) -> dict:
+        """Write the note. touch=False keeps its `updated` time (bookkeeping such as a citation key)."""
         with self.lock:
             if note.get("_yaml_error"):
                 raise FrontmatterError(f"{note['id']}.md has invalid frontmatter ({note['_yaml_error']}). "
                                        "Fix the file in a text editor; saving now would erase its properties.")
-            note["updated"] = now_iso()
+            if touch or not note.get("updated"):
+                note["updated"] = now_iso()
             path = self.note_path(note["id"])
             tmp = path.with_suffix(".md.tmp")
             tmp.write_text(self._dump(note), encoding="utf-8")
@@ -396,6 +406,9 @@ class Store:
                 if k == "saved_because":
                     v = " ".join(v.split())[:300]
                 note[k] = v
+            if note.get("csl"):  # the CSL record follows edits of title/authors/year/venue/... (app/metadata.py)
+                from .metadata import sync_edit
+                sync_edit(note, [k for k in fields if k in EDITABLE])
             return self.save(note)
 
     def set_fields(self, nid: str, **fields) -> dict:

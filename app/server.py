@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agents, citations, claude_cli, scholar, security
+from . import agents, citations, claude_cli, metadata, scholar, security
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .pdftext import extract, guess_title
@@ -313,13 +313,28 @@ def _paper_fields(meta: dict) -> dict:
             if meta.get(k) not in (None, "", [])}
 
 
-def _create_paper(meta: dict) -> dict:
+def _create_paper(meta: dict, meta_hint: dict | None = None, wait: float = 0.0) -> dict:
+    """A new paper from looked-up (or page) metadata. Its authoritative record (Crossref, arXiv, ...) is then
+    resolved in the background (app/metadata.py); `wait` seconds are spent waiting for it, so a quick answer
+    is already in the response. `meta_hint`: {page, ids, url} for the resolver."""
     fields = _paper_fields(meta)
     fields["type"] = "paper"
     note = store.create(fields)
     if citations.s2_key(note):
         citations.schedule(store, note["id"])  # real citation links, in the background
+    _resolve_meta(note["id"], meta, wait=wait, fresh=True, **(meta_hint or {}))
     return note
+
+
+def _resolve_meta(nid: str, meta: dict | None = None, *, wait: float = 0.0, fresh: bool = False,
+                  page: dict | None = None, ids: dict | None = None, url: str = "") -> bool:
+    """Schedule the metadata resolver for a note (never raises). `meta` is what the import already has: a
+    Semantic Scholar result is handed over so it isn't fetched again."""
+    meta = meta or {}
+    s2 = meta if meta.get("s2_id") and meta.get("title") else None
+    want = {"doi": meta.get("doi") or "", "arxiv": meta.get("arxiv") or "", **(ids or {})}
+    return metadata.schedule(store, nid, wait=wait, publish=lambda ev: event_bus.publish(ev), ids=want, page=page,
+                             s2=s2, url=url or meta.get("url") or "", fresh=fresh)
 
 
 AI_ERRORS = (claude_cli.ClaudeError, agents.AgentError)
@@ -759,6 +774,29 @@ def api_delete_note(nid: str):
     return {"ok": True}
 
 
+class RefreshMetaIn(BaseModel):
+    keep_edits: bool = True   # fields you edited in the app stay as you wrote them
+    title_search: bool = True  # no identifier: try a Crossref title search (exact-title matches only)
+
+
+@app.post("/api/notes/{nid}/refresh-metadata")
+def api_refresh_metadata(nid: str, body: RefreshMetaIn | None = None):
+    """Look the paper up again by its identifiers (DOI, arXiv id, PMID, ISBN, OSTI/NTRS id; else its title) and
+    replace its metadata with the authoritative record. Blocks until done (a few seconds)."""
+    body = body or RefreshMetaIn()
+    n = _get(nid)
+    if n["type"] == "fragment":
+        raise HTTPException(400, "Fragments have no bibliographic metadata; refresh the paper instead")
+    if not metadata.enabled():
+        raise HTTPException(503, "Metadata lookups are turned off (RB_METADATA=0)")
+    res = metadata.refresh(store, nid, force=True, keep_edits=body.keep_edits, title_search=body.title_search)
+    if res.get("changed"):
+        event_bus.publish({"type": "notes-changed", "ids": [nid], "reason": "metadata", "source": res.get("source", "")})
+    out = _with_extras(store.get(nid))
+    out["metadata"] = {k: res.get(k) for k in ("found", "source", "changed", "errors")}
+    return out
+
+
 @app.post("/api/notes/{nid}/link")
 def api_link(nid: str, body: LinkIn):
     _get(nid), _get(body.target)
@@ -831,12 +869,13 @@ def _store_pdf(nid: str, tmp_pdf: Path, text: str) -> None:
 @app.post("/api/import/pdf", status_code=201)
 async def api_import_pdf(file: UploadFile = File(...)):
     tmp = await _save_upload(file)
+    info: dict = {}
     try:
-        text, meta_title = extract(tmp)
+        text, meta_title = extract(tmp, info=info)
     except Exception as e:
         shutil.rmtree(tmp.parent, ignore_errors=True)
         raise HTTPException(400, f"Couldn't read that PDF: {e}")
-    ids = scholar.find_ids_in_text(text)
+    ids = _pdf_ids(text, info)
     guess = meta_title or guess_title(text) or Path(file.filename or "Untitled").stem.replace("_", " ")
     meta = None
     try:
@@ -861,12 +900,24 @@ async def api_import_pdf(file: UploadFile = File(...)):
             _store_pdf(dup["id"], tmp, text)
         else:
             shutil.rmtree(tmp.parent, ignore_errors=True)
+        _resolve_meta(dup["id"], meta)
         out = _with_extras(store.get(dup["id"]))
         out["duplicate"] = True
         return out
-    note = _create_paper(meta)
+    note = _create_paper(meta)  # the resolver runs in the background (this endpoint is async: no waiting)
     _store_pdf(note["id"], tmp, text)
     return _with_extras(store.get(note["id"]))
+
+
+def _pdf_ids(text: str, info: dict | None) -> dict:
+    """DOI / arXiv id of a PDF: what the file declares (XMP, document info) beats the first DOI in its text
+    (which can be a cited paper's)."""
+    ids = scholar.find_ids_in_text(text)
+    declared = metadata.ids_from_pdf_info(info)
+    for k in ("doi", "arxiv"):
+        if declared.get(k):
+            ids[k] = declared[k]
+    return ids
 
 
 @app.post("/api/notes/{nid}/pdf")
@@ -875,21 +926,31 @@ async def api_attach_pdf(nid: str, file: UploadFile = File(...)):
     if note["type"] == "fragment":
         raise HTTPException(400, "Attach the PDF to the parent paper instead")
     tmp = await _save_upload(file)
+    info: dict = {}
     try:
-        text, _ = extract(tmp)
+        text, _ = extract(tmp, info=info)
     except Exception as e:
         shutil.rmtree(tmp.parent, ignore_errors=True)
         raise HTTPException(400, f"Couldn't read that PDF: {e}")
     _store_pdf(nid, tmp, text)
     if not note["doi"] and not note["arxiv"]:
-        ids = scholar.find_ids_in_text(text)
+        ids = _pdf_ids(text, info)
         store.set_fields(nid, doi=ids["doi"], arxiv=ids["arxiv"])
+        if ids["doi"] or ids["arxiv"]:
+            _resolve_meta(nid, ids)
     return _with_extras(store.get(nid))
 
 
-def _import_meta(meta: dict, link_to: str | None = None) -> dict:
+def _import_meta(meta: dict, link_to: str | None = None, resolved: dict | None = None) -> dict:
     dup = store.find_duplicate(meta.get("doi", ""), meta.get("arxiv", ""), meta.get("s2_id", ""))
-    note = dup or _create_paper(meta)
+    if dup:
+        _resolve_meta(dup["id"], meta)  # fills what the library entry lacks (it was added without a record)
+        note = dup
+    elif resolved:  # found by the metadata resolver itself (Semantic Scholar had nothing): apply it now
+        note = _create_paper(meta, wait=0)
+        metadata.apply(store, note["id"], resolved, fresh=True)
+    else:
+        note = _create_paper(meta, wait=metadata.WAIT_ON_IMPORT)
     if link_to and store.exists(link_to) and link_to != note["id"]:
         store.link(note["id"], link_to)
     storage_api.on_paper_added(note["id"], meta)  # open-access PDF, in the background (app/acquire.py)
@@ -903,13 +964,45 @@ def _import_meta(meta: dict, link_to: str | None = None) -> dict:
 def api_import_lookup(body: LookupIn):
     if not body.query.strip():
         raise HTTPException(400, "Enter a DOI, arXiv id, URL or title")
+    err = None
     try:
         meta = scholar.lookup(body.query)
     except scholar.ScholarError as e:
-        raise HTTPException(503, str(e))
+        meta, err = None, e
+    resolved = None
+    if not meta and metadata.enabled():  # Crossref / DataCite / arXiv / PubMed / Open Library / OSTI / NTRS
+        resolved = _resolve_query(body.query)
+        if resolved:
+            meta = {k: v for k, v in metadata.legacy_from_csl(resolved["csl"]).items() if v not in (None, "", [])}
     if not meta:
-        raise HTTPException(404, "Semantic Scholar couldn't find that paper. Try the DOI or arXiv id, or drop in the PDF.")
-    return _import_meta(meta)
+        if err:
+            raise HTTPException(503, str(err))
+        raise HTTPException(404, "Couldn't find that paper. Try the DOI or arXiv id, or drop in the PDF.")
+    return _import_meta(meta, resolved=resolved)
+
+
+def _resolve_query(q: str) -> dict | None:
+    """A DOI / arXiv id / PMID / ISBN / OSTI or NTRS link / title typed into "Add by DOI / arXiv / title"."""
+    q = (q or "").strip()
+    kind, value = scholar.parse_identifier(q)
+    ids = dict(metadata.ids_from_url(q))
+    title = ""
+    if kind in ("doi", "arxiv"):
+        ids[kind] = value
+    elif re.fullmatch(r"(?i)(pmid:?\s*)?\d{5,9}", q):
+        ids["pmid"] = re.sub(r"\D", "", q)
+    elif re.fullmatch(r"(?i)pmc\d{3,10}", q):
+        ids["pmcid"] = q.upper()
+    elif metadata.clean_isbn(re.sub(r"(?i)^isbn[:\s]*", "", q)):
+        ids["isbn"] = metadata.clean_isbn(re.sub(r"(?i)^isbn[:\s]*", "", q))
+    elif not ids:
+        title = value
+    try:
+        res = metadata.resolver_for(store).resolve(ids, url=q if q.startswith("http") else "", title=title)
+    except Exception as e:
+        print(f"[research_brain] metadata lookup for {q[:80]!r} failed: {e!r}")
+        return None
+    return res if res and res.get("csl") else None
 
 
 @app.post("/api/import/s2", status_code=201)
@@ -1266,13 +1359,22 @@ def api_zotero_status():
     return zotero.status()
 
 
+def _zotero_item_done(nid: str, result: str) -> None:
+    """After a Zotero item is imported: Zotero's metadata stays as it is; a paper with a DOI or arXiv id gets
+    the fields Zotero didn't have (volume, issue, pages, ISSN, ...) from Crossref / arXiv, in the background."""
+    if result in ("created", "updated"):
+        n = store.get(nid)
+        if n.get("type") == "paper" and (n.get("doi") or n.get("arxiv")) and not n.get("meta_checked"):
+            metadata.schedule(store, nid, publish=lambda ev: event_bus.publish(ev), title_search=False)
+
+
 @app.post("/api/zotero/import")
 def api_zotero_import(body: ZoteroImportIn):
     # The job writes notes directly through the store and never calls index()/_with_extras per item;
     # the embedding index is rebuilt once, lazily, on the next /api/graph call.
     try:
         job_id = zotero.start_import(store, body.collection_key or None, body.include_pdfs, body.include_annotations,
-                                     body.library_id)
+                                     body.library_id, on_item=_zotero_item_done)
     except KeyError as e:
         what = "library" if str(e.args[0] if e.args else "").startswith("library") else "collection"
         raise HTTPException(404, f"That Zotero {what} no longer exists. Reopen the dialog to refresh the list.")
@@ -2210,15 +2312,16 @@ def api_import_url(body: ImportUrlIn):
         tmp, final_url = urlfetch.download_pdf(url)
     except urlfetch.FetchError as e:
         raise HTTPException(e.status, str(e))
+    info: dict = {}
     try:
-        text, meta_title = extract(tmp)
+        text, meta_title = extract(tmp, info=info)
     except Exception as e:
         shutil.rmtree(tmp.parent, ignore_errors=True)
         raise HTTPException(400, f"Couldn't read that PDF: {e}")
     if have:  # the paper is in the library without a PDF: attach this one
         _store_pdf(have["id"], tmp, text)
         return _viewer_out(have["id"], duplicate=True)
-    ids = scholar.find_ids_in_text(text)
+    ids = _pdf_ids(text, info)
     kind, value = scholar.parse_identifier(unquote(url))  # the URL itself often names the paper (arxiv.org/pdf/<id>)
     if kind == "arxiv" and "arxiv.org" in url:
         ids["arxiv"] = value
@@ -2251,8 +2354,9 @@ def api_import_url(body: ImportUrlIn):
             _store_pdf(dup["id"], tmp, text)
         else:
             shutil.rmtree(tmp.parent, ignore_errors=True)
+        _resolve_meta(dup["id"], meta)
         return _viewer_out(dup["id"], duplicate=True)
-    note = _create_paper(meta)
+    note = _create_paper(meta, meta_hint={"url": url}, wait=metadata.WAIT_ON_IMPORT)
     _store_pdf(note["id"], tmp, text)
     return _viewer_out(note["id"])
 
@@ -2269,6 +2373,11 @@ def urlsplit_path(u: str) -> str:
 from . import storage_api  # noqa: E402
 storage_api.install(app, store=store, resolved=RESOLVED, create_paper=_create_paper, with_extras=_with_extras,
                     match_url=_match_url, same_title=_same_title, guess_title=guess_title, publish=event_bus.publish)
+
+# ---------------------------------------------------------------- citing: styles, keys, .bib/RIS exports (app/cite_api.py)
+from . import cite_api  # noqa: E402
+cite_api.install(app, store=store, vault=VAULT, watcher=_watcher,
+                 note_refs=lambda nid: list(_wiki(index())["mentions"].get(nid, [])))
 
 
 # ---------------------------------------------------------------- static frontend

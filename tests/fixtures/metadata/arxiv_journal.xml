@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://arxiv.org/api/xyz</id>
+  <title>arXiv Query: search_query=&amp;id_list=2001.01234</title>
+  <updated>2024-01-01T00:00:00Z</updated>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/2001.01234v3</id>
+    <updated>2020-06-10T00:00:00Z</updated>
+    <published>2020-01-04T18:00:00Z</published>
+    <title>Sheath formation at a floating wall:
+      a kinetic study</title>
+    <summary>  We study the sheath in front of a floating wall with a
+      kinetic model and find the Bohm criterion $c_s=\sqrt{kT_e/m_i}$ holds.
+    </summary>
+    <author><name>Irving Langmuir</name></author>
+    <author><name>Lewi Tonks</name></author>
+    <arxiv:doi>10.1063/5.0012345</arxiv:doi>
+    <link title="doi" href="http://dx.doi.org/10.1063/5.0012345" rel="related"/>
+    <arxiv:journal_ref>Phys. Plasmas 27, 063505 (2020)</arxiv:journal_ref>
+    <link href="http://arxiv.org/abs/2001.01234v3" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2001.01234v3" rel="related" type="application/pdf"/>
+    <arxiv:primary_category term="physics.plasm-ph" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="physics.plasm-ph" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>

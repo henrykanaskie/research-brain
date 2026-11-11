@@ -41,11 +41,13 @@ def _limits():  # runs in the child between fork and exec
         pass
 
 
-def extract(path: Path, max_pages: int = 80) -> tuple[str, str]:
+def extract(path: Path, max_pages: int = 80, info: dict | None = None) -> tuple[str, str]:
     """Return (text, metadata_title). Text has '[[page N]]' markers so Claude can cite pages.
-    Parses in a sandboxed child process (see the module docstring); raises PdfError if it fails."""
+    Parses in a sandboxed child process (see the module docstring); raises PdfError if it fails.
+    `info`, if given, is filled with identifiers from the PDF's document info and XMP metadata
+    ({"xmp_doi", "info_doi", "subject", "xmp_arxiv"}; app/metadata.ids_from_pdf_info reads them)."""
     if os.environ.get("RB_PDF_INPROCESS") == "1":
-        return extract_inprocess(path, max_pages)
+        return extract_inprocess(path, max_pages, info)
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
     # the child needs the app's own site-packages (pypdfium2, pypdf) but nothing from the current directory
     here = Path(__file__).resolve().parent
@@ -58,7 +60,7 @@ def extract(path: Path, max_pages: int = 80) -> tuple[str, str]:
     except subprocess.TimeoutExpired:
         raise PdfError(f"reading it took longer than {int(TIMEOUT)} s")
     except OSError:  # couldn't start a process at all: parse here rather than fail every import
-        return extract_inprocess(path, max_pages)
+        return extract_inprocess(path, max_pages, info)
     if proc.returncode != 0:
         tail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1:] or [f"exit {proc.returncode}"]
         if proc.returncode < 0 or "MemoryError" in tail[0]:
@@ -66,13 +68,52 @@ def extract(path: Path, max_pages: int = 80) -> tuple[str, str]:
         raise PdfError(tail[0][:200])
     try:
         out = json.loads(proc.stdout.decode("utf-8"))
+        if info is not None and isinstance(out.get("info"), dict):
+            info.update({str(k): str(v)[:2000] for k, v in out["info"].items() if v})
         return str(out["text"])[:MAX_TEXT_CHARS], str(out["title"])[:500]
     except (ValueError, KeyError, TypeError):
         raise PdfError("the PDF parser returned nothing usable")
 
 
-def extract_inprocess(path: Path, max_pages: int = 80) -> tuple[str, str]:
+_XMP_DOI = (r"<prism:doi>\s*([^<\s]+)", r"<pdfx:doi>\s*([^<\s]+)", r"<crossmark:DOI>\s*([^<\s]+)",
+            r"prism:doi=\"([^\"]+)\"", r"pdfx:doi=\"([^\"]+)\"", r"<dc:identifier>[\s\S]{0,200}?(?:doi:|doi\.org/)?(10\.\d{4,9}/[^<\s]+)",
+            r"<rdf:li>\s*(?:doi:|https?://doi\.org/)(10\.\d{4,9}/[^<\s]+)")
+
+
+def pdf_info(path: Path) -> dict:
+    """Identifiers the PDF declares about itself: XMP (prism:doi, pdfx:doi, crossmark:DOI, dc:identifier) and
+    the document info dictionary (/doi, /Subject). Only small strings come back."""
+    out: dict = {}
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(str(path))
+        meta = reader.metadata or {}
+        for k, v in meta.items():
+            kk = str(k).lower().lstrip("/")
+            if kk in ("doi", "prism:doi") and v:
+                out["info_doi"] = str(v)[:300]
+            elif kk == "subject" and v:
+                out["subject"] = str(v)[:1000]
+        root = reader.trailer.get("/Root")
+        xmp = root.get_object().get("/Metadata") if root is not None else None
+        raw = xmp.get_object().get_data()[:400_000].decode("utf-8", "replace") if xmp is not None else ""
+        for rx in _XMP_DOI:
+            m = re.search(rx, raw, re.I)
+            if m:
+                out["xmp_doi"] = m.group(1)[:300]
+                break
+        m = re.search(r"arXiv:\s*(\d{4}\.\d{4,5})", raw)
+        if m:
+            out["xmp_arxiv"] = m.group(1)
+    except Exception:
+        pass
+    return out
+
+
+def extract_inprocess(path: Path, max_pages: int = 80, info: dict | None = None) -> tuple[str, str]:
     """extract() without the child process."""
+    if info is not None:
+        info.update(pdf_info(path))
     pages: list[str] = []
     meta_title = ""
     try:
@@ -149,5 +190,6 @@ if __name__ == "__main__":  # the child process started by extract()
         sys.path[:0] = [p for p in json.loads(os.environ.get("RB_PDF_SYS_PATH", "[]")) if isinstance(p, str)]
     except ValueError:
         pass
-    _text, _title = extract_inprocess(Path(sys.argv[1]), int(sys.argv[2]) if len(sys.argv) > 2 else 80)
-    sys.stdout.write(json.dumps({"text": _text, "title": _title}, ensure_ascii=False))
+    _info: dict = {}
+    _text, _title = extract_inprocess(Path(sys.argv[1]), int(sys.argv[2]) if len(sys.argv) > 2 else 80, _info)
+    sys.stdout.write(json.dumps({"text": _text, "title": _title, "info": _info}, ensure_ascii=False))

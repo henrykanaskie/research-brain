@@ -1,0 +1,8 @@
+{"status": "ok", "message-type": "work-list", "message": {"total-results": 2, "items": [
+ {"DOI": "10.1088/1361-6595/ab9b52", "type": "journal-article", "title": ["Machine learning for plasma diagnostics: a review"],
+  "author": [{"given": "Grace", "family": "Hopper", "sequence": "first"}],
+  "container-title": ["Plasma Sources Science and Technology"], "short-container-title": ["Plasma Sources Sci. Technol."],
+  "volume": "29", "issue": "7", "article-number": "074001", "issued": {"date-parts": [[2020, 7, 1]]},
+  "publisher": "IOP Publishing", "ISSN": ["0963-0252", "1361-6595"]},
+ {"DOI": "10.1000/unrelated", "type": "journal-article", "title": ["Something else entirely"], "issued": {"date-parts": [[2001]]}}
+]}}

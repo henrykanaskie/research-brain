@@ -17,6 +17,7 @@ import http.server
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import threading
@@ -145,7 +146,8 @@ def env(tmp_path_factory):
         # In real use `activeTab` grants the current tab when you click the button or press Alt+Shift+A. Playwright
         # can't press the toolbar button, so the test copy also gets the local test site as a host permission
         # (the shipped manifest has none; tests/test_annotate.py checks that).
-        m["host_permissions"] = [f"{base}/*", f"{site.base}/*"]
+        # (and the two sites whose tab URL picks the Cite tab's main button; their pages are served by a route)
+        m["host_permissions"] = [f"{base}/*", f"{site.base}/*", "https://www.overleaf.com/*", "https://docs.google.com/*"]
         (ext / "manifest.json").write_text(json.dumps(m))
         # the shipped UI lives in a closed shadow root (page scripts can't read your notes); Playwright
         # can only look inside open ones
@@ -604,3 +606,101 @@ def test_extension_id_is_the_pinned_one(env):
     key = json.loads((EXT_SRC / "manifest.json").read_text())["key"]
     assert env["ext_id"] == extension_id_from_key(key)
     assert env["ext_id"] in Policy().extension_ids
+
+
+# the popup's Cite tab: copies are captured from navigator.clipboard.write (text/html + text/plain)
+CAPTURE_CLIPBOARD = """() => {
+  window.__copied = [];
+  navigator.clipboard.write = async (items) => {
+    for (const it of items) {
+      const o = {};
+      for (const t of it.types) o[t] = await (await it.getType(t)).text();
+      window.__copied.push(o);
+    }
+  };
+}"""
+
+
+def _copied(pop, n):
+    pop.wait_for_function("(n) => window.__copied && window.__copied.length >= n", arg=n)
+    return pop.evaluate("window.__copied")[n - 1]
+
+
+def test_popup_cite_tab(env):
+    ctx, site = env["ctx"], env["site"]
+    a = api(env, "POST", "/api/notes", {"type": "paper", "title": "Probe sheath kinetics zqc", "authors": ["Ann Probe"],
+                                        "year": 2020, "venue": "Physics of Plasmas", "doi": "10.1063/zqc.1"})
+    b = api(env, "POST", "/api/notes", {"type": "paper", "title": "Sheath turbulence preprint zqc", "authors": ["Bob Sheath"],
+                                        "year": 2023, "arxiv": "2301.00099"})
+    site.html("/notes-page.html", "<!doctype html><title>Some page</title><p>Writing about sheaths.</p>")
+    url = site.base + "/notes-page.html"  # a page that isn't a paper in the library (nothing preselected)
+    page = ctx.new_page()
+    page.goto(url)
+    tid = tab_id(env, url)
+    pop = ctx.new_page()
+    pop.set_viewport_size({"width": 420, "height": 700})
+    pop.goto(f"chrome-extension://{env['ext_id']}/clip.html?tab={tid}")
+    expect(pop.locator("#home")).to_be_visible()
+    pop.evaluate(CAPTURE_CLIPBOARD)
+    pop.locator("#citeTabBtn").click()
+    expect(pop.locator("#cite")).to_be_visible()
+    expect(pop.locator("#home")).to_be_hidden()
+    expect(pop.locator("#citeQ")).to_be_focused()
+    expect(pop.locator("#citeStyle")).to_have_value("american-physics-society")
+    expect(pop.locator("#citeCit")).to_have_class(re.compile(r"\bprimary\b"))  # a plain page: formatted first
+    pop.locator("#citeQ").fill("zqc")
+    expect(pop.locator("#citeList .opt[data-i]")).to_have_count(2)
+    pop.locator("#citeList .opt", has_text="Probe sheath kinetics").click()
+    pop.locator("#citeList .opt", has_text="Sheath turbulence preprint").click()
+    expect(pop.locator("#citeN")).to_have_text("2 selected")
+    shot(pop, "ext-cite-tab")
+    pop.locator("#citeLatex").click()
+    assert _copied(pop, 1)["text/plain"] == "\\cite{probe2020probe,sheath2023sheath}"
+    expect(pop.locator("#citeHint")).to_contain_text("Copied \\cite{probe2020probe,sheath2023sheath}")
+    pop.locator("#citeBib").click()
+    bib = _copied(pop, 2)
+    assert bib["text/plain"].startswith("[1] A. Probe, Probe sheath kinetics zqc, Physics of Plasmas (2020).")
+    assert "arXiv:2301.00099" in bib["text/plain"] and '<div class="csl-entry">' in bib["text/html"]
+    pop.locator("#citeStyle").select_option("apa")
+    pop.locator("#citeCit").click()
+    assert _copied(pop, 3)["text/plain"] == "(Probe, 2020; Sheath, 2023)"
+    pop.locator("#citeBack").click()
+    expect(pop.locator("#home")).to_be_visible()
+    expect(pop.locator("#cite")).to_be_hidden()
+    api(env, "PUT", "/api/cite/settings", {"style": "american-physics-society"})
+    expect(pop.locator("#noAi")).to_have_text(
+        "No AI in this extension. Everything you save goes only to research_brain on this computer.")
+
+    # on Overleaf, \cite{} is the main button (the page is served locally under overleaf.com's name)
+    ov_url = "https://www.overleaf.com/project/abc123"
+    ctx.route("https://www.overleaf.com/**", lambda r: r.fulfill(status=200, content_type="text/html",
+                                                                body="<!doctype html><title>thesis - Overleaf</title><p>editor</p>"))
+    try:
+        ov = ctx.new_page()
+        ov.goto(ov_url)
+        otid = tab_id(env, ov_url)
+        pop.goto(f"chrome-extension://{env['ext_id']}/clip.html?tab={otid}&cite=1")
+        pop.evaluate(CAPTURE_CLIPBOARD)
+        expect(pop.locator("#cite")).to_be_visible()
+        expect(pop.locator("#citeLatex")).to_have_class(re.compile(r"\bprimary\b"))
+        expect(pop.locator("#citeHint")).to_contain_text("Overleaf")
+        pop.locator("#citeQ").fill("probe sheath kinetics")
+        expect(pop.locator("#citeList .opt[data-i]")).to_have_count(1)
+        pop.locator("#citeQ").press("Enter")
+        pop.locator("#citeQ").press("Control+Enter")
+        assert _copied(pop, 1)["text/plain"] == "\\cite{probe2020probe}"
+        # Google Docs: a formatted citation first
+        gd_url = "https://docs.google.com/document/d/xyz/edit"
+        ctx.route("https://docs.google.com/**", lambda r: r.fulfill(status=200, content_type="text/html", body="<title>Doc</title>"))
+        gd = ctx.new_page()
+        gd.goto(gd_url)
+        pop.goto(f"chrome-extension://{env['ext_id']}/clip.html?tab={tab_id(env, gd_url)}&cite=1")
+        expect(pop.locator("#citeCit")).to_have_class(re.compile(r"\bprimary\b"))
+        expect(pop.locator("#citeHint")).to_contain_text("Google Docs")
+        ov.close()
+        gd.close()
+    finally:
+        ctx.unroute("https://www.overleaf.com/**")
+        ctx.unroute("https://docs.google.com/**")
+    page.close()
+    assert not env["external"], env["external"]

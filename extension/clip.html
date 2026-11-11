@@ -6,6 +6,7 @@
 <title>research_brain</title>
 <link rel="stylesheet" href="vendor/katex/katex.min.css">
 <link rel="stylesheet" href="clip.css">
+<link rel="stylesheet" href="cite.css">
 </head>
 <body>
 <div id="app">
@@ -14,6 +15,7 @@
     <span class="brand">research_brain</span>
     <span id="modeLbl"></span>
     <span class="grow"></span>
+    <button class="link" id="citeTabBtn" type="button" title="Cite papers from your library: \cite{key}, a formatted citation or a bibliography">Cite</button>
     <button class="link" id="gearBtn" title="Server settings">Settings</button>
   </header>
 
@@ -91,11 +93,30 @@
     </div>
   </section>
 
+  <!-- Cite: search the library, pick papers, copy \cite{key} / a formatted citation / a bibliography (cite.js) -->
+  <section id="cite" hidden>
+    <label for="citeQ">Cite from your library</label>
+    <input id="citeQ" type="search" placeholder="Search by title, author or year" spellcheck="false" autocomplete="off">
+    <div id="citeList" role="listbox" aria-multiselectable="true" aria-label="Papers to cite"></div>
+    <div class="cite-row">
+      <span id="citeN" class="hint"></span>
+      <select id="citeStyle" aria-label="Citation style"></select>
+    </div>
+    <div class="cite-acts">
+      <button class="btn" id="citeLatex" type="button" title="LaTeX / Overleaf">Copy \cite{…}</button>
+      <button class="btn" id="citeCit" type="button" title="In-text citation in the chosen style">Copy citation</button>
+      <button class="btn" id="citeBib" type="button" title="Reference list for Word or Google Docs">Copy bibliography</button>
+    </div>
+    <p class="hint" id="citeHint"></p>
+    <div class="stats"><span class="grow"></span><button class="link" id="citeBack" type="button">Back</button></div>
+  </section>
+
   <p class="noai" id="noAi">No AI in this extension. Everything you save goes only to research_brain on this computer.</p>
 </div>
 <script src="vendor/katex/katex.min.js"></script>
 <script src="vendor/marked.min.js"></script>
 <script src="vendor/latex-editor.js"></script>
 <script src="clip.js"></script>
+<script src="cite.js"></script>
 </body>
 </html>

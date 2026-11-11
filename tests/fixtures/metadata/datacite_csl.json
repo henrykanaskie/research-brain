@@ -1,0 +1,5 @@
+{"type": "dataset", "id": "https://doi.org/10.5281/zenodo.1234567", "categories": ["plasma"],
+ "language": "en", "author": [{"family": "Hopper", "given": "Grace"}, {"literal": "PESPL Collaboration"}],
+ "issued": {"date-parts": [[2021, 5, 3]]}, "abstract": "Langmuir probe sweeps.",
+ "DOI": "10.5281/ZENODO.1234567", "publisher": "Zenodo", "title": "Langmuir probe I-V sweeps, krypton discharge",
+ "URL": "https://zenodo.org/record/1234567", "version": "1.0"}
