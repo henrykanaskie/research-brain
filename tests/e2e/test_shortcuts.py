@@ -450,3 +450,28 @@ def test_every_math_delimiter_is_typeset_and_streaming_holds_back_open_math(ctx,
     for k in ("openParen", "openBracket", "openDollar"):
         assert "stream-tail" in out[k] and "katex" not in out[k], k
     assert "katex" in out["dollarInParen"] and "stream-tail" not in out["dollarInParen"]
+
+
+def test_citation_opens_the_pdf_with_its_sentence_highlighted(ctx, server, tmp_path):
+    """A "[[paper]] p. 1" citation in an answer is pointed at the sentence that backs the claim; the viewer
+    highlights it for a moment. "Find related papers" results are scrolled to."""
+    from test_e2e import _pdf_bytes
+    clear_vault(server)
+    pdf = tmp_path / "sheath.pdf"
+    pdf.write_bytes(_pdf_bytes())
+    page = open_app(ctx, server)
+    import_pdf_with_shortcut(page, pdf)
+    page.wait_for_function("window.__rb.S.cur && window.__rb.S.cur.has_pdf", timeout=30_000)
+    nid = page.evaluate("window.__rb.S.cur.id")
+    page.evaluate("""(nid) => { const d = document.createElement('div'); d.className = 'md'; d.id = 'cite-test';
+      d.innerHTML = window.__rb.renderMD(`Ions must reach the sound speed at the sheath edge [[${nid}]] p. 1.`);
+      document.body.appendChild(d); }""", nid)
+    a = page.locator("#cite-test a.cite")
+    expect(a).to_have_attribute("data-pinned", "1", timeout=10_000)
+    href = a.get_attribute("href")
+    assert "&hl=" in href and "Bohm" in __import__("urllib.parse").parse.unquote(href)
+    v = ctx.new_page()
+    v.goto(server["base"] + href)
+    expect(v.locator(".textLayer span.rb-cite").first).to_be_visible(timeout=30_000)
+    assert "Bohm criterion" in " ".join(v.locator(".textLayer span.rb-cite").all_inner_texts())
+    assert "hl=" not in v.evaluate("location.hash")  # the highlight isn't kept in the address

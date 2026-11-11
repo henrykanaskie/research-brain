@@ -1020,3 +1020,20 @@ body.chat-scoped .rs-mode { display: none; }
 /* a question asked about a selected passage in the PDF viewer */
 .msg-sel { font: 13.5px/1.45 var(--serif); color: var(--ink-2); margin: 2px 0 6px; padding-left: 12px; border-left: 2px solid var(--rule);
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* "Find related papers": the section it fills is below the fold, so it's scrolled to and flashed */
+#discover-slot { scroll-margin-top: 12px; border-radius: 4px; }
+#discover-slot.flash { animation: discFlash 1.4s ease-out; }
+@keyframes discFlash { 0%, 30% { box-shadow: 0 0 0 2px var(--red); } 100% { box-shadow: 0 0 0 2px transparent; } }
+@media (prefers-reduced-motion: reduce) { #discover-slot.flash { animation: none; } }
+.row .cand-acts { display: inline-flex; gap: 2px; align-items: center; }
+.cite.cite-moved .cite-page { text-decoration: underline dotted; text-underline-offset: 2px; }
+
+/* Is the paper readable without an account? Quiet: muted text, a lock, details on hover. */
+.access-badge { display: inline-flex; align-items: center; gap: 4px; font: 12px var(--sans); color: var(--ink-3, #7a7f84); padding: 0 4px; align-self: center; cursor: help; }
+.access-badge svg, .access-ico svg { flex: none; }
+.access-badge.open, .access-ico.open { color: var(--green, #3d7a52); }
+.access-badge.closed, .access-ico.closed { color: var(--ink-3, #8a6d3b); }
+.access-ico { display: inline-flex; margin-right: 3px; vertical-align: -1px; opacity: .85; }
+.disc-src { font: 12px var(--sans); color: var(--ink-3); margin: 4px 0 2px; }
+.ls-key { margin-top: 10px; }

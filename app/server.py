@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agents, budget, citations, claude_cli, metadata, scholar, security
+from . import access as access_mod, agents, apikeys, budget, citations, claude_cli, locate as locate_mod, metadata, openalex, scholar, security
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .pdftext import extract, guess_title
@@ -428,6 +428,7 @@ class LinkIn(BaseModel):
 
 class LookupIn(BaseModel):
     query: str
+    link_to: str | None = None   # "Add" from Related papers: link the new paper to the one being read
 
 
 class ExplainIn(BaseModel):
@@ -458,6 +459,54 @@ def api_ai_usage_set(body: AIUsageIn):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {**out, "usage": budget.usage(privacy.read_log(5000), days=7)}
+
+
+class LookupKeyIn(BaseModel):
+    service: str
+    key: str | None = None
+
+
+@app.get("/api/lookup-keys")
+def api_lookup_keys():
+    """Which free paper-database keys are saved (never the keys themselves, only their last 4 characters)."""
+    return apikeys.status()
+
+
+@app.put("/api/lookup-keys")
+def api_lookup_keys_set(body: LookupKeyIn):
+    try:
+        return apikeys.save(body.service, body.key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class LocateItem(BaseModel):
+    id: str
+    page: int | None = None
+    claim: str = ""
+
+
+class LocateIn(BaseModel):
+    items: list[LocateItem]
+
+
+@app.post("/api/locate")
+def api_locate(body: LocateIn):
+    """For citations in an answer: the sentence on the cited page (or the page beside it) that best supports
+    the claim the citation ends, so the viewer can highlight it. Local text matching only; no AI."""
+    out, texts = [], {}
+    for it in body.items[:60]:
+        try:
+            n = store.get(it.id)
+        except KeyError:
+            out.append(None)
+            continue
+        root = _root(n)
+        if root not in texts:
+            texts[root] = _fulltext(root)
+        r = locate_mod.locate(texts[root], it.page, it.claim[:1200])
+        out.append({**r, "pdf": root})
+    return {"items": out}
 
 
 class ChatIn(BaseModel):
@@ -1066,7 +1115,7 @@ def api_import_lookup(body: LookupIn):
         if err:
             raise HTTPException(503, str(err))
         raise HTTPException(404, "Couldn't find that paper. Try the DOI or arXiv id, or drop in the PDF.")
-    return _import_meta(meta, resolved=resolved)
+    return _import_meta(meta, body.link_to, resolved=resolved)
 
 
 def _resolve_query(q: str) -> dict | None:
@@ -1125,6 +1174,15 @@ def _s2_key(n: dict) -> str:
     return ""
 
 
+@app.get("/api/notes/{nid}/access")
+def api_access(nid: str, refresh: bool = False):
+    """Whether a paper is free to read online (arXiv, or OpenAlex by DOI), and where the free copy is."""
+    n = _get(nid)
+    if n["type"] != "paper":
+        return {"state": "unknown", "label": "", "url": ""}
+    return {**access_mod.of(store, n, refresh=refresh), "has_pdf": bool(n.get("has_pdf"))}
+
+
 @app.get("/api/notes/{nid}/discover")
 def api_discover(nid: str):
     n = _get(nid)
@@ -1141,15 +1199,30 @@ def api_discover(nid: str):
                 key = meta["s2_id"]
         except scholar.ScholarError:
             pass
+    res, why = None, None
     try:
         res = scholar.discover(key)
+        res["source"] = "s2"
     except scholar.ScholarError as e:
-        raise HTTPException(503, str(e))
+        why = e
+    if (res is None or not any(res[k] for k in ("references", "citations", "recommended"))) and (n["doi"] or n["arxiv"]):
+        # Semantic Scholar is busy (its keyless pool is shared) or doesn't list this paper: ask OpenAlex
+        try:
+            alt = openalex.discover(doi=n["doi"], arxiv=n["arxiv"])
+            if any(alt.values()) or res is None:
+                res = {**alt, "source": "openalex",
+                       "note": "Semantic Scholar was busy, so these come from OpenAlex." if why
+                       else "Semantic Scholar doesn't list this paper, so these come from OpenAlex."}
+        except openalex.OpenAlexError as e:
+            if res is None:
+                raise HTTPException(503, f"{why} OpenAlex didn't answer either: {e}")
+    if res is None:
+        raise HTTPException(503, str(why))
     lib = store.all()
     by_s2 = {x["s2_id"]: x["id"] for x in lib if x["s2_id"]}
     by_doi = {x["doi"].lower(): x["id"] for x in lib if x["doi"]}
     by_arx = {x["arxiv"].lower(): x["id"] for x in lib if x["arxiv"]}
-    for lst in res.values():
+    for lst in (res["references"], res["citations"], res["recommended"]):
         for c in lst:
             c["in_library"] = (by_s2.get(c["s2_id"]) or by_doi.get((c["doi"] or "").lower())
                                or by_arx.get((c["arxiv"] or "").lower()))

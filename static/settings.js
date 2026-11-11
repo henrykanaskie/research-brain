@@ -204,6 +204,12 @@
       el('p', { class: 'ls-p', text: 'Unpaywall asks for a contact email with each lookup. It is sent only to Unpaywall. For paywalled papers, use “Save PDF to research_brain” in the browser extension while signed in to the publisher.' }),
       el('div', { class: 'ls-row' }, email, saveOA));
 
+    // Paper lookup: optional free keys for Semantic Scholar and OpenAlex (app/apikeys.py)
+    const keySec = el('section', { class: 'ls-sec', id: 'ls-lookup' },
+      el('div', { class: 'ls-h', text: 'Paper lookup' }),
+      el('p', { class: 'ls-p', text: 'Related papers, citations and metadata come from Semantic Scholar, with OpenAlex as a backup when it is busy. Both are free. Without a key, Semantic Scholar shares one allowance among everyone, so it sometimes says “rate limited”; a free personal key fixes that. Keys stay on this computer and are sent only to their own service.' }));
+    renderKeys(keySec, say);
+
     // Saving from publisher pages (the browser extension's primary button)
     const modeSec = el('section', { class: 'ls-sec', id: 'ls-save-mode' },
       el('div', { class: 'ls-h', text: 'When saving from a publisher page' }));
@@ -253,7 +259,7 @@
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
     const card = el('div', { class: 'modal-card ls-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-title' },
       el('div', { class: 'modal-title', id: 'ls-title', text: 'Library settings' }),
-      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
+      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, keySec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
     const wrap = el('div', { class: 'modal', id: 'library-settings' }, card);
     wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
     document.body.appendChild(wrap);
@@ -263,8 +269,42 @@
       if (focus === 'agent') agentSec.scrollIntoView({ block: 'start' });
       if (focus === 'citations' && citeSec) citeSec.scrollIntoView({ block: 'start' });
       if (focus === 'privacy' && privSec) privSec.scrollIntoView({ block: 'start' });
+      if (focus === 'lookup') keySec.scrollIntoView({ block: 'start' });
       (focus === 'profiles' && !prof.pinned ? newName : done).focus({ preventScroll: true });
     }, 0);
+  }
+
+  // ---------------------------------------------------------------- paper lookup keys (app/apikeys.py)
+  const KEY_HELP = {
+    s2: 'Request one on Semantic Scholar’s API page (a short form; the key arrives by email).',
+    openalex: 'Optional: OpenAlex works without a key. A free key (sign up, then Settings → API key) gives ten times the daily allowance.',
+  };
+  async function renderKeys(sec, say) {
+    let st;
+    try { st = await api('/api/lookup-keys'); } catch { return; }
+    for (const [sid, k] of Object.entries(st)) {
+      const inp = el('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', id: `ls-key-${sid}`,
+        placeholder: k.set ? `Saved (ends ${k.hint.replace('…', '')})` : `${k.name} API key`, 'aria-label': `${k.name} API key` });
+      const save = el('button', { class: 'btn', type: 'button', text: 'Save' });
+      const forget = el('button', { class: 'btn btn-text', type: 'button', text: 'Remove', hidden: !k.set || k.from_env });
+      save.addEventListener('click', async () => {
+        try {
+          const out = await api('/api/lookup-keys', json('PUT', { service: sid, key: inp.value.trim() }));
+          inp.value = ''; inp.placeholder = out[sid].set ? `Saved (ends ${out[sid].hint.replace('…', '')})` : `${k.name} API key`;
+          forget.hidden = !out[sid].set;
+          say(out[sid].set ? `${k.name} key saved.` : `${k.name} key removed.`);
+        } catch (e) { say(e.message, true); }
+      });
+      forget.addEventListener('click', async () => {
+        try { await api('/api/lookup-keys', json('PUT', { service: sid, key: '' })); inp.placeholder = `${k.name} API key`; forget.hidden = true; say(`${k.name} key removed.`); }
+        catch (e) { say(e.message, true); }
+      });
+      sec.append(el('div', { class: 'ls-key' },
+        el('label', { class: 'ls-p', for: `ls-key-${sid}` }, el('b', { text: k.name + ' ' }), KEY_HELP[sid] || '', ' ',
+          el('a', { href: k.get_url, target: '_blank', rel: 'noopener noreferrer', text: 'Get a free key' }),
+          k.from_env ? el('span', { text: ` (set by the ${k.env} environment variable)` }) : null),
+        el('div', { class: 'ls-row' }, inp, save, forget)));
+    }
   }
 
   // ---------------------------------------------------------------- AI usage (app/budget.py)

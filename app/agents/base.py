@@ -30,6 +30,7 @@ Adapters live in app/agents/<name>.py and call app.agents.register(Backend()) at
 """
 from __future__ import annotations
 
+from app import fsio
 import glob
 import os
 import queue
@@ -324,7 +325,7 @@ class StreamProcess:
             self.returncode = self.proc.returncode
             self.stderr = self.stderr or "".join(self._err).strip()
         if self._own_cwd and self.cwd is not None:
-            shutil.rmtree(self.cwd, ignore_errors=True)
+            fsio.remove_tree(self.cwd)
 
 
 def stream_lines(cmd: list[str], *, stdin: str = "", timeout: float = 180, cwd: Path | str | None = None,

@@ -1206,7 +1206,8 @@ class Resolver:
         return csl_from_ntrs(data) if st == 200 else None
 
     def s2(self, doi: str = "", arxiv: str = "", title: str = "") -> dict | None:
-        hdrs = {"x-api-key": os.environ["S2_API_KEY"]} if os.environ.get("S2_API_KEY") else {}
+        from . import apikeys
+        hdrs = {"x-api-key": apikeys.get("s2")} if apikeys.get("s2") else {}
         if doi or arxiv:
             pid = f"DOI:{doi}" if doi else f"ARXIV:{arxiv}"
             st, data = self.http(f"{S2_API}{quote(pid, safe=':/.')}?{urlencode({'fields': S2_FIELDS})}", headers=hdrs)

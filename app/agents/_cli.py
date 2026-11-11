@@ -17,6 +17,7 @@ group on timeout / tool event / early close, and turns failures into plain-langu
 """
 from __future__ import annotations
 
+from app import fsio
 import json
 import os
 import re
@@ -194,4 +195,4 @@ class CliBackend(Backend):
                         yield piece
             self.finish(state, sp.returncode, sp.stderr)
         finally:
-            shutil.rmtree(workdir, ignore_errors=True)
+            fsio.remove_tree(workdir)

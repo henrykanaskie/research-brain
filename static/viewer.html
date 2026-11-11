@@ -105,8 +105,11 @@ body.side-hidden #side{display:none}
 /* Saved fragments: red wash + 1px red underline (always on white paper, so use the light red) */
 .textLayer span.rb-hl{background:rgba(178,58,51,.10);box-shadow:inset 0 -1px 0 #B23A33;cursor:pointer}
 .textLayer span.rb-flash{animation:sflash 1.6s ease-out}
+/* a citation's passage: highlighted for a few seconds, then gone (it isn't saved) */
+.textLayer span.rb-cite{animation:scite 3.2s ease-out forwards}
+@keyframes scite{0%,55%{background:rgba(230,170,40,.42);box-shadow:0 0 0 1px rgba(200,140,20,.35)}100%{background:transparent;box-shadow:none}}
 @keyframes sflash{0%,40%{background:rgba(178,58,51,.32)}100%{background:rgba(178,58,51,.10)}}
-@media (prefers-reduced-motion: reduce){.page.flash,.textLayer span.rb-flash{animation:none}}
+@media (prefers-reduced-motion: reduce){.page.flash,.textLayer span.rb-flash{animation:none}.textLayer span.rb-cite{animation:none;background:rgba(230,170,40,.35)}}
 
 /* Sidebar */
 #side{width:var(--side-w);flex:none;border-left:1px solid var(--rule);background:var(--sheet);display:flex;flex-direction:column;min-height:0;position:relative}
@@ -595,7 +598,29 @@ function applyHash(initial) {
   const frag = h.get("frag");
   if (frag) { const f = S.frags.find((x) => x.id === frag); if (f) { jumpToFrag(f); return; } }
   const pg = parseInt(h.get("page"), 10);
-  if (pg) goPage(pg); else if (initial) setCurrent(1);
+  const hl = h.get("hl");
+  if (pg && hl) { history.replaceState(null, "", `#page=${pg}`); flashQuote(pg, hl); }
+  else if (pg) goPage(pg); else if (initial) setCurrent(1);
+}
+/* A cited passage: go to its page, scroll it into view and highlight it for a few seconds. Falls back to
+   flashing the page when the text layer doesn't contain it (a scanned page, say). */
+async function flashQuote(num, quote) {
+  if (!S.pages.length) return;
+  const p = S.pages[Math.max(1, Math.min(S.pages.length, num)) - 1];
+  goPage(p.num);
+  await whenRendered(p);
+  const sp = quote ? findSpans(p, quote) : null;
+  if (sp && sp.length) {
+    const r = sp[0].getBoundingClientRect(), vr = viewer.getBoundingClientRect();
+    viewer.scrollBy({ top: r.top - vr.top - viewer.clientHeight * 0.3, behavior: "smooth" });
+    p.tl.querySelectorAll(".rb-cite").forEach((s) => s.classList.remove("rb-cite"));
+    sp.forEach((s) => { void s.offsetWidth; s.classList.add("rb-cite"); });
+    clearTimeout(flashQuote.t);
+    flashQuote.t = setTimeout(() => p.tl && p.tl.querySelectorAll(".rb-cite").forEach((s) => s.classList.remove("rb-cite")), 3400);
+    return true;
+  }
+  p.div.classList.remove("flash"); void p.div.offsetWidth; p.div.classList.add("flash");
+  return false;
 }
 window.addEventListener("resize", () => { if (S.fit && S.pages.length) setScale(fitScale(), true); });
 
@@ -1127,12 +1152,38 @@ function renderAskCtx() {
 }
 askLog.addEventListener("click", (e) => {
   const pg = e.target.closest("[data-page]");
-  if (pg) { goPage(+pg.dataset.page, true); const p = S.pages[+pg.dataset.page - 1]; if (p) { p.div.classList.remove("flash"); void p.div.offsetWidth; p.div.classList.add("flash"); } return; }
+  if (pg) { citeClick(pg); return; }
   const q = e.target.closest("[data-q]");
   if (q) { send(q.dataset.q); return; }
   const r = e.target.closest("[data-retry]");
   if (r) { const i = +r.dataset.retry, m = ASK.thread[i]; ASK.thread.splice(i - 1, 2); send(m.question, m.sel); }
 });
+
+/* "p. 6" in an answer about this paper: find the sentence on that page (or the one beside it) that backs the
+   claim the citation ends, and highlight it. Local text matching (POST /api/locate), no AI. */
+function claimBefore(el) {
+  const block = el.closest("p, li, td, blockquote, .txt") || el.parentNode;
+  const r = document.createRange(); r.setStart(block, 0); r.setEndBefore(el);
+  let c = r.toString().replace(/\s+/g, " ").split(/(?<=[.!?])\s+(?=[A-Z0-9(])/).pop().trim();
+  if (c.length < 30) { const r2 = document.createRange(); r2.setStartAfter(el); r2.setEnd(block, block.childNodes.length); c = (c + " " + r2.toString().replace(/\s+/g, " ").split(/(?<=[.!?])\s/)[0]).trim(); }
+  return c.slice(-600);
+}
+async function citeClick(el) {
+  const page = +el.dataset.page;
+  if (el.dataset.quote) { flashQuote(+el.dataset.at || page, el.dataset.quote); return; }
+  goPage(page, true);
+  let res = null;
+  try {
+    const r = await fetch("/api/locate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: [{ id: ID, page, claim: claimBefore(el) }] }) });
+    if (r.ok) res = ((await r.json()).items || [])[0];
+  } catch { }
+  if (res && res.quote) {
+    el.dataset.quote = res.quote; el.dataset.at = res.page;
+    if (res.moved) { el.innerHTML = `p.&nbsp;${esc(res.page)}`; el.classList.add("cite-moved"); el.title = `The answer said p. ${page}; this passage is on p. ${res.page}`; }
+    else el.title = `Highlight the passage on page ${page}`;
+    flashQuote(res.page, res.quote);
+  } else flashQuote(page, "");
+}
 
 async function streamChat(body, onDelta) {
   const res = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(body) });

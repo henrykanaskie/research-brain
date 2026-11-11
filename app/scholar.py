@@ -14,10 +14,12 @@ from urllib.parse import quote, unquote
 
 import requests
 
+from . import apikeys
+
 S2 = "https://api.semanticscholar.org/graph/v1"
 S2_REC = "https://api.semanticscholar.org/recommendations/v1"
 FIELDS = "paperId,title,year,authors,abstract,externalIds,venue,url,citationCount,openAccessPdf"
-LIST_FIELDS = "paperId,title,year,authors,externalIds,citationCount,url"
+LIST_FIELDS = "paperId,title,year,authors,externalIds,citationCount,url,isOpenAccess,openAccessPdf"
 UA = {"User-Agent": "research_brain/1.0 (local personal knowledge graph)"}
 
 DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>{}]+)", re.I)
@@ -28,6 +30,10 @@ ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/([^\s?#]+?)(?:v\d+)?(?:\
 
 class ScholarError(RuntimeError):
     pass
+
+
+class RateLimited(ScholarError):
+    """HTTP 429 (or 5xx) after retries: the shared keyless pool is busy."""
 
 
 def clean_doi(doi: str) -> str:
@@ -77,8 +83,9 @@ def find_ids_in_text(text: str) -> dict:
 
 def _get(url: str, params: dict | None = None, timeout: int = 20) -> requests.Response:
     headers = dict(UA)
-    if os.environ.get("S2_API_KEY") and "semanticscholar" in url:
-        headers["x-api-key"] = os.environ["S2_API_KEY"]
+    key = apikeys.get("s2") if "semanticscholar" in url else ""
+    if key:
+        headers["x-api-key"] = key
     last = None
     for attempt in range(3):
         try:
@@ -97,8 +104,8 @@ def _get(url: str, params: dict | None = None, timeout: int = 20) -> requests.Re
         return r
     if isinstance(last, requests.RequestException):
         raise ScholarError(f"Couldn't reach {url.split('/')[2]} ({last.__class__.__name__}). Check your internet connection.")
-    raise ScholarError("Semantic Scholar is rate-limiting requests right now — wait a minute and try again "
-                       "(a free S2_API_KEY removes this).")
+    raise RateLimited("Semantic Scholar is rate-limiting requests right now. Wait a minute and try again, or "
+                      "add a free Semantic Scholar key in Settings → Paper lookup.")
 
 
 def _paper_from_s2(p: dict) -> dict:
@@ -233,7 +240,9 @@ def _candidates(items: list[dict], key: str) -> list[dict]:
         d = _paper_from_s2(p)
         d.pop("abstract", None)
         d.pop("venue", None)
-        d.pop("oa_pdf", None)
+        # free to read? (Semantic Scholar knows a legal open copy, or it's on arXiv); None = unknown
+        d["access"] = "open" if (d.get("oa_pdf") or d.get("arxiv") or p.get("isOpenAccess")) else \
+            ("closed" if p.get("isOpenAccess") is False else "")
         out.append(d)
     return out
 
@@ -279,7 +288,7 @@ def references(paper_id: str, citing: bool = False, max_items: int = 1000) -> li
         if r.status_code == 404:
             return out
         if r.status_code == 429:
-            raise ScholarError("Semantic Scholar is rate-limiting requests right now (HTTP 429)")
+            raise RateLimited("Semantic Scholar is rate-limiting requests right now (HTTP 429)")
         if r.status_code != 200:
             raise ScholarError(f"Semantic Scholar error {r.status_code}: {r.text[:200]}")
         data = r.json() or {}

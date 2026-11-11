@@ -197,6 +197,74 @@
     if (!done) throw new Error('The stream ended early');
     return done;
   }
+  // ---------- citations that point at the sentence ----------
+  /** A citation like "[[paper]] p. 6" in a finished answer gets the sentence on that page that best supports
+   *  the claim it ends (POST /api/locate: local text matching, no AI). Clicking it opens the PDF at that
+   *  sentence and highlights it for a moment. If the best match is clearly on the next or previous page, the
+   *  citation is corrected to that page. Watches the page, so every answer, explanation and critique gets it. */
+  const pinCache = new Map();
+  let pinQueue = [], pinTimer = 0;
+  function claimFor(a) {
+    const block = a.closest('p, li, td, blockquote, .msg-body, .md') || a.parentNode;
+    const r = document.createRange();
+    r.setStart(block, 0); r.setEndBefore(a);
+    const before = r.toString().replace(/\s+/g, ' ');
+    let claim = before.split(/(?<=[.!?])\s+(?=[A-Z0-9(])/).pop().trim();
+    if (claim.length < 30) { // the citation opens its sentence: use what follows instead
+      const r2 = document.createRange(); r2.setStartAfter(a); r2.setEnd(block, block.childNodes.length);
+      claim = (claim + ' ' + r2.toString().replace(/\s+/g, ' ').split(/(?<=[.!?])\s/)[0]).trim();
+    }
+    return claim.slice(-600);
+  }
+  function applyPin(a, res) {
+    a.dataset.pinned = '1';
+    if (!res || !res.quote) return;
+    const m = /^\/viewer\/([^#]+)#page=(\d+)/.exec(a.getAttribute('href') || '');
+    if (!m) return;
+    a.setAttribute('href', `/viewer/${encodeURIComponent(res.pdf)}#page=${res.page}&hl=${encodeURIComponent(res.quote)}`);
+    const pg = a.querySelector('.cite-page');
+    if (res.moved && pg) {
+      pg.textContent = `p. ${res.page}`;
+      a.classList.add('cite-moved');
+    }
+    const head = (a.getAttribute('title') || '').split('\n')[0].replace(/, page \d+/, `, page ${res.page}`);
+    a.setAttribute('title', `${head}\n\n“${truncate(res.quote, 220)}”${res.moved ? `\n\nThe answer said p. ${m[2]}; this passage is on p. ${res.page}.` : ''}\n\nClick to open the PDF with this passage highlighted.`);
+  }
+  function pinCitations(root) {
+    const els = (root || document).querySelectorAll('.md a.cite[href^="/viewer/"]:not([data-pinned])');
+    for (const a of els) {
+      if (a.closest('.chat-live, .rs-live, .crit-live')) continue; // still streaming
+      const m = /^\/viewer\/([^#]+)#page=(\d+)$/.exec(a.getAttribute('href') || '');
+      if (!m) { a.dataset.pinned = '1'; continue; }
+      const item = { id: decodeURIComponent(m[1]), page: +m[2], claim: claimFor(a) };
+      const key = `${item.id}|${item.page}|${item.claim}`;
+      a.dataset.pinned = 'wait';
+      if (pinCache.has(key)) { const v = pinCache.get(key); if (v instanceof Promise) v.then((r) => applyPin(a, r)); else applyPin(a, v); continue; }
+      pinQueue.push({ a, item, key });
+    }
+    if (pinQueue.length && !pinTimer) pinTimer = setTimeout(flushPins, 60);
+  }
+  async function flushPins() {
+    pinTimer = 0;
+    const batch = pinQueue.splice(0, 60);
+    const keys = [...new Map(batch.map((b) => [b.key, b.item])).entries()];
+    let done;
+    const p = new Promise((res) => { done = res; });
+    keys.forEach(([k]) => pinCache.set(k, p.then((m) => m.get(k))));
+    let byKey = new Map();
+    try {
+      const r = await api('POST', '/api/locate', { items: keys.map(([, it]) => it) });
+      keys.forEach(([k], i) => byKey.set(k, (r.items || [])[i] || null));
+    } catch { /* offline or old server: the citations still open the page */ }
+    done(byKey);
+    for (const [k] of keys) pinCache.set(k, byKey.get(k) || null);
+    for (const b of batch) applyPin(b.a, byKey.get(b.key));
+    if (pinQueue.length) pinTimer = setTimeout(flushPins, 0);
+  }
+  let scanTimer = 0;
+  new MutationObserver(() => { if (!scanTimer) scanTimer = setTimeout(() => { scanTimer = 0; pinCitations(); }, 120); })
+    .observe(document.body, { childList: true, subtree: true });
+
   /** Markdown for a half-written answer: hold back an unclosed trailing $…$, $$…$$, \(…\) or \[…\] so
    *  KaTeX only ever sees balanced math (the open segment shows as plain text until it closes). */
   function partialMD(src) {
@@ -864,7 +932,7 @@
       if (!info || !info.label) continue;
       let cx = 0, minY = Infinity, maxY = -Infinity;
       for (const n of mem) { cx += n.x; minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); }
-      S.regionLabels.push({ cid, x: cx / mem.length, y: minY - 18 / Math.max(k, 0.3), cy: maxY, label: info.label, size: mem.length });
+      S.regionLabels.push({ cid, x: cx / mem.length, y: minY - 22 / Math.max(k, 0.3), cy: maxY, label: info.label, size: mem.length });
     }
     S.regionLabels.sort((a, b) => b.size - a.size);
   }
@@ -922,6 +990,12 @@
       ctx.font = numFont; ctx.fillStyle = C.ink3; ctx.fillText(num, x0 + padX + wName + gap, y + 0.5 * px);
     }
     ctx.restore();
+  }
+  function regionTagClick(e) {
+    const r = labelHit(e);
+    if (!r) return false;
+    if (S.focusCluster === r.cid) unfocusRegion(); else focusRegion(r.cid);
+    return true;
   }
   function labelHit(e) {
     if (!fg || !e) return null;
@@ -1008,13 +1082,13 @@
         if (n.sub >= 0) { subSizes.set(n.sub, (subSizes.get(n.sub) || 0) + 1); subOf.set(n.sub, n.cluster); }
       }
       const ids = [...sizes.keys()].sort((a, b) => sizes.get(b) - sizes.get(a));
-      anchors = ids.length <= 1 ? new Map(ids.map((id) => [id, { x: 0, y: 0 }])) : golden(ids, 12 * Math.sqrt(top.length) + 30, 0, 0, -Math.PI / 2);
+      anchors = ids.length <= 1 ? new Map(ids.map((id) => [id, { x: 0, y: 0 }])) : golden(ids, 9 * Math.sqrt(top.length) + 22, 0, 0, -Math.PI / 2);
       subAnchors = new Map();
       for (const cid of ids) {
         const subs = [...subSizes.keys()].filter((s) => subOf.get(s) === cid).sort((a, b) => subSizes.get(b) - subSizes.get(a));
         if (subs.length < 2) continue;
         const c = anchors.get(cid);
-        const inner = golden(subs, 5.5 * Math.sqrt(sizes.get(cid)) + 8, c.x, c.y, cid * 1.3);
+        const inner = golden(subs, 4.2 * Math.sqrt(sizes.get(cid)) + 6, c.x, c.y, cid * 1.3);
         for (const [k, v] of inner) subAnchors.set(k, v);
       }
     }
@@ -1098,13 +1172,13 @@
       })
       .onNodeHover((n) => { S.hover = n ? n.id : null; graphEl.style.cursor = n ? 'pointer' : ''; kick(50); })
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
-      .onNodeClick((n, e) => { if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
+      .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onBackgroundClick((e) => {
-        const r = labelHit(e);
-        if (r) { if (S.focusCluster === r.cid) unfocusRegion(); else focusRegion(r.cid); return; }
+        if (regionTagClick(e)) return;
         if (S.backgroundClickHook) S.backgroundClickHook(e);
       })
-      .onLinkClick(onLinkClick)
+      // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
+      .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
       .onRenderFramePre((ctx, k) => {
         S.k = k; S.partLayout = new Map();
         S.labelBoxes = [];
@@ -1124,7 +1198,7 @@
       .d3VelocityDecay(0.38)
       .minZoom(0.12).maxZoom(10);
 
-    fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -4 : -30)).distanceMax(180);
+    fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -3 : -20)).distanceMax(120); // compact: linked notes sit close
     fg.d3Force('center', null);
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
@@ -1196,7 +1270,7 @@
     S.focusCache = null;
     const lf = fg.d3Force('link');
     if (!lf) return;
-    lf.distance((l) => (l.kind === 'part' ? 9 : l.kind === 'manual' ? 44 : l.kind === 'mention' ? 50 : l.kind === 'cites' ? 56 : 38 + 46 * (1 - l.score)))
+    lf.distance((l) => (l.kind === 'part' ? 8 : l.kind === 'manual' ? 28 : l.kind === 'mention' ? 32 : l.kind === 'cites' ? 36 : 26 + 30 * (1 - l.score)))
       .strength((l) => {
         if (l.kind === 'part') return 1;
         if (l.kind === 'manual') return 0.3;
@@ -1876,21 +1950,38 @@
     } else if (n.type === 'paper' && n.source === 'linked') {
       out.push(h('div', { class: 'linked-line' }, h('span', { class: 'kind-link', html: LINK_SVG }),
         h('span', null, h('b', { text: 'Linked article. ' }), n.has_text ? 'Its link, full text and metadata are saved; search, citations and the AI features use the text. The PDF file isn’t kept.' : 'Its link and metadata are saved, not the PDF file.')));
-      if (httpUrl(n.url)) acts.push(h('a', { class: 'btn', href: httpUrl(n.url), target: '_blank', rel: 'noopener noreferrer', title: 'Open the article on its site (your browser, your access)' }, 'Open article'));
+      if (httpUrl(n.url)) {
+        const a = h('a', { class: 'btn', href: httpUrl(n.url), target: '_blank', rel: 'noopener noreferrer', title: 'Open the article on its site (your browser, your access)' }, 'Open article');
+        const badge = h('span', { class: 'access-badge', hidden: true });
+        acts.push(a, badge);
+        if (n.doi || n.arxiv) showAccess(n, a, badge, false);
+      }
       acts.push(h('button', { class: 'btn', title: 'Look for a free legal copy; otherwise save it with the browser extension', onclick: (e) => getPdf(n, e.currentTarget) }, 'Get the PDF'));
       const inp = h('input', { type: 'file', accept: 'application/pdf,.pdf', hidden: true });
       const btn = h('button', { class: 'btn btn-text', title: 'Attach a PDF file you already have', onclick: () => inp.click() }, 'Attach PDF');
       inp.addEventListener('change', () => { const f = inp.files[0]; inp.value = ''; if (f) attachPdf(n.id, f, btn); });
       acts.push(btn, inp);
     } else if (n.type === 'paper') {
+      // no PDF here yet: read it online (arXiv's PDF, else the publisher via its DOI), or fetch a free copy
+      const view = onlineView(n);
+      if (view) {
+        const a = h('a', { class: 'btn', href: view.href, target: '_blank', rel: 'noopener noreferrer', 'data-act': 'view-online', title: view.title }, 'View paper');
+        const badge = h('span', { class: 'access-badge', hidden: true });
+        acts.push(a, badge);
+        showAccess(n, a, badge);
+      }
+      if (n.doi || n.arxiv || n.s2_id) acts.push(h('button', { class: 'btn btn-text', title: 'Look for a free legal copy and attach it, so you can highlight and ask about it here', onclick: (e) => getPdf(n, e.currentTarget) }, 'Get the PDF'));
       const inp = h('input', { type: 'file', accept: 'application/pdf,.pdf', hidden: true });
-      const btn = h('button', { class: 'btn', title: 'Attach a PDF file to this paper', onclick: () => inp.click() }, 'Attach PDF');
+      const btn = h('button', { class: view ? 'btn btn-text' : 'btn', title: 'Attach a PDF file to this paper', onclick: () => inp.click() }, 'Attach PDF');
       inp.addEventListener('change', () => { const f = inp.files[0]; inp.value = ''; if (f) attachPdf(n.id, f, btn); });
       acts.push(btn, inp);
     }
     if (n.s2_id || n.doi || n.arxiv) {
       const busy = S.ops.has('discover:' + n.id);
-      acts.push(h('button', { class: 'btn' + (busy ? ' busy' : ''), disabled: busy, title: 'References, citations and recommendations from Semantic Scholar', onclick: (e) => runDiscover(n.id, e.currentTarget) }, 'Find related papers'));
+      const have = S.discover.has(n.id);
+      acts.push(h('button', { class: 'btn' + (busy ? ' busy' : ''), disabled: busy, 'data-act': 'discover',
+        title: have ? 'Jump to the related papers below' : 'References, citations and recommendations from Semantic Scholar',
+        onclick: (e) => (have ? showDiscover(n.id) : runDiscover(n.id, e.currentTarget)) }, have ? 'Show related papers' : 'Find related papers'));
     }
     if (n.type === 'paper') {
       acts.unshift(h('button', { class: 'btn btn-ask-paper needs-claude', 'data-act': 'ask-paper', title: `Talk with ${ai()} about this paper: it reads the paper and your notes on it`, onclick: () => chatAboutPaper(n.id) }, 'Ask about this paper'));
@@ -2412,19 +2503,47 @@
     S.ops.set(key, { start: Date.now() });
     if (btn) { btn.disabled = true; btn.classList.add('busy'); }
     const slot = () => (S.cur && S.cur.id === id ? $('#discover-slot', pbody) : null);
-    if (slot()) fillDiscover(slot(), id);
+    if (slot()) { fillDiscover(slot(), id); showDiscover(id, false); } // the results appear below the fold: go there
+    let found = null;
     try {
       const data = await api('GET', `/api/notes/${encodeURIComponent(id)}/discover`);
       const prev = S.discover.get(id);
       const tab = prev ? prev.tab : (data.references || []).length ? 'references' : (data.citations || []).length ? 'citations' : 'recommended';
       S.discover.set(id, { data, tab });
+      found = data;
     } catch (e) {
-      toastErr(e, 'Could not find related papers');
+      if (/rate-limit|rate limit|allowance/i.test(e.message || '') && window.__rbSettings)
+        toast(`Could not find related papers. ${e.message}`, 'error', { ms: 12000, action: { label: 'Add a free key', fn: () => window.__rbSettings.open('lookup') } });
+      else toastErr(e, 'Could not find related papers');
     } finally {
       S.ops.delete(key);
-      if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('busy'); }
+      if (btn && btn.isConnected) {
+        btn.disabled = false; btn.classList.remove('busy');
+        if (found) { btn.textContent = 'Show related papers'; btn.title = 'Jump to the related papers below'; btn.onclick = () => showDiscover(id); }
+      }
       if (slot()) fillDiscover(slot(), id);
     }
+    if (!found) return;
+    const c = (k) => (found[k] || []).length, total = c('references') + c('citations') + c('recommended');
+    const what = [[c('references'), 'reference', 'references'], [c('citations'), 'citing paper', 'citing papers'], [c('recommended'), 'recommendation', 'recommendations']]
+      .filter(([k]) => k).map(([k, one, many]) => `${k} ${k === 1 ? one : many}`).join(', ');
+    const title = (S.nodes.get(id) || {}).title || 'this paper';
+    if (!total) toast(`Semantic Scholar lists no related papers for “${truncate(title, 50)}”.`, 'info');
+    else if (slot()) { showDiscover(id); toast(`Found ${what}.`, 'ok'); }
+    else toast(`Found ${what} for “${truncate(title, 50)}”.`, 'ok', { ms: 8000, action: { label: 'Show', fn: () => showDiscover(id) } });
+  }
+
+  /** Bring the Related papers section into view (opening its note first if another one is open) and flash it. */
+  async function showDiscover(id, flash = true) {
+    if (!S.cur || S.cur.id !== id) await openNote(id);
+    const slot = $('#discover-slot', pbody);
+    if (!slot) return;
+    if (!slot.firstChild) fillDiscover(slot, id);
+    const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    slot.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    if (flash) { slot.classList.remove('flash'); void slot.offsetWidth; slot.classList.add('flash'); }
+    const tab = slot.querySelector('[role="tab"].on');
+    if (flash && tab) tab.focus({ preventScroll: true });
   }
 
   function fillDiscover(slot, id) {
@@ -2443,7 +2562,9 @@
       const cands = st.data[st.tab] || [];
       if (!cands.length) list.appendChild(h('div', { class: 'empty-list', text: 'Semantic Scholar has nothing listed here.' }));
       for (const c of cands) list.appendChild(candidateRow(c, id, slot));
-      kids.push(tabs, list);
+      kids.push(tabs);
+      if (st.data.note) kids.push(h('p', { class: 'disc-src', text: st.data.note }));
+      kids.push(list);
     }
     const close = st ? head(h('button', { class: 'btn btn-sm btn-text', type: 'button', text: 'Hide', onclick: () => { S.discover.delete(id); fillDiscover(slot, id); } })) : null;
     slot.replaceChildren(section('Related papers', null, head(h('div', { class: 'spacer' })), close, kids));
@@ -2455,12 +2576,14 @@
     if (c.in_library) {
       right = h('button', { class: 'btn btn-sm btn-text', type: 'button', title: 'Already in your library. Open it.', text: 'In library', onclick: () => openNote(c.in_library, { center: true }) });
     } else {
-      right = h('button', { class: 'btn btn-sm', type: 'button', title: 'Add to your library and link it to this note' }, 'Add');
-      right.onclick = async () => {
-        if (!c.s2_id) { toast("This paper has no Semantic Scholar id, so it can't be added from here. Try adding it by title.", 'error'); return; }
-        right.disabled = true; right.replaceChildren(h('span', { class: 'spin' }), 'Adding');
+      const addBtn = right = h('button', { class: 'btn btn-sm', type: 'button', title: 'Add to your library and link it to this note' }, 'Add');
+      addBtn.onclick = async () => {
+        const q = c.doi || (c.arxiv ? 'arXiv:' + c.arxiv : '');
+        if (!c.s2_id && !q) { toast("This paper has no DOI, arXiv id or Semantic Scholar id, so it can't be added from here. Try adding it by title.", 'error'); return; }
+        addBtn.disabled = true; addBtn.replaceChildren(h('span', { class: 'spin' }), 'Adding');
         try {
-          const note = await api('POST', '/api/import/s2', { s2_id: c.s2_id, link_to: curId });
+          const note = c.s2_id ? await api('POST', '/api/import/s2', { s2_id: c.s2_id, link_to: curId })
+            : await api('POST', '/api/import/lookup', { query: q, link_to: curId });
           c.in_library = note.id;
           if (note.duplicate) toast('Already in your library. Linked it to this note.', 'info');
           else toast(`Added “${truncate(note.title, 60)}”`, 'ok', { action: { label: 'Open', fn: () => openNote(note.id, { center: true }) } });
@@ -2478,9 +2601,16 @@
     }
     const title = h('div', { class: 'r-title', text: c.title || '(untitled)' });
     const main = h('div', { class: 'r-main', title: c.title || '' }, title, h('div', { class: 'r-sub' }, sub.map((x) => h('span', { text: String(x) }))));
+    const view = c.in_library ? null : onlineView(c);
     if (c.in_library) main.onclick = () => openNote(c.in_library, { center: true });
-    else if (c.url && /^https?:/i.test(c.url)) main.onclick = () => window.open(c.url, '_blank', 'noopener');
+    else if (view) { main.onclick = () => window.open(view.href, '_blank', 'noopener,noreferrer'); main.title = `${c.title || ''}\n\n${view.title}`; }
     else main.style.cursor = 'default';
+    if (view) {
+      const acc = ACCESS[c.access];
+      const v = h('a', { class: 'btn btn-sm btn-text', href: view.href, target: '_blank', rel: 'noopener noreferrer', title: acc ? `${view.title}\n${acc.tip}` : view.title });
+      v.innerHTML = acc ? `<span class="access-ico ${c.access}" aria-label="${esc(acc.text)}">${acc.icon}</span>View` : 'View';
+      right = h('span', { class: 'cand-acts' }, v, right);
+    }
     return h('div', { class: 'row cand' },
       h('span', { class: 'tdot ' + (c.in_library ? 'paper' : 'hollow') }),
       main,
@@ -2818,6 +2948,47 @@
     } finally { t.done(); }
   }
 
+  /** Where to read a paper you don't have the PDF of, in the browser (nothing is downloaded or stored):
+   *  arXiv's PDF, else the open-access PDF Semantic Scholar knows, else the publisher's page via the DOI,
+   *  else the saved link, else its Semantic Scholar page. */
+  function onlineView(n) {
+    const arx = String(n.arxiv || '').replace(/^arxiv:/i, '').trim();
+    if (arx) return { href: `https://arxiv.org/pdf/${encodeURIComponent(arx).replace(/%2F/g, '/')}`, title: 'Read it on arXiv (opens a new tab; nothing is downloaded)' };
+    if (httpUrl(n.oa_pdf)) return { href: httpUrl(n.oa_pdf), title: 'Read the open-access PDF online (opens a new tab)' };
+    if (n.doi) return { href: 'https://doi.org/' + encodeURI(n.doi), title: 'Open it on the publisher’s site through its DOI (your browser, your access)' };
+    if (httpUrl(n.url)) return { href: httpUrl(n.url), title: 'Open its page (new tab)' };
+    if (n.s2_id) return { href: 'https://www.semanticscholar.org/paper/' + encodeURIComponent(n.s2_id), title: 'Open it on Semantic Scholar' };
+    return null;
+  }
+
+  /** A quiet note on whether a paper can be read without an account: an open or closed lock and a few words,
+   *  the details on hover. When a free copy exists elsewhere (a repository, the author's page), `link` is
+   *  pointed at it. Unknown access shows nothing. */
+  const LOCK_OPEN = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 5.8-1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+  const LOCK_SHUT = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+  const ACCESS = {
+    open: { icon: LOCK_OPEN, text: 'Free to read', tip: 'A free, legal copy is online, so you won’t need an account.' },
+    free: { icon: LOCK_OPEN, text: 'Free on the publisher’s site', tip: 'Free to read on the publisher’s site, which may ask you to register (no payment).' },
+    closed: { icon: LOCK_SHUT, text: 'Paywalled', tip: 'The publisher asks for a subscription or an account. Your library’s login usually works; or attach the PDF if you have it.' },
+  };
+  function accessBadge(state, el = h('span', { class: 'access-badge' })) {
+    const a = ACCESS[state];
+    if (!a) { el.hidden = true; return el; }
+    el.hidden = false; el.className = `access-badge ${state}`; el.title = a.tip;
+    el.innerHTML = `${a.icon}<span>${esc(a.text)}</span>`;
+    return el;
+  }
+  async function showAccess(n, link, badge, retarget = true) {
+    let r;
+    try { r = await api('GET', `/api/notes/${encodeURIComponent(n.id)}/access`); } catch { return; }
+    if (!badge.isConnected) return;
+    accessBadge(r.state, badge);
+    if (retarget && httpUrl(r.url) && r.state !== 'closed') {
+      link.href = httpUrl(r.url);
+      link.title = r.via === 'arxiv' ? 'Read it on arXiv (opens a new tab; nothing is downloaded)' : 'Read the free copy online (opens a new tab; nothing is downloaded)';
+    }
+  }
+
   /** "Get the PDF" on a linked paper: (a) a free legal copy (the server's open-access lookup), else
    *  (b) the browser extension's "Save PDF too" on the article page, which uses the user's own access. */
   async function getPdf(n, btn) {
@@ -2957,6 +3128,7 @@
     if (e.pointerType === 'touch') return;
     const r = S.hover ? null : labelHit(e);
     const id = r ? r.cid : null;
+    if (r && S.hoverLink) { S.hoverLink = null; }
     if (id !== (S.hoverRegion ?? null)) { S.hoverRegion = id; graphEl.style.cursor = r ? 'pointer' : (S.hover ? 'pointer' : ''); kick(50); }
   });
   graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
