@@ -514,3 +514,47 @@ def test_status_text_in_app_js():
     assert "'Claude ready'" not in js and "st-model" in js  # name (+ model) only; the dot shows ready
     s = (ROOT / "static" / "settings.js").read_text()
     assert "id: 'agent.choose'" in s and "It never needs an API key." in s
+
+
+def test_chat_about_one_paper(server):
+    """Ask about this paper: the agent gets that paper (whole text when it fits) and your shareable notes on it,
+    not the rest of the library; private notes on it stay out; a private paper is refused; related is opt-in."""
+    srv, c = server
+    from app import agents
+    fb = FakeBackend("fake", script=["About the focus paper."] * 6)
+    agents.register(fb)
+    try:
+        c.put("/api/agents/active", json={"id": "fake"})
+        focus = c.post("/api/notes", json={"type": "paper", "title": "Sheath edge criterion in Hall thrusters",
+                                             "abstract": "We revisit the Bohm criterion at the sheath edge."}).json()
+        srv.store.text_path(focus["id"]).write_text(
+            "[[page 1]]\nThe Bohm criterion requires ions to enter the sheath at the sound speed.\n"
+            "[[page 2]]\nSecondary electron emission weakens the sheath potential drop.", encoding="utf-8")
+        c.post("/api/notes", json={"type": "fragment", "parent": focus["id"], "quote": "sound speed",
+                                   "body": "My shareable highlight about ion entry."})
+        c.post("/api/notes", json={"type": "note", "parent": focus["id"], "title": "Private hunch", "private": True,
+                                   "body": "Unpublished idea about emissive walls changing the criterion."})
+        other = c.post("/api/notes", json={"type": "paper", "title": "Bohm criterion in magnetized sheaths",
+                                             "abstract": "Bohm criterion sheath edge magnetized plasma sound speed ions."}).json()
+        srv.store.text_path(other["id"]).write_text("[[page 1]]\nMagnetized presheath and the Bohm criterion.", encoding="utf-8")
+        q = {"question": "What does the Bohm criterion require here?", "history": []}
+        r = c.post("/api/chat", json={**q, "paper": focus["id"]})
+        assert r.status_code == 200 and r.json()["paper"] == focus["id"]
+        prompt, _ = fb.prompts[-1]
+        assert "FOCUS PAPER" in prompt and "Secondary electron emission" in prompt and "[[page 2]]" in prompt
+        assert "My shareable highlight" in prompt
+        assert "Unpublished idea" not in prompt and "Private hunch" not in prompt
+        assert "Magnetized presheath" not in prompt  # the rest of the library stays out by default
+        assert [s["id"] for s in r.json()["sources"]] == [focus["id"]]
+        r = c.post("/api/chat", json={**q, "paper": focus["id"], "include_related": True})
+        assert r.status_code == 200
+        assert "RELATED PAPERS" in fb.prompts[-1][0] and "Magnetized presheath" in fb.prompts[-1][0]
+        r = c.post("/api/chat/stream", json={**q, "paper": focus["id"]})
+        assert _sse_events(r.text)[-1][0] == "done"
+        c.post(f"/api/notes/{focus['id']}/privacy", json={"private": True})
+        n = len(fb.prompts)
+        r = c.post("/api/chat", json={**q, "paper": focus["id"]})
+        assert r.status_code == 403 and "private" in r.json()["detail"] and len(fb.prompts) == n
+        assert c.post("/api/chat", json={**q, "paper": "nope-404"}).status_code == 404
+    finally:
+        agents.unregister("fake")

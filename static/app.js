@@ -62,7 +62,10 @@
     discover: new Map(),    // note id -> {data, tab}
     explain: null,          // {a, b}
     explainCache: new Map(),
-    chat: [],               // [{role, content, sources?, error?}]
+    chat: [],               // [{role, content, sources?, error?}] — the conversation for the current scope
+    chatPaper: null,        // {id, title} when talking about one paper; null = the whole library
+    chatRelated: false,     // with chatPaper: also draw on the most similar papers
+    chatThreads: {},        // scope key ('' = library, else paper id) -> conversation, so each paper keeps its own
     chatBusy: false,
     quoteIdx: new Map(),    // fragment id -> quote (for search)
     crawled: new Set(),     // parent ids whose fragments we've indexed
@@ -1884,6 +1887,9 @@
       acts.push(h('button', { class: 'btn' + (busy ? ' busy' : ''), disabled: busy, title: 'References, citations and recommendations from Semantic Scholar', onclick: (e) => runDiscover(n.id, e.currentTarget) }, 'Find related papers'));
     }
     if (n.type === 'paper') {
+      acts.unshift(h('button', { class: 'btn btn-ask-paper needs-claude', 'data-act': 'ask-paper', title: `Talk with ${ai()} about this paper: it reads the paper and your notes on it`, onclick: () => chatAboutPaper(n.id) }, 'Ask about this paper'));
+    }
+    if (n.type === 'paper') {
       const src = { crossref: 'Crossref', datacite: 'DataCite', arxiv: 'arXiv', pubmed: 'PubMed', openlibrary: 'Open Library', osti: 'OSTI', ntrs: 'NASA NTRS', 'translation-server': 'Zotero translation-server', s2: 'Semantic Scholar', page: 'the article page', zotero: 'Zotero' }[n.meta_source] || '';
       const when = n.meta_checked ? ` on ${String(n.meta_checked).slice(0, 10)}` : '';
       acts.push(h('button', { class: 'btn btn-text', 'data-act': 'refresh-metadata',
@@ -2527,10 +2533,58 @@
     setTimeout(() => $('#chat-input').focus(), 0);
   }
   function closeChat() { $('#chat').hidden = true; document.body.classList.remove('chat-open'); }
+  /** Switch the chat to talk about one paper (id) or back to the whole library (null). Each scope keeps its
+   *  own conversation. */
+  function setChatScope(id) {
+    if (S.chatBusy) { toast(`Wait for ${ai()} to finish the current answer first.`, 'info'); return false; }
+    S.chatThreads[S.chatPaper ? S.chatPaper.id : ''] = S.chat;
+    if (id) {
+      const t = (S.cur && S.cur.id === id && S.cur.title) || nodeTitle(id) || 'this paper';
+      S.chatPaper = { id, title: t };
+    } else S.chatPaper = null;
+    S.chat = S.chatThreads[id || ''] || [];
+    renderChatScope();
+    return true;
+  }
+  function chatAboutPaper(id) {
+    if (!id) return;
+    if (setChatScope(id) === false) return;
+    if (window.__rbResearch && window.__rbResearch.setMode) window.__rbResearch.setMode('quick');
+    openChat();
+  }
+  function renderChatScope() {
+    const bar = $('#chat-scope'), title = $('.chat-title');
+    const ta = $('#chat-input');
+    if (!bar) return;
+    if (!S.chatPaper) {
+      bar.hidden = true;
+      if (title) title.textContent = 'Ask your library';
+      if (ta) ta.placeholder = 'Ask about your papers and notes';
+      document.body.classList.remove('chat-scoped');
+      return;
+    }
+    bar.hidden = false;
+    document.body.classList.add('chat-scoped');
+    if (title) title.textContent = 'This paper';
+    $('.cs-title', bar).textContent = S.chatPaper.title;
+    $('.cs-title', bar).title = S.chatPaper.title;
+    $('#cs-related').checked = !!S.chatRelated;
+    if (ta) ta.placeholder = 'Ask anything about this paper';
+  }
 
   function renderChat() {
     const kids = [];
-    if (!S.chat.length) {
+    if (!S.chat.length && S.chatPaper) {
+      const examples = [
+        'What is the main result, and what evidence supports it?',
+        'Walk me through the key derivation step by step.',
+        'What assumptions does this rely on, and where could it break?',
+        'How does this compare with what I wrote in my summary?',
+      ];
+      kids.push(h('div', { class: 'chat-empty' },
+        `${ai()} reads this paper (and your notes on it) and answers with page citations. Your private notes are never included.`,
+        examples.map((x) => h('button', { type: 'button', class: 'ex', text: x, onclick: () => { const ta = $('#chat-input'); ta.value = x; ta.dispatchEvent(new Event('input')); ta.focus(); } }))));
+    } else if (!S.chat.length) {
       const examples = [
         'Which papers in my library discuss plasma instabilities, and how do their approaches differ?',
         'Summarise what my notes say about attention mechanisms.',
@@ -2551,7 +2605,7 @@
           h('div', { class: 'machine-head' }, h('span', { text: `${ai()}, writing…` })),
           h('div', { class: 'msg-body md chat-live', html: partialMD(m.live) }))));
       } else if (m.pending) {
-        kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(`${ai()} is reading your library`, m.start))));
+        kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatPaper ? `${ai()} is reading the paper` : `${ai()} is reading your library`, m.start))));
       } else if (m.error) {
         kids.push(h('div', { class: 'msg error' }, h('div', { class: 'msg-role', text: `${ai()} couldn't answer` }), h('div', { class: 'msg-body', text: m.content }),
           h('div', { class: 'actions' }, h('button', { class: 'btn btn-sm needs-claude', type: 'button', text: 'Retry', onclick: () => retryChat(i) }))));
@@ -2602,7 +2656,9 @@
     if (claudeBlocked()) return;
     question = question.trim();
     if (!question) return;
-    if (window.__rbResearch && window.__rbResearch.wants(opts)) return window.__rbResearch.send(question); // Research mode
+    // Research mode searches the whole library; a chat about one paper always answers from that paper
+    if (!S.chatPaper && window.__rbResearch && window.__rbResearch.wants(opts)) return window.__rbResearch.send(question);
+    const scope = S.chatPaper ? { paper: S.chatPaper.id, include_related: !!S.chatRelated } : {};
     const history = S.chat.filter((m) => !m.pending && !m.error && !m.failed).map((m) => ({ role: m.role, content: m.content }));
     const userMsg = { role: 'user', content: question };
     const pending = { role: 'assistant', pending: true, start: Date.now() };
@@ -2621,7 +2677,7 @@
     try {
       let r;
       try {
-        r = await apiStream('/api/chat/stream', { question, history }, (t) => {
+        r = await apiStream('/api/chat/stream', { question, history, ...scope }, (t) => {
           if (!pending.live) { pending.live = t; renderChat(); }
           live.push(t);
         });
@@ -2632,7 +2688,7 @@
         console.warn('chat streaming failed, retrying without streaming:', e);
         pending.live = '';
         renderChat();
-        r = await api('POST', '/api/chat', { question, history });
+        r = await api('POST', '/api/chat', { question, history, ...scope });
       }
       delete pending.live;
       Object.assign(pending, { pending: false, content: r.answer || '', sources: r.sources || [], passages: r.passages || [] });
@@ -2673,6 +2729,9 @@
   void chatLE;
   $('#chat-input').addEventListener('input', (e) => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight + 2) + 'px'; });
   $('#btn-chat-clear').addEventListener('click', () => { if (S.chatBusy) { toast('Wait for the current answer to finish first.', 'info'); return; } S.chat = []; renderChat(); });
+  $('#cs-clear').addEventListener('click', () => { if (setChatScope(null) !== false) { renderChat(); $('#chat-input').focus(); } });
+  $('#cs-open').addEventListener('click', () => S.chatPaper && openNote(S.chatPaper.id, { center: true }));
+  $('#cs-related').addEventListener('change', (e) => { S.chatRelated = e.target.checked; });
   $('#btn-chat-close').addEventListener('click', closeChat);
   $('#btn-chat').addEventListener('click', () => {
     if (!$('#chat').hidden) { closeChat(); return; }
@@ -2929,6 +2988,14 @@
       aliases: ['cluster', 'topic', 'zoom to region', 'isolate', 'only this group'],
       description: 'Zooms to one region and dims the rest. Click a region\'s name on the graph to do the same; Esc shows everything again.',
       run: chooseRegion });
+    CMD.register({ id: 'chat.aboutPaper', title: 'Ask about this paper', group: 'Note',
+      when: () => !!(S.cur && S.cur.type === 'paper'),
+      aliases: ['talk about paper', 'chat with paper', 'discuss', 'explain this paper', 'question this paper'],
+      description: 'Opens a conversation about the open paper only: the agent reads the paper and your notes on it.',
+      run: () => chatAboutPaper(S.cur.id) });
+    CMD.register({ id: 'chat.wholeLibrary', title: 'Ask about the whole library', group: 'Research',
+      when: () => !!S.chatPaper, description: 'Switches the chat back from one paper to your whole library.',
+      run: () => { if (setChatScope(null) !== false) { renderChat(); openChat(); } } });
     CMD.register({ id: 'graph.showAllRegions', title: 'Show all regions', group: 'Graph', when: () => S.focusCluster != null,
       description: 'Leaves region focus and fits the whole library.', run: () => unfocusRegion() });
     CMD.register({ id: 'nav.search', title: 'Search your library', group: 'Navigate', keys: '/', aliases: ['find', 'filter', 'look up'],
@@ -3018,7 +3085,7 @@
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
     setNodeFilter(fn) { S.nodeFilter = typeof fn === 'function' ? fn : null; kick(400); },
     setHidden(set) { S.hidden = set && set.size ? set : null; S.focusCache = null; configureLinkForce(); kick(400); },
-    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, nodeType, working, claudeBlocked, confirmDialog,
+    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, setChatScope, nodeType, working, claudeBlocked, confirmDialog,
     rerenderCritique() { const s = S.cur && $('#summary-sec', pbody); if (s && s.__refresh) s.__refresh(); },
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },

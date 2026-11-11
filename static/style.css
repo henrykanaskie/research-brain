@@ -1000,3 +1000,20 @@ html .tp-add:focus { border-style: solid; border-color: var(--ink-2); background
   .region-focus .rf-label { display: none; }
   .region-focus .rf-name { font-size: 15px; }
 }
+
+/* chat about one paper: a scope bar under the chat header */
+.chat-scope { padding: 10px 18px 10px; border-bottom: 1px solid var(--rule); background: color-mix(in srgb, var(--machine) 5%, var(--sheet)); }
+.chat-scope[hidden] { display: none; }
+.cs-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.cs-label { font: 12px var(--sans); font-stretch: var(--narrow); color: var(--ink-3); flex: none; }
+.cs-title { flex: 1; min-width: 0; text-align: left; border: 0; background: none; padding: 0; color: var(--ink); cursor: pointer;
+  font: italic 500 15px/1.3 var(--display); font-variation-settings: "opsz" 18; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-title:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.cs-related { display: flex; align-items: center; gap: 6px; margin-top: 6px; font: 12px var(--sans); color: var(--ink-2); cursor: pointer; }
+.cs-related input { accent-color: var(--machine); }
+@media (max-width: 900px) {
+  .cs-related { min-height: 36px; font-size: 13px; }
+  .cs-row .btn { min-height: 36px; }
+}
+/* a paper-scoped chat always answers from that paper; the library-wide Research mode doesn't apply */
+body.chat-scoped .rs-mode { display: none; }

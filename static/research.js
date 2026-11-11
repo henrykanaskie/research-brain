@@ -77,7 +77,9 @@
     bRes.setAttribute('aria-pressed', String(R.mode === 'research'));
     fast.hidden = notice.hidden = R.mode !== 'research';
     const ta = $('#chat-input');
-    if (ta) ta.placeholder = R.mode === 'research' ? `Ask a question for ${window.RB_AI || 'Claude'} to research in your library` : 'Ask about your papers and notes';
+    const scoped = window.__rb && window.__rb.S && window.__rb.S.chatPaper;
+    if (ta && scoped) ta.placeholder = 'Ask anything about this paper';
+    else if (ta) ta.placeholder = R.mode === 'research' ? `Ask a question for ${window.RB_AI || 'Claude'} to research in your library` : 'Ask about your papers and notes';
   }
   paintMode();
 

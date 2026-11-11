@@ -439,6 +439,8 @@ class ExplainIn(BaseModel):
 class ChatIn(BaseModel):
     question: str
     history: list[dict] = []
+    paper: str | None = None          # talk about one paper (its text, your notes on it) instead of the library
+    include_related: bool = False     # with `paper`: also let it draw on the most similar papers
 
 
 class S2In(BaseModel):
@@ -1282,6 +1284,9 @@ def _chat_prompt(body: ChatIn) -> tuple[str, str, dict]:
     by_id = idx["by_id"]
     if not by_id:
         raise HTTPException(400, "Your library is empty — add a paper or note first")
+    if body.paper:
+        context, sources, passages = _paper_chat_context(idx, body.paper, q, body.history, body.include_related)
+        return PAPER_CHAT_INSTRUCTION, context, {"sources": sources, "passages": passages, "paper": body.paper}
     context, sources, passages = _chat_context(idx, q, body.history)
     return CHAT_INSTRUCTION, context, {"sources": sources, "passages": passages}
 
@@ -1371,6 +1376,102 @@ def _chat_context(idx: dict, q: str, history: list[dict]) -> tuple[str, list[dic
                                "text": p["text"], "score": p["score"], "pdf": pdf_of(p["id"]),
                                **({"section": p["section"], "section_title": p.get("section_title") or p["section"]}
                                   if p.get("section") else {})}, by_id) for p in hits]
+    return context, sources, passages
+
+
+# Talking about one paper: the whole paper when it fits (so the agent can answer anything about it, not just
+# what a search happens to pick), otherwise its most relevant passages; plus your summary, notes and
+# highlights on it (unless private), and optionally the most similar papers' passages.
+PAPER_CHAT_FULLTEXT = 48000
+PAPER_CHAT_INSTRUCTION = (
+    "The student wants to talk about ONE paper (the FOCUS PAPER below). Answer their QUESTION (at the end of stdin) "
+    "about that paper: explain, critique, derive, compare with what they wrote, or help them think it through. Cite "
+    "the paper's text inline exactly as the headings show ([[note-id]] p. N, [[note-id]] §3.2, or [[note-id]]); never "
+    "invent pages. If RELATED PAPERS are included, cite them the same way and keep clear which paper says what. "
+    "Label your own general knowledge as such, and say plainly when the paper doesn't address something. Be concise "
+    "unless asked to go deep.")
+
+
+def _paper_chat_context(idx: dict, pid: str, q: str, history: list[dict], include_related: bool):
+    by_all = idx["by_id"]
+    paper = by_all.get(pid)
+    if not paper:
+        raise HTTPException(404, f"No note with id '{pid}'")
+    agent = _ai_agent()
+    if not privacy.allow_ai(paper, agent):
+        raise HTTPException(403, "This paper is marked private, so it isn't sent to an AI agent. "
+                                 "Make it shareable from its panel, or use a local model if you allowed that.")
+    by_id = _ai_visible(by_all)
+    attached = [n for n in by_id.values() if n.get("parent") == pid]
+    scope = {pid: paper, **{n["id"]: n for n in attached}}
+    related: list[str] = []
+    if include_related and idx["m"] is not None and pid in idx["ids"]:
+        i = idx["ids"].index(pid)
+        sims = idx["m"] @ idx["m"][i]
+        for j in np.argsort(-sims):
+            nid = idx["ids"][j]
+            if nid != pid and nid in by_id and by_id[nid]["type"] == "paper" and nid not in scope:
+                related.append(nid)
+            if len(related) >= 4:
+                break
+    prev = " ".join(h.get("content", "") for h in history[-2:] if h.get("role") == "user")
+    query = f"{prev}\n{q}".strip()
+    parts, budget = [], 90000
+    head = _describe(paper, with_text=False)
+    parts.append("FOCUS PAPER:\n\n" + head)
+    text = _fulltext(pid)
+    hits: list[dict] = []
+    if text and len(text) <= PAPER_CHAT_FULLTEXT:
+        parts.append(f"FULL TEXT of [[{pid}]] (page markers like [[page N]] tell you the page to cite):\n\n{text}")
+        budget -= len(text)
+    else:
+        try:
+            hits = [p for p in _chunk_index.search(query, k=18, per_note=18, notes=[paper]) if p["id"] == pid]
+        except Exception as e:
+            print(f"[research_brain] passage search failed: {e!r}")
+        blocks = []
+        for p in hits:
+            block = f"### [[{pid}]]{passage_where(p)}\n{p['text']}"
+            if budget - len(block) < 0:
+                break
+            budget -= len(block)
+            blocks.append(block)
+        if blocks:
+            parts.append("PASSAGES FROM THE FOCUS PAPER (most relevant first; each heading is how to cite it):\n\n"
+                         + "\n\n".join(blocks))
+    mine = [n for n in attached if n["type"] != "paper"]
+    if mine:
+        parts.append("THE STUDENT'S OWN NOTES AND HIGHLIGHTS ON THIS PAPER:\n\n"
+                     + "\n\n".join(_describe(n, with_text=False) for n in mine))
+    rel_hits: list[dict] = []
+    if related:
+        try:
+            rel_hits = [p for p in _chunk_index.search(query, k=8, per_note=2, notes=[by_id[r] for r in related])
+                        if p["id"] in related]
+        except Exception as e:
+            print(f"[research_brain] related passage search failed: {e!r}")
+        blocks = []
+        for p in rel_hits:
+            n = by_id[p["id"]]
+            block = f"### [[{n['id']}]]{passage_where(p)}\nFrom: {n['title']}\n{p['text']}"
+            if budget - len(block) < 0:
+                break
+            budget -= len(block)
+            blocks.append(block)
+        if blocks:
+            parts.append("RELATED PAPERS IN THE LIBRARY (for comparison):\n\n" + "\n\n".join(blocks))
+    hist = "\n".join(f"{h.get('role', 'user').upper()}: {h.get('content', '')}" for h in history[-8:])
+    context = ("\n\n---\n".join(parts) + (f"\n\n---\nEARLIER CONVERSATION:\n{hist}" if hist else "")
+               + f"\n\n---\nQUESTION: {q}")
+    order = [pid] + [r for r in related if any(p["id"] == r for p in rel_hits)]
+    sources = [{"id": nid, "title": by_id[nid]["title"], "score": 1.0 if nid == pid else 0.5} for nid in order]
+    def row(p):
+        n = by_id[p["id"]]
+        return passage_links({"id": p["id"], "title": n["title"], "page": p["page"], "src": p["src"], "text": p["text"],
+                              "score": p["score"], "pdf": p["id"] if n.get("has_pdf") else "",
+                              **({"section": p["section"], "section_title": p.get("section_title") or p["section"]}
+                                 if p.get("section") else {})}, by_id)
+    passages = [row(p) for p in hits + rel_hits]
     return context, sources, passages
 
 
