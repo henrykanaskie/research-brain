@@ -23,6 +23,8 @@ from typing import Any
 
 import yaml
 
+from . import fsio
+
 FIELDS_DEFAULTS: dict[str, Any] = {
     "type": "note",
     "title": "",
@@ -155,7 +157,14 @@ def slugify(text: str, max_len: int = 60) -> str:
     text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
     if len(text) > max_len:
         text = text[:max_len].rsplit("-", 1)[0] or text[:max_len]
-    return text or "note"
+    text = text or "note"
+    # Windows can't create files with these names, with or without an extension
+    if text in WINDOWS_RESERVED:
+        text += "-note"
+    return text
+
+
+WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{i}" for i in range(10)), *(f"lpt{i}" for i in range(10))})
 
 
 def _plain(v):
@@ -346,8 +355,8 @@ class Store:
                 note["updated"] = now_iso()
             path = self.note_path(note["id"])
             tmp = path.with_suffix(".md.tmp")
-            tmp.write_text(self._dump(note), encoding="utf-8")
-            tmp.replace(path)
+            tmp.write_text(self._dump(note), encoding="utf-8", newline="\n")
+            fsio.replace(tmp, path)
             self.rev += 1
             saved = self.get(note["id"])
             if self.meta is not None:
@@ -566,5 +575,5 @@ class Store:
         with self.lock:
             p = self._json_path(name)
             tmp = p.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-            tmp.replace(p)
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
+            fsio.replace(tmp, p)

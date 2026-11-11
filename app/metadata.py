@@ -165,7 +165,7 @@ class Cache:
                 try:
                     self.path.parent.mkdir(parents=True, exist_ok=True)
                     tmp = self.path.with_suffix(".json.tmp")
-                    tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+                    tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8", newline="\n")
                     tmp.replace(self.path)
                 except OSError:
                     pass

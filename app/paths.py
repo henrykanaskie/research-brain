@@ -93,11 +93,12 @@ def write_json_atomic(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             json.dump(data, f, ensure_ascii=False, indent=1)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        from . import fsio
+        fsio.replace(tmp, path)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -197,7 +198,7 @@ def log(message: str) -> None:
         d = user_data_dir()
         d.mkdir(parents=True, exist_ok=True)
         stamp = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
-        with (d / "storage.log").open("a", encoding="utf-8") as f:
+        with (d / "storage.log").open("a", encoding="utf-8", newline="\n") as f:
             f.write(f"{stamp} {message}\n")
     except OSError:
         pass

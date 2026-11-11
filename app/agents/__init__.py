@@ -7,6 +7,8 @@ ORDER is used. RB_AGENT (environment) overrides the saved choice, e.g. for tests
 """
 from __future__ import annotations
 
+import contextlib
+
 import importlib
 import logging
 import os
@@ -186,8 +188,10 @@ def set_active(backend_id: str, model: str | None = None, url: str | None = None
 
 
 def model_for(backend_id: str) -> str:
-    """The model saved for a backend ("" = the backend's default)."""
-    return str((_settings().get("agent_models") or {}).get(backend_id) or "")
+    """The model saved for a backend ("" = the backend's default). Inside budget.small_job() it is the
+    provider's small model instead, when "lighter model for small jobs" is on and one is known."""
+    from .. import budget
+    return budget.small_model(backend_id) or str((_settings().get("agent_models") or {}).get(backend_id) or "")
 
 
 def url_for(backend_id: str) -> str:
@@ -265,12 +269,14 @@ def join_parts(instruction: str, context: str = "") -> str:
 
 def ask_parts(instruction: str, context: str = "", system: str = "", backend: Backend | None = None,
               purpose: str = "ask", sources=None) -> str:
+    from .. import budget
     b = backend or active()
-    instruction, context = guard_send(b, purpose, instruction, context, sources=sources,
-                                      approve=lambda c: [join_parts(*c)])
-    if hasattr(b, "ask_parts"):
-        return b.ask_parts(instruction, context, system)
-    return b.ask(join_parts(instruction, context), system=system, timeout=TIMEOUT).strip()
+    with (budget.small_job() if purpose in budget.SMALL_JOBS else contextlib.nullcontext()):
+        instruction, context = guard_send(b, purpose, instruction, context, sources=sources,
+                                          approve=lambda c: [join_parts(*c)])
+        if hasattr(b, "ask_parts"):
+            return b.ask_parts(instruction, context, system)
+        return b.ask(join_parts(instruction, context), system=system, timeout=TIMEOUT).strip()
 
 
 def stream_parts(instruction: str, context: str = "", system: str = "", backend: Backend | None = None,

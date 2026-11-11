@@ -67,7 +67,7 @@ def write_private(path: Path, text: str) -> Path:
     """Write a lockdown file readable only by this user (0600) inside the private workdir."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     return path
 

@@ -8,6 +8,7 @@
 # Uses uv if you have it, else pipx, else a private virtualenv in the data folder with a link in
 # ~/.local/bin. Re-running it updates the app. Your library is never touched: it lives in
 #   macOS ~/Library/Application Support/research_brain   Linux ~/.local/share/research_brain
+# On Linux it also adds "research brain" to your desktop's app menu. Windows: use install.ps1.
 # Options (environment): RB_EMBEDDINGS=1 also installs sentence-transformers (better similarity, ~500 MB).
 set -euo pipefail
 
@@ -29,7 +30,11 @@ pick_python() {
       echo "$py"; return
     fi
   done
-  echo "research_brain needs Python 3.10 or newer (macOS: brew install python, or python.org)." >&2
+  case "$(uname -s)" in
+    Darwin) hint="brew install python, or python.org" ;;
+    *) hint="e.g. sudo apt install python3 python3-venv (Debian/Ubuntu) or sudo dnf install python3 (Fedora)" ;;
+  esac
+  echo "research_brain needs Python 3.10 or newer ($hint)." >&2
   exit 1
 }
 
@@ -64,6 +69,21 @@ else
 fi
 
 echo "→ Installed: $(research-brain --version 2>/dev/null || "$HOME/.local/bin/research-brain" --version)"
+if [ "$(uname -s)" = Linux ] && [ "${RB_NO_DESKTOP:-}" != 1 ]; then
+  BIN="$(command -v research-brain 2>/dev/null || echo "$HOME/.local/bin/research-brain")"
+  APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  mkdir -p "$APPS"
+  cat > "$APPS/research-brain.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=research brain
+Comment=Your research library and second brain
+Exec="$BIN"
+Terminal=true
+Categories=Education;Science;Office;
+DESKTOP
+  echo "  Added 'research brain' to your app menu (RB_NO_DESKTOP=1 skips this)."
+fi
 if ! command -v claude >/dev/null 2>&1; then
   echo "  The 'claude' CLI isn't installed. Everything except summaries, critiques and Ask/Research works without it."
 fi

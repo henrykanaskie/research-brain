@@ -64,7 +64,7 @@ class Embedder:
         self._cache_file = self.index_dir / f"vectors-{self.kind.replace(':', '_').replace('/', '_')}.json"
         if self.kind != "tfidf" and self._cache_file.exists():
             try:
-                self._cache = json.loads(self._cache_file.read_text())
+                self._cache = json.loads(self._cache_file.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 self._cache = {}
 
@@ -84,7 +84,7 @@ class Embedder:
 
     def _persist(self):
         tmp = self._cache_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._cache))
+        tmp.write_text(json.dumps(self._cache), encoding="utf-8", newline="\n")
         tmp.replace(self._cache_file)
 
     # ---- public ----

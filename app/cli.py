@@ -7,6 +7,7 @@
     research-brain profiles              list profiles
     research-brain profiles create NAME [--path DIR]
     research-brain profiles use NAME     open NAME from the next start on
+    research-brain backup [--schedule]   snapshot the library into local git history (nightly with --schedule)
     research-brain export FILE.zip [--no-pdfs]
     research-brain import FILE.zip --profile NAME
     research-brain move-legacy-vault     move an old ./vault into the data folder (server must be stopped)
@@ -128,7 +129,9 @@ def cmd_serve(a) -> int:
             print("Restarting research_brain…")
     except KeyboardInterrupt:
         if child and child.poll() is None:
-            child.send_signal(signal.SIGINT)
+            if sys.platform != "win32":
+                child.send_signal(signal.SIGINT)
+            # on Windows, Ctrl+C already reached the server (same console); it only needs time to stop
             try:
                 child.wait(10)
             except subprocess.TimeoutExpired:
@@ -145,6 +148,19 @@ def cmd_where(a) -> int:
                settings=str(paths.settings_path()))
     print(json.dumps(out, indent=1))
     return 0
+
+
+def cmd_backup(a) -> int:
+    from . import backup
+    try:
+        if a.schedule or a.unschedule:
+            print(backup.schedule(enable=not a.unschedule))
+            return 0
+        print(backup.snapshot(paths.resolve(a.vault, a.profile).vault))
+        return 0
+    except backup.BackupError as e:
+        print(f"backup: {e}", file=sys.stderr)
+        return 1
 
 
 def cmd_profiles(a) -> int:
@@ -250,6 +266,12 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("file")
     i.add_argument("--profile", required=True)
     i.set_defaults(fn=cmd_import)
+
+    b = sub.add_parser("backup", help="snapshot the library into its own local git history")
+    b.add_argument("--schedule", action="store_true", help="snapshot every night (Task Scheduler, systemd or launchd)")
+    b.add_argument("--unschedule", action="store_true", help="stop the nightly snapshot")
+    lib_opts(b)
+    b.set_defaults(fn=cmd_backup)
 
     m = sub.add_parser("move-legacy-vault", help="move an old ./vault into the data folder")
     m.add_argument("--port", type=int, default=int(os.environ.get("RB_PORT", "8765")))

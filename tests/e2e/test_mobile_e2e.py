@@ -173,6 +173,9 @@ def test_note_opens_as_sheet_and_swipes_closed(browser, pw, server, device):
     expect(panel).to_be_visible()
     expect(page.locator(".title-input")).to_have_value("A very long title about anomalous electron transport in magnetically shielded Hall thrusters on krypton")
     vw, vh = page.viewport_size["width"], page.viewport_size["height"]
+    # the sheet slides up; measure it once it has settled (slower machines catch it mid-transition)
+    page.wait_for_function("""(() => { const r = document.querySelector('#panel').getBoundingClientRect();
+        return Math.abs(r.bottom - innerHeight) < 2 && r.width > 0; })()""", timeout=5000)
     box = panel.bounding_box()
     assert box["x"] == 0 and abs(box["width"] - vw) < 2 and box["y"] < 60 and abs(box["y"] + box["height"] - vh) < 2
     # the title isn't clipped

@@ -108,7 +108,7 @@ class PdfHashes:
 
     def _save(self, d: dict) -> None:
         tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(d), encoding="utf-8")
+        tmp.write_text(json.dumps(d), encoding="utf-8", newline="\n")
         tmp.replace(self.path)
 
     def refresh(self) -> dict:
@@ -171,7 +171,7 @@ def _record(store, nid: str, rec: dict) -> None:
             data = {}
         data[nid] = rec
         tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
         tmp.replace(p)
 
 
@@ -255,7 +255,7 @@ def acquire(store, nid: str, meta: dict | None = None, *, email: str = "", hashe
                     break
                 shutil.move(str(tmp), store.pdf_path(nid))
                 if text.strip():
-                    store.text_path(nid).write_text(text, encoding="utf-8")
+                    store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
                 n = store.get(nid)
                 store.save(n)  # bumps the revision so indexes and open pages see the new PDF
             rec = {"state": "found", "at": _now(), "source": source, "url": url, "final_url": final,

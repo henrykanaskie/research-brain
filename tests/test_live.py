@@ -118,7 +118,9 @@ def test_critique_stream_matches_stored_critique(srv):
     stored = requests.get(f"{base}/api/notes/{n['id']}").json()
     assert stored["critique"]["text"] == done[0]["text"]
     assert stored["critiques"][-1]["text"] == done[0]["text"]  # history goes through the same helper
-    plain = requests.post(f"{base}/api/notes/{n['id']}/critique").json()
+    again = requests.post(f"{base}/api/notes/{n['id']}/critique").json()  # same summary: the last critique, not resent
+    assert again["cached"] is True and again["text"] == done[0]["text"]
+    plain = requests.post(f"{base}/api/notes/{n['id']}/critique?refresh=true").json()
     assert set(plain) == set(done[0])
     # errors before streaming are plain HTTP errors, like the non-streaming endpoint
     empty = requests.post(base + "/api/notes", json={"type": "paper", "title": "No summary"}).json()

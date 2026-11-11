@@ -114,7 +114,7 @@ def _set_cites(store, nid: str, cites: list[str]) -> bool:
         note["cites"] = cites
         path = store.note_path(nid)
         tmp = path.with_suffix(".md.tmp")
-        tmp.write_text(store._dump(note), encoding="utf-8")
+        tmp.write_text(store._dump(note), encoding="utf-8", newline="\n")
         tmp.replace(path)
         store.rev += 1
         return True

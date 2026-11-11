@@ -34,6 +34,13 @@
   .ls-profiles .cur { color: var(--red); font-size: 11.5px; }
   .ls-profiles .grow { flex: 1; }
   .ls-msg { font: 12.5px/1.5 var(--sans); color: var(--ink-2); margin-top: 8px; }
+  .ls-usage { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 76px; margin: 10px 0 4px; }
+  .ls-usage .b { display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; height: 100%; gap: 3px; }
+  .ls-usage .bar { background: var(--ink); min-height: 1px; border-radius: 1px 1px 0 0; }
+  .ls-usage .bar.zero { background: var(--rule); }
+  .ls-usage .d { font: 10.5px/1 var(--sans); color: var(--ink-3); text-align: center; font-variant-numeric: tabular-nums; }
+  .ls-usage-sum { font: 12.5px/1.5 var(--sans); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .ls-usage-sum .m { color: var(--ink-2); }
   .ls-msg.err { color: var(--red); }
   .rb-profile-tag { margin-left: 8px; font: 500 11.5px/1 var(--sans); color: var(--ink-2); border: 1px solid var(--rule);
     border-radius: 3px; padding: 3px 6px; cursor: pointer; background: transparent; }
@@ -232,6 +239,7 @@
     const agentList = el('ul', { class: 'ls-agents' });
     agentSec.append(agentList, el('p', { class: 'ls-p', text: 'Whatever you pick gets no tools: it can’t run commands, open files or browse. It only reads the text research_brain sends it and writes an answer.' }));
     renderAgents(agentList, say);
+    renderUsage(agentSec, say);
 
     // Citations (static/cite.js): default style, copy format, your .csl styles, auto-updating .bib files
     const citeSec = window.__rbCite ? window.__rbCite.settingsSection(say) : null;
@@ -257,6 +265,61 @@
       if (focus === 'privacy' && privSec) privSec.scrollIntoView({ block: 'start' });
       (focus === 'profiles' && !prof.pinned ? newName : done).focus({ preventScroll: true });
     }, 0);
+  }
+
+  // ---------------------------------------------------------------- AI usage (app/budget.py)
+  // How much each request may send, so research brain doesn't eat your plan's limits. Nothing runs the AI
+  // by itself: every request starts from something you did.
+  const USAGE_LEVELS = [
+    ['light', 'Light', 'The smallest requests. Answers lean on the best passages, chat remembers less.'],
+    ['balanced', 'Balanced', 'Recommended. A paper is sent whole only when it is short.'],
+    ['thorough', 'Thorough', 'The most context. Uses your plan’s limits fastest.'],
+  ];
+  const fmtTok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
+  const PURPOSE = { chat: 'Chat', critique: 'Critiques', research: 'Research', 'research tool': 'Research lookups',
+    explain: 'Link explanations', 'review check': 'Review checks', 'card-extraction': 'Idea cards', 'question summary': 'Question summaries' };
+  function renderUsage(sec, say) {
+    const box = el('div', {});
+    sec.append(el('div', { class: 'ls-h', text: 'AI usage', style: 'margin-top:14px' }),
+      el('p', { class: 'ls-p', text: 'Every request uses your AI plan’s limits. Choose how much research brain may send each time. The AI only runs when you ask for something.' }), box);
+    let cur = null;
+    async function save(patch, msg) {
+      try { cur = await api('/api/ai-usage', json('PUT', patch)); paint(); say(msg); }
+      catch (e) { say(e.message, true); }
+    }
+    function paint() {
+      box.replaceChildren();
+      for (const [id, name, desc] of USAGE_LEVELS) {
+        const r = el('input', { type: 'radio', name: 'ls-ai-usage', value: id, id: `ls-ai-usage-${id}` });
+        r.checked = cur.level === id;
+        r.addEventListener('change', () => { if (r.checked) save({ level: id }, `AI usage: ${name}.`); });
+        box.append(el('label', { class: 'ls-check', for: `ls-ai-usage-${id}` }, r,
+          el('span', {}, el('b', { text: name }), document.createTextNode(` · ${desc}`))));
+      }
+      const lm = el('input', { type: 'checkbox', id: 'ls-light-model' });
+      lm.checked = !!cur.light_model_small_jobs;
+      lm.addEventListener('change', () => save({ light_model_small_jobs: lm.checked },
+        lm.checked ? 'Small jobs use the lighter model.' : 'Small jobs use your chosen model.'));
+      box.append(el('label', { class: 'ls-check', for: 'ls-light-model' }, lm,
+        el('span', { text: 'Use a lighter model for small jobs: explaining a link, checking a review answer, suggesting idea cards (Claude: Haiku, Gemini: Flash).' })));
+      const u = cur.usage || {};
+      const days = u.by_day || [];
+      const max = Math.max(1, ...days.map((d) => d.tokens));
+      const bars = el('div', { class: 'ls-usage', role: 'img', 'aria-label': `About ${fmtTok(u.tokens || 0)} tokens sent in the last 7 days` });
+      for (const d of days) {
+        const pct = Math.round((d.tokens / max) * 100);
+        const wd = new Date(d.day + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' });
+        bars.append(el('div', { class: 'b', title: `${d.day}: about ${fmtTok(d.tokens)} tokens` },
+          el('div', { class: 'bar' + (d.tokens ? '' : ' zero'), style: `height:${d.tokens ? `calc((100% - 16px) * ${Math.max(4, pct) / 100})` : '1px'}` }),
+          el('div', { class: 'd', text: wd })));
+      }
+      const top = (u.by_purpose || []).slice(0, 3).map((p) => `${PURPOSE[p.purpose] || p.purpose} ${fmtTok(p.tokens)}`).join(' · ');
+      box.append(el('div', { class: 'ls-h', text: 'Last 7 days', style: 'margin-top:12px' }), bars,
+        el('div', { class: 'ls-usage-sum' }, document.createTextNode(`About ${fmtTok(u.tokens || 0)} tokens in ${u.requests || 0} request${u.requests === 1 ? '' : 's'}`),
+          top ? el('span', { class: 'm', text: ` · ${top}` }) : null),
+        el('p', { class: 'ls-p', text: 'An estimate of what research brain sent (characters ÷ 4). Your agent’s replies and its own overhead are not included.' }));
+    }
+    api('/api/ai-usage').then((d) => { cur = d; paint(); }).catch((e) => box.replaceChildren(el('p', { class: 'ls-p', text: `Couldn’t load AI usage: ${e.message}` })));
   }
 
   // ---------------------------------------------------------------- AI agent choice

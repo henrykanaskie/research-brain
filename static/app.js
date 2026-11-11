@@ -1993,7 +1993,7 @@
     box.replaceChildren(...kids.filter(Boolean));
   }
 
-  async function runCritique(id) {
+  async function runCritique(id, fresh = false) {
     const sec = $('#summary-sec', pbody);
     const btn = sec && $('.needs-claude', sec);
     if (claudeBlocked(btn)) return;
@@ -2015,7 +2015,7 @@
     try {
       let r;
       try {
-        r = await apiStream(`/api/notes/${encodeURIComponent(id)}/critique/stream`, undefined, (t) => {
+        r = await apiStream(`/api/notes/${encodeURIComponent(id)}/critique/stream${fresh ? '?refresh=true' : ''}`, undefined, (t) => {
           if (!op.live) { op.live = t; refresh(); } // first words: swap the spinner for the live box
           live.push(t);
         });
@@ -2026,7 +2026,13 @@
         console.warn('critique streaming failed, retrying without streaming:', e);
         op.live = '';
         refresh();
-        r = await api('POST', `/api/notes/${encodeURIComponent(id)}/critique`);
+        r = await api('POST', `/api/notes/${encodeURIComponent(id)}/critique${fresh ? '?refresh=true' : ''}`);
+      }
+      if (r.cached) {
+        // the summary and paper are what the last critique read: it was shown again, nothing was sent
+        toast("Your summary hasn't changed since the last critique, so that one is shown. Nothing was sent.", 'info',
+          { action: { label: 'Run again', fn: () => runCritique(id, true) } });
+        return;
       }
       const crit = { text: r.text, at: r.at, summary_snapshot: r.summary_snapshot ?? snapshot };
       if (S.cur && S.cur.id === id) { S.cur.critique = crit; S.cur.critiques = [...(S.cur.critiques || []), crit]; }

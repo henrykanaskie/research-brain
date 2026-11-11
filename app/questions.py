@@ -177,7 +177,7 @@ def load(store, qid: str) -> dict:
 def _save(store, qid: str, data: dict) -> None:
     p = _path(store, qid)
     tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
     tmp.replace(p)
     REV[0] += 1
 

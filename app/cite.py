@@ -449,7 +449,9 @@ def set_citekey(store, nid: str, key: str) -> dict:
 def ensure_keys(store, ids: list[str], notes: list[dict] | None = None) -> dict[str, str]:
     """Keys for `ids`, persisting any that were only computed so far. Ids that aren't notes are skipped."""
     with store.lock:
-        notes = store.all() if notes is None else notes
+        # read the notes inside the lock: a snapshot taken before it can predate a key the user just set,
+        # and persisting a key computed from it would overwrite theirs
+        notes = store.all()
         keys = assign_keys(notes)
         out = {}
         for nid in ids:
@@ -458,6 +460,10 @@ def ensure_keys(store, ids: list[str], notes: list[dict] | None = None) -> dict[
             k, persisted = keys[nid]
             if not persisted:
                 try:
+                    cur = stored_key(store.get(nid))
+                    if cur:  # set meanwhile: theirs wins
+                        out[nid] = cur
+                        continue
                     set_citekey(store, nid, k)
                 except (KeyError, OSError) as e:
                     print(f"[research_brain] couldn't save the citation key of {nid}: {e!r}")

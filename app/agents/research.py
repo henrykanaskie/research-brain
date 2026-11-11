@@ -37,13 +37,18 @@ from typing import Iterator
 
 from .base import AgentError, Backend
 
-MAX_STEPS = int(os.environ.get("RB_RESEARCH_MAX_STEPS", "6"))
+MAX_STEPS = int(os.environ.get("RB_RESEARCH_MAX_STEPS", "0"))  # 0: from the AI usage level (app/budget.py)
 BUDGET = float(os.environ.get("RB_RESEARCH_BUDGET", "150"))
 STEP_TIMEOUT = float(os.environ.get("RB_RESEARCH_STEP_TIMEOUT", "120"))
 MIN_STEP_TIMEOUT = 15.0
 MAX_REMEMBER = 2
-RESULT_CHARS = 6000        # one action's result as shown to the model
-TRANSCRIPT_CHARS = 36000   # all earlier actions + results (oldest dropped first)
+# one action's result as shown to the model, and all earlier actions + results (oldest dropped first):
+# both from the AI usage level (app/budget.py)
+
+
+def _cap(name: str) -> int:
+    from .. import budget
+    return budget.get(name)
 CHUNK = 48                 # answer text is sent to the page in pieces of this size
 
 ACTIONS = ("search", "read", "citations", "similar", "memory", "cards", "remember", "answer")
@@ -168,7 +173,7 @@ def build_prompt(context: str, transcript: list[str], steps_left: int, nudge: st
     kept: list[str] = []
     total = 0
     for block in reversed(transcript):
-        if total + len(block) > TRANSCRIPT_CHARS:
+        if total + len(block) > _cap("research_transcript_chars"):
             kept.append("(earlier lookups omitted to save space)")
             break
         kept.append(block)
@@ -225,7 +230,7 @@ def run(backend: Backend, context: str, tools, run_state, *, system: str = SYSTE
         budget: float | None = None, clock=time.monotonic) -> Iterator[dict]:
     """The research loop. `tools` is app.agent.Tools, `run_state` the app.agent.Run for this question.
     Yields run_agent-shaped events; raises AgentError (incl. ToolGuardError) from the backend."""
-    max_steps = MAX_STEPS if max_steps is None else max_steps
+    max_steps = (MAX_STEPS or _cap("research_steps")) if max_steps is None else max_steps
     budget = BUDGET if budget is None else budget
     t0 = clock()
     available = set(tools.available())
@@ -312,7 +317,8 @@ def run(backend: Backend, context: str, tools, run_state, *, system: str = SYSTE
             if name == "remember" and not err and not text.startswith("Not saved"):
                 remembered += 1
             yield {"type": "tool_result", "id": tid, "is_error": err, "text": text}
-            body = text if len(text) <= RESULT_CHARS else text[:RESULT_CHARS] + "\n… (cut)"
+            rc = _cap("research_result_chars")
+            body = text if len(text) <= rc else text[:rc] + "\n… (cut)"
             if err:  # "No note with id '<a guessed private id>'" must not echo the id back
                 try:
                     from .. import privacy

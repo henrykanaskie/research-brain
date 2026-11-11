@@ -233,7 +233,7 @@ class ChunkIndex:
     def _save(self) -> None:
         jf, nf = self._files(self._kind)
         tmp = jf.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"notes": self._notes, "rows": self._rows}, ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps({"notes": self._notes, "rows": self._rows}, ensure_ascii=False), encoding="utf-8", newline="\n")
         tmp.replace(jf)
         if self._kind != "tfidf" and self._m is not None:
             tmpn = nf.with_name(nf.stem + ".tmp.npy")

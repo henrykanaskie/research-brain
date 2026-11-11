@@ -574,7 +574,8 @@ def test_chat_about_a_long_paper_includes_the_page_being_read(server, monkeypatc
     """A paper too long to send whole goes as its best passages, plus the full page the student is on."""
     srv, c = server
     from app import agents
-    monkeypatch.setattr(srv, "PAPER_CHAT_FULLTEXT", 200)
+    real = srv.budget.get
+    monkeypatch.setattr(srv.budget, "get", lambda name: 200 if name == "paper_full_chars" else real(name))
     fb = FakeBackend("fake", script=["ok"] * 3)
     agents.register(fb)
     try:

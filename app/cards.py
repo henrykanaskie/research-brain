@@ -467,7 +467,7 @@ class CardStore:
             p = self.path(pid)
             body = {"paper": pid, "cards": data.get("cards") or [], "extractions": (data.get("extractions") or [])[-10:]}
             tmp = p.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(body, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+            tmp.write_text(json.dumps(body, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
             tmp.replace(p)
             self.rev += 1
             self._ids = None
@@ -1022,7 +1022,7 @@ class CardIndex:
                 try:
                     self.cs.index_dir.mkdir(parents=True, exist_ok=True)
                     tmp = self._cache_file().with_suffix(".tmp")
-                    tmp.write_text(json.dumps(cache), encoding="utf-8")
+                    tmp.write_text(json.dumps(cache), encoding="utf-8", newline="\n")
                     tmp.replace(self._cache_file())
                 except OSError:
                     pass
@@ -1092,7 +1092,7 @@ class CardIndex:
         try:
             self.cs.index_dir.mkdir(parents=True, exist_ok=True)
             tmp = f.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"sig": sig, "links": out}, ensure_ascii=False), encoding="utf-8")
+            tmp.write_text(json.dumps({"sig": sig, "links": out}, ensure_ascii=False), encoding="utf-8", newline="\n")
             tmp.replace(f)
         except OSError:
             pass

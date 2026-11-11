@@ -77,25 +77,19 @@ class ClaudeError(RuntimeError):
 
 
 def _candidates() -> list[str]:
+    from . import procs
     home = Path.home()
-    paths = [
-        os.environ.get("RB_CLAUDE_BIN", ""),
-        shutil.which("claude") or "",
-        str(home / ".local/bin/claude"),
-        str(home / ".claude/local/claude"),
-        "/opt/homebrew/bin/claude",
-        "/usr/local/bin/claude",
-        str(home / ".homebrew/bin/claude"),
-        str(home / ".npm-global/bin/claude"),
-        str(home / ".bun/bin/claude"),
-    ]
-    paths += sorted(glob.glob(str(home / ".nvm/versions/node/*/bin/claude")), reverse=True)
+    paths = [os.environ.get("RB_CLAUDE_BIN", ""), shutil.which("claude") or ""]
+    for nm in procs.exe_names("claude"):
+        paths += [str(home / ".claude/local" / nm)] + [str(d / nm) for d in procs.install_dirs()]
+        paths += sorted(glob.glob(str(home / f".nvm/versions/node/*/bin/{nm}")), reverse=True)
     return [p for p in paths if p]
 
 
 def find_claude() -> str | None:
+    from . import procs
     for p in _candidates():
-        if os.path.isfile(p) and os.access(p, os.X_OK):
+        if procs.runnable(p):
             return p
     return None
 
@@ -318,11 +312,16 @@ def ask_stream(instruction: str, context: str = "", system: str = "", heartbeat:
 
 def _run_stream(cmd: list[str], stdin: str, env: dict, state: dict, heartbeat: float | None):
     """Run one stream-json CLI process, yielding text deltas. Sets state ok/code/stderr/error."""
+    from . import procs
     try:
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, encoding="utf-8", errors="replace", cwd=_workdir, env=env, bufsize=1)
+        proc = subprocess.Popen(procs.resolve(cmd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, encoding="utf-8", errors="replace", cwd=_workdir, env=env, bufsize=1,
+                                **procs.popen_kwargs())
+    except procs.UnsafeCommand as e:
+        raise ClaudeError(str(e))
     except OSError as e:
         raise ClaudeError(f"Couldn't start claude: {e}")
+    proc._rb_group = True
     lines: queue.Queue = queue.Queue()
     err_buf: list[str] = []
     timed_out = threading.Event()
@@ -409,13 +408,13 @@ def _run_stream(cmd: list[str], stdin: str, env: dict, state: dict, heartbeat: f
 
 def _kill(proc) -> None:
     """Kill a CLI process and, when it leads its own process group, its children (the MCP server)."""
-    try:
-        if os.name == "posix" and getattr(proc, "_rb_group", False):
+    from . import procs
+    if os.name == "posix" and getattr(proc, "_rb_group", False):
+        try:
             os.killpg(proc.pid, 9)
-        else:
-            proc.kill()
-    except (OSError, ProcessLookupError):
-        pass
+        except (OSError, ProcessLookupError):
+            pass
+    procs.kill_tree(proc)
 
 
 # ---------------------------------------------------------------- agent (Research mode)
@@ -473,7 +472,7 @@ def run_agent(instruction: str, context: str, system: str, mcp_config: dict, all
     allowed_set = frozenset(allowed)
     cfg_dir = Path(tempfile.mkdtemp(prefix="rb_agent_", dir=_workdir))
     cfg = cfg_dir / "mcp.json"
-    cfg.write_text(json.dumps(mcp_config), encoding="utf-8")
+    cfg.write_text(json.dumps(mcp_config), encoding="utf-8", newline="\n")
     try:
         cfg.chmod(0o600)
     except OSError:
@@ -483,13 +482,14 @@ def run_agent(instruction: str, context: str, system: str, mcp_config: dict, all
     env = _env()
     with _sema:
         try:
-            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    text=True, encoding="utf-8", errors="replace", cwd=cfg_dir, env=env,
-                                    bufsize=1, start_new_session=(os.name == "posix"))
-        except OSError as e:
+            from . import procs
+            proc = subprocess.Popen(procs.resolve(cmd), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                                    cwd=cfg_dir, env=env, bufsize=1, **procs.popen_kwargs())
+        except (OSError, ValueError) as e:  # ValueError: procs.UnsafeCommand
             shutil.rmtree(cfg_dir, ignore_errors=True)
             raise ClaudeError(f"Couldn't start claude: {e}")
-        proc._rb_group = os.name == "posix"
+        proc._rb_group = True
         try:
             yield from _agent_events(proc, context, allowed_set, budget, grace)
         finally:

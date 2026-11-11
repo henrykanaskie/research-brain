@@ -343,7 +343,12 @@ def _item_text(n: dict, parent_private: bool) -> str:
                 parts.append(v)
             elif isinstance(v, list):
                 parts += [x for x in v if isinstance(x, str)]
-    return "\n".join(p for p in parts if p)
+    # [[links]] are left out: a link names ANOTHER note (its id is that note's title in slug form), so its
+    # words are not this item's text; links to private notes are checked separately, by id and title
+    return _LINK_SPAN_RE.sub(" ", "\n".join(p for p in parts if p))
+
+
+_LINK_SPAN_RE = re.compile(r"\[\[[^\[\]\n]*\]\]")
 
 
 def _fulltext_of(nid: str) -> tuple[str, int]:
@@ -622,7 +627,7 @@ def log_send(agent, purpose: str, item_ids, n_chars: int) -> dict | None:
             except FileNotFoundError:
                 pass
             fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            with os.fdopen(fd, "a", encoding="utf-8") as f:
+            with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as f:
                 f.write(line)
     except OSError as e:
         print(f"[research_brain] couldn't write the AI log: {e!r}")

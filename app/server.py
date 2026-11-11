@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agents, citations, claude_cli, metadata, scholar, security
+from . import agents, budget, citations, claude_cli, metadata, scholar, security
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .pdftext import extract, guess_title
@@ -434,6 +434,27 @@ class ExplainIn(BaseModel):
     a: str
     b: str
     refresh: bool = False
+
+
+class AIUsageIn(BaseModel):
+    level: str | None = None              # light | balanced | thorough
+    light_model_small_jobs: bool | None = None
+
+
+@app.get("/api/ai-usage")
+def api_ai_usage():
+    """The AI usage level, its limits, and an estimate of what was sent in the last 7 days (from the AI log,
+    which holds sizes, never content)."""
+    return {**budget.settings_out(), "usage": budget.usage(privacy.read_log(5000), days=7)}
+
+
+@app.put("/api/ai-usage")
+def api_ai_usage_set(body: AIUsageIn):
+    try:
+        out = budget.save(body.level, body.light_model_small_jobs)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {**out, "usage": budget.usage(privacy.read_log(5000), days=7)}
 
 
 class ChatIn(BaseModel):
@@ -927,7 +948,7 @@ def _store_pdf(nid: str, tmp_pdf: Path, text: str) -> None:
     shutil.move(str(tmp_pdf), store.pdf_path(nid))
     shutil.rmtree(tmp_pdf.parent, ignore_errors=True)
     if text.strip():
-        store.text_path(nid).write_text(text, encoding="utf-8")
+        store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
 
 
 @app.post("/api/import/pdf", status_code=201)
@@ -1197,12 +1218,51 @@ def api_clip(body: ClipIn):
 
 
 # ---------------------------------------------------------------- Claude features
+def _same_critique(n: dict, refresh: bool) -> dict | None:
+    """The last critique, when the summary and the paper text are what it was written against: asking again
+    would spend the same tokens for the same answer. `refresh` asks anyway."""
+    last = n.get("critique") or {}
+    if refresh or not last.get("text") or last.get("summary_snapshot") != n.get("summary"):
+        return None
+    if last.get("paper_chars") != len(_fulltext(n["id"]) or ""):
+        return None
+    return {"text": last["text"], "at": last.get("at"), "summary_snapshot": last.get("summary_snapshot"), "cached": True}
+
+
 @app.post("/api/notes/{nid}/critique")
-def api_critique(nid: str):
+def api_critique(nid: str, refresh: bool = False):
     n = _get(nid)
+    hit = _same_critique(n, refresh)
+    if hit:
+        return hit
     instruction, context = _critique_prompt(n)
     answer = _ask(instruction, context, "critique", [nid])
     return _save_critique(nid, n, answer)
+
+
+def _critique_digest(n: dict, text: str, cap: int) -> str:
+    """A long paper, cut to `cap` characters for a critique: its opening (abstract, introduction), its end
+    (conclusions) and the passages closest to the student's summary, in page order where possible."""
+    head = text[: int(cap * 0.35)]
+    tail = text[-int(cap * 0.2):]
+    room = cap - len(head) - len(tail)
+    picked: list[str] = []
+    try:
+        k = budget.get("critique_passages")
+        for p in _chunk_index.search(n["summary"], k=k, per_note=k, notes=[n]):
+            if p["id"] != n["id"] or p["text"][:80] in head or p["text"][:80] in tail:
+                continue
+            block = f"[{passage_where(p).strip() or 'passage'}]\n{p['text']}"
+            if room - len(block) < 0:
+                break
+            room -= len(block)
+            picked.append(block)
+    except Exception as e:
+        print(f"[research_brain] critique passage search failed: {e!r}")
+    return ("THE PAPER IS LONG, SO THIS IS ITS OPENING, THE PASSAGES CLOSEST TO THE SUMMARY, AND ITS END "
+            "(page markers [[page N]] kept). If a judgement needs a part you can't see, say so.\n\n"
+            f"OPENING:\n{head}\n\n[…]\n\nPASSAGES CLOSEST TO THE SUMMARY:\n\n" + "\n\n".join(picked)
+            + f"\n\n[…]\n\nEND:\n{tail}")
 
 
 def _critique_prompt(n: dict) -> tuple[str, str]:
@@ -1215,8 +1275,13 @@ def _critique_prompt(n: dict) -> tuple[str, str]:
     if not n["summary"].strip():
         raise HTTPException(400, "Write your summary first — the critique compares it against the paper")
     text = _fulltext(nid)
-    source = (f"FULL PAPER TEXT (page markers [[page N]]):\n{text[:CLAUDE_CONTEXT_CHARS]}" if text
-              else f"ABSTRACT ONLY (no PDF attached):\n{n['abstract'] or '(no abstract available)'}")
+    cap = min(budget.get("critique_full_chars"), CLAUDE_CONTEXT_CHARS)
+    if text and len(text) > cap:
+        source = _critique_digest(n, text, cap)
+    elif text:
+        source = f"FULL PAPER TEXT (page markers [[page N]]):\n{text}"
+    else:
+        source = f"ABSTRACT ONLY (no PDF attached):\n{n['abstract'] or '(no abstract available)'}"
     context = (f"PAPER: {n['title']}\nAuthors: {', '.join(n['authors'][:10])} {n['year'] or ''}\n\n"
                f"{source}\n\n---\nSTUDENT'S SUMMARY:\n{n['summary']}\n\n"
                f"STUDENT'S OTHER NOTES (context only):\n{n['body'][:4000]}")
@@ -1237,7 +1302,7 @@ def _critique_prompt(n: dict) -> tuple[str, str]:
 def _save_critique(nid: str, n: dict, answer: str) -> dict:
     """Store a finished critique (n = the note as it was when the critique started) and return the
     endpoint's response JSON. Shared by the plain and streaming critique endpoints."""
-    crit = {"text": answer, "at": now_iso(), "summary_snapshot": n["summary"]}
+    crit = {"text": answer, "at": now_iso(), "summary_snapshot": n["summary"], "paper_chars": len(_fulltext(nid) or "")}
     with store.lock:  # keep every critique (history); `critique` stays the latest for compatibility
         cur = store.get(nid)
         store.set_fields(nid, critique=crit, critiques=cur["critiques"] + [crit])
@@ -1321,7 +1386,7 @@ def _chat_context(idx: dict, q: str, history: list[dict]) -> tuple[str, list[dic
             notes = [(idx["ids"][i], float(sims[i])) for i in order[:CHAT_NOTES + 64]
                      if sims[i] > 0 and idx["ids"][i] in by_id][:CHAT_NOTES]
     try:
-        hits = [p for p in _chunk_index.search(query, k=CHAT_PASSAGES, per_note=CHAT_PER_NOTE,
+        hits = [p for p in _chunk_index.search(query, k=budget.get("chat_passages"), per_note=CHAT_PER_NOTE,
                                                notes=list(by_id.values())) if p["id"] in by_id]
     except Exception as e:  # passage index trouble must not break chat: whole notes still work
         print(f"[research_brain] passage search failed: {e!r}")
@@ -1329,25 +1394,25 @@ def _chat_context(idx: dict, q: str, history: list[dict]) -> tuple[str, list[dic
     if not notes and not hits:  # nothing matched: fall back to the most recent notes
         recent = sorted(by_id.values(), key=lambda n: n["updated"], reverse=True)[:8]
         notes = [(n["id"], 0.0) for n in recent]
-    budget, pblocks = 60000, []
+    room, pblocks = 60000, []
     for p in hits:
         n = by_id[p["id"]]
         where = passage_where(p)
         what = {"text": "paper text", "abstract": "abstract", "summary": "student's summary",
                 "notes": "student's notes", "fragment": "student's fragment"}.get(p["src"], p["src"])
         block = f"### [[{n['id']}]]{where}\nFrom: {n['title']} ({what})\n{p['text']}"
-        if budget - len(block) < 0:
+        if room - len(block) < 0:
             break
-        budget -= len(block)
+        room -= len(block)
         pblocks.append(block)
     nblocks = []
     for nid, _ in notes:
         block = _describe(by_id[nid], with_text=False)
-        if budget - len(block) < 0:
+        if room - len(block) < 0:
             break
-        budget -= len(block)
+        room -= len(block)
         nblocks.append(block)
-    hist = "\n".join(f"{h.get('role', 'user').upper()}: {h.get('content', '')}" for h in history[-8:])
+    hist = "\n".join(f"{h.get('role', 'user').upper()}: {h.get('content', '')}" for h in budget.trim_history(history))
     parts = []
     if pblocks:
         parts.append("RELEVANT PASSAGES (most relevant first; each heading is how to cite it):\n\n" + "\n\n".join(pblocks))
@@ -1385,7 +1450,7 @@ def _chat_context(idx: dict, q: str, history: list[dict]) -> tuple[str, list[dic
 # Talking about one paper: the whole paper when it fits (so the agent can answer anything about it, not just
 # what a search happens to pick), otherwise its most relevant passages; plus your summary, notes and
 # highlights on it (unless private), and optionally the most similar papers' passages.
-PAPER_CHAT_FULLTEXT = 48000
+PAPER_CHAT_FULLTEXT = 48000  # the most the "thorough" AI usage level sends whole (app/budget.py decides)
 PAPER_CHAT_INSTRUCTION = (
     "The student wants to talk about ONE paper (the FOCUS PAPER below). Answer their QUESTION (at the end of stdin) "
     "about that paper: explain, critique, derive, compare with what they wrote, or help them think it through. Cite "
@@ -1419,34 +1484,36 @@ def _paper_chat_context(idx: dict, pid: str, q: str, history: list[dict], includ
             nid = idx["ids"][j]
             if nid != pid and nid in by_id and by_id[nid]["type"] == "paper" and nid not in scope:
                 related.append(nid)
-            if len(related) >= 4:
+            if len(related) >= budget.get("related_papers"):
                 break
     prev = " ".join(h.get("content", "") for h in history[-2:] if h.get("role") == "user")
     query = f"{prev}\n{q}".strip()
-    parts, budget = [], 90000
+    parts, room = [], 90000
+    full_cap = budget.get("paper_full_chars")
     head = _describe(paper, with_text=False)
     parts.append("FOCUS PAPER:\n\n" + head)
     text = _fulltext(pid)
     hits: list[dict] = []
-    if text and len(text) <= PAPER_CHAT_FULLTEXT:
+    if text and len(text) <= full_cap:
         parts.append(f"FULL TEXT of [[{pid}]] (page markers like [[page N]] tell you the page to cite):\n\n{text}")
-        budget -= len(text)
+        room -= len(text)
     else:
+        k = budget.get("paper_passages")
         try:
-            hits = [p for p in _chunk_index.search(query, k=18, per_note=18, notes=[paper]) if p["id"] == pid]
+            hits = [p for p in _chunk_index.search(query, k=k, per_note=k, notes=[paper]) if p["id"] == pid]
         except Exception as e:
             print(f"[research_brain] passage search failed: {e!r}")
         blocks = []
         for p in hits:
             block = f"### [[{pid}]]{passage_where(p)}\n{p['text']}"
-            if budget - len(block) < 0:
+            if room - len(block) < 0:
                 break
-            budget -= len(block)
+            room -= len(block)
             blocks.append(block)
         if blocks:
             parts.append("PASSAGES FROM THE FOCUS PAPER (most relevant first; each heading is how to cite it):\n\n"
                          + "\n\n".join(blocks))
-    if page and page > 0 and not (text and len(text) <= PAPER_CHAT_FULLTEXT):
+    if page and page > 0 and not (text and len(text) <= full_cap):
         # a long paper is sent as passages, so add the page they are reading in full: "this page" must work
         from .chunks import split_pages
         on_page = next((t for pg, t in split_pages(text) if pg == page), "").strip()[:12000]
@@ -1474,13 +1541,13 @@ def _paper_chat_context(idx: dict, pid: str, q: str, history: list[dict], includ
         for p in rel_hits:
             n = by_id[p["id"]]
             block = f"### [[{n['id']}]]{passage_where(p)}\nFrom: {n['title']}\n{p['text']}"
-            if budget - len(block) < 0:
+            if room - len(block) < 0:
                 break
-            budget -= len(block)
+            room -= len(block)
             blocks.append(block)
         if blocks:
             parts.append("RELATED PAPERS IN THE LIBRARY (for comparison):\n\n" + "\n\n".join(blocks))
-    hist = "\n".join(f"{h.get('role', 'user').upper()}: {h.get('content', '')}" for h in history[-8:])
+    hist = "\n".join(f"{h.get('role', 'user').upper()}: {h.get('content', '')}" for h in budget.trim_history(history))
     context = ("\n\n---\n".join(parts) + (f"\n\n---\nEARLIER CONVERSATION:\n{hist}" if hist else "")
                + f"\n\n---\nQUESTION: {q}")
     order = [pid] + [r for r in related if any(p["id"] == r for p in rel_hits)]
@@ -1789,8 +1856,12 @@ def _claude_sse(instruction: str, context: str, finish, purpose: str = "ask", so
 
 
 @app.post("/api/notes/{nid}/critique/stream")
-def api_critique_stream(nid: str):
+def api_critique_stream(nid: str, refresh: bool = False):
     n = _get(nid)
+    hit = _same_critique(n, refresh)
+    if hit:
+        return StreamingResponse(iter([live.sse("delta", {"text": hit["text"]}), live.sse("done", hit)]),
+                                 media_type="text/event-stream", headers=SSE_HEADERS)
     instruction, context = _critique_prompt(n)  # 400s happen here, before the stream starts
     return StreamingResponse(_claude_sse(instruction, context, lambda text: _save_critique(nid, n, text),
                                          "critique", [nid]),
@@ -2180,7 +2251,7 @@ def _research_seed(q: str, history: list[dict], run) -> tuple[str, list[dict]]:
     prev = " ".join(h.get("content", "") for h in history[-2:] if h.get("role") == "user")
     query = f"{prev}\n{q}".strip()
     try:
-        hits = agent_tools._passage_rows(_Lib.passages(query, agent_mod.SEED_PASSAGES, 2))
+        hits = agent_tools._passage_rows(_Lib.passages(query, budget.get("research_seed"), 2))
     except Exception as e:
         print(f"[research_brain] research pre-seed failed: {e!r}")
         hits = []
@@ -2195,7 +2266,7 @@ def _research_seed(q: str, history: list[dict], run) -> tuple[str, list[dict]]:
     if priv and not privacy.local_exception(_ai_agent()):  # findings that cite or copy a private note
         finds = [f for f in finds if not ({m[0] for m in WIKILINK_RE.findall(f.get("sources") or "")} & priv)
                  and not privacy.find_leaks(f.get("text") or "")]
-    hist = "\n".join(f"{h.get('role', 'user').upper()}: {str(h.get('content', ''))[:1500]}" for h in history[-6:])
+    hist = "\n".join(f"{h.get('role', 'user').upper()}: {str(h.get('content', ''))}" for h in budget.trim_history(history))
     parts = ["PRE-SEARCHED PASSAGES (hybrid search for the question; each heading is how to cite it):\n\n"
              + ("\n\n".join(agent_tools.fmt_passage(p) for p in hits) or "(none matched)")]
     if mem_map:
@@ -2284,7 +2355,7 @@ def _research_sse(body: ResearchIn):
             cfg = agent_mod.mcp_config(f"http://127.0.0.1:{_server_port()}", run.token, names)
             model = (agent_mod.FAST_MODEL if body.fast else None) or None
             events = claude_cli.run_agent(agent_mod.AGENT_INSTRUCTION, context, agent_mod.SYSTEM, cfg,
-                                          agent_mod.allowed_tools(names), max_turns=agent_mod.MAX_TURNS,
+                                          agent_mod.allowed_tools(names), max_turns=agent_mod.max_turns(),
                                           budget=agent_mod.BUDGET, model=model,
                                           effort=agent_mod.EFFORT or ("low" if body.fast else None))
         ended = {"reason": "done", "text": "", "tool_calls": 0, "turns": 0}
@@ -2616,7 +2687,7 @@ storage_api.install(app, store=store, resolved=RESOLVED, create_paper=_create_pa
 # Evidence is matched locally (passage index, note index, idea cards) in a background thread; nothing about a
 # question goes to an AI agent unless privacy.allow_ai says so.
 questions_api.install(app, store=store, chunk_index=_chunk_index, embedder=embedder, index_fn=index, event_bus=event_bus,
-                      passage_links=passage_links, ask=_ask)
+                      passage_links=passage_links, ask=lambda i, c, purpose="question summary", sources=None: _ask(i, c, purpose, sources))
 
 # ---------------------------------------------------------------- citing: styles, keys, .bib/RIS exports (app/cite_api.py)
 from . import cite_api  # noqa: E402

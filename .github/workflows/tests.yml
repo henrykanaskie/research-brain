@@ -5,6 +5,7 @@ on:
   pull_request:
 
 jobs:
+  # Everything, browser tests included, on Linux.
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -28,3 +29,40 @@ jobs:
           RB_FAKE_CLAUDE: "1"
           RB_EMBEDDER: tfidf
         run: python -m pytest -q tests -rs
+
+  # The app's own code on Windows and macOS, and on the oldest Python it supports.
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, python: "3.12" }
+          - { os: macos-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.10" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run tests (everything except the browser tests)
+        env:
+          RB_FAKE_CLAUDE: "1"
+          RB_EMBEDDER: tfidf
+          PYTHONUTF8: "0"
+        run: python -m pytest -q tests --ignore=tests/e2e -rs -p no:cacheprovider
+      - name: Install as a command and start it
+        shell: bash
+        run: |
+          pip install .
+          research-brain --version
+          research-brain where

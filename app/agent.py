@@ -35,7 +35,13 @@ MAX_PAGES = 3
 SEED_PASSAGES = 8
 MAX_QUERIES = 4
 BUDGET = float(os.environ.get("RB_AGENT_BUDGET", "45"))
-MAX_TURNS = int(os.environ.get("RB_AGENT_MAX_TURNS", "8"))
+MAX_TURNS = int(os.environ.get("RB_AGENT_MAX_TURNS", "0"))  # 0: from the AI usage level (app/budget.py)
+
+
+def max_turns() -> int:
+    """Claude's own tool loop: one turn per lookup, plus the turn that answers and one spare."""
+    from . import budget
+    return MAX_TURNS or budget.get("research_steps") + 2
 FAST_MODEL = os.environ.get("RB_AGENT_FAST_MODEL", "haiku").strip()
 EFFORT = os.environ.get("RB_AGENT_EFFORT", "").strip() or None
 LOCKDOWN = ("You can only use the research_brain tools listed; you cannot browse, click, open files, run code or "

@@ -12,10 +12,29 @@ Markdown files, so your library folder also opens as an Obsidian vault.
 
 ## Install and start it
 
+It runs on macOS, Windows and Linux. You need Python 3.10 or newer.
+
+**macOS and Linux**
+
 ```bash
-./install.sh        # from a checkout or release: installs the `research-brain` command (uv, pipx or a venv)
+git clone https://github.com/henrykanaskie/research-brain.git
+cd research-brain
+./install.sh        # installs the `research-brain` command (uv, pipx or a venv); Linux also gets an app-menu entry
 research-brain      # starts the app and opens the browser; Ctrl+C stops it
 ```
+
+**Windows** (PowerShell)
+
+```powershell
+git clone https://github.com/henrykanaskie/research-brain.git
+cd research-brain
+powershell -ExecutionPolicy Bypass -File .\install.ps1   # the command, plus "research brain" in the Start menu
+research-brain
+```
+
+Or double-click `research_brain.cmd` in File Explorer: it installs on first use, then starts the app.
+No Python yet? `winget install Python.Python.3.12`. If you already use `uv`, one line works on every OS:
+`uv tool install git+https://github.com/henrykanaskie/research-brain.git`.
 
 Or, without installing, from a checkout:
 
@@ -24,7 +43,7 @@ cd ~/coding_projects/research_brain
 ./run.sh            # first run builds .venv and installs deps (a few minutes), then opens the browser
 ```
 
-You can also double-click `research_brain.command` in Finder. `research-brain --version` prints the
+On a Mac you can also double-click `research_brain.command` in Finder. `research-brain --version` prints the
 version; `research-brain where` shows where your library is. Updating the app never touches your data.
 
 **Your data** lives in a per-user folder, separate from the app: `~/Library/Application Support/research_brain/`
@@ -36,8 +55,19 @@ is; **View → Library settings** offers to move it. Details, and how PDFs are o
 
 **Requirements:** Python 3.10+, plus one AI tool installed and signed in (see "Choosing an AI agent"
 below). Everything except critiques, explanations and questions works without one. For Claude Code, the
-app finds `claude` on your PATH, `~/.local/bin`, Homebrew, or nvm; if it lives somewhere else, set
-`export RB_CLAUDE_BIN=/path/to/claude`.
+app finds `claude` on your PATH, `~/.local/bin` (`%USERPROFILE%\.local\bin\claude.exe` on Windows), Homebrew,
+npm (`%APPDATA%\npm` on Windows), WinGet, Scoop, snap or nvm; if it lives somewhere else, set
+`RB_CLAUDE_BIN` to its full path. On Windows, agents installed with npm run through Node directly, never
+through `cmd.exe`, so a prompt can't be misread as a command.
+
+**Using your plan sparingly.** Every request uses your AI plan's limits, so research brain sends as little
+as each job needs. **Library settings › AI usage** sets how much: *Light*, *Balanced* (the default) or
+*Thorough*. At *Balanced*, a 12-page paper is answered from its best passages (about 2,600 tokens per
+question) instead of being sent whole (about 11,000); a critique of a long paper sends its opening, its end
+and the passages nearest your summary. Small jobs (explaining a link, checking a review answer,
+suggesting idea cards) use the provider's small model (Claude Haiku, Gemini Flash) unless you turn that
+off. Critiquing an unchanged summary shows the last critique instead of asking again. The panel shows an
+estimate of the last 7 days. Nothing calls the AI in the background.
 
 ## Choosing an AI agent
 
@@ -310,7 +340,12 @@ all work on a plane. Only the things that are online by nature need a connection
 lookups (Add by DOI, Find related papers) and Claude. `tests/test_offline.py` fails if a page ever
 loads a script or stylesheet from the internet again.
 
-## Backups and starting at login (macOS)
+## Backups and starting at login
+
+On any OS, `research-brain backup` snapshots the library into its own local git history, and
+`research-brain backup --schedule` runs it every night: a Task Scheduler task on Windows, a systemd user
+timer on Linux (or a crontab line it prints), and on macOS the launchd agents below. Git must be installed
+(`winget install Git.Git` on Windows). The rest of this section is the macOS-specific setup.
 
 `scripts/vault_backup.sh` snapshots your notes into a git repository inside the vault (by default the
 library the app opens; pass a folder to choose another). The first run

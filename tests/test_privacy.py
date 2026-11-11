@@ -127,6 +127,24 @@ def test_guard_ids_and_copied_text(lib):
         "a [[a private note]] and [[a private note]] and [[other]]"
 
 
+def test_a_private_note_linking_a_paper_does_not_block_that_paper(lib):
+    """A link's words are the linked paper's title (ids are slugs of titles), not the private note's own
+    text: fingerprinting them made every prompt that named the paper look like a leak."""
+    s, P = lib
+    paper = s.create({"type": "paper", "title": "A collisional-radiative model for krypton 2p levels in low-temperature plasmas",
+                      "private": False})
+    secret = s.create({"type": "note", "title": "Plan for the Kr CRM validation",
+                       "body": f"Compare our model against [[{paper['id']}]]. " + IDEA})
+    P.refresh()
+    cloud = FakeBackend()
+    P.guard_prompt("FOCUS PAPER: A collisional-radiative model for krypton 2p levels in low-temperature plasmas. "
+                   "The 826/758 ratio is the workhorse.", cloud)  # naming the paper is fine
+    with pytest.raises(P.PrivacyError):
+        P.guard_prompt("Context: " + IDEA, cloud)  # the note's own words still are not
+    with pytest.raises(P.PrivacyError):
+        P.guard_prompt(f"see [[{secret['id']}]]", cloud)
+
+
 def test_guard_ignores_shared_stock_phrases(lib):
     s, P = lib
     stock = ("on the other hand it is not clear that this is the case and in this paper we "

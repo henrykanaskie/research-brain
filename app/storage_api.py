@@ -161,7 +161,7 @@ def _restart(request: dict) -> bool:
     if not f:
         return False
     try:
-        Path(f).write_text(json.dumps(request), encoding="utf-8")
+        Path(f).write_text(json.dumps(request), encoding="utf-8", newline="\n")
     except OSError:
         return False
     threading.Timer(0.6, _terminate).start()
@@ -337,7 +337,7 @@ def _attach(nid: str, tmp: Path, text: str) -> None:
     with store.lock:
         shutil.move(str(tmp), store.pdf_path(nid))
         if text.strip():
-            store.text_path(nid).write_text(text, encoding="utf-8")
+            store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
         store.save(store.get(nid))
 
 
@@ -350,7 +350,7 @@ def _link_text(nid: str, text: str, url: str = "") -> bool:
         n = store.get(nid)
         if not n["has_pdf"]:
             if text.strip():
-                store.text_path(nid).write_text(text, encoding="utf-8")
+                store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
                 wrote = True
             n["source"] = "linked"
             if n["type"] == "note":
@@ -650,7 +650,7 @@ def _import_linked(body: LinkedIn) -> dict:
                 old = store.text_path(nid)
                 old_len = old.stat().st_size if old.exists() else 0
                 if text and (not old_len or (n.get("source") == "linked" and len(text.encode()) > old_len)):
-                    old.write_text(text, encoding="utf-8")
+                    old.write_text(text, encoding="utf-8", newline="\n")
                     wrote = True
                 n["source"] = "linked"
             store.save(n)
@@ -678,7 +678,7 @@ def _import_linked(body: LinkedIn) -> dict:
     with store.lock:
         n = store.get(nid)
         if text:
-            store.text_path(nid).write_text(text, encoding="utf-8")
+            store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
         n["source"] = "linked"
         store.save(n)
     added = _cites_from_references(nid, refs)

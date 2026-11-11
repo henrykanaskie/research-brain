@@ -143,7 +143,7 @@ def _write(store, t: dict) -> None:
     body = "".join(f"- [[{m}]]\n" for m in t["members"])
     p = _path(store, t["slug"])
     tmp = p.with_suffix(".md.tmp")
-    tmp.write_text(f"---\n{front}---\n{body}", encoding="utf-8")
+    tmp.write_text(f"---\n{front}---\n{body}", encoding="utf-8", newline="\n")
     tmp.replace(p)
 
 

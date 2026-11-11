@@ -345,8 +345,8 @@ def _copy_assets(static_dir: Path, dest: Path) -> None:
             shutil.copytree(s, d, ignore=shutil.ignore_patterns("LICENSE*"))
         else:
             shutil.copy2(s, d)
-    (dest / "export.css").write_text(CSS.strip() + "\n", encoding="utf-8")
-    (dest / "export.js").write_text(RENDER_JS, encoding="utf-8")
+    (dest / "export.css").write_text(CSS.strip() + "\n", encoding="utf-8", newline="\n")
+    (dest / "export.js").write_text(RENDER_JS, encoding="utf-8", newline="\n")
 
 
 def export_site(store, ids: list[str] | None = None, include_pdfs: bool = False, *, static_dir: Path,
@@ -402,11 +402,11 @@ def export_site(store, ids: list[str] | None = None, include_pdfs: bool = False,
                     shutil.copy2(src, tmp / "pdfs" / f"{n['id']}.pdf")
                     has_pdf, pdfs = True, pdfs + 1
             page = _note_page(n, frags.get(n["id"], []), where, titles, resolve, title, has_pdf)
-            (tmp / "notes" / f"{n['id']}.html").write_text(page, encoding="utf-8")
+            (tmp / "notes" / f"{n['id']}.html").write_text(page, encoding="utf-8", newline="\n")
         when = now or dt.datetime.now()
         created = f"{when.day} {when:%B %Y}"
         frag_count = sum(len(v) for v in frags.values())
-        (tmp / "index.html").write_text(_index_page(pages, frag_count, title, created), encoding="utf-8")
+        (tmp / "index.html").write_text(_index_page(pages, frag_count, title, created), encoding="utf-8", newline="\n")
         tmp.rename(out)
     except Exception:
         shutil.rmtree(tmp, ignore_errors=True)

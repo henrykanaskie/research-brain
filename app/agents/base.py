@@ -114,16 +114,18 @@ def find_executable(names: Iterable[str], extra: Iterable[str] = (), env_var: st
     cands: list[str] = []
     if env_var and os.environ.get(env_var, "").strip():
         cands.append(os.path.expanduser(os.environ[env_var].strip()))
+    from .. import procs
     cands += [shutil.which(n) or "" for n in names]
-    dirs = [home / ".local/bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin"), home / ".homebrew/bin",
-            home / ".npm-global/bin", home / ".bun/bin", home / ".volta/bin", home / "bin"]
+    dirs = procs.install_dirs()
     for n in names:
-        cands += [str(d / n) for d in dirs]
-        cands += sorted(glob.glob(str(home / f".nvm/versions/node/*/bin/{n}")), reverse=True)
+        for nm in procs.exe_names(n):
+            cands += [str(d / nm) for d in dirs]
+            cands += sorted(glob.glob(str(home / f".nvm/versions/node/*/bin/{nm}")), reverse=True)
     for e in extra:
-        cands += sorted(glob.glob(os.path.expanduser(e)), reverse=True)
+        for x in procs.exe_names(os.path.expanduser(e)):
+            cands += sorted(glob.glob(x), reverse=True)
     for p in cands:
-        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+        if procs.runnable(p):
             return p
     return None
 
@@ -186,29 +188,29 @@ def clean_env(drop: Iterable[str] = (), force: dict | None = None, keep_api_keys
 
 # ---------------------------------------------------------------- processes
 def _popen(cmd: list[str], cwd: Path | str | None, env: dict | None) -> subprocess.Popen:
+    from .. import procs
     try:
-        return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        return subprocess.Popen(procs.resolve(cmd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, encoding="utf-8", errors="replace",
                                 cwd=str(cwd) if cwd else None, env=env if env is not None else clean_env(),
-                                bufsize=1, start_new_session=(os.name == "posix"))
+                                bufsize=1, **procs.popen_kwargs())
+    except procs.UnsafeCommand as e:
+        raise AgentError(str(e))
     except OSError as e:
         raise AgentError(f"Couldn't start {os.path.basename(cmd[0]) if cmd else 'the agent'}: {e}")
 
 
 def kill_group(proc: subprocess.Popen) -> None:
     """Kill the process and everything it started (it leads its own session/process group)."""
+    from .. import procs
     if proc.poll() is not None and os.name != "posix":
         return
-    try:
-        if os.name == "posix":
-            os.killpg(proc.pid, signal.SIGKILL)
-        else:
-            proc.kill()
-    except (OSError, ProcessLookupError):
+    if os.name == "posix":
         try:
-            proc.kill()
-        except OSError:
+            os.killpg(proc.pid, signal.SIGKILL)  # the group may outlive its leader: kill it either way
+        except (OSError, ProcessLookupError):
             pass
+    procs.kill_tree(proc)
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:

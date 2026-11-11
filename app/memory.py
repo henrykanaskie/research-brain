@@ -225,7 +225,7 @@ class Memory:
         with self._locked():
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_name(f".{p.name}.{secrets.token_hex(4)}.tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
+            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
                 f.write(text)
                 f.flush()
                 os.fsync(f.fileno())
