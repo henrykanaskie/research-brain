@@ -4,9 +4,17 @@
 // Injected into the tab you are on, only when you click the button in the popup (activeTab + scripting).
 // It reads the article you are looking at, in this page as your browser shows it, and returns:
 //   - citation metadata from the page's own tags: Highwire citation_* (Google Scholar's), Dublin Core
-//     (DC.* / dcterms.*), PRISM, JSON-LD (schema.org ScholarlyArticle / Article) and Open Graph;
+//     (DC.* / dcterms.*), PRISM, JSON-LD (schema.org ScholarlyArticle / Article) and Open Graph, plus
+//     publisher-specific places: IEEE Xplore's `xplGlobal.document.metadata` (read from the inline script's
+//     text: the page's JS globals aren't visible to an extension), ScienceDirect's header markup, DOI links in
+//     an article header, data-doi attributes and per-publisher URL patterns (/doi/10..., /article/10...,
+//     journals.aps.org/<j>/abstract/10.1103/...). Identifiers: DOI, arXiv id, PMID, ISBN, OSTI and NTRS ids;
+//     bibliographic details: volume, issue, pages / article number, ISSN, publisher, journal abbreviation,
+//     conference, and a CSL type the page implies (genre). research_brain then asks Crossref & co. for the
+//     authoritative record (app/metadata.py); what the page says only fills gaps;
 //   - the article's main text, each heading turned into a [[section <heading>]] marker so research_brain
-//     can cite "§3.2"; math kept as $TeX$ where the page carries it (MathML alttext, KaTeX, MathJax 2);
+//     can cite "§3.2"; math kept as $TeX$ where the page carries it (MathML alttext / TeX annotation, KaTeX,
+//     MathJax 2 script tags incl. math/mml, MathJax 3 mjx-container with assistive MathML or data-latex);
 //   - the reference list, separately (research_brain links it to papers already in your library).
 // It never fetches anything, never reads cookies or storage, and sends nothing itself: the popup posts the
 // result to research_brain on this computer.
@@ -87,53 +95,172 @@
     try { const x = new URL(u, base); return /^https?:$/.test(x.protocol) ? x.href : ""; } catch { return ""; }
   }
 
+  /** IEEE Xplore: `xplGlobal.document.metadata = {...};` in an inline script (parsed from its text). */
+  function ieeeMeta(doc) {
+    for (const sc of doc.querySelectorAll("script:not([src])")) {
+      const t = sc.textContent || "";
+      const at = t.indexOf("xplGlobal.document.metadata");
+      if (at < 0) continue;
+      const open = t.indexOf("{", at);
+      if (open < 0) continue;
+      let depth = 0, inStr = false, esc = false, end = -1;
+      for (let i = open; i < t.length && i < open + 2_000_000; i++) {  // string-aware brace matching
+        const c = t[i];
+        if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+        if (c === '"') inStr = true;
+        else if (c === "{") depth++;
+        else if (c === "}" && --depth === 0) { end = i; break; }
+      }
+      if (end < 0) continue;
+      try { const o = JSON.parse(t.slice(open, end + 1)); if (o && typeof o === "object") return o; } catch { /* not JSON */ }
+    }
+    return null;
+  }
+
+  /** ScienceDirect's article header (it has few citation_* tags). */
+  function sciencedirectMeta(doc) {
+    if (!doc.querySelector("#publication-title, .publication-title, #author-group, .title-text")) return null;
+    const authors = [...doc.querySelectorAll("#author-group .react-xocs-alternative-link, #author-group a.author, #author-group .author")]
+      .map((a) => {
+        const g = clean((a.querySelector(".given-name") || {}).textContent), f = clean((a.querySelector(".surname") || {}).textContent);
+        return f ? [g, f].filter(Boolean).join(" ") : "";
+      }).filter(Boolean);
+    const vol = clean((doc.querySelector(".publication-volume .text-xs, .publication-volume") || {}).textContent);
+    return {
+      title: clean((doc.querySelector("h1 .title-text, span.title-text") || {}).textContent),
+      authors: [...new Set(authors)],
+      venue: clean((doc.querySelector(".publication-title-link, #publication-title a, h2.publication-title") || {}).textContent),
+      doi: doiOf((doc.querySelector("a.doi, a.anchor.doi") || {}).getAttribute?.("href") || ""),
+      volume: (/Volume\s+(\w+)/i.exec(vol) || [])[1] || "", year: (/\b(1[5-9]\d\d|2[01]\d\d)\b/.exec(vol) || [])[1] || "",
+      article: (/,\s*(\d{5,7})\s*$/.exec(vol) || [])[1] || "",
+    };
+  }
+
+  const inRefs = (el) => { for (let e = el; e && e.nodeType === 1; e = e.parentElement) { if (REF_BOX_RE.test(attrs(e)) || e.getAttribute("role") === "doc-bibliography") return true; } return false; };
+  // DOIs in a publisher URL (the article's own address)
+  const URL_DOI_RES = [
+    /journals\.aps\.org\/[a-z]+\/(?:abstract|fulltext|pdf|supplemental|references)\/(10\.1103\/[^?#\s]+)/i,  // APS
+    /\/doi\/(?:abs|full|pdf|epdf|epub|book|ref|figure|citedby|reader|pdfdirect|suppl)?\/?(10\.\d{4,9}\/[^?#\s]+)/i,  // Atypon: Wiley, T&F, AIAA, ...
+    /\/article\/(?:pii\/)?(10\.\d{4,9}\/[^?#\s]+)/i,                                                      // IOP, Springer
+    /\/(?:chapter|book|referenceworkentry)\/(10\.\d{4,9}\/[^?#\s]+)/i,                                     // Springer books
+  ];
+  function urlDoi(href) {
+    const u = decodeURIComponentSafe(String(href || ""));
+    for (const re of URL_DOI_RES) {
+      const m = re.exec(u);
+      if (m) return m[1].replace(/\/(meta|pdf|full|abstract|epdf|references|fulltext|html|figures|metrics|citedby)\/?$/i, "").replace(/[.,;)\]]+$/, "");
+    }
+    return "";
+  }
+
+  function findDoi(doc, href, m, ld, xpl, sd) {
+    const metaVals = [first(m, ["citation_doi", "prism.doi", "bepress_citation_doi", "dc.identifier.doi"])];
+    for (const el of doc.querySelectorAll('meta[name="dc.identifier" i], meta[name="dcterms.identifier" i], meta[name="citation_id" i]')) {
+      const scheme = lc(el.getAttribute("scheme"));
+      const v = clean(el.getAttribute("content"));
+      if (scheme === "doi" || /^(doi:|https?:\/\/(dx\.)?doi\.org\/|10\.)/i.test(v)) metaVals.push(v);
+    }
+    const ldIds = [ldText(ld.doi), ...[].concat(ld.identifier || []).map((x) => (typeof x === "string" ? x : x && (x.value || x["@value"]) || "")),
+      ...[].concat(ld.sameAs || []), ...[].concat(ld["@id"] || [])];
+    const dataDoi = [...doc.querySelectorAll("[data-doi]")].filter((e) => !inRefs(e)).map((e) => e.getAttribute("data-doi"));
+    const headerLinks = [...doc.querySelectorAll(
+      'a.doi, .doi a, #doi a, .citation__doi a, .epub-section__doilink a, .article-header a[href*="doi.org/10."], header a[href*="doi.org/10."], ' +
+      '.c-bibliographic-information__value a[href*="doi.org/"], .article-meta a[href*="doi.org/10."], .doi-link a')]
+      .filter((a) => !inRefs(a)).map((a) => a.getAttribute("href") || a.textContent);
+    const canon = (doc.querySelector('link[rel="canonical"]') || {}).href || "";
+    for (const v of [...metaVals, xpl && xpl.doi, ...ldIds, sd && sd.doi, ...dataDoi, urlDoi(href), urlDoi(canon), ...headerLinks, canon, href]) {
+      const d = doiOf(v);
+      if (d) return d;
+    }
+    return "";
+  }
+
+  /** The CSL type the page implies, for research_brain's metadata resolver (it uses Crossref's when it has one). */
+  function genre(m, xpl) {
+    if (first(m, ["citation_conference_title", "citation_conference"]) || (xpl && /conference/i.test(xpl.contentType || ""))) return "paper-conference";
+    if (first(m, ["citation_dissertation_institution", "citation_dissertation_name"])) return "thesis";
+    if (first(m, ["citation_technical_report_institution", "citation_technical_report_number"])) return "report";
+    if (first(m, ["citation_inbook_title"]) || (first(m, ["citation_book_title"]) && first(m, ["citation_firstpage"]))) return "chapter";
+    if (first(m, ["citation_isbn"]) && !first(m, ["citation_journal_title"])) return "book";
+    if (first(m, ["citation_journal_title"]) || (xpl && /journal|periodical/i.test(xpl.contentType || ""))) return "article-journal";
+    return "";
+  }
+
   function metadata(doc, href) {
     const m = metaIndex(doc);
     const ld = jsonLd(doc);
+    const xpl = ieeeMeta(doc);
+    const sd = sciencedirectMeta(doc);
     const title = first(m, ["citation_title", "dc.title", "dcterms.title", "prism.title", "eprints.title"])
+      || (xpl && clean(xpl.title || xpl.displayDocTitle || "")) || (sd && sd.title)
       || ldText(ld.headline) || ldText(ld.name) || first(m, ["og:title", "twitter:title"])
-      || clean((doc.querySelector("h1") || {}).textContent) || clean(doc.title);
+      || clean((doc.querySelector("h1.citation__title, #maincontent h1, h1") || {}).textContent) || clean(doc.title);
     let authors = all(m, ["citation_author", "dc.creator", "dcterms.creator", "eprints.creators_name"]).map(personName);
-    if (!authors.length) authors = ldAuthors(ld);
-    let doi = "";
-    for (const v of [first(m, ["citation_doi", "prism.doi", "bepress_citation_doi"]),
-      ...all(m, ["dc.identifier", "dcterms.identifier", "citation_id"]),
-      ldText(ld.doi), ...[].concat(ld.identifier || []).map((x) => (typeof x === "string" ? x : x && (x.value || x["@value"] || x.propertyID === "DOI" && x.value) || "")),
-      ...[].concat(ld.sameAs || []), ...[].concat(ld["@id"] || []),
-      (doc.querySelector('link[rel="canonical"]') || {}).href || "", href]) {
-      doi = doiOf(v);
-      if (doi) break;
+    if (!authors.length && xpl && Array.isArray(xpl.authors)) {
+      authors = xpl.authors.map((a) => clean(a && (a.name || [a.firstName, a.lastName].filter(Boolean).join(" ")))).filter(Boolean);
     }
-    let arxiv = first(m, ["citation_arxiv_id"]);
+    if (!authors.length && sd) authors = sd.authors;
+    if (!authors.length) authors = ldAuthors(ld);
+    const doi = findDoi(doc, href, m, ld, xpl, sd);
+    let arxiv = first(m, ["citation_arxiv_id"]).replace(/^arxiv:\s*/i, "");
     const ax = /arxiv\.org\/(?:abs|pdf|html)\/([^?#\s]+?)(?:v\d+)?(?:\.pdf)?(?:[?#/]|$)/i.exec(href || "");
     if (!arxiv && ax) arxiv = ax[1];
+    const axDoi = /^10\.48550\/arxiv\.(.+)$/i.exec(doi || "");
+    if (!arxiv && axDoi) arxiv = axDoi[1];
     const date = first(m, ["citation_publication_date", "citation_date", "citation_online_date", "citation_cover_date",
       "citation_year", "prism.publicationdate", "dc.date", "dcterms.issued", "dcterms.date", "article:published_time"])
-      || ldText(ld.datePublished) || ldText(ld.dateCreated);
+      || (xpl && clean(xpl.publicationDate || xpl.publicationYear || "")) || ldText(ld.datePublished) || ldText(ld.dateCreated)
+      || (sd && sd.year) || "";
     const ym = /\b(1[5-9]\d\d|2[01]\d\d)\b/.exec(date || "");
     const isPartOf = [].concat(ld.isPartOf || [])[0];
     const venue = first(m, ["citation_journal_title", "citation_conference_title", "citation_inbook_title",
       "prism.publicationname", "citation_book_title", "dc.source", "dc.relation.ispartof"])
-      || (isPartOf && (ldText(isPartOf) || ldText(isPartOf.isPartOf))) || first(m, ["citation_publisher", "dc.publisher"]);
+      || (xpl && clean(xpl.displayPublicationTitle || xpl.publicationTitle || "")) || (sd && sd.venue)
+      || (isPartOf && (ldText(isPartOf) || ldText(isPartOf.isPartOf)))
+      || first(m, ["citation_dissertation_institution", "citation_technical_report_institution", "citation_publisher", "dc.publisher"]);
     const canon = absUrl((doc.querySelector('link[rel="canonical"]') || {}).getAttribute?.("href") || "", href);
     const og = absUrl(first(m, ["og:url"]), href);
     const here = absUrl(href, href).split("#")[0];
     // the canonical address when it is on the same site (some sites point canonical at a CDN or a hub page)
     const sameSite = (u) => { try { return new URL(u).hostname.replace(/^www\./, "") === new URL(here).hostname.replace(/^www\./, ""); } catch { return false; } };
     const url = (canon && sameSite(canon) ? canon : og && sameSite(og) ? og : here) || here;
-    const pdf = absUrl(first(m, ["citation_pdf_url", "eprints.document_url"]), href);
-    let abstract = first(m, ["citation_abstract", "dcterms.abstract", "dc.description.abstract"]) || ldText(ld.abstract);
+    const pdfLink = doc.querySelector("a.article-pdfLink, a#pdf-link");
+    const pdf = absUrl(first(m, ["citation_pdf_url", "eprints.document_url"]) || (pdfLink && (pdfLink.getAttribute("href") || pdfLink.getAttribute("data-article-url"))) || "", href);
+    let abstract = first(m, ["citation_abstract", "dcterms.abstract", "dc.description.abstract"]) || ldText(ld.abstract)
+      || (xpl && clean(String(xpl.abstract || "").replace(/<[^>]+>/g, " "))) || "";
     const domAbs = abstractFromDom(doc);
     if (domAbs && domAbs.length > abstract.length) abstract = domAbs;
     if (!abstract) {
       const d = first(m, ["dc.description", "description", "og:description"]) || ldText(ld.description);
       if (d.length > 300) abstract = d;  // a short description is usually site copy, not an abstract
     }
-    return { title: title.slice(0, 500), authors: authors.slice(0, 300), doi, arxiv, year: ym ? +ym[1] : null,
-             venue: venue.slice(0, 300), abstract: abstract.replace(/^abstract[:.\s]*/i, "").slice(0, 20000), url, pdf_url: pdf };
+    const fp = first(m, ["citation_firstpage"]) || (xpl && xpl.startPage) || (sd && sd.article) || "";
+    const lp = first(m, ["citation_lastpage"]) || (xpl && xpl.endPage) || "";
+    const issn = [...new Set([...all(m, ["citation_issn", "prism.issn", "prism.eissn"]),
+      ...((xpl && Array.isArray(xpl.issn)) ? xpl.issn.map((x) => clean(x && x.value)) : [])].filter(Boolean))].slice(0, 4);
+    const low = decodeURIComponentSafe(href || "").toLowerCase();
+    const pick = (re) => (re.exec(low) || [])[1] || "";
+    return {
+      title: title.slice(0, 500), authors: authors.slice(0, 300), doi, arxiv, year: ym ? +ym[1] : null,
+      venue: venue.slice(0, 300), abstract: abstract.replace(/^abstract[:.\s]*/i, "").slice(0, 20000), url, pdf_url: pdf,
+      date: (/^\d{4}([-/]\d{1,2}([-/]\d{1,2})?)?/.exec(date || "") || [""])[0],
+      volume: first(m, ["citation_volume", "prism.volume"]) || (xpl && String(xpl.volume || "")) || (sd && sd.volume) || "",
+      issue: first(m, ["citation_issue", "prism.number"]) || (xpl && String(xpl.issue || "")) || "",
+      pages: fp ? (lp && lp !== fp ? `${fp}-${lp}` : String(fp)) : "",
+      issn, publisher: first(m, ["citation_publisher", "dc.publisher", "prism.publisher"]) || (xpl && xpl.publisher) || "",
+      journal_abbrev: first(m, ["citation_journal_abbrev"]),
+      conference: first(m, ["citation_conference_title", "citation_conference"]),
+      genre: genre(m, xpl),
+      pmid: first(m, ["citation_pmid"]) || pick(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d{1,9})/),
+      isbn: first(m, ["citation_isbn", "prism.isbn"]) || (xpl && Array.isArray(xpl.isbn) && xpl.isbn[0] && clean(xpl.isbn[0].value)) || "",
+      osti: first(m, ["citation_osti_id"]) || pick(/osti\.gov\/(?:pages\/)?biblio\/(\d{3,10})/),
+      ntrs: pick(/ntrs\.nasa\.gov\/citations\/(\d{6,14})/),
+    };
   }
 
-  const ABSTRACT_SEL = ["blockquote.abstract", "section.abstract", "div.abstract", "#abstract", "#abstracts",
+  const ABSTRACT_SEL = ["#abstract-section-content", "div.abstract.author:not(.author-highlights)",          // APS, ScienceDirect
+    "div.abstract-text", "div.article-abstract", ".wd-jnl-art-abstract",                                     // IEEE, IOP
+    "blockquote.abstract", "section.abstract", "div.abstract:not(.author-highlights):not(.graphical)", "#abstract", "#abstracts",
     "#Abs1-content", "section[data-title='Abstract' i]", ".c-article-section__content[id^='Abs']", ".abstract-content",
     ".article-section__abstract", "[role='doc-abstract']", ".ltx_abstract", ".abstractSection", ".hlFld-Abstract",
     "div[class*='abstract' i]", "section[id*='abstract' i]"];
@@ -154,6 +281,9 @@
     ".ltx_page_content article", "article.ltx_document", ".ltx_document",          // arXiv HTML (LaTeXML), ar5iv
     ".c-article-body", "div.main-content[data-article-body]",                       // Springer Nature, BMC
     "#bodymatter", ".article__body", ".article-body", "#article-body",               // Wiley, ACS, AIP, IOP, APS
+    "section.article-section__full", "div[data-widgetname='ArticleFulltext']", ".widget-ArticleFulltext", // Wiley, AIP (Silverchair)
+    "div[itemprop='articleBody']", "div.article-content",                           // IOP
+    "#document-body", ".document-text", "#content-container .content-box",          // IEEE Xplore, Cambridge Core
     ".hlFld-Fulltext", ".NLM_sec_level_1",                                          // Taylor & Francis, ACS
     "#body", "div.Body", "#centerInner .Body",                                      // ScienceDirect (Elsevier)
     ".html-body",                                                                   // MDPI
@@ -208,9 +338,19 @@
       const t = clean(el.textContent);
       return t ? (/mode=display/i.test(el.type) ? `$$${t}$$` : `$${t}$`) : "";
     }
-    if (tag === "MJX-CONTAINER") {
+    if (tag === "SCRIPT" && /^math\/mml/i.test(el.type || "")) {  // MathJax 2 with MathML input (ScienceDirect)
+      try {
+        const m = new DOMParser().parseFromString(el.textContent || "", "text/html").querySelector("math");
+        return m ? tex(m) : "";
+      } catch { return ""; }
+    }
+    if (tag === "MJX-CONTAINER") {  // MathJax 3
+      const lt = el.getAttribute("data-latex") || (el.querySelector("[data-latex]") || { getAttribute: () => "" }).getAttribute("data-latex");
+      const display = el.getAttribute("display") === "true" || el.getAttribute("display") === "block";
+      if (clean(lt)) return display ? `$$${clean(lt)}$$` : `$${clean(lt)}$`;
       const m = el.querySelector("mjx-assistive-mml math, math");
-      return m ? tex(m) : "";
+      if (m) { const t = tex(m); return display && /^\$[^$]/.test(t) ? `$${t}$` : t; }
+      return clean(el.getAttribute("aria-label") || "");
     }
     return null;  // not math
   }
@@ -239,6 +379,7 @@
       if (tag === "SCRIPT" || tag === "STYLE") return;
       if (el.classList && (el.classList.contains("MathJax") || el.classList.contains("MathJax_Preview")
         || el.classList.contains("MathJax_Display") || el.classList.contains("MathJax_SVG")
+        || el.classList.contains("MathJax_CHTML") || el.classList.contains("MJX_Assistive_MathML")
         || el.classList.contains("katex-html"))) return;  // rendered copies of math kept as TeX elsewhere
       if (SKIP_TAGS.has(tag)) return;
       if (!top && (hidden(el) || SKIP_RE.test(attrs(el)))) return;
@@ -256,8 +397,16 @@
       }
       if (!top && !refLevel && (REF_BOX_RE.test(attrs(el)) || el.getAttribute("role") === "doc-bibliography")) {
         flush();
-        const items = el.querySelectorAll("li, .ltx_bibitem, .c-article-references__item, p.ref, div.ref");
-        for (const it of (items.length ? items : [el])) { const r = clean(inlineText(it)); if (r) refs.push(r.slice(0, 1000)); }
+        let items = [];
+        for (const sel of ["li", ".ltx_bibitem", ".c-article-references__item", "dd.reference, dd", ".ref-content",
+          "p.ref, div.ref", ".reference", ".citation", ".bib-item"]) {
+          items = el.querySelectorAll(sel);
+          if (items.length) break;
+        }
+        for (const it of (items.length ? items : [el])) {
+          const r = clean(inlineText(it)).replace(/\s*(Google Scholar|Crossref|CrossRef|Search ADS|PubMed|Web of Science|Scopus|View in Scopus|Find this author)(\s*,?\s*(Google Scholar|Crossref|CrossRef|Search ADS|PubMed|Web of Science|Scopus|View in Scopus))*\s*$/g, "");
+          if (r) refs.push(r.slice(0, 1000));
+        }
         return;
       }
       if (tag === "FIGURE" || /(^|[\s_-])(table-wrap|fig|figure)([\s_-]|$)/i.test(attrs(el)) && !top) {
@@ -295,6 +444,7 @@
       const tag = n.tagName.toUpperCase();
       if (tag === "SCRIPT" || tag === "STYLE" || tag === "BUTTON" || tag === "SVG") return;
       if (n.classList && (n.classList.contains("MathJax") || n.classList.contains("MathJax_Preview")
+        || n.classList.contains("MathJax_SVG") || n.classList.contains("MathJax_CHTML") || n.classList.contains("MJX_Assistive_MathML")
         || n.classList.contains("katex-html") || n.classList.contains("visually-hidden") || n.classList.contains("u-visually-hidden"))) return;
       for (const c of n.childNodes) visit(c);
       if (BLOCK.has(tag)) s += " ";
@@ -359,5 +509,5 @@
     return { ...meta, text: body, references: refs.slice(0, 3000), kind: "html", partial, chars: body.length };
   }
 
-  window.__rbExtract = { run, metadata, pickRoot, walkText, personName };
+  window.__rbExtract = { run, metadata, pickRoot, walkText, personName, urlDoi };
 })();
