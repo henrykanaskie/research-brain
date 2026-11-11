@@ -430,7 +430,7 @@ def test_claude_cli_gets_no_settings_hooks_or_claude_md(tmp_path, monkeypatch):
     # the working directory is private and no folder above it is writable by other users,
     # so nobody can plant a CLAUDE.md the CLI would pick up from a parent folder (e.g. /tmp/CLAUDE.md)
     cwd = Path(got["cwd"])
-    assert stat.S_IMODE(cwd.stat().st_mode) == 0o700 and not list(cwd.iterdir())
+    assert (os.name == "nt" or stat.S_IMODE(cwd.stat().st_mode) == 0o700) and not list(cwd.iterdir())
     if claude_cli._private_base() is not None:
         for d in cwd.resolve().parents:
             assert not (d.stat().st_mode & 0o002), d

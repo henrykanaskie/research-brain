@@ -102,9 +102,15 @@ class MetaIndex:
             pass
 
     def _open(self) -> None:
-        """Open (or create) the database and load it into memory; delete-and-rebuild on any problem."""
+        """Open (or create) the database and load it into memory; delete-and-rebuild on any problem.
+        On Windows a damaged file another connection still holds can be neither deleted nor emptied: then the
+        index is rebuilt in a fresh file beside it (meta.alt.sqlite), and the stale one is removed later."""
         with self.lock:
-            for attempt in (0, 1):
+            main = self.path.with_name("meta.sqlite")
+            alt = main.with_name("meta.alt.sqlite")
+            if self.path == main and alt.exists() and not main.exists():
+                self.path = alt  # the main file went away; keep using the copy that has the rows
+            for attempt in (0, 1, 2):
                 try:
                     self.conn = self._connect()
                     ver = self.conn.execute("PRAGMA user_version").fetchone()[0]
@@ -120,10 +126,22 @@ class MetaIndex:
                         raise sqlite3.DatabaseError("quick_check failed")
                     self._load()
                     self.ok = True
+                    if self.path == main and alt.exists():  # an earlier fallback copy is no longer needed
+                        for suffix in ("", "-wal", "-shm", "-journal"):
+                            try:
+                                Path(str(alt) + suffix).unlink()
+                            except OSError:
+                                pass
                     break
                 except (sqlite3.DatabaseError, json.JSONDecodeError, OSError) as e:
                     self._close()
-                    if attempt == 1:
+                    if attempt == 1 and self.path == main and main.exists():
+                        print(f"[research_brain] {main.name} is held open elsewhere; rebuilding into {alt.name}")
+                        self.path = alt
+                        self._delete_files()
+                        self.rebuilds += 1
+                        continue
+                    if attempt >= 1:
                         print(f"[research_brain] metadata index unavailable ({e!r}); reading note files directly")
                         self.ok = False
                         return

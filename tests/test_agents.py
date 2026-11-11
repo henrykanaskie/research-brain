@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -129,7 +130,7 @@ def test_broken_adapter_module_is_skipped(tmp_path, monkeypatch, caplog):
 def test_base_helpers_kill_and_timeout(tmp_path):
     from app.agents import base
     wd = base.private_workdir("t_")
-    assert wd.is_dir() and not any(wd.iterdir()) and (wd.stat().st_mode & 0o077) == 0
+    assert wd.is_dir() and not any(wd.iterdir()) and (os.name == "nt" or (wd.stat().st_mode & 0o077) == 0)
     code, out, err = base.run_process([sys.executable, "-c", "import sys; print(sys.stdin.read().upper())"], stdin="hi")
     assert code == 0 and out.strip() == "HI"
     with pytest.raises(base.AgentError) as e:

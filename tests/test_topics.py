@@ -146,6 +146,8 @@ def test_topic_file_persistence(client, server):
     client.post(f"/api/topics/{slug}/queue/dismiss", json={"s2_id": "X1", "title": "Bad paper"})
     client.post(f"/api/topics/{slug}/queue/snooze", json={"key": "X2"})
     import shutil
+    if server.store.meta is not None:
+        server.store.meta._close()  # Windows can't delete a file another connection holds open
     shutil.rmtree(server.store.index_dir)
     server.store.index_dir.mkdir()
     t = server.topics_mod.get_topic(server.store, slug)

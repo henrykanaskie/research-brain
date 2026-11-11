@@ -3,6 +3,7 @@
 Runs a real uvicorn server (a free port, tests/rb_testserver.py) so Server-Sent Events stream for real; Claude is faked.
 """
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -164,7 +165,7 @@ def test_server_stops_promptly_with_open_event_streams(tmp_path):
     """SIGTERM/SIGINT end the /api/events streams, so the server exits instead of waiting on them forever."""
     import signal
     import threading
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    for sig in ((signal.SIGTERM,) if os.name == "nt" else (signal.SIGTERM, signal.SIGINT)):
         with run_server(tmp_path / f"vault-{sig}", graceful_timeout=None) as s:  # as run.sh starts it
             responses = [requests.get(s.base + "/api/events", stream=True, timeout=10, headers={"Origin": s.base})
                          for _ in range(2)]

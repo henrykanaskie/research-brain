@@ -295,6 +295,7 @@ def test_desktop_layout_unchanged_at_1440(browser, pw, server):
     assert page.locator("#topbar").bounding_box()["height"] == 52
     page.evaluate(f"window.__rb.openNote({server['ids'][0]!r})")
     expect(page.locator("#panel")).to_be_visible()
+    page.wait_for_function("Math.abs(document.querySelector('#panel').getBoundingClientRect().right - innerWidth) < 1", timeout=5000)
     box = page.locator("#panel").bounding_box()
     assert box["x"] + box["width"] == 1440 and box["y"] == 52 and 330 <= box["width"] <= 1080
     assert page.evaluate("getComputedStyle(document.querySelector('#panel .md, #panel .field')).fontSize") in ("15px", "16px")

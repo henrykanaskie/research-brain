@@ -104,9 +104,9 @@ for root, dirs, fs in os.walk("."):
     for f in fs:
         p = os.path.join(root, f)
         try:
-            files[p[2:]] = open(p, encoding="utf-8").read()
+            files[p[2:].replace(os.sep, "/")] = open(p, encoding="utf-8").read()
         except Exception:
-            files[p[2:]] = "?"
+            files[p[2:].replace(os.sep, "/")] = "?"
 child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"]) if mode in ("sleep", "tool", "slowtext") else None
 if rec:
     st = os.stat(".")
@@ -227,6 +227,17 @@ def _rec(path: Path) -> dict:
 def _alive(pid: int | None) -> bool:
     if not pid:
         return False
+    if os.name == "nt":  # os.kill(pid, 0) would send Ctrl+C there; ask Windows whether it has exited
+        import ctypes
+        h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        try:
+            ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+        return code.value == 259  # STILL_ACTIVE
     try:
         os.kill(pid, 0)
     except OSError:
@@ -315,7 +326,7 @@ def test_codex_specifics(fake, settings_dir):
     argv = r["argv"]
     assert _has(argv, "-m", "gpt-test") and argv[-1] == "-"
     instr = [a for a in argv if a.startswith("model_instructions_file=")]
-    assert len(instr) == 1 and json.loads(instr[0].split("=", 1)[1]).endswith(".rb/instructions.md")
+    assert len(instr) == 1 and json.loads(instr[0].split("=", 1)[1]).replace("\\", "/").endswith(".rb/instructions.md")
     from app.agents.codex import FEATURES_OFF
     for f in FEATURES_OFF:
         assert _has(argv, "--disable", f)
