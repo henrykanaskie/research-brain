@@ -681,7 +681,18 @@
     // parallel traces separate instead of sitting on top of each other.
     const s = l.source, t = l.target;
     if (!s || !t || s.x === undefined || t.x === undefined) return null;
-    const x0 = s.x, y0 = s.y, x1 = t.x, y1 = t.y;
+    const k = S.k || 1;
+    const sd = l.sPart ? partDot(s, l.sPart, k) : null, td = l.tPart ? partDot(t, l.tPart, k) : null;
+    // a link that belongs to an attached note leaves from that note's red dot: first a short stub
+    // pointing away from the paper (snapped to the nearest 45 degrees), then the usual trace, so it
+    // never runs back across the paper's dot
+    const stub = (d, host) => {
+      if (!d) return null;
+      const ang = Math.round(Math.atan2(d.y - host.y, d.x - host.x) / (Math.PI / 4)) * (Math.PI / 4), L = 7 / k;
+      return { x: d.x + Math.cos(ang) * L, y: d.y + Math.sin(ang) * L };
+    };
+    const ss = stub(sd, s), ts = stub(td, t);
+    const x0 = ss ? ss.x : s.x, y0 = ss ? ss.y : s.y, x1 = ts ? ts.x : t.x, y1 = ts ? ts.y : t.y;
     const dx = x1 - x0, dy = y1 - y0, ax = Math.abs(dx), ay = Math.abs(dy);
     const sx = Math.sign(dx) || 1, sy = Math.sign(dy) || 1;
     if (l.__split === undefined) l.__split = 0.3 + 0.4 * ((strHash(l.kind + linkKey(lid(s), lid(t))) % 1000) / 1000);
@@ -694,10 +705,12 @@
       const run = ay - ax, a = y0 + sy * run * f;
       pts = [x0, y0, x0, a, x1, a + sy * ax, x1, y1];
     }
+    if (sd) pts.unshift(sd.x, sd.y);
+    if (td) pts.push(td.x, td.y);
     const seg = [];
     let total = 0;
     for (let i = 0; i + 3 < pts.length; i += 2) { const d = Math.hypot(pts[i + 2] - pts[i], pts[i + 3] - pts[i + 1]); seg.push(d); total += d; }
-    return { x0, y0, x1, y1, pts, seg, total: total || 1 };
+    return { x0: pts[0], y0: pts[1], x1: pts[pts.length - 2], y1: pts[pts.length - 1], pts, seg, total: total || 1, sd, td };
   }
   function updateCentroids() {
     const sums = new Map(); let ax = 0, ay = 0, an = 0;
@@ -784,7 +797,7 @@
     if (st.a <= 0.01) return;
     // traces end exactly on the edge of the drawn dot (same radius drawNode uses at this zoom), so
     // they meet it flush and on its centre line; the red note-dots are drawn on top of them
-    const r0 = drawnRadius(l.source, k), r1 = drawnRadius(l.target, k);
+    const r0 = g.sd ? g.sd.r : drawnRadius(l.source, k), r1 = g.td ? g.td.r : drawnRadius(l.target, k);
     if (Math.hypot(g.x1 - g.x0, g.y1 - g.y0) <= r0 + r1) return;
     ctx.beginPath();
     tracePath(ctx, g, r0, r1);
@@ -1001,6 +1014,7 @@
       .onNodeClick((n, e) => { if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onLinkClick(onLinkClick)
       .onRenderFramePre((ctx, k) => {
+        S.k = k; S.partLayout = new Map();
         S.labelBoxes = [];
         const moving = stepAlphas();
         if (moving) kick(60);
@@ -1104,6 +1118,39 @@
   /** the radius a node is drawn at for zoom k: zooming in reveals structure rather than inflating dots */
   function drawnRadius(n, k) { return nodeRadius(n) * (k > 1.5 ? Math.sqrt(1.5 / k) : 1); }
 
+  /** Where each attached note's red dot sits on its paper's ring. A note that links somewhere faces
+   *  that link (snapped to 45 degrees), so its trace leaves outward instead of crossing the paper;
+   *  notes without links fill the free directions. Dots keep a minimum spacing. Cached per frame. */
+  function partAngles(host) {
+    if (S.partLayout && S.partLayout.has(host.id)) return S.partLayout.get(host.id);
+    const ids = (S.partsOf && S.partsOf.get(host.id)) || [];
+    const shown = ids.slice(0, 12);
+    const want = new Map();
+    for (const l of S.links) {
+      const mine = (l.sPart && lid(l.source) === host.id) ? l.sPart : (l.tPart && lid(l.target) === host.id) ? l.tPart : null;
+      if (!mine || want.has(mine)) continue;
+      const other = l.sPart === mine ? l.target : l.source;
+      if (!other || other.x === undefined) continue;
+      want.set(mine, Math.round(Math.atan2(other.y - host.y, other.x - host.x) / (Math.PI / 4)) * (Math.PI / 4));
+    }
+    const a0 = ((strHash(host.id) % 360) / 360) * Math.PI * 2;
+    const items = shown.map((id, i) => ({ id, a: want.has(id) ? want.get(id) : a0 + i * 2.39996 }));
+    // keep dots apart: walk around the circle pushing any dot that is too close to the previous one
+    const sep = (Math.PI * 2) / Math.max(10, shown.length + 2);
+    items.sort((x, y) => x.a - y.a);
+    for (let pass = 0; pass < 2; pass++) for (let i = 1; i < items.length; i++) if (items[i].a - items[i - 1].a < sep) items[i].a = items[i - 1].a + sep;
+    const out = new Map(items.map((x) => [x.id, x.a]));
+    if (S.partLayout) S.partLayout.set(host.id, out);
+    return out;
+  }
+  function dotRadius(r, px) { return Math.max(0.85 * px, Math.min(1.25 * px, r * 0.22)); }
+  function partDot(hostNode, partId, k) {
+    const a = partAngles(hostNode).get(partId);
+    if (a === undefined) return null;
+    const px = 1 / k, r = drawnRadius(hostNode, k), ringR = r + 2.6 * px;
+    return { x: hostNode.x + Math.cos(a) * ringR, y: hostNode.y + Math.sin(a) * ringR, r: dotRadius(r, px) };
+  }
+
   /** how many red note-dots sit around a document: attached notes/highlights, or 1 for a summary alone */
   function markCount(n) {
     if (!n || n.type === 'fragment') return 0;
@@ -1138,12 +1185,11 @@
     const nMarks = markCount(n);
     const ringR = r + 2.6 * px;
     if (nMarks) {
-      const shown = Math.min(nMarks, 12);
-      const a0 = ((strHash(n.id) % 360) / 360) * Math.PI * 2;
-      const dr = Math.max(0.85 * px, Math.min(1.25 * px, r * 0.22));
       ctx.fillStyle = C.red;
-      for (let i = 0; i < shown; i++) {
-        const a = a0 + (i / shown) * Math.PI * 2;
+      const angles = [...partAngles(n).values()];
+      if (!angles.length) angles.push(((strHash(n.id) % 360) / 360) * Math.PI * 2); // a summary alone: one dot
+      const dr = dotRadius(r, px);
+      for (const a of angles) {
         ctx.beginPath(); ctx.arc(n.x + Math.cos(a) * ringR, n.y + Math.sin(a) * ringR, dr, 0, 2 * Math.PI); ctx.fill();
       }
     }
@@ -1239,19 +1285,25 @@
     const host = (id) => into.get(id) || id;
     const folded = new Map(), parts = new Map();
     for (const [id, r] of into) { folded.set(id, byId.get(id)); parts.set(r, (parts.get(r) || 0) + 1); }
+    // each attached note gets a fixed slot on its host's ring (sorted by id, so slots are stable)
+    const slots = new Map(), perHost = new Map();
+    for (const id of [...into.keys()].sort()) { const r = into.get(id); const i = perHost.get(r) || 0; perHost.set(r, i + 1); slots.set(id, i); }
+    S.partSlots = slots;
+    S.partsOf = new Map();
+    for (const id of [...into.keys()].sort()) { const r = into.get(id); if (!S.partsOf.has(r)) S.partsOf.set(r, []); S.partsOf.get(r).push(id); }
     const nodes = raw.filter((n) => n && n.id && !into.has(n.id)).map((n) => ({ ...n, parts: parts.get(n.id) || 0 }));
     const links = [];
     for (const l of g.links || []) {
       if (l.kind === 'part') continue;
-      const s = host(lid(l.source)), t = host(lid(l.target));
-      if (s !== t) links.push({ ...l, source: s, target: t });
+      const s0 = lid(l.source), t0 = lid(l.target), s = host(s0), t = host(t0);
+      if (s !== t) links.push({ ...l, source: s, target: t, sPart: s0 !== s ? s0 : null, tPart: t0 !== t ? t0 : null });
     }
     const best = new Map();
     for (const l of g.similar || []) {
-      const s = host(lid(l.source)), t = host(lid(l.target));
+      const s0 = lid(l.source), t0 = lid(l.target), s = host(s0), t = host(t0);
       if (s === t) continue;
       const k = linkKey(s, t), sc = Number(l.score) || 0;
-      if (!best.has(k) || best.get(k).score < sc) best.set(k, { source: s, target: t, score: sc });
+      if (!best.has(k) || best.get(k).score < sc) best.set(k, { source: s, target: t, score: sc, sPart: s0 !== s ? s0 : null, tPart: t0 !== t ? t0 : null });
     }
     S.foldInto = into; S.folded = folded;
     return { ...g, nodes, links, similar: [...best.values()] };
@@ -1293,9 +1345,9 @@
       const s = lid(l.source), t = lid(l.target);
       if (!next.has(s) || !next.has(t) || s === t) continue;
       const kind = l.kind === 'part' ? 'part' : l.kind === 'mention' ? 'mention' : l.kind === 'cites' ? 'cites' : 'manual';
-      const key = kind + linkKey(s, t);
+      const key = kind + linkKey(s + (l.sPart ? '#' + l.sPart : ''), t + (l.tPart ? '#' + l.tPart : ''));
       if (seen.has(key)) continue; seen.add(key);
-      (kind === 'part' ? part : manual).push({ source: s, target: t, kind });
+      (kind === 'part' ? part : manual).push({ source: s, target: t, kind, sPart: l.sPart || null, tPart: l.tPart || null });
       if (!neighbour.has(s)) neighbour.set(s, t);
       if (!neighbour.has(t)) neighbour.set(t, s);
     }
@@ -1315,7 +1367,7 @@
       const key = linkKey(s, t);
       if (simSeen.has(key) || linkedPairs.has(key)) continue; // manual link wins visually
       simSeen.add(key);
-      sim.push({ source: s, target: t, kind: 'similar', score: Number(l.score) || 0 });
+      sim.push({ source: s, target: t, kind: 'similar', score: Number(l.score) || 0, sPart: l.sPart || null, tPart: l.tPart || null });
     }
     // keep each node's 3 strongest similarities: enough to show where it belongs, not a hairball
     const byNode = new Map();
