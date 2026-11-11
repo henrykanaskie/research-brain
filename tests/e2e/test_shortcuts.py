@@ -305,3 +305,33 @@ def test_viewer_keys_with_a_pdf(ctx, server, tmp_path):
     v.wait_for_function("document.querySelector('#pageIn').value === '1'")
     expect(v.locator("#fragItems .frag.active")).to_have_count(1)
     assert not errors, errors
+
+
+def test_region_tags_focus_and_escape(ctx, server):
+    """A region's name tag can be clicked to focus that region; the focus bar names it; Esc shows all."""
+    clear_vault(server)
+    for i in range(6):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Langmuir probe sheath electron temperature {i}",
+                                           "abstract": "Langmuir probe sheath electron temperature plasma density measurement."})
+    for i in range(6):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Transformer decoder pretraining {i}",
+                                           "abstract": "Transformer decoder language model pretraining tokens attention."})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 12 && (window.__rb.S.regionLabels || []).some(r => r.box)", timeout=20000)
+    page.wait_for_timeout(3000)  # let the first zoom-to-fit finish so the tag doesn't move under the click
+    pt = page.evaluate("""() => { const {S, fg} = window.__rb; const r = S.regionLabels.find(r => r.box);
+        const c = fg.graph2ScreenCoords((r.box[0] + r.box[2]) / 2, (r.box[1] + r.box[3]) / 2);
+        const g = document.querySelector('#graph').getBoundingClientRect(); return {x: c.x + g.left, y: c.y + g.top, cid: r.cid}; }""")
+    page.mouse.click(pt["x"], pt["y"])
+    page.wait_for_function(f"window.__rb.S.focusCluster === {pt['cid']}")
+    expect(page.locator("#region-focus")).to_be_visible()
+    blur(page)
+    page.keyboard.press("Escape")
+    page.wait_for_function("window.__rb.S.focusCluster == null")
+    expect(page.locator("#region-focus")).to_be_hidden()
+    page.click("#btn-regions")
+    expect(page.locator(".rf-chooser .rf-item").first).to_be_visible()
+    page.locator(".rf-chooser .rf-item").first.click()
+    page.wait_for_function("window.__rb.S.focusCluster != null")
+    assert page.evaluate("window.RB.commands.conflicts()") == []
+    assert not page.errors

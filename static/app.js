@@ -594,6 +594,7 @@
   function targetAlpha(n) {
     if (S.nodeFilter && !S.nodeFilter(n)) return DIM; // graph view filter (static/views.js)
     if (S.search) return S.matches.has(n.id) ? 1 : DIM;
+    if (S.focusCluster != null && n.cluster !== S.focusCluster && S.selected !== n.id) return DIM;
     const f = focusSet();
     return f && !f.has(n.id) ? DIM : 1;
   }
@@ -852,46 +853,115 @@
       if (mem.length < 2) continue;
       const info = S.clusters.find((c) => c.id === cid);
       if (!info || !info.label) continue;
-      let cx = 0, minY = Infinity;
-      for (const n of mem) { cx += n.x; minY = Math.min(minY, n.y); }
-      S.regionLabels.push({ x: cx / mem.length, y: minY - 16 / Math.max(k, 0.3), label: info.label, size: mem.length });
+      let cx = 0, minY = Infinity, maxY = -Infinity;
+      for (const n of mem) { cx += n.x; minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); }
+      S.regionLabels.push({ cid, x: cx / mem.length, y: minY - 18 / Math.max(k, 0.3), cy: maxY, label: info.label, size: mem.length });
     }
     S.regionLabels.sort((a, b) => b.size - a.size);
   }
+  function regionName(label) { return label ? label.charAt(0).toUpperCase() + label.slice(1) : ''; }
+  /** Region names are small tags (sheet ground, hairline frame) placed above each region, so they stay
+   *  readable over the traces. Hovering a tag, or any dot in the region, frames it in ink; clicking
+   *  a tag focuses that region. When zoomed in past the tags, the region shows in the dot's tooltip. */
   function drawRegionLabels(ctx, k) {
-    if (!S.regionLabels || k > 3.6) return;
-    const fade = Math.min(1, (3.6 - k) / 0.6);
+    if (!S.regionLabels) return;
+    const focused = S.focusCluster;
+    // tags stay at every zoom (they are few, and kept inside the view), so you always know where you are
+    const fade = 1;
+    const hoverNode = S.hover && S.nodes.get(S.hover);
+    const hot = S.hoverRegion != null ? S.hoverRegion : hoverNode ? hoverNode.cluster : null;
     ctx.save();
-    ctx.textBaseline = 'alphabetic';
-    const placed = [], lh = 22 / k;
-    const nameFont = `italic 500 ${15 / k}px "Bodoni Moda", Didot, Georgia, serif`;
-    const numFont = `500 ${10.5 / k}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
+    ctx.textBaseline = 'middle';
+    const placed = [], px = 1 / k, small = graphEl.clientWidth < 600 ? 0.82 : 1;
+    const fs = 15.5 * small * px, padX = 8 * small * px, h = 24 * small * px, lh = h + 4 * px;
+    // keep tags inside the visible plate
+    const vtl = fg.screen2GraphCoords(0, 0), vbr = fg.screen2GraphCoords(graphEl.clientWidth, graphEl.clientHeight);
+    const nameFont = `italic 500 ${fs}px "Bodoni Moda", Didot, Georgia, serif`;
+    const numFont = `500 ${10.5 * small * px}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
     for (const r of S.regionLabels) {
-      const text = r.label.charAt(0).toUpperCase() + r.label.slice(1);
-      const num = String(r.size);
+      r.box = null;
+      if (focused != null) continue; // the focus bar names the region; no tag on top of it
+      const text = regionName(r.label), num = String(r.size);
       ctx.font = nameFont; const wName = ctx.measureText(text).width;
       ctx.font = numFont; const wNum = ctx.measureText(num).width;
-      const gap = 7 / k, w = wName + gap + wNum, x0 = r.x - w / 2;
+      const gap = 7 * px, w = padX + wName + gap + wNum + padX;
+      // only regions that are on screen get a tag; a tag above the view slides down to its top edge
+      if (r.x < vtl.x || r.x > vbr.x || r.y > vbr.y || (r.cy !== undefined && r.cy < vtl.y)) continue;
+      const margin = 8 * px, x0 = Math.max(vtl.x + margin, Math.min(r.x - w / 2, vbr.x - margin - w));
+      if (r.y - h / 2 < vtl.y + margin) r.y = vtl.y + margin + h / 2;
       let y = r.y, ok = false;
-      for (let tries = 0; tries < 5 && !ok; tries++) {
-        ok = !placed.some((p) => Math.abs(p.x - r.x) < (p.w + w) / 2 + 10 / k && Math.abs(p.y - y) < lh);
+      for (let tries = 0; tries < 6 && !ok; tries++) {
+        ok = !placed.some((p) => Math.abs(p.x - r.x) < (p.w + w) / 2 + 8 * px && Math.abs(p.y - y) < lh);
         if (!ok) y -= lh;
       }
       if (!ok) continue;
       placed.push({ x: r.x, y, w });
       r.y = y;
-      const a = fade * (S.selected || S.search ? 0.45 : 1);
-      ctx.lineJoin = 'round'; ctx.lineWidth = 4 / k; ctx.strokeStyle = C.ground;
+      const isHot = hot != null && r.cid === hot, isFocus = focused != null && r.cid === focused;
+      const dimmed = !isHot && !isFocus && (S.selected || S.search);
+      const a = fade * (dimmed ? 0.5 : 1);
+      r.box = [x0, y - h / 2, x0 + w, y + h / 2];
       ctx.globalAlpha = a;
-      ctx.font = nameFont; ctx.textAlign = 'left';
-      ctx.strokeText(text, x0, y); ctx.fillStyle = C.ink; ctx.fillText(text, x0, y);
-      ctx.font = numFont; ctx.fillStyle = C.ink3;
-      ctx.fillText(num, x0 + wName + gap, y);
-      // a short hairline under the name, like an annotation on a plate
-      ctx.globalAlpha = a * 0.6; ctx.strokeStyle = C.ink3; ctx.lineWidth = 0.5 / k;
-      ctx.beginPath(); ctx.moveTo(x0, y + 5 / k); ctx.lineTo(x0 + Math.min(w, 28 / k), y + 5 / k); ctx.stroke();
+      ctx.fillStyle = C.sheet;
+      ctx.fillRect(x0, y - h / 2, w, h);
+      ctx.lineWidth = (isHot || isFocus ? 1 : 0.6) * px;
+      ctx.strokeStyle = isHot || isFocus ? C.ink : rgba(C.ink3, 0.7);
+      ctx.strokeRect(x0, y - h / 2, w, h);
+      if (isFocus) { ctx.fillStyle = C.red; ctx.fillRect(x0, y + h / 2 - 1.5 * px, w, 1.5 * px); }
+      ctx.textAlign = 'left';
+      ctx.font = nameFont; ctx.fillStyle = C.ink; ctx.fillText(text, x0 + padX, y + 0.5 * px);
+      ctx.font = numFont; ctx.fillStyle = C.ink3; ctx.fillText(num, x0 + padX + wName + gap, y + 0.5 * px);
     }
     ctx.restore();
+  }
+  function labelHit(e) {
+    if (!fg || !e) return null;
+    const rect = graphEl.getBoundingClientRect();
+    const p = fg.screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top);
+    return regionAt(p.x, p.y);
+  }
+  function regionAt(gx, gy) {
+    for (const r of S.regionLabels || []) {
+      const b = r.box;
+      if (b && gx >= b[0] && gx <= b[2] && gy >= b[1] && gy <= b[3]) return r;
+    }
+    return null;
+  }
+
+  /** Focus one region: zoom to it and dim everything else, until "Show all" or Esc. */
+  function focusRegion(cid) {
+    if (!fg) return;
+    const info = (S.clusters || []).find((c) => c.id === cid);
+    if (!info) return;
+    S.focusCluster = cid;
+    const bar = $('#region-focus');
+    if (bar) { $('.rf-name', bar).textContent = regionName(info.label); bar.hidden = false; }
+    fg.zoomToFit(T(600), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid);
+    kick(800);
+  }
+  function unfocusRegion(refit = true) {
+    if (S.focusCluster == null) return;
+    S.focusCluster = null;
+    const bar = $('#region-focus');
+    if (bar) bar.hidden = true;
+    if (refit && fg) fg.zoomToFit(T(600), 70);
+    kick(800);
+  }
+  function chooseRegion() {
+    const regs = (S.regionLabels || []).filter((r) => r.label);
+    if (!regs.length) { toast('No regions yet. They appear once a few papers are related.', 'info'); return; }
+    const list = h('div', { class: 'rf-list', role: 'listbox', 'aria-label': 'Regions' },
+      regs.map((r) => h('button', { type: 'button', class: 'rf-item', role: 'option',
+        onclick: () => { closeChooser(); focusRegion(r.cid); } },
+        h('span', { class: 'rf-item-name', text: regionName(r.label) }), h('span', { class: 'rf-item-n', text: String(r.size) }))));
+    const sheet = h('div', { class: 'rf-chooser' }, h('div', { class: 'rf-head', text: 'Focus a region' }), list);
+    const closeChooser = () => { sheet.remove(); S.regionChooserClose = null; };
+    S.regionChooserClose = closeChooser;
+    document.body.append(sheet);
+    const first = $('.rf-item', sheet); if (first) first.focus();
+    setTimeout(() => document.addEventListener('pointerdown', function off(e) {
+      if (!sheet.contains(e.target)) { closeChooser(); document.removeEventListener('pointerdown', off); }
+    }), 0);
   }
 
   // ---------- forces ----------
@@ -988,7 +1058,9 @@
         if (n.authors && n.authors.length) meta.push(`<span>${esc(fmtAuthors(n.authors, 2))}</span>`);
         const q = n.type === 'fragment' && S.quoteIdx.get(n.id) ? `<div class="tt-quote">${esc(truncate(S.quoteIdx.get(n.id), 140))}</div>` : '';
         const tags = (n.tags || []).length ? `<div class="tt-meta">${n.tags.map(esc).join(', ')}</div>` : '';
-        return `<div class="tt-title">${esc(n.title || n.id)}</div><div class="tt-meta">${meta.join('')}</div>${q}${tags}`;
+        const reg = n.cluster >= 0 && (S.clusters || []).find((c) => c.id === n.cluster);
+        const region = reg && reg.label ? `<div class="tt-meta">Region: <i>${esc(regionName(reg.label))}</i></div>` : '';
+        return `<div class="tt-title">${esc(n.title || n.id)}</div><div class="tt-meta">${meta.join('')}</div>${q}${tags}${region}`;
       })
       .nodeCanvasObject(drawNode)
       .nodePointerAreaPaint((n, color, ctx) => {
@@ -1018,6 +1090,11 @@
       .onNodeHover((n) => { S.hover = n ? n.id : null; graphEl.style.cursor = n ? 'pointer' : ''; kick(50); })
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
       .onNodeClick((n, e) => { if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
+      .onBackgroundClick((e) => {
+        const r = labelHit(e);
+        if (r) { if (S.focusCluster === r.cid) unfocusRegion(); else focusRegion(r.cid); return; }
+        if (S.backgroundClickHook) S.backgroundClickHook(e);
+      })
       .onLinkClick(onLinkClick)
       .onRenderFramePre((ctx, k) => {
         S.k = k; S.partLayout = new Map();
@@ -1227,7 +1304,7 @@
     }
 
     const match = S.search && S.matches.has(n.id);
-    const regionsShowing = S.regionLabels && S.regionLabels.length && k <= 3.0;
+    const regionsShowing = S.regionLabels && S.regionLabels.length && k <= 3.0;  // node labels defer to tags when zoomed out
     const must = hov || sel || match;
     let show;
     if (n.type === 'fragment') show = hov || sel;
@@ -2781,7 +2858,16 @@
     if (claudeBlocked(e.currentTarget) || !S.explain) return;
     openExplain(S.explain.a, S.explain.b, true);
   });
-  $('#btn-zoom-fit').addEventListener('click', () => fg && fg.zoomToFit(T(600), 70));
+  $('#btn-zoom-fit').addEventListener('click', () => { if (S.focusCluster != null) unfocusRegion(); else if (fg) fg.zoomToFit(T(600), 70); });
+  graphEl.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch') return;
+    const r = S.hover ? null : labelHit(e);
+    const id = r ? r.cid : null;
+    if (id !== (S.hoverRegion ?? null)) { S.hoverRegion = id; graphEl.style.cursor = r ? 'pointer' : (S.hover ? 'pointer' : ''); kick(50); }
+  });
+  graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
+  $('#rf-show-all') && $('#rf-show-all').addEventListener('click', () => unfocusRegion());
+  $('#btn-regions') && $('#btn-regions').addEventListener('click', (e) => { e.stopPropagation(); chooseRegion(); });
 
   // search
   const searchInput = $('#search-input');
@@ -2837,6 +2923,14 @@
     CMD.layer({ id: 'app.topbar-field', order: 60, isOpen: (c) => inside(c, '#topbar'), close: (c) => c.target.blur() });
     CMD.layer({ id: 'app.chat', order: 50, isOpen: (c) => !$('#chat').hidden && (!(c && c.typing) || inside(c, '#chat')), close: closeChat });
     CMD.layer({ id: 'app.panel', order: 40, isOpen: () => !panel.hidden, close: (c) => { if (c.typing) c.target.blur(); closePanel(); } });
+    CMD.layer({ id: 'app.region-chooser', order: 95, isOpen: () => !!S.regionChooserClose, close: () => S.regionChooserClose() });
+    CMD.layer({ id: 'app.region-focus', order: 35, isOpen: () => S.focusCluster != null, close: () => unfocusRegion() });
+    CMD.register({ id: 'graph.focusRegion', title: 'Focus a region…', group: 'Graph', keys: ['G then C'],
+      aliases: ['cluster', 'topic', 'zoom to region', 'isolate', 'only this group'],
+      description: 'Zooms to one region and dims the rest. Click a region\'s name on the graph to do the same; Esc shows everything again.',
+      run: chooseRegion });
+    CMD.register({ id: 'graph.showAllRegions', title: 'Show all regions', group: 'Graph', when: () => S.focusCluster != null,
+      description: 'Leaves region focus and fits the whole library.', run: () => unfocusRegion() });
     CMD.register({ id: 'nav.search', title: 'Search your library', group: 'Navigate', keys: '/', aliases: ['find', 'filter', 'look up'],
       description: 'Highlights matching papers, notes and fragments. Enter opens the first match.',
       run: () => { searchInput.focus(); searchInput.select(); } });
@@ -2936,6 +3030,7 @@
     openMenu, addById, openChat, closeChat, closeExplain, newNote, runCritique, updateSearch, setShowSim, linkNotes, offerCreate,
     pickPdf: () => $('#pdf-input').click(),
     zoomFit: () => fg && fg.zoomToFit(T(600), 70),
+    focusRegion, unfocusRegion, chooseRegion,
   });
   boot();
 })();

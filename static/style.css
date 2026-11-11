@@ -960,3 +960,43 @@ html .ls-card .modal-actions { position: sticky; bottom: -16px; background: var(
 
 .lg-q { width: 8px; height: 8px; border: 1px solid var(--violet); transform: rotate(45deg); background: var(--ground); }
 .lg-conflict { width: 20px; border-top: 1px dashed var(--ochre); }
+
+/* topic entry: a quiet dashed pill, not a form box (all sizes; larger touch target on small screens) */
+html .tp-add { border: 1px dashed color-mix(in srgb, var(--ink-3) 60%, transparent); border-radius: 999px;
+  background: transparent; padding: 0 10px; width: auto; min-width: 6.5em; max-width: 12em; color: var(--ink); }
+html .tp-add::placeholder { color: var(--ink-3); }
+html .tp-add:hover { background: transparent; border-color: var(--ink-3); }
+html .tp-add:focus { border-style: solid; border-color: var(--ink-2); background: var(--sheet); outline: none; }
+@media (max-width: 900px) {
+  html .tp-add { height: 34px; min-height: 34px; font: 15px/1 var(--sans); padding: 0 14px; box-shadow: none; }
+}
+
+/* region focus: a small bar at the top of the graph while one region is isolated */
+.region-focus { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: flex; align-items: center; gap: 10px; padding: 4px 6px 4px 14px; background: var(--sheet);
+  border: 1px solid var(--ink); border-bottom: 2px solid var(--red); font: 13px var(--sans); font-stretch: var(--narrow); }
+.region-focus[hidden] { display: none; }
+.region-focus .rf-label { color: var(--ink-3); }
+.region-focus .rf-name { font: italic 500 16px var(--display); color: var(--ink); }
+.rf-chooser { position: fixed; z-index: 80; top: 90px; left: 50%; transform: translateX(-50%); width: min(360px, calc(100vw - 32px));
+  max-height: 60vh; overflow: auto; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 6px;
+  box-shadow: 0 18px 40px -22px color-mix(in srgb, var(--ink) 35%, transparent); }
+.rf-head { font: italic 500 15px var(--display); color: var(--ink-2); padding: 6px 8px 8px; }
+.rf-item { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; border: 0; background: none;
+  padding: 8px; border-radius: 3px; color: var(--ink); cursor: pointer; }
+.rf-item:hover, .rf-item:focus-visible { background: var(--ground); outline: none; }
+.rf-item-name { font: 15px var(--display); flex: 1; }
+.rf-item-n { font: 12px var(--sans); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) {
+  .region-focus { top: 10px; max-width: calc(100vw - 32px); }
+  .region-focus .btn { min-height: 36px; }
+  .rf-item { min-height: 44px; align-items: center; }
+}
+
+.region-focus { white-space: nowrap; max-width: min(620px, calc(100% - 200px)); }
+.region-focus .rf-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (max-width: 900px) {
+  .region-focus { top: auto; bottom: 12px; left: 16px; right: auto; transform: none; max-width: calc(100% - 210px); gap: 6px; padding-left: 10px; }
+  .region-focus .rf-label { display: none; }
+  .region-focus .rf-name { font-size: 15px; }
+}

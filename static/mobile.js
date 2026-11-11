@@ -471,7 +471,8 @@
   function wireGraphBackground() {
     const fg = rb.fg;
     if (!fg || !fg.onBackgroundClick) return;
-    fg.onBackgroundClick(() => { if (M.on && M.sel) { M.sel = null; peek.hidden = true; S.selected = S.cur ? S.cur.id : null; rb.kick(300); } });
+    // don't replace the app's own background handler (region tags use it); add to it
+    S.backgroundClickHook = () => { if (M.on && M.sel) { M.sel = null; peek.hidden = true; S.selected = S.cur ? S.cur.id : null; rb.kick(300); } };
   }
 
   // ====================================================================== lite: desktop-only things

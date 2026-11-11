@@ -114,6 +114,10 @@
 
   <main id="stage">
     <div id="graph"></div>
+    <div id="region-focus" class="region-focus" hidden role="status">
+      <span class="rf-label">Region</span> <span class="rf-name"></span>
+      <button type="button" class="btn btn-text" id="rf-show-all">Show all</button>
+    </div>
     <div id="legend" class="legend">
       <div><span class="lg lg-paper"></span>Paper</div>
       <div title="One small red dot for each of your notes or highlights on a paper; a summary on its own shows one dot"><span class="lg lg-mine"></span>Your notes</div>
@@ -125,6 +129,7 @@
       <div class="legend-count" id="legend-count"></div>
     </div>
     <div class="graph-tools">
+      <button id="btn-regions" class="btn btn-sm" title="Focus on one region of the graph">Regions</button>
       <button id="btn-zoom-fit" class="btn btn-sm" title="Fit the whole graph in view">Fit</button>
     </div>
 

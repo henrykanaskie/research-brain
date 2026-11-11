@@ -169,7 +169,7 @@
   function topicRow(n) {
     const row = h('div', { class: 'tp-row', id: 'topic-row' });
     let mine = (n.topics || []).slice();
-    const input = h('input', { type: 'text', class: 'tp-add', placeholder: mine.length ? 'Add' : 'Add to a topic', spellcheck: false,
+    const input = h('input', { type: 'text', class: 'tp-add', placeholder: mine.length ? '+ Topic' : '+ Add to a topic', spellcheck: false,
       'aria-label': 'Add to a topic', 'aria-autocomplete': 'list', id: 'topic-add' });
     let sugg = null, hi = 0, opts = [];
     const close = () => { if (sugg) { sugg.remove(); sugg = null; } };
@@ -179,7 +179,7 @@
           h('button', { class: 'tp-go', title: 'Open this topic', text: t.name, onclick: () => openDrawer(t.slug) }),
           h('button', { class: 'tp-x', title: `Remove from ${t.name}`, 'aria-label': `Remove from ${t.name}`, text: '×', onclick: () => remove(t) }))),
         input);
-      input.placeholder = mine.length ? 'Add' : 'Add to a topic';
+      input.placeholder = mine.length ? '+ Topic' : '+ Add to a topic';
     };
     const suggest = async () => {
       if (!T.list) await loadTopics();
