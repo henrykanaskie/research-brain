@@ -12,6 +12,7 @@ Protocol (one JSON object per reply; anything around it, such as a ```json fence
   {"action": "citations", "id": "<note-id>", "direction": "in"|"out"|"both"}
   {"action": "similar", "id": "<note-id>"}
   {"action": "memory", "query": "..."}                    search saved findings and the library map
+  {"action": "cards", "query": "...", "kind"?: "quantity"} the user's confirmed idea cards (app/cards.py)
   {"action": "remember", "text": "...", "sources": ["<note-id>", ...]}
                                                           save one short, sourced finding (memory rules apply)
   {"action": "answer", "text": "<Markdown answer citing [[note-id]] p. N>"}
@@ -45,7 +46,7 @@ RESULT_CHARS = 6000        # one action's result as shown to the model
 TRANSCRIPT_CHARS = 36000   # all earlier actions + results (oldest dropped first)
 CHUNK = 48                 # answer text is sent to the page in pieces of this size
 
-ACTIONS = ("search", "read", "citations", "similar", "memory", "remember", "answer")
+ACTIONS = ("search", "read", "citations", "similar", "memory", "cards", "remember", "answer")
 
 SYSTEM = (
     "You are a research assistant inside research_brain, a researcher's local library of papers and notes. "
@@ -60,6 +61,8 @@ SYSTEM = (
     '  {"action": "citations", "id": "<note-id>", "direction": "both"}   what it cites / what cites it\n'
     '  {"action": "similar", "id": "<note-id>"}   neighbouring notes\n'
     '  {"action": "memory", "query": "..."}   search saved findings and the library map\n'
+    '  {"action": "cards", "query": "...", "kind": "quantity"}   the idea cards the user confirmed (claims, '
+    "equations, measured quantities with units and conditions, methods); kind is optional\n"
     '  {"action": "remember", "text": "...", "sources": ["<note-id>"]}   only for a durable, non-obvious '
     "finding (one or two plain sentences, with sources). Most questions need none.\n"
     '  {"action": "answer", "text": "..."}   your final answer\n\n'
@@ -120,7 +123,7 @@ def to_tool(action: dict) -> tuple[str, dict]:
     if a not in ACTIONS:
         raise ValueError(f"unknown action {a[:30]!r}; use one of: {', '.join(ACTIONS)}")
     extra = set(action) - {"action", "query", "queries", "id", "note_id", "pages", "page", "direction", "text",
-                           "sources", "k", "n"}
+                           "sources", "k", "n", "kind"}
     if extra:
         raise ValueError(f"unexpected field {sorted(extra)[0][:30]!r} for {a}")
     nid = action.get("id", action.get("note_id"))
@@ -149,6 +152,11 @@ def to_tool(action: dict) -> tuple[str, dict]:
         return "similar", {"id": nid}
     if a == "memory":
         return "memory_search", {"query": action.get("query")}
+    if a == "cards":
+        args = {"query": action.get("query")}
+        if action.get("kind") is not None:
+            args["kind"] = action["kind"]
+        return "cards_search", args
     if a == "remember":
         return "remember", {"text": action.get("text"), "sources": action.get("sources")}
     raise ValueError("answer is not a lookup")
@@ -182,7 +190,9 @@ def _call(backend: Backend, prompt: str, system: str, timeout: float, cancel: th
         parts: list[str] = []
         gen = None
         try:
-            gen = backend.ask_stream(prompt, system=system, timeout=timeout)
+            from . import guard_send  # the privacy choke point (app/privacy.py), with this send's purpose
+            (sent,) = guard_send(backend, "research", prompt)
+            gen = backend.ask_stream(sent, system=system, timeout=timeout)
             for piece in gen:
                 if cancel.is_set():
                     break
@@ -270,6 +280,11 @@ def run(backend: Backend, context: str, tools, run_state, *, system: str = SYSTE
             step += 1
             tid = f"r{step}"
             shown = json.dumps(action, ensure_ascii=False)[:300]
+            try:  # echoing a guessed private id back would trip the privacy guard (app/privacy.py)
+                from .. import privacy
+                shown = privacy.hide_ids(shown)
+            except Exception:
+                pass
             try:
                 if str(action.get("action")).lower() == "answer":
                     raise ValueError("the answer text was empty")
@@ -298,6 +313,12 @@ def run(backend: Backend, context: str, tools, run_state, *, system: str = SYSTE
                 remembered += 1
             yield {"type": "tool_result", "id": tid, "is_error": err, "text": text}
             body = text if len(text) <= RESULT_CHARS else text[:RESULT_CHARS] + "\n… (cut)"
+            if err:  # "No note with id '<a guessed private id>'" must not echo the id back
+                try:
+                    from .. import privacy
+                    body = privacy.hide_ids(body)
+                except Exception:
+                    pass
             transcript.append(f"### you asked: {shown}\n{body}")
         yield {"type": "end", "reason": "max_turns", "text": "", "turns": turns, "tool_calls": calls}
     finally:

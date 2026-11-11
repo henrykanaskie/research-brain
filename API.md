@@ -34,6 +34,9 @@ Every request first passes the checks in app/security.py (SECURITY.md has the re
   "links": ["note-id"],                      // manual links (undirected; stored on both sides)
   "cites": ["note-id"],                      // papers: library papers this one cites (Semantic Scholar references; directed)
   "status": "" | "to-read" | "reading" | "read" | "later" | "not-relevant",   // reading status; new papers start "to-read"
+  "question_status": "" | "open" | "answered" | "parked",   // type "question" only (see "Open questions"); "" otherwise
+  "answer": "string",                        // questions: the user's current answer / thinking (markdown + $LaTeX$, [[links]])
+  "last_seen": "ISO8601" | "",               // questions: when the user last looked at the evidence
   "saved_because": "string",                 // the user's one-line "why I kept this"
   "topics": [{"slug","name"}],               // GET/PUT responses: topics this note belongs to
   "has_pdf": true | false,
@@ -223,9 +226,11 @@ Fragments imported from a Zotero annotation also store `"zotero_annotation"` (th
   is still refreshed. Fragments you made yourself are never touched.
 
 ## ADDED: Static export (reading lists)
-- `POST /api/export` body `{"ids": ["note-id", ...] | null, "include_pdfs": false, "title": "Reading list"}` →
-  201 `{"path": "/abs/vault/exports/2026-11-09_184812", "name", "index": "<path>/index.html",
-  "notes": int, "fragments": int, "pdfs": int}`.
+- `POST /api/export` body `{"ids": ["note-id", ...] | null, "include_pdfs": false, "include_private": false,
+  "title": "Reading list"}` → 201 `{"path": "/abs/vault/exports/2026-11-09_184812", "name",
+  "index": "<path>/index.html", "notes": int, "fragments": int, "pdfs": int, "private_skipped": int}`.
+  Private items (see Privacy) are left out unless `include_private` is true: no page, no fragment, and a
+  `[[link]]` to one becomes "a private note". 400 if everything picked is private.
   `ids: null` exports every paper and note. A selected paper/note brings its fragments (shown on its page);
   a fragment selected without its parent gets its own page. Writes `index.html`, `notes/<id>.html`,
   `assets/` (vendored KaTeX/marked/fonts) and, with `include_pdfs`, `pdfs/<id>.pdf`. All links are relative;
@@ -628,3 +633,204 @@ Cite menu, topic tools, Library settings › Citations) and `extension/cite.js` 
   absolute, `*.bib`, no `..`, its folder exists, not a symlink, not in the app's folder or the library's internal
   folders, and new/empty or starting with `% Written by research brain`.
 
+## ADDED: Privacy (app/privacy.py, app/privacy_api.py)
+An item is **private** if its frontmatter says `private: true`, or its type is in the library's
+`private_by_default` set (default `["note", "question"]`; "note" = a standalone note, no parent) and it doesn't
+say `private: false`. A fragment or note whose parent is private is private. Private items are never sent to an
+AI agent and are left out of exports by default; search and similarity are unaffected. SECURITY.md has the rules.
+- Note JSON (`GET /api/notes/{id}` and every endpoint that returns a note) carries `private` (effective, bool) and
+  `private_explicit` (`true`/`false` from the file, or `null` when the default applies). `PUT /api/notes/{id}`
+  accepts `{"private": true|false|null}`; `POST /api/notes` accepts `private` too.
+- `POST /api/notes/{id}/privacy` `{"private": true|false|null}` → the note. `null` removes the property.
+- `/api/graph` nodes carry `"private": bool`.
+- `GET /api/privacy` → `{"settings": {"private_by_default": [...], "private_ok_for_local_ai": bool},
+  "kinds": ["note", "question", "paper", "fragment", ...], "counts": {"private", "total"}}`.
+- `PUT /api/privacy/settings` `{"private_by_default"?: [types], "private_ok_for_local_ai"?: bool}` → same shape.
+  Stored in `vault/state/privacy.json`. `private_ok_for_local_ai` lets an agent of kind `local-server` read
+  private items; cloud CLIs never can.
+- `GET /api/privacy/log?limit=200` → `{"entries": [{"at", "agent", "agent_name", "kind", "model", "purpose",
+  "items": [ids], "private_items": [ids], "chars"}] (newest first), "titles": {id: title}, "path"}`. One entry per
+  send to an AI agent (`vault/state/ai_log.jsonl`, rotated at 5 MB); never any content.
+- AI endpoints: critique (plain and stream), explain and review check answer **403** with a plain message when an
+  item involved is private. Chat and Research leave private items out of retrieval. If an outgoing prompt still
+  contains a private id or 16+ copied words of a private item, the call is refused before anything is sent: 403
+  `{"detail": "This includes private notes (…), so nothing was sent to …"}` on plain endpoints, an `error` SSE event
+  on streams. Agent tools (`/api/agent/tools/{name}`) never return private items.
+
+
+## ADDED: Idea cards (claims, equations, quantities, methods)
+Logic in `app/cards.py` (storage, extraction, quote check, links, search) and `app/units.py` (pint); endpoints in
+`app/cards_api.py`; UI in `static/cards.js`. Cards are machine-suggested until the user confirms them; confirmed and
+edited cards are the user's knowledge (the only ones chat and Research see).
+
+```json
+Card = {"id": "c_<8 hex>", "paper": "note-id", "kind": "claim" | "equation" | "quantity" | "method",
+        "text": "one sentence", "latex"?: "n_e = ...",                       // equations
+        "quantity"?: {"name", "symbol", "value": float, "uncertainty": float|null, "unit", "conditions",
+                      "canonical_unit_value", "canonical_uncertainty", "canonical_unit", "canonical_dim"},  // SI, derived
+        "locator": {"quote": "verbatim, <= 300 chars", "page"?: int, "section"?: "3.2"|"Abstract"|..., "verified": bool},
+        "status": "suggested" | "confirmed" | "edited" | "rejected", "origin": "ai" | "user", "private": bool,
+        "created", "updated"}
+```
+Stored in `vault/cards/<paper-id>.json` as `{"paper", "cards": [Card], "extractions": [{at, agent, added, dropped,
+duplicates, calls}]}` (indented JSON; in backups and the library zip). Responses add `paper_title`, `year`, `citekey`
+(display only, never written), `where` ("p. 4", "§3.2", "abstract"), `href` (`/viewer/<id>#page=N` for a PDF, the
+article URL at the page or passage for a linked paper, else ""), for quantities `value_text`, `canonical_text` and
+`custom_text` (the text isn't the generated one), and `links: [{card, paper, paper_title, citekey, where, kind,
+conflict, score, text, status, href, value_text}]` + `conflicts` (count).
+
+- `GET /api/papers/{id}/cards` → `{"paper": {id, title, has_pdf, has_text, source, private}, "cards": [Card+],
+  "counts": {suggested, confirmed, edited, rejected}, "agent": {available, name, id, why}, "job": Job|null,
+  "extractions", "default_private": bool, "max_ai": 25}`. 404 unknown, 400 not a paper.
+- `POST /api/papers/{id}/cards` body `{kind, text?, latex?, quantity?, locator?: {quote, page?, section?}, private?}` →
+  201 Card (origin `user`, status `confirmed`; `private` defaults to true when standalone notes are private by
+  default, app/privacy.py). A quote found in the paper is marked `verified` and gets its page. 400 for a bad kind, a
+  quantity without a numeric value, or empty text.
+- `PATCH /api/cards/{card_id}` body: any of `kind, text, latex, quantity, locator, status, private` → Card. Changing
+  an AI card's content makes it `edited`; `status` confirms (`confirmed`), rejects (`rejected`) or restores
+  (`suggested`). 404 unknown card, 400 bad values.
+- `DELETE /api/cards/{card_id}` → `{"ok": true}`.
+- `POST /api/papers/{id}/cards/confirm-all` body `{ids?: [card id]}` → `{"confirmed": n}`.
+- `POST /api/papers/{id}/cards/extract` → 202 `{"job_id", "state": "running"}` (or the running job with
+  `already_running`). 400 no text, 403 a private paper (unless the local-AI exception allows it), 409 already 25 AI
+  cards, 429 two extractions already running, 503 no agent available ("You can still add cards by hand.").
+- `GET /api/cards/jobs/{job_id}` → `Job = {"id", "paper", "state": "running"|"done"|"error", "done", "total", "added",
+  "dropped", "duplicates", "errors", "message", "agent", "started", "finished", "cards": [ids]}`.
+- `GET /api/cards?kind=&q=&quantity=&status=&paper=&limit=` → `{"cards": [Card+], "total", "quantities": [{name,
+  count}]}`. Local only: `q` ranks by reciprocal-rank fusion of the embedding (or TF-IDF) and BM25 over the card text,
+  quantity, conditions, quote and paper title, keeping cards that match either; `quantity` keeps quantity cards of
+  that quantity ("electron temperature", "T_e", "Te"); `status` = `all` (default: all but rejected), `known`
+  (confirmed + edited) or a comma list. Without `q`, ordered by paper title then creation.
+- `GET /api/cards/export.csv?…` (same parameters) → `text/csv` attachment with columns `kind, name, symbol, value,
+  uncertainty, unit, canonical_value, canonical_uncertainty, canonical_unit, conditions, text, latex, paper, citekey,
+  year, where, quote, status, origin, conflicts, card_id`. Text cells starting with `= + - @` are prefixed with `'`.
+- `GET /api/cards/links` → `{"links": [{a, b, a_paper, b_paper, kind, score, conflict}]}` (derived, cached in
+  `.index/card_links.json`, rebuilt when a cards file changes).
+- `GET /api/graph`: paper nodes gain `"cards"` (cards that aren't rejected) and the response gains
+  `"card_links": [{a_paper, b_paper, kind, conflict, a, b}]` (data only; the graph doesn't draw them yet).
+- Research: agent tool `cards_search {query, kind?, k?}` (offered only when confirmed cards exist; confirmed and
+  edited cards that are neither private nor from a private paper) and the universal protocol action
+  `{"action": "cards", "query": "...", "kind"?: "quantity"}`. Chat adds up to 6 matching confirmed cards to its
+  context ("CONFIRMED IDEA CARDS"), privacy-filtered the same way.
+- Python (other features, e.g. open questions): `cards.for_paper(paper_id, confirmed_only=True)`,
+  `cards.search(text, k=8, confirmed_only=True, kind=None, quantity=None)`.
+
+**Extraction protocol.** Only the paper's own text is sent (its extracted text without the reference list, plus the
+abstract when the text doesn't start with it), through `agents.ask_parts(..., purpose="card-extraction",
+sources=[paper id])`, so the privacy guard checks it and `state/ai_log.jsonl` records it. The text is cut into parts of
+about 6,000 characters (`RB_CARDS_WINDOW`) along page and section markers; parts with the abstract, results,
+discussion and conclusions go first, introduction and background last; at most 6 calls (`RB_CARDS_MAX_CALLS`), 10
+cards per call, 25 AI cards per paper over all extractions (`RB_CARDS_MAX`), 600 s per extraction (`RB_CARDS_BUDGET`),
+two extractions at once (`RB_CARDS_MAX_JOBS`). The model replies with one JSON object `{"cards": [{kind, text, quote,
+latex?, quantity?}]}` (a code fence, prose around it or a bare list are accepted; one corrective retry).
+
+**Hallucination guard.** A card is kept only if its quote is found in the paper text: exactly after normalising (case,
+whitespace, NFKC ligatures, dashes and quotes, end-of-line hyphenation), else ignoring punctuation, else a fuzzy match
+covering at least 85% of the quote within the part it came from. The stored quote is replaced by the paper's own text
+at that spot (whitespace collapsed, at most 300 characters) with its page or section. A quantity is also dropped
+unless its value (or both ends of value ± uncertainty) is among the quote's numbers. Then duplicates (same kind and the
+same quote, a text ≥ 85% similar, the same equation, or the same quantity and value) are skipped, against all the
+paper's cards including rejected ones, so a rejected suggestion doesn't come back.
+
+**Links and conflicts.** Quantity cards of different papers are linked when they are the same quantity (a known
+concept such as electron temperature from the name or symbol, else ≥ 60% name-word overlap, else the same symbol) with
+the same SI dimension. They conflict when their conditions are comparable (no shared operating parameter that differs
+by more than 20%, and the descriptions share words or a parameter, or one says nothing) and the SI values differ by
+more than the combined uncertainty (√(σa² + σb²), a missing one counting as 0), or by more than 30% of the larger
+when neither gives one. Other cards are linked within the same kind when their embeddings' cosine similarity is
+≥ 0.78 (sentence-transformers; `RB_CARD_LINK_ST`) or ≥ 0.5 (TF-IDF; `RB_CARD_LINK_TFIDF`), at most 6 per card, or when
+two equations have the same normalised LaTeX. Rejected cards take no part.
+
+## ADDED: Open questions (app/questions.py, app/questions_api.py)
+
+A question is a note with `"type": "question"`: create, edit and delete it with the notes API
+(`POST /api/notes {"type": "question", "title", "body"?}`, `PUT /api/notes/{id} {title?, body?, answer?,
+question_status?}`, `DELETE /api/notes/{id}`). New questions start `question_status: "open"` and private
+(app/privacy.py). The body is what the question means in more detail (the matcher uses title + body + tags);
+`answer` is a wikilink field like summary and body. Deleting a question moves its evidence file to `.trash/`.
+
+Evidence (the user's decisions) is stored in `vault/state/questions/<question id>.json`:
+`{"items": [Evidence]}` with
+
+```json
+{
+  "id": "3f2a9c01b7de",                       // stable: sha1 of key
+  "key": "passage:<note>:<page>:<section>:<text hash>" | "note:<id>" | "paper:<id>" | "card:<card id>",
+  "kind": "passage" | "note" | "paper" | "card",   // passage = paper text; paper = its abstract or your summary;
+                                              // note = a note or fragment; card = an idea card (app/cards.py)
+  "ref": {"note": "paper-or-note-id", "page"?: 3, "section"?: "3.2", "card"?: "c_1234abcd", "parent"?: "paper-id"},
+  "score": 0.29,                              // cosine similarity in the passage index's space
+  "found_at": "ISO8601",
+  "verdict": "new" | "supports" | "against" | "related" | "dismissed",
+  "user_note": "string",
+  "snippet": "the passage (≤ 600 chars)",
+  "title": "source title when found",
+  "decided_at"?: "ISO8601"
+}
+```
+
+- `GET /api/questions` → `{"questions": [{id, title, question_status, created, updated, last_seen, answered,
+  tags, counts, new_evidence, latest_evidence}], "total_new": n, "matching": {runs, enabled}}`. Open first, then
+  parked, then answered; most new evidence first. `counts = {new, untriaged, supports, against, related,
+  dismissed, total}`: `new` = untriaged items found after `last_seen` (the badge), `untriaged` = verdict "new".
+  `total_new` sums `new` over open questions.
+- `GET /api/questions/{id}/evidence` → `{"question": {id, title, question_status, last_seen}, "items":
+  [Evidence + {"new": bool, "where": "p. 3" | "§3.2" | "", "href": "/viewer/<id>#page=3" | article URL | "",
+  "source": {id, title, type, year, authors, exists, paper: {id, title} | null}}], "groups": [{verdict, label,
+  count}], "counts", "ai": {"available": bool, "reason": "why not, in plain words"}}`. Items are sorted by group
+  (to triage, supports, against, related, dismissed), new first, best score first. 404 if not a question.
+- `PUT /api/questions/{id}/evidence/{eid}` `{"verdict"?: ..., "user_note"?: "..."}` → `{"item", "counts"}`.
+  400 for an unknown verdict, 404 for an unknown item. Setting `"new"` puts an item back under To triage.
+- `POST /api/questions/{id}/seen` → `{"last_seen", "counts"}`. Doesn't change the note's `updated`.
+- `POST /api/questions/{id}/rescan` → `{"added": n, "counts"}`: look for evidence now (local, synchronous).
+- `GET /api/questions/settings` → `{"threshold_tfidf", "threshold_dense", "daily_cap", "embedder", "family":
+  "tfidf" | "dense", "threshold": in effect, "defaults": {...}}`; `PUT` the same three keys (400 outside 0-1 /
+  1-100). Stored as `questions` in the app settings file.
+- `POST /api/questions/{id}/summarize` → `{"text", "used", "left_out"}`: an optional AI summary of the kept
+  evidence. **403** with a plain reason while the question is private (the default), or when every kept piece
+  comes from a private note; evidence from private notes is left out (`left_out`). Goes through the agents
+  layer's privacy guard like every AI call.
+- `GET /api/graph`: question nodes have `"type": "question"` and `"new_evidence": n`; the payload has
+  `"question_links": [{"q": question id, "paper": note id, "verdict": "supports" | "against" | "related"}]`, one per
+  question, source and verdict (a fragment's or card's evidence points at its paper). Dismissed and untriaged
+  evidence makes no link.
+
+**Matching (local only; nothing about a question is sent to an AI agent).** Candidates come from the passage
+index (`ChunkIndex.search`, BM25 + embeddings fused by RRF, which now also returns each passage's absolute cosine
+`sim`), whole-note similarity from the note index, and `app.cards.search` / `for_paper(confirmed_only=True)`
+when idea cards exist. Each candidate is scored by cosine similarity in the passage index's space
+(`ChunkIndex.similarity`) and kept if it clears the threshold (TF-IDF 0.12, sentence-transformers 0.40); with TF-IDF it
+must also share 3 of the question's (stemmed, non-stop) words. Then: deduplicated against every stored item; a
+dismissed passage blocks its page/section, a dismissed note/paper/card its source; a note- or abstract-level match
+is skipped when a passage or card from the same source is evidence; at most 2 new items per source per scan and
+`daily_cap` (10) per question per day, best score first. Questions are never indexed as passages and never
+evidence for each other. The background matcher (one thread) runs debounced (2 s, `RB_QUESTIONS_DEBOUNCE`) after
+any note save or delete (`Store.listen`), any live event (`notes-changed`, `cards-changed`, metadata), and a slow
+poll (30 s, `RB_QUESTIONS_POLL`); it skips a question when neither it, the library, the cards, the settings nor
+the date changed. Only open questions are scanned in the background. `RB_QUESTIONS_MATCH=0` turns it off.
+
+## ADDED: Phones and tablets (app/pairing.py, app/mobile_api.py)
+
+Any request that isn't from this computer needs a paired device's token (cookie `rb_device`, or
+`Authorization: Bearer <token>` for the iOS Shortcut); otherwise `401`. See SECURITY.md, "Phones and tablets".
+
+| Method | Path | Who | What |
+| --- | --- | --- | --- |
+| GET | `/api/device` | any | `{local, device: {id, name} \| null}`: this computer, or which paired device is asking |
+| POST | `/api/pair/start` | computer | `{code, expires_in, urls: [{url, label, pair_url}]}`: a one-time code (10 min) and the addresses a phone can open |
+| DELETE | `/api/pair/codes` | computer | cancel unused codes |
+| POST | `/api/pair/claim` | unpaired device | `{code, name}` → `201 {device}` and the `rb_device` cookie; `400`/`410` bad or used code, `429` too many tries |
+| POST | `/api/device/forget` | paired device | unpair itself |
+| GET | `/api/devices` | computer | `{devices: [{id, name, created, last_seen, ua}]}` |
+| POST | `/api/devices/token` | computer | `{name}` → `{device, token}`: a Bearer token for the iOS Shortcut, shown once |
+| PATCH | `/api/devices/{id}` | computer | `{name}` rename |
+| DELETE | `/api/devices/{id}` | computer | revoke |
+| POST | `/api/capture/photo?title=&note=` | any allowed | raw `image/jpeg`, `image/png` or `image/webp` body (≤ 25 MB) → `201 {id, title, attachment}`: a note tagged `photo` showing the photo |
+| GET | `/attachments/{name}` | any allowed | an attached photo |
+| GET | `/pair` | unpaired device | the pairing page (reads `?code=`) |
+| GET | `/share?title=&text=&url=` | any allowed | Web Share Target: the app opens on its Add screen with the shared link or text |
+| GET | `/manifest.webmanifest`, `/sw.js` | any | web app manifest; service worker (caches `/static/` only) |
+
+Paired devices get `403 Available on your computer` from: `/api/pair/*`, `/api/devices*`, `/api/cite/auto-exports*`,
+`/api/vault/export|import`, `/api/library/move-legacy`, `/api/zotero/*`, `/api/export`, `/api/backfill/*`, and
+writes to `/api/profiles*`, `/api/settings`, `/api/agents/active`, `/api/privacy/settings`.

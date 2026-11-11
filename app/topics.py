@@ -423,7 +423,12 @@ def _drop_recs(store, slug: str) -> None:
 
 def _positives_negatives(t: dict, by_id: dict) -> tuple[list[str], list[str]]:
     from .citations import s2_key
-    live = [by_id[m] for m in t["members"] if m in by_id and by_id[m]["type"] == "paper"]
+    try:  # a paper marked private (app/privacy.py) isn't sent to Semantic Scholar as a recommendation seed
+        from . import privacy
+        priv = privacy.private_ids()
+    except Exception:
+        priv = frozenset()
+    live = [by_id[m] for m in t["members"] if m in by_id and by_id[m]["type"] == "paper" and m not in priv]
     pos = [s2_key(n) for n in live if s2_key(n) and n.get("status") != "not-relevant"][-MAX_POSITIVES:]
     neg = [s2_key(n) for n in live if s2_key(n) and n.get("status") == "not-relevant"]
     neg += [d["s2_id"] for d in t["dismissed"] if d["s2_id"]]

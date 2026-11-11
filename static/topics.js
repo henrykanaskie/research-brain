@@ -241,6 +241,7 @@
     if (!n || n.type === 'fragment') return;
     const title = $('.title-input', body);
     if (!title) return;
+    if (n.type === 'question') { title.after(topicRow(n)); return; } // a question has no reading status (static/questions.js)
     title.before(statusRow(n));
     title.after(becauseField(n), topicRow(n));
   });

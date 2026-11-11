@@ -11,3 +11,4 @@ watchdog>=4.0
 mcp>=2.3,<3   # Research mode's MCP server can also run on the SDK (RB_AGENT_MCP_SDK=1); 2.x API (mcp.server.mcpserver)
 citeproc-py>=0.12  # citation styles (CSL) for formatted citations and bibliographies (app/cite.py)
 defusedxml>=0.7    # safe parsing of user-added .csl style files (no DTDs, entities or network)
+pint>=0.24          # unit normalisation for measured quantities on idea cards (app/units.py)

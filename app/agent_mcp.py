@@ -67,6 +67,14 @@ TOOLS: dict[str, dict] = {
                    "schema": {"type": "object", "properties": {}}},
     "memory_search": {"description": "Search the library map and saved findings.",
                       "schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    "cards_search": {
+        "description": "Search the idea cards the user confirmed: claims, equations, measured quantities (value, "
+                       "uncertainty, unit, conditions, with an SI conversion) and methods, each with its paper, page "
+                       "and a verbatim quote. Good for 'every measured X' questions.",
+        "schema": {"type": "object", "properties": {
+            "query": {"type": "string"},
+            "kind": {"type": "string", "enum": ["claim", "equation", "quantity", "method"]},
+            "k": {"type": "integer", "minimum": 1, "maximum": 15}}, "required": ["query"]}},
     "remember": {
         "description": "Save ONE short durable finding to memory (plain prose, at most 400 characters, no code), with "
                        "the note ids it comes from (\"note-id\" or \"note-id p. 4\"). Use rarely.",
@@ -80,7 +88,7 @@ READ_ONLY = {n for n in TOOLS if n != "remember"}
 
 def offered() -> list[str]:
     want = [t.strip() for t in os.environ.get("RB_AGENT_TOOLS", "").split(",") if t.strip()]
-    return [t for t in (want or [t for t in TOOLS if t not in ("list_topics", "topic_papers")]) if t in TOOLS]
+    return [t for t in (want or [t for t in TOOLS if t not in ("list_topics", "topic_papers", "cards_search")]) if t in TOOLS]
 
 
 def call_app(name: str, args: dict) -> tuple[str, bool]:

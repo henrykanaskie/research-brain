@@ -18,7 +18,7 @@ This page explains what we defend against, how, and what is still up to you.
 | A web page in your browser | A site posts a hidden form to `http://127.0.0.1:8765/api/notes`, or loads `/api/graph` in a `<script>` tag | Origin and fetch-metadata checks, JSON-only bodies, CORS, same-origin resource policy |
 | DNS rebinding | `evil.example` points its DNS at 127.0.0.1, so the browser treats our server as that site | Host-header allowlist on every request |
 | Other people or programs on the same computer | Another account reads `~/research_brain/vault`, or plants a `CLAUDE.md` in `/tmp` | Private file permissions, a private working folder for Claude |
-| Other devices on the network | Someone on café Wi-Fi opens your library | The server listens on 127.0.0.1 only (unless you set `RB_HOST`) |
+| Other devices on the network | Someone on café Wi-Fi opens your library | The server listens on 127.0.0.1 only (unless you set `RB_HOST`); any device that isn't this computer must be paired |
 | Malicious files you import | A PDF built to hang or exhaust the parser; a note file with a YAML "billion laughs"; a Zotero attachment path pointing at `~/.ssh` | Parser in a limited child process, size and time limits, path checks |
 | Malicious URLs you import | "Annotate this PDF" on a link that redirects to your router or a cloud metadata address | SSRF guard with a pinned, checked IP address for every hop |
 | Prompt injection in paper text | A paper says "ignore your instructions and run `curl …`" | Claude has no tools that could do it; the tool guard kills the run if it does |
@@ -28,7 +28,8 @@ This page explains what we defend against, how, and what is still up to you.
 
 ## The local server (app/security.py)
 
-The app has no password. It trusts whoever can reach `127.0.0.1:8765`, so the browser is the main way in.
+The app has no password. It trusts whoever can reach `127.0.0.1:8765` from this computer, so the browser is the main way in.
+Any other device must be paired first (see [Phones and tablets](#phones-and-tablets-device-pairing-apppairingpy-appmobile_apipy)).
 Every request passes these checks before any endpoint runs:
 
 - **Host allowlist (DNS rebinding).** The `Host` header must be `127.0.0.1`, `localhost` or `[::1]`
@@ -55,6 +56,49 @@ Every request passes these checks before any endpoint runs:
 - Tools without a browser (the iOS Shortcut, `curl`, Research mode's tool bridge) send no `Origin` and
   no `Sec-Fetch-*` headers, so they work as before. They still need a correct Host and a JSON body.
 - The Swagger page (`/api/docs`) is off: it loads scripts from a CDN. `API.md` documents every endpoint.
+
+## Phones and tablets: device pairing (app/pairing.py, app/mobile_api.py)
+
+With `RB_HOST` or `RB_ALLOWED_HOSTS` (docs/mobile-capture.md) other devices can reach the server. None of them
+gets anything until it is paired; this computer itself never needs pairing.
+
+- **Who is "this computer".** The TCP peer is a loopback address *and* the `Host` header names loopback, or the
+  peer is the very address the server accepted the connection on (a browser on the laptop opening its own
+  Tailscale IP). In both cases there must be no proxy header (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`,
+  `X-Forwarded-Host`, `Tailscale-User-*`). `tailscale serve` connects from 127.0.0.1 but adds those headers and
+  uses the ts.net name as `Host`, so phones coming through it are not mistaken for the laptop.
+- **Everything else needs a device token**, checked in the security middleware before any endpoint, static file
+  or PDF: an unpaired device gets `401` (a short "Pair this device from your computer" page for page loads, JSON
+  for everything else). The only paths open to it are `/pair`, `POST /api/pair/claim`, `/static/pair.js`, the
+  web-app icons, the manifest and the fonts that page uses.
+- **Pairing codes.** Library settings › Phones and tablets › Pair a phone (`POST /api/pair/start`, computer only)
+  makes a code of 128 random bits, valid for 10 minutes and usable once; only its SHA-256 is kept, in memory.
+  The QR code (drawn on the page by the vendored `static/vendor/qr.js`; nothing is sent anywhere) holds
+  `<address>/pair?code=…`. The phone's page removes the code from the address bar and trades it for a token with a
+  `POST` (so link previewers and prefetchers can't burn it).
+- **Device tokens** are 256 random bits in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` when the page is
+  https, as with `tailscale serve`), valid for 400 days. Only their SHA-256 is stored, in the per-user
+  `settings.json` (never in the library, so a library zip carries no tokens), compared in constant time. The
+  iOS Shortcut can't keep a cookie, so Library settings can make a token for it once, sent as
+  `Authorization: Bearer …`.
+- **Revoke** (Library settings, or "Unpair this device" on the phone) deletes the hash: the next request from
+  that device is refused. Last-seen times are written at most every 5 minutes.
+- **Rate limit.** At most 10 failed claims per client address and 30 in total per 10 minutes; after that every
+  claim gets `429` until the window passes.
+- **A paired device can't change this computer.** `403 Available on your computer` for: pairing and devices,
+  auto-updating `.bib` files (they write to disk), library import/export and profiles, writing `/api/settings`,
+  the AI agent choice, privacy settings, Zotero, site export and backfills. It can read, search, review, ask
+  (subject to the privacy rules: private notes never go to an AI agent, from any device) and add notes,
+  links, PDFs and photos.
+- **The installed web app** (`static/sw.js`) caches the app shell only (files under `/static/`), network first.
+  It never caches `/api/`, `/pdf/`, `/attachments/` or the page itself, so no note, PDF or answer is left on the
+  phone, and revoking a device leaves nothing readable behind. The share target (`/share`) is a page load like
+  any other, so it needs the device token too.
+- **Photos** (`POST /api/capture/photo`) must be JPEG, PNG or WebP by content type *and* by their first bytes, at
+  most 25 MB (`RB_MAX_PHOTO_MB`); they are stored under `vault/attachments/` with a random name and served only
+  by exact name.
+- The Host allowlist, Origin and fetch-metadata rules above still apply to paired devices. An `https` origin on
+  port 443 is accepted for a non-loopback allowed name (that is `tailscale serve`).
 
 ## Files on disk
 
@@ -247,6 +291,72 @@ folded into a summary.
 - The id is pinned by the public `key` in the manifest, so the server can accept exactly this extension.
   (Reloading after this change gives the extension a new id once; its server setting resets to the default.)
 
+## Privacy of your own ideas (app/privacy.py)
+
+*"What if I don't want my novel ideas getting out?"* Your library leaves this computer in exactly two ways:
+through the **AI agent** you picked (a CLI such as Claude Code, Codex or Gemini talks to its provider's cloud;
+Ollama or LM Studio don't) and through **exports you make**. GitHub never sees the vault: the code is on
+GitHub, your library lives in your data folder. research_brain lets you mark items **private**, and then they
+take neither way out.
+
+**What is private.** An item is private if its file says `private: true`, or its type is private by default
+and it doesn't say `private: false`. Out of the box, **open questions** and **standalone notes** (a note with
+no parent) are private; **papers, fragments and your summaries** are shareable. A fragment or note attached
+to a private parent is private too, whatever it says itself. Change the defaults in Library settings ›
+Privacy (they are stored in the library, `state/privacy.json`, so they survive a browser change and move with
+the library), or one item with the lock in its header (`POST /api/notes/{id}/privacy`). The graph shows a
+lock on private nodes.
+
+**What is sent to an AI provider, and what isn't.**
+
+- Never sent: a private item's title, id, summary, notes, quote, properties or its own full text, in chat,
+  streaming chat, critique, explain-a-link, review checks, Research mode (both Claude's native path and the
+  app-driven loop for other agents), the Research pre-search, or the library map and saved findings that
+  Research reads. Critique, explain and review checks on a private item answer **403** with a plain message
+  instead of calling the agent. Chat and Research simply don't retrieve private items: retrieval runs over
+  the shareable part of the library only.
+- The agent's library tools (search, search titles, read a note or its pages, citations, similar notes,
+  recent notes, topics, memory search) never return private items; a private id looks like a missing one.
+  Every tool result is checked again before the model reads it, and withheld if it still carries private text.
+- Memory: `remember` refuses a finding that cites a private note or copies 8+ words of one, and the library map
+  (`memory/core.md`) leaves private items out.
+- A `[[link]]` to a private note inside a shareable note is sent as `[[a private note]]`.
+- Sent as before: shareable papers, fragments, summaries and notes that the question needs, and what you type.
+
+**The choke point.** Context builders filter first, but the guarantee is one check in the agents layer
+(`app/agents/__init__.py` → `privacy.check_send`): every backend's `ask`, `ask_stream`, `ask_parts` and
+`stream_parts` is wrapped when it is registered, every turn of the app-driven Research loop goes through it,
+and so do the Claude native Research path's context and each tool result. Before anything is sent it scrubs
+links to private notes, then refuses the call (*"This includes private notes …, so nothing was sent"*) if a
+private id appears (inside `[[…]]`, or bare when it has three or more hyphenated parts) or private text appears.
+Text is matched with hashed 8-word shingles of every private item, refreshed whenever the library or the
+settings change: two non-overlapping matching shingles from one item (16+ copied words) is a leak. Shingles
+made of stop words and generic academic words ("in this paper we propose a novel method") are not indexed,
+so shared boilerplate doesn't trip it. The check takes a few milliseconds for a 50,000-character prompt against
+2,000 private items.
+
+**Local models.** Library settings › Privacy › "Let a local model server read private items" (off by
+default) lets a backend of kind `local-server` (Ollama, LM Studio, an OpenAI-compatible server on 127.0.0.1)
+see private items. Cloud CLIs never do. The library map and memory stay private-free either way.
+
+**The audit log.** Every send is one line in `state/ai_log.jsonl`: time, agent, model, purpose (chat,
+critique, research, research tool, …), the library ids named in the prompt (private ones flagged, which can
+only happen under the local-model exception) and the size in characters. **No content.** It is rotated at 5 MB
+(the previous file is kept as `ai_log.1.jsonl`). Library settings › Privacy › *What was sent to AI* shows it,
+with links to the items; `GET /api/privacy/log` returns it.
+
+**Exports and backups.** Reading-list exports (`POST /api/export`, View › Export) leave private items out
+(no page, no fragment, no title in a link) unless you tick *Include private notes*. The library zip
+(Library settings › Export library, `research-brain export`) is a **full backup and includes everything,
+private items too**: keep it as private as the library itself. BibTeX/RIS/CSL-JSON exports and auto-updating
+`.bib` files are for your own writing and still include private papers' bibliographic records.
+
+**Limits.** The guard is a backstop for copying, not for paraphrase: if you retype a private idea in your
+own words into a shareable note, that note is shareable. Fewer than 16 copied words (or one 8-word run) pass.
+A private paper's identifiers (DOI, arXiv id) are still used for metadata lookups (public records), though not
+as Semantic Scholar recommendation seeds. Search, similarity and the graph are local and keep working on
+private items. Anyone who can run programs as you can read the vault (see below).
+
 ## What goes over the network
 
 - **Semantic Scholar, arXiv, Crossref**: DOIs, arXiv ids and titles, when you add a paper, open
@@ -263,8 +373,11 @@ folded into a summary.
   (`RB_TRANSLATION_SERVER_PORT`): the URL of a page that had no identifier. That server then fetches the page
   itself.
 - **Your AI agent's provider**, through the CLI you picked (Anthropic for Claude Code, OpenAI for Codex,
-  Google for Gemini, GitHub for Copilot, ...): the paper text and notes needed for the question you asked.
-  Nothing, if you use Ollama or another local model server.
+  Google for Gemini, GitHub for Copilot, ...): the paper text and notes needed for the question you asked,
+  never private items ([Privacy of your own ideas](#privacy-of-your-own-ideas-appprivacypy)); each send is
+  listed in `state/ai_log.jsonl`. Nothing, if you use Ollama or another local model server.
+  **Suggest ideas** (idea cards, `app/cards.py`) sends only the paper's own text and abstract, never your
+  notes, summaries, cards or questions, and never a paper marked private (logged as `card-extraction`).
 - **Hugging Face**, once: the embedding model download (`sentence-transformers`), unless `RB_EMBEDDER=tfidf`.
 - **The URL you import**, when you use "Annotate this PDF" / import by URL.
 - Nothing else. The interface loads no CDN, font or analytics URL (`tests/test_offline.py` and the
@@ -284,9 +397,13 @@ Python or OS). All front-end code (KaTeX, marked, force-graph, PDF.js, fonts) is
 - **Anyone who can run programs as you can read and change your library.** Local file permissions protect
   you from *other* accounts, not from software you run yourself (including other browser extensions with
   broad host permissions, which can read any local page).
-- **`RB_HOST` exposes the app, with no password, to that network.** Only use it on a network you trust
-  (e.g. Tailscale). The Host and Origin checks still apply, and the Research tool endpoint still needs a
-  live token from a loopback client.
+- **`RB_HOST` puts the app on that network.** Other devices still need pairing, but anyone on the network can
+  see that something answers and try to pair (codes are 128 random bits, expire in 10 minutes and are rate
+  limited). Prefer Tailscale; use a plain LAN only if you trust it. Over plain `http://` on a LAN the cookie
+  travels unencrypted, so someone who can watch that Wi-Fi could copy it; Tailscale (WireGuard) or
+  `tailscale serve` (https) avoid that. The Research tool endpoint still needs a live token from a loopback client.
+- **A paired phone is as trusted as you.** Someone holding your unlocked phone can read and add to your library.
+  Revoke a lost phone from Library settings.
 - **Prompt injection can still steer what Claude writes**, in an answer or a memory finding. It can't
   give Claude new abilities. Findings are labelled, sourced and editable.
 - **The tool guard trusts the CLI's own report of its tools.** If a future CLI attached tools without
@@ -302,6 +419,9 @@ Python or OS). All front-end code (KaTeX, marked, force-graph, PDF.js, fonts) is
 
 ## Tests
 
+`tests/test_pairing.py` covers pairing (unpaired 401, single-use and expiring codes, revoke, rate limit, the computer-only
+endpoints, the "this computer" rules, photo checks, the Shortcut token, the QR encoder);
+`tests/e2e/test_mobile_e2e.py` pairs a phone in Chromium and checks the service worker never caches `/api/`.
 `tests/test_security.py` covers the Host allowlist, Origin and fetch-metadata checks, JSON-only bodies,
 size limits, headers and CSP hashes, path traversal, YAML bombs, the PDF parser's time and memory limits,
 URL import pinning and content checks, the Claude CLI's flags, working folder and environment, agent tool
@@ -310,7 +430,10 @@ permissions. `tests/e2e/test_csp_e2e.py` runs the app and the PDF viewer in Chro
 and fails on any violation. `tests/test_agent.py` covers the tool guard against a fake `claude`.
 `tests/test_cite.py` covers style-file validation (XXE, entity expansion, size, dependent styles), HTML
 sanitising of formatted citations, and auto-export path rules (relative paths, `..`, missing folders, the app
-folder, symlinks, hand-written .bib files).
+folder, symlinks, hand-written .bib files). `tests/test_privacy.py` covers private-by-default types,
+inheritance and settings, the guard (ids, copied text, no false alarms on stock phrases, its speed with 2,000
+private items), every AI path refusing or filtering private items, the agent tools and memory, the local-model
+exception, the audit log and its rotation, and exports.
 
 
 The exact command line, lockdown method, version verified and remaining risk for each command-line agent (Codex, Gemini, Copilot, OpenCode, Qwen Code, Cursor) are in [docs/agents.md](docs/agents.md).

@@ -283,6 +283,14 @@ class Memory:
         """The agent's one write: append a finding. Validates everything first."""
         clean = check_text(text)
         srcs = self._validate_sources(sources)
+        try:  # private notes (app/privacy.py) never go into memory, which later goes to the AI
+            from . import privacy
+            priv = privacy.private_ids()
+            leaked = privacy.copies_private(clean) if priv else []
+        except Exception:
+            priv, leaked = frozenset(), []
+        if leaked or any(s["id"] in priv for s in srcs):
+            raise MemoryError("that finding comes from a private note; private notes stay out of memory")
         with self._locked():
             entries, summary = self.findings()
             if any(_norm(e["text"]) == _norm(clean) for e in entries):

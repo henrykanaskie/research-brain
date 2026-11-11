@@ -553,7 +553,7 @@ def test_exported_site_escapes_note_content(app_env):
     c, server = app_env
     evil = "</script><script>alert(1)</script><img src=x onerror=alert(1)>"
     n = c.post("/api/notes", json={"title": evil, "body": evil, "summary": evil, "url": "javascript:alert(1)",
-                                   "tags": [evil]}).json()
+                                   "tags": [evil], "private": False}).json()
     r = c.post("/api/export", json={"ids": [n["id"]]})
     assert r.status_code == 201, r.text
     out = Path(r.json()["path"]) if "path" in r.json() else None

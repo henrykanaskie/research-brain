@@ -57,12 +57,17 @@ FIELDS_DEFAULTS: dict[str, Any] = {
     "meta_source": "",        # where `csl` came from: crossref, datacite, arxiv, pubmed, openlibrary, osti, ntrs,
                               # translation-server, s2, page, zotero ("" = never resolved)
     "meta_checked": "",       # when the metadata was last resolved (ISO time)
+    # open questions (type "question", app/questions.py); written only when set, so other notes don't carry them
+    "question_status": "",    # open | answered | parked
+    "answer": "",             # the user's current answer / thinking (Markdown + LaTeX)
+    "last_seen": "",          # when the user last looked at the question's evidence (ISO time)
 }
 SOURCES = ("", "linked", "pdf")
-TYPES = ("paper", "note", "fragment")
+TYPES = ("paper", "note", "fragment", "question")
 STATUSES = ("to-read", "reading", "read", "later", "not-relevant")
+QUESTION_STATUSES = ("open", "answered", "parked")
 EDITABLE = {"title", "summary", "body", "tags", "authors", "year", "venue", "url", "abstract",
-            "quote", "locator", "page", "status", "saved_because"}
+            "quote", "locator", "page", "status", "saved_because", "question_status", "answer"}
 
 
 def normalize_selector(v: Any) -> dict | None:
@@ -73,6 +78,19 @@ def normalize_selector(v: Any) -> dict | None:
     if not exact.strip():
         return None
     return {"exact": exact, "prefix": str(v.get("prefix") or "")[:200], "suffix": str(v.get("suffix") or "")[:200]}
+
+
+def set_private(note: dict, value: Any) -> None:
+    """Write the note's `private` property (app/privacy.py): True or False, or None to remove it (the
+    type's default applies again). Kept with the other extra properties, so older versions keep it."""
+    extra = dict(note.get("_extra") or {})
+    if value is None or (isinstance(value, str) and not value.strip()):
+        extra.pop("private", None)
+    else:
+        if isinstance(value, str):
+            value = value.strip().lower() in ("true", "yes", "1", "on", "private")
+        extra["private"] = bool(value)
+    note["_extra"] = extra
 
 
 class FrontmatterError(ValueError):
@@ -163,6 +181,7 @@ class Store:
             d.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.rev = 0  # bumped on every write; part of the index signature
+        self.listeners: list = []  # fn(kind, note_id) after save/delete (see listen())
         # SQLite metadata/FTS index (app/meta.py): serves all()/find_duplicate()/signature() without
         # re-reading every file. None or .ok False -> the file-reading code below is used instead.
         self.meta = None
@@ -256,7 +275,8 @@ class Store:
             except (TypeError, ValueError):
                 note[k] = None
         for k in ("title", "venue", "doi", "arxiv", "s2_id", "url", "abstract", "summary", "created", "updated",
-                  "parent", "quote", "locator", "zotero_key", "status", "saved_because", "meta_source", "meta_checked"):
+                  "parent", "quote", "locator", "zotero_key", "status", "saved_because", "meta_source", "meta_checked",
+                  "question_status", "answer", "last_seen"):
             v = note[k]
             # Obsidian's Date & time properties are written unquoted, so YAML reads them as dates;
             # isoformat() keeps the "T" that str() would drop.
@@ -265,6 +285,11 @@ class Store:
             note["type"] = "note"
         if note["status"] not in STATUSES:
             note["status"] = ""
+        if note["type"] == "question":
+            if note["question_status"] not in QUESTION_STATUSES:
+                note["question_status"] = "open"
+        else:
+            note["question_status"] = ""
         note["saved_because"] = " ".join(note["saved_because"].split())  # one line
         if not note["title"]:
             note["title"] = nid
@@ -286,7 +311,7 @@ class Store:
             meta.pop("selector", None)
         if not meta.get("source"):
             meta.pop("source", None)
-        for k in ("csl", "meta_source", "meta_checked"):
+        for k in ("csl", "meta_source", "meta_checked", "question_status", "answer", "last_seen"):
             if not meta.get(k):
                 meta.pop(k, None)
         if not meta.get("critiques"):
@@ -327,7 +352,20 @@ class Store:
             saved = self.get(note["id"])
             if self.meta is not None:
                 self.meta.put(saved)
-            return saved
+        self._notify("saved", saved["id"])
+        return saved
+
+    def listen(self, fn) -> None:
+        """fn(kind, note_id) after every save ("saved") or delete ("deleted"), outside the store lock.
+        Listeners must be quick (e.g. poke a background worker) and never raise into the caller."""
+        self.listeners.append(fn)
+
+    def _notify(self, kind: str, nid: str) -> None:
+        for fn in list(getattr(self, "listeners", ())):
+            try:
+                fn(kind, nid)
+            except Exception as e:
+                print(f"[research_brain] store listener failed: {e!r}")
 
     def all(self) -> list[dict]:
         if self._meta_ok():
@@ -370,7 +408,11 @@ class Store:
                 note["type"] = "note"
             if note["type"] == "paper" and "status" not in fields:
                 note["status"] = "to-read"  # a newly added paper is waiting to be read
+            if note["type"] == "question" and note.get("question_status") not in QUESTION_STATUSES:
+                note["question_status"] = "open"
             note["links"] = []
+            if fields.get("private") is not None:
+                set_private(note, fields["private"])
             if note["type"] == "fragment":
                 base = f"{note['parent']}-{slugify(note['title'], 30)}"
                 note["id"] = self.new_id(base[:90])
@@ -383,6 +425,8 @@ class Store:
     def update(self, nid: str, fields: dict) -> dict:
         with self.lock:
             note = self.get(nid)
+            if "private" in fields:  # app/privacy.py: true/false in the frontmatter, None = the type's default
+                set_private(note, fields["private"])
             for k, v in fields.items():
                 if k not in EDITABLE:
                     continue
@@ -403,6 +447,11 @@ class Store:
                     v = (v or "").strip() or note["title"]
                 if k == "status" and v not in STATUSES and v != "":
                     raise ValueError(f"status must be one of {', '.join(STATUSES)} (or empty)")
+                if k == "question_status":
+                    if note["type"] != "question":
+                        continue
+                    if v not in QUESTION_STATUSES:
+                        raise ValueError(f"question_status must be one of {', '.join(QUESTION_STATUSES)}")
                 if k == "saved_because":
                     v = " ".join(v.split())[:300]
                 note[k] = v
@@ -448,6 +497,7 @@ class Store:
                         continue  # never rewrite a file we couldn't parse
                     o["links"] = [x for x in o["links"] if x != nid]
                     self.save(o)
+        self._notify("deleted", nid)
 
     def link(self, a: str, b: str) -> dict:
         if a == b:

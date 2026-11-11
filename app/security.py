@@ -46,6 +46,7 @@ UPLOAD_PATHS = re.compile(r"^/api/(import/pdf|notes/[^/]+/pdf)$")
 RAW_BODY_PATHS = {
     "/api/import/pdf-bytes": (("application/pdf",), "RB_MAX_UPLOAD_MB", 300),
     "/api/vault/import": (("application/zip", "application/x-zip-compressed"), "RB_MAX_IMPORT_MB", 50 * 1024),
+    "/api/capture/photo": (("image/jpeg", "image/png", "image/webp"), "RB_MAX_PHOTO_MB", 25),  # app/mobile_api.py
 }
 MB = 1 << 20
 
@@ -150,6 +151,9 @@ class Policy:
         port = auth[1] if auth[1] is not None else (443 if m.group(1) == "https" else 80)
         if testclient:
             return True
+        # `tailscale serve` (docs/mobile-capture.md) puts https on 443 in front of the app for a non-loopback name
+        if m.group(1) == "https" and port == 443 and auth[0] not in LOOPBACK:
+            return True
         return port in {p for p in (server_port, self.port) if p}
 
 
@@ -234,7 +238,15 @@ class SecurityMiddleware:
         if refusal:
             if scope["type"] == "websocket":
                 return await send({"type": "websocket.close", "code": 1008})
-            status, headers, body = _json(*refusal)
+            if len(refusal) == 3 and refusal[2] == "html":  # an unpaired device opening a page (app/pairing.py)
+                from . import pairing
+                body = pairing.unpaired_page()
+                headers = [(b"content-type", b"text/html; charset=utf-8"), (b"content-length", str(len(body)).encode()),
+                           (b"cache-control", b"no-store"), (b"content-security-policy", csp().encode())]
+                await send({"type": "http.response.start", "status": refusal[0], "headers": headers + COMMON_HEADERS})
+                await send({"type": "http.response.body", "body": body})
+                return
+            status, headers, body = _json(*refusal[:2])
             await send({"type": "http.response.start", "status": status, "headers": headers + COMMON_HEADERS})
             await send({"type": "http.response.body", "body": body})
             return
@@ -275,8 +287,8 @@ class SecurityMiddleware:
                 await send({"type": "http.response.start", "status": status, "headers": headers + COMMON_HEADERS})
                 await send({"type": "http.response.body", "body": body})
 
-    def check(self, scope) -> tuple[int, str] | None:
-        """(status, reason) to refuse the request, or None."""
+    def check(self, scope) -> tuple | None:
+        """(status, reason[, "html"|"json"]) to refuse the request, or None."""
         headers = {}
         for k, v in scope.get("headers") or []:
             headers.setdefault(k.decode("latin-1").lower(), v.decode("latin-1"))
@@ -289,6 +301,17 @@ class SecurityMiddleware:
         origin = headers.get("origin")
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "")
+        # Device pairing (app/pairing.py): anything that isn't this computer needs a paired device's token.
+        from . import pairing
+        if not pairing.is_local(scope, headers):
+            if not pairing.UNPAIRED_OK.match(path):
+                if pairing.device_for(headers) is None:
+                    page = (method in ("GET", "HEAD") and not path.startswith(("/api/", "/pdf/", "/attachments/"))
+                            and headers.get("sec-fetch-dest", "document") in ("document", ""))
+                    return (401, "Pair this device from your computer: Library settings, Phones and tablets.",
+                            "html" if page else "json")
+                if pairing.computer_only(path, method):
+                    return 403, "Available on your computer: this changes the computer, not your library."
         if origin is not None:
             if not self.policy.origin_ok(origin, server[1], testclient):
                 return 403, f"Origin {origin[:100]} not allowed"

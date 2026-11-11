@@ -16,7 +16,8 @@ text, so the page is still readable with JavaScript off.
 
 [[wikilinks]] and manual links to notes that are part of the export become links; links to notes
 that aren't exported become plain text (their alias, or what was written). Titles of notes outside
-the export are never written into it. Claude's critiques are not exported.
+the export are never written into it. Claude's critiques are not exported. Private notes (app/privacy.py)
+are left out (no page, no fragment, no title in a link) unless include_private=True.
 """
 from __future__ import annotations
 
@@ -349,8 +350,27 @@ def _copy_assets(static_dir: Path, dest: Path) -> None:
 
 
 def export_site(store, ids: list[str] | None = None, include_pdfs: bool = False, *, static_dir: Path,
-                title: str = "Reading list", now: dt.datetime | None = None) -> dict:
+                title: str = "Reading list", now: dt.datetime | None = None, include_private: bool = False) -> dict:
     notes = store.all()
+    skipped = 0
+    if not include_private:  # private notes (app/privacy.py) stay out of anything shared, unless asked for
+        from . import privacy
+        priv = privacy.private_ids() if privacy.configured() else {n["id"] for n in notes if privacy.is_private(n)}
+        if ids is not None:
+            missing = [i for i in ids if i not in {n["id"] for n in notes}]
+            if missing:
+                raise KeyError(missing[0])
+            skipped = len([i for i in dict.fromkeys(ids) if i in priv])
+            ids = [i for i in ids if i not in priv]
+            if not ids:
+                raise ExportError("Everything you picked is private. Private notes are left out of exports unless "
+                                  "you choose to include them.")
+        else:
+            skipped = len([n for n in notes if n["id"] in priv and n["type"] != "fragment"])
+        # private notes are gone entirely: no page, no fragment row, no title in a link
+        notes = [n for n in notes if n["id"] not in priv]
+        if priv and privacy.configured():  # [[Private idea]] written in a shared note -> "a private note"
+            notes = [{**n, **{k: privacy.scrub(n.get(k) or "") for k in WIKI_FIELDS}} for n in notes]
     pages, frags = select(notes, ids)
     by_id = {n["id"]: n for n in notes}
     where: dict[str, str] = {n["id"]: n["id"] for n in pages}
@@ -392,4 +412,4 @@ def export_site(store, ids: list[str] | None = None, include_pdfs: bool = False,
         shutil.rmtree(tmp, ignore_errors=True)
         raise
     return {"path": str(out), "name": out.name, "notes": len(pages), "fragments": frag_count, "pdfs": pdfs,
-            "index": str(out / "index.html")}
+            "index": str(out / "index.html"), "private_skipped": skipped}

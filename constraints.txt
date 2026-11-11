@@ -16,6 +16,8 @@ cloudpickle==3.1.2
 cryptography==50.0.1
 defusedxml==0.7.1
 fastapi==0.162.2
+flexcache==0.3
+flexparser==0.4
 h11==0.16.0
 httpcore2==2.13.1
 httpx2==2.13.1
@@ -29,6 +31,8 @@ mcp-types==2.3.0
 narwhals==2.27.1
 numpy==2.5.3
 opentelemetry-api==1.45.0
+pint==0.26.2
+platformdirs==4.13.5
 pycparser==3.0
 pydantic==2.13.5
 pydantic-core==2.46.5

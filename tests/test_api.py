@@ -114,7 +114,7 @@ def test_full_flow(client):
     assert client.post("/api/import/lookup", json={"query": "zzz no such paper"}).status_code == 404
 
     # plain note
-    note = client.post("/api/notes", json={"type": "note", "title": "Self-attention intuition",
+    note = client.post("/api/notes", json={"type": "note", "private": False, "title": "Self-attention intuition",
                                            "body": "Attention mechanisms weight tokens; transformer layers stack them.",
                                            "tags": "ml, attention"}).json()
     assert note["tags"] == ["ml", "attention"]

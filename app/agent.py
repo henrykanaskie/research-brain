@@ -51,7 +51,8 @@ SYSTEM = (
     "- Otherwise make tool calls. Issue independent calls together in ONE turn (parallel). Use `search` with up "
     "to 4 differently-worded queries at once rather than one query per turn. Use `read_pages` to open the pages "
     "around a promising hit, `citations` to follow what a paper cites or is cited by, `similar` for neighbours, "
-    "`memory_map`/`memory_search` to know where things are.\n"
+    "`memory_map`/`memory_search` to know where things are, `cards_search` (when offered) for the claims, "
+    "equations, measured values and methods the user confirmed.\n"
     "- Stop searching as soon as you can answer. Aim for at most 2-3 rounds of tool calls.\n"
     "- Use `remember` only for a durable, non-obvious finding worth keeping across questions (one or two plain "
     "sentences with its sources; no code). Most answers need none.\n\n"
@@ -78,8 +79,9 @@ FALLBACK_INSTRUCTION = (
     "italics saying what was searched.")
 
 TOOL_NAMES = ("search", "search_notes", "read_note", "read_pages", "list_topics", "topic_papers", "citations",
-              "similar", "recent", "memory_map", "memory_search", "remember")
+              "similar", "recent", "memory_map", "memory_search", "cards_search", "remember")
 TOPIC_TOOLS = ("list_topics", "topic_papers")
+CARD_TOOLS = ("cards_search",)  # offered only when the user has confirmed idea cards (app/cards.py)
 
 
 def _short(s: str, n: int) -> str:
@@ -158,6 +160,7 @@ ARG_SPEC: dict[str, dict[str, str]] = {
     "recent": {"n": _INT},
     "memory_map": {},
     "memory_search": {"query": _STR},
+    "cards_search": {"query": _STR, "kind": _STR, "k": _INT},
     "remember": {"text": _STR, "sources": _SRCS},
 }
 MAX_ARG_STR = 500       # a query, id or topic name
@@ -218,10 +221,16 @@ class Tools:
         self.lib = lib
 
     def available(self) -> list[str]:
-        names = [n for n in TOOL_NAMES if n not in TOPIC_TOOLS]
+        names = [n for n in TOOL_NAMES if n not in TOPIC_TOOLS and n not in CARD_TOOLS]
         try:
             if (self.lib.topics() or {}).get("topics"):
                 names += list(TOPIC_TOOLS)
+        except Exception:
+            pass
+        try:
+            has = getattr(self.lib, "has_cards", None)
+            if callable(has) and has():
+                names += list(CARD_TOOLS)
         except Exception:
             pass
         return [n for n in TOOL_NAMES if n in names]
@@ -232,14 +241,45 @@ class Tools:
         args = validate_args(name, args)
         fn = getattr(self, "t_" + name)
         run.calls += 1
-        out = fn(run=run, **args)
+        out = self._private_check(fn(run=run, **args))
         with run.lock:
             run.tool_log.append(f"### tool {name}({_short(str(args), 160)})\n{out[:2500]}")
         return out
 
+    # ---- privacy (app/privacy.py): the model never sees private notes through a tool
+    def _agent(self):
+        fn = getattr(self.lib, "agent", None)
+        try:
+            return fn() if callable(fn) else None
+        except Exception:
+            return None
+
+    def _by_id(self) -> dict:
+        """The notes this run's agent may see: the library minus private items (unless the local-AI
+        exception applies). Unknown and private ids look the same to the model."""
+        from . import privacy
+        by_id = self.lib.by_id()
+        priv = privacy.private_ids()
+        if not priv or privacy.local_exception(self._agent()):
+            return by_id
+        return {i: n for i, n in by_id.items() if i not in priv}
+
+    def _private_check(self, out: str) -> str:
+        """Last check on a tool result before the model reads it: links to private notes are scrubbed,
+        and a result that still carries private text or ids is withheld."""
+        from . import privacy
+        agent = self._agent()
+        if privacy.local_exception(agent):
+            return out
+        out = privacy.scrub(out, agent)
+        if privacy.find_leaks(out):
+            return ("Withheld: this result included private notes, which stay on this computer. "
+                    "Search for something else.")
+        return out
+
     # ---- helpers
     def _note(self, nid: str) -> dict:
-        n = self.lib.by_id().get(str(nid or "").strip().strip("[]").lower())
+        n = self._by_id().get(str(nid or "").strip().strip("[]").lower())
         if not n:
             raise ValueError(f"No note with id '{nid}'. Use ids exactly as shown in search results.")
         return n
@@ -249,7 +289,7 @@ class Tools:
         return {p: t for p, t in split_pages(self.lib.fulltext(nid)) if p is not None}
 
     def _passage_rows(self, hits: list[dict]) -> list[dict]:
-        by_id = self.lib.by_id()
+        by_id = self._by_id()
         links = getattr(self.lib, "passage_links", None) or (lambda row: row)
         return [links({"id": p["id"], "title": by_id[p["id"]]["title"], "page": p["page"], "src": p["src"],
                        "text": p["text"], "score": p.get("score", 0), "pdf": self.lib.pdf_of(p["id"]),
@@ -284,7 +324,8 @@ class Tools:
         return "\n\n".join(out)
 
     def t_search_notes(self, run: Run, query: str = "", limit: int = 10) -> str:
-        hits = self.lib.fts(query, max(1, min(int(limit or 10), 25)))
+        visible = self._by_id()
+        hits = [h for h in self.lib.fts(query, max(1, min(int(limit or 10), 25))) if h.get("id") in visible]
         if not hits:
             return "No notes match."
         return "\n".join(f"[[{h['id']}]] {_short(h['title'], 90)} ({h['type']}{', ' + str(h['year']) if h.get('year') else ''})"
@@ -292,7 +333,7 @@ class Tools:
 
     def t_read_note(self, run: Run, id: str = "", note_id: str = "") -> str:
         n = self._note(id or note_id)
-        by_id = self.lib.by_id()
+        by_id = self._by_id()
         L = [f"[[{n['id']}]] {n['title']} ({n['type']})"]
         if n.get("authors"):
             L.append("Authors: " + ", ".join(n["authors"][:6]) + (f" ({n['year']})" if n.get("year") else ""))
@@ -352,7 +393,7 @@ class Tools:
 
     def t_citations(self, run: Run, id: str = "", direction: str = "both", note_id: str = "") -> str:
         n = self._note(id or note_id)
-        by_id = self.lib.by_id()
+        by_id = self._by_id()
         direction = (direction or "both").lower()
         out_ids = [t for t in n.get("cites") or [] if t in by_id]
         in_ids = sorted(x["id"] for x in by_id.values() if n["id"] in (x.get("cites") or []))
@@ -368,14 +409,14 @@ class Tools:
 
     def t_similar(self, run: Run, id: str = "", n: int = 6, note_id: str = "") -> str:
         note = self._note(id or note_id)
-        by_id = self.lib.by_id()
+        by_id = self._by_id()
         rows = [(j, s) for j, s in self.lib.neighbours(note["id"]) if j in by_id][:max(1, min(int(n or 6), 10))]
         if not rows:
             return "No similar notes."
         return "\n".join(f"[[{j}]] {_short(by_id[j]['title'], 90)} ({by_id[j]['type']}, similarity {s:.2f})" for j, s in rows)
 
     def t_recent(self, run: Run, n: int = 10) -> str:
-        notes = sorted((x for x in self.lib.by_id().values() if x["type"] != "fragment"),
+        notes = sorted((x for x in self._by_id().values() if x["type"] != "fragment"),
                        key=lambda x: (x.get("updated") or "", x["id"]), reverse=True)[:max(1, min(int(n or 10), 25))]
         return "\n".join(f"[[{x['id']}]] {_short(x['title'], 90)} ({x['type']}, changed {(x.get('updated') or '')[:10]})"
                          for x in notes) or "The library is empty."
@@ -385,11 +426,13 @@ class Tools:
         rows = t.get("topics") or []
         if not rows:
             return "No topics."
-        return "\n".join(f"{x.get('name')} ({len(x.get('ids') or [])} notes)" for x in rows[:40])
+        visible = self._by_id()
+        return "\n".join(f"{x.get('name')} ({len([i for i in x.get('ids') or [] if i in visible])} notes)"
+                         for x in rows[:40])
 
     def t_topic_papers(self, run: Run, topic: str = "") -> str:
         t = self.lib.topics() or {}
-        by_id = self.lib.by_id()
+        by_id = self._by_id()
         hit = next((x for x in t.get("topics") or [] if str(x.get("name", "")).lower() == str(topic).lower()), None)
         if not hit:
             return f"No topic called '{topic}'. Use list_topics."
@@ -399,11 +442,29 @@ class Tools:
         return self.lib.memory.read("core.md") or "The memory map hasn't been generated yet."
 
     def t_memory_search(self, run: Run, query: str = "") -> str:
+        from . import privacy
+        priv = privacy.private_ids()
         rows = self.lib.memory.search(query, 10)
+        if priv and not privacy.local_exception(self._agent()):  # findings that cite or copy a private note
+            rows = [r for r in rows if not (set(re.findall(r"\[\[([a-z0-9][a-z0-9-]*)\]\]", r.get("sources") or ""))
+                                            & priv) and not privacy.find_leaks(r.get("text") or "")]
         if not rows:
             return "Nothing in memory matches."
         return "\n".join(f"({r['where']}{', ' + r['date'] if r.get('date') else ''}) {r['text']}"
                          + (f" [sources: {r['sources']}]" if r.get("sources") else "") for r in rows)
+
+    def t_cards_search(self, run: Run, query: str = "", kind: str = "", k: int = 8) -> str:
+        """Idea cards the user confirmed (claims, equations, measured quantities, methods), privacy-filtered."""
+        kind = (kind or "").strip().lower()
+        if kind and kind not in ("claim", "equation", "quantity", "method"):
+            raise ValueError("kind is claim, equation, quantity or method")
+        if not str(query or "").strip():
+            raise ValueError("Give a query.")
+        visible = self._by_id()
+        rows = [c for c in self.lib.cards(query, max(1, min(int(k or 8), 15)), kind) if c["paper"] in visible]
+        if not rows:
+            return "No confirmed idea cards match."
+        return "\n\n".join(self.lib.fmt_card(c) for c in rows)
 
     # ---- the one write tool
     def t_remember(self, run: Run, text: str = "", sources=None) -> str:
@@ -452,6 +513,8 @@ def step_label(name: str, args: dict, titles: dict) -> tuple[str, list[str]]:
         return f"Opening topic {_short(str(args.get('topic', '')), 40)}", []
     if name == "remember":
         return "Saving a finding to memory", []
+    if name == "cards_search":
+        return f"Searching idea cards: {_short(str(args.get('query', '')), 60)}", []
     return name, []
 
 

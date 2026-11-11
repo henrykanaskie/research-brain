@@ -140,3 +140,27 @@ listener.
 - Keycaps: small bordered rounded boxes in Instrument Sans (not mono), 11.5px, `--rule` border.
 - The palette, sheet, coach marks and chord hint are white sheets with hairline rules; the subtle
   menu shadow is the only shadow.
+
+## Idea cards (static/cards.js)
+Cards are machine-suggested until you confirm them; confirmed (and edited) cards count as your knowledge.
+The encoding follows the red-pen idea: a suggested card has a dashed `--machine` left rule and `--ink-2` text
+(quiet, not yet yours); confirmed, edited and hand-written cards get the 2px `--red` rule; rejected cards are
+hidden behind "Show n rejected". The supporting quote is italic STIX in `--ink-2`, linked to its page or section.
+"Same idea in …" links are `--moss`, "Disagrees with …" is `--ochre` (a flag, not an error). Quantities show
+the value as the paper gives it, then the SI conversion in `--ink-2`; symbols are typeset with KaTeX. The Ideas
+view is a full sheet like Memory: a hairline-ruled table, sortable headers, tabular numbers, no boxes.
+
+
+## Open questions (static/questions.js)
+A question is the user's own thinking, so it carries the red pen: a small red diamond as its type dot, the
+question itself as the panel title in italic Bodoni (display serif), and *Your answer* behind the 2px `--red`
+margin rule with a live KaTeX preview. Evidence is source material: STIX snippets in `--ink-2`, the source title
+in STIX `--ink`, its p. / § link in `--machine`, the local similarity as a small tabular number in `--ink-3`.
+Kept evidence gets a 2px inset rule by verdict: supports `--moss`, against `--red`, related `--violet`;
+dismissed evidence is greyed under a closed "Dismissed" disclosure. New evidence is a 6px red dot, and the count
+is plain text ("3 new since you last looked"), never a banner. The top-bar "Questions" badge is a small red pill
+only when there is something new; nothing pulses. Triage keys live on the focused evidence row (S, A, R, D; ↑ ↓),
+listed in the shortcuts sheet in their own scope so they never clash with S (summary), A (ask) or R (rename).
+Copy says what happens locally: "Evidence is found on this computer; no AI sees it". When the optional AI summary
+is unavailable, the reason is visible text under the disabled button, not only a tooltip. Questions stay on your
+computer and matching is local.

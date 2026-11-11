@@ -27,6 +27,12 @@ class EventBus:
         self._subs: set[tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = set()
         self._lock = threading.Lock()
         self.closed = False
+        self._listeners: list = []  # in-process fn(event) callbacks (e.g. app/questions.py's matcher)
+
+    def listen(self, fn) -> None:
+        """Call fn(event) for every published event, in the publishing thread. Keep it quick."""
+        with self._lock:
+            self._listeners.append(fn)
 
     def close(self) -> None:
         """End every open stream (server shutdown). Safe from a signal handler or any thread."""
@@ -51,6 +57,12 @@ class EventBus:
     def publish(self, event: dict | None) -> None:
         with self._lock:
             subs = list(self._subs)
+            listeners = list(self._listeners) if event is not None else []
+        for fn in listeners:
+            try:
+                fn(event)
+            except Exception as e:
+                print(f"[research_brain] event listener failed: {e!r}")
         for loop, q in subs:
             try:
                 loop.call_soon_threadsafe(_put_nowait, q, event)

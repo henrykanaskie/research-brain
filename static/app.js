@@ -18,6 +18,7 @@
     C.ground = g('--ground', C.ground); C.sheet = g('--sheet', C.sheet); C.ink = g('--ink', C.ink);
     C.ink2 = g('--ink-2', C.ink2); C.rule = g('--rule', C.rule); C.red = g('--red', C.red); C.machine = g('--machine', C.machine);
     C.ink3 = g('--ink-3', C.ink3); C.dot = g('--dot', C.dot);
+    C.violet = g('--violet', '#6B5A93'); C.ochre = g('--ochre', '#A9761F');
   }
   function rgba(col, a) {
     const m = /^#([0-9a-f]{6})$/i.exec(col);
@@ -783,6 +784,8 @@
     if (l.kind === 'manual') return { col: C.red, a: (hov ? 1 : 0.8) * dim, w: hov ? 1.1 : 0.8 };
     if (l.kind === 'mention') return { col: C.red, a: (hov ? 0.9 : 0.45) * dim * depth, w: hov ? 0.9 : 0.6 };
     if (l.kind === 'cites') return { col: C.ink, a: (hov ? 0.9 : 0.4) * dim * depth, w: hov ? 0.8 : 0.5 };
+    if (l.kind === 'question') return { col: C.violet, a: (hov ? 1 : l.verdict === 'related' ? 0.4 : 0.7) * dim, w: hov ? 1 : 0.7 };
+    if (l.kind === 'conflict') return { col: C.ochre, a: (hov ? 1 : 0.85) * dim, w: hov ? 1.1 : 0.8, dash: true };
     const span = Math.max(1e-3, 1 - S.threshold);
     const sa = 0.22 + 0.4 * Math.min(1, Math.max(0, (l.score - S.threshold) / span));
     return { col: C.machine, a: (hov ? 0.95 : sa) * dim * depth, w: hov ? 0.8 : 0.5 };
@@ -804,7 +807,10 @@
     ctx.lineJoin = 'miter';
     ctx.strokeStyle = rgba(st.col, st.a);
     ctx.lineWidth = st.w / k;
+    // disagreements between papers are dashed, so they read as a warning rather than a connection
+    if (st.dash) ctx.setLineDash([3 / k, 2.5 / k]);
     ctx.stroke();
+    if (st.dash) ctx.setLineDash([]);
     // tiny vias where the trace bends
     if (k > 0.9 && l.kind !== 'part') {
       const vr = 0.7 / k;
@@ -1153,7 +1159,7 @@
 
   /** how many red note-dots sit around a document: attached notes/highlights, or 1 for a summary alone */
   function markCount(n) {
-    if (!n || n.type === 'fragment') return 0;
+    if (!n || n.type === 'fragment' || n.type === 'question') return 0;
     return Math.max(Number(n.parts) || 0, (Number(n.mass) || 0) > 0 ? 1 : 0);
   }
 
@@ -1173,6 +1179,15 @@
       if (n.type === 'paper') {
         ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
         ctx.fillStyle = C.ink; ctx.fill();
+      } else if (n.type === 'question') {
+        const d = r * 1.25;
+        ctx.beginPath(); ctx.moveTo(n.x, n.y - d); ctx.lineTo(n.x + d, n.y); ctx.lineTo(n.x, n.y + d); ctx.lineTo(n.x - d, n.y); ctx.closePath();
+        ctx.fillStyle = C.ground; ctx.fill();
+        ctx.strokeStyle = C.violet; ctx.lineWidth = Math.min(1.1, 1 * px); ctx.stroke();
+        if ((Number(n.new_evidence) || 0) > 0) {
+          ctx.beginPath(); ctx.arc(n.x, n.y, Math.max(0.9 * px, d * 0.28), 0, 2 * Math.PI);
+          ctx.fillStyle = C.red; ctx.fill();
+        }
       } else {
         ctx.beginPath(); ctx.arc(n.x, n.y, r * 0.92, 0, 2 * Math.PI);
         ctx.fillStyle = C.ground; ctx.fill();
@@ -1305,6 +1320,19 @@
       const k = linkKey(s, t), sc = Number(l.score) || 0;
       if (!best.has(k) || best.get(k).score < sc) best.set(k, { source: s, target: t, score: sc, sPart: s0 !== s ? s0 : null, tPart: t0 !== t ? t0 : null });
     }
+    // open questions link to the papers whose evidence you kept; disagreeing measurements link papers
+    for (const q of g.question_links || []) {
+      const t = host(q.paper);
+      if (q.q && t && q.q !== t) links.push({ source: q.q, target: t, kind: 'question', verdict: q.verdict });
+    }
+    const seenConflict = new Set();
+    for (const c of g.card_links || []) {
+      if (!c.conflict) continue;
+      const a = host(c.a_paper), b = host(c.b_paper), key = linkKey(a, b);
+      if (a === b || seenConflict.has(key)) continue;
+      seenConflict.add(key);
+      links.push({ source: a, target: b, kind: 'conflict' });
+    }
     S.foldInto = into; S.folded = folded;
     return { ...g, nodes, links, similar: [...best.values()] };
   }
@@ -1344,10 +1372,10 @@
     for (const l of g.links || []) {
       const s = lid(l.source), t = lid(l.target);
       if (!next.has(s) || !next.has(t) || s === t) continue;
-      const kind = l.kind === 'part' ? 'part' : l.kind === 'mention' ? 'mention' : l.kind === 'cites' ? 'cites' : 'manual';
+      const kind = ['part', 'mention', 'cites', 'question', 'conflict'].includes(l.kind) ? l.kind : 'manual';
       const key = kind + linkKey(s + (l.sPart ? '#' + l.sPart : ''), t + (l.tPart ? '#' + l.tPart : ''));
       if (seen.has(key)) continue; seen.add(key);
-      (kind === 'part' ? part : manual).push({ source: s, target: t, kind, sPart: l.sPart || null, tPart: l.tPart || null });
+      (kind === 'part' ? part : manual).push({ source: s, target: t, kind, sPart: l.sPart || null, tPart: l.tPart || null, verdict: l.verdict });
       if (!neighbour.has(s)) neighbour.set(s, t);
       if (!neighbour.has(t)) neighbour.set(t, s);
     }
@@ -1685,18 +1713,26 @@
 
   // ---------- render ----------
   function autosize(ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; }
+  // a narrower or wider panel (resizer, window, phone rotation) re-wraps the title: measure it again
+  if (window.ResizeObserver) {
+    let lastW = 0;
+    new ResizeObserver(() => { const w = pbody.clientWidth; if (w && w !== lastW) { lastW = w; $$('textarea.title-input', pbody).forEach(autosize); } }).observe(pbody);
+  }
 
   function renderPanel() {
     const n = S.cur;
     if (!n) return;
     const typeEl = $('#panel-type');
-    typeEl.replaceChildren(h('span', { class: 'tdot ' + (n.type || 'note') }), n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : 'Note',
+    const custom = (S.renderers || {})[n.type]; // other types (static/questions.js: "question") render themselves
+    typeEl.replaceChildren(h('span', { class: 'tdot ' + (n.type || 'note') }), custom ? custom.label : n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : 'Note',
       ...(n.type === 'paper' && n.source === 'linked' && !n.has_pdf ? [h('span', { class: 'kind-link', title: 'Linked article: the link, full text and metadata are saved, not the PDF file', html: LINK_SVG })] : []));
     setSaveInd('', '');
-    const kids = n.type === 'fragment' ? renderFragmentView(n) : renderNoteView(n);
+    const kids = custom ? custom.render(n) : n.type === 'fragment' ? renderFragmentView(n) : renderNoteView(n);
     pbody.replaceChildren(...kids);
     pbody.scrollTop = 0;
     $$('textarea.title-input', pbody).forEach(autosize);
+    // the display face may still be loading: measure the title again once it has (else a long title is clipped)
+    if (document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(() => $$('textarea.title-input', pbody).forEach(autosize));
     applyClaude(pbody);
     for (const fn of S.panelHooks || []) { try { fn(n, pbody); } catch (e) { console.error(e); } } // static/topics.js etc.
   }
@@ -2893,6 +2929,9 @@
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },
     queueSave, centerOn, closePanel,
+    // static/questions.js: a note type with its own panel ({label, render(note) -> nodes}) and the parts it reuses
+    registerRenderer(type, r) { (S.renderers || (S.renderers = {}))[type] = r; if (S.cur && S.cur.type === type && !panel.hidden) renderPanel(); },
+    titleField, section, renderTags, renderBacklinks, renderLinked, renderDanger, renderMD, autosize, renderPanel,
     // static/shortcuts.js (keyboard commands, palette actions, tour)
     openMenu, addById, openChat, closeChat, closeExplain, newNote, runCritique, updateSearch, setShowSim, linkNotes, offerCreate,
     pickPdf: () => $('#pdf-input').click(),

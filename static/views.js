@@ -72,7 +72,8 @@
   const parentOf = (n) => (n.type === 'fragment' && n.parent && S.nodes.get(n.parent)) || n;
 
   function matches(n, f = F) {
-    if (!f.types.includes(n.type)) return false;
+    // types without a toggle here (open questions) aren't hidden by the type buttons
+    if (!f.types.includes(n.type) && TYPES.some(([t]) => t === n.type)) return false;
     const base = parentOf(n); // fragments are judged by their paper's year, tags and region
     if (f.yearFrom != null || f.yearTo != null) {
       const y = Number(base.year);

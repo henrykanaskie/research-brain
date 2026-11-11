@@ -68,8 +68,8 @@ if [ -z "$NO_OPEN" ]; then
 fi
 
 if [ "$HOST" != "127.0.0.1" ] && [ "$HOST" != "localhost" ]; then
-  echo "⚠ RB_HOST=$HOST: the server is reachable from other devices on that network, with no password."
-  echo "  Only do this on a network you trust (e.g. Tailscale). See docs/mobile-capture.md."
+  echo "⚠ RB_HOST=$HOST: the server is reachable from other devices on that network. Each one must be paired"
+  echo "  first (Library settings, Phones and tablets). Prefer Tailscale; see docs/mobile-capture.md."
 fi
 # app/cli.py supervises the server: it restarts it when you switch profile in the app, and prints which
 # library (vault) it uses. Your data lives in the per-user data folder, not here (see

@@ -366,8 +366,8 @@ def test_search_with_slash(ctx, server):
 
 def test_export_from_view_menu(ctx, server):
     clear_vault(server)
-    api(server, "POST", "/api/notes", {"type": "note", "title": "Langmuir probe analysis", "summary": "$T_e$ from the I-V curve."})
-    api(server, "POST", "/api/notes", {"type": "note", "title": "Transformer attention"})
+    api(server, "POST", "/api/notes", {"type": "note", "private": False, "title": "Langmuir probe analysis", "summary": "$T_e$ from the I-V curve."})
+    api(server, "POST", "/api/notes", {"type": "note", "private": False, "title": "Transformer attention"})
     page = open_app(ctx, server)
     page.wait_for_function("window.__rb.S.nodes.size >= 2")
     page.locator("#search-input").fill("langmuir")

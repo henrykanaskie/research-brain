@@ -221,7 +221,7 @@
     imp.addEventListener('click', () => importZip(say));
     const ioSec = el('section', { class: 'ls-sec' },
       el('div', { class: 'ls-h', text: 'Backup and moving computers' }),
-      el('p', { class: 'ls-p', text: 'The zip holds your notes, PDFs, review history, memory and topics. Import it on another computer; it becomes a new profile, so nothing is overwritten.' }),
+      el('p', { class: 'ls-p', text: 'The zip holds your notes, PDFs, review history, memory and topics. Import it on another computer; it becomes a new profile, so nothing is overwritten. It is a full backup, so private notes are in it too: keep it as private as the library.' }),
       el('label', { class: 'ls-check' }, withPdfs, el('span', { text: 'Include PDFs' })),
       el('div', { class: 'ls-row' }, exp, imp));
 
@@ -235,11 +235,17 @@
 
     // Citations (static/cite.js): default style, copy format, your .csl styles, auto-updating .bib files
     const citeSec = window.__rbCite ? window.__rbCite.settingsSection(say) : null;
+    // Privacy (static/privacy.js): private-by-default types, local-AI exception, what was sent to AI
+    const privSec = window.__rbPrivacy ? window.__rbPrivacy.settingsSection(say) : null;
+    // Open questions (static/questions.js): matching threshold and the daily cap
+    const qSec = window.__rbQuestions ? window.__rbQuestions.settingsSection(say) : null;
+    // Phones and tablets (static/mobile.js): pair a phone with a QR code, paired devices, revoke
+    const pairSec = window.__rbPair ? window.__rbPair.settingsSection(say) : null;
 
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
     const card = el('div', { class: 'modal-card ls-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-title' },
       el('div', { class: 'modal-title', id: 'ls-title', text: 'Library settings' }),
-      libSec, agentSec, profSec, citeSec, modeSec, oaSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
+      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
     const wrap = el('div', { class: 'modal', id: 'library-settings' }, card);
     wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
     document.body.appendChild(wrap);
@@ -248,7 +254,8 @@
       if (focus === 'profiles') profSec.scrollIntoView({ block: 'nearest' });
       if (focus === 'agent') agentSec.scrollIntoView({ block: 'start' });
       if (focus === 'citations' && citeSec) citeSec.scrollIntoView({ block: 'start' });
-      (focus === 'profiles' && !prof.pinned ? newName : done).focus();
+      if (focus === 'privacy' && privSec) privSec.scrollIntoView({ block: 'start' });
+      (focus === 'profiles' && !prof.pinned ? newName : done).focus({ preventScroll: true });
     }, 0);
   }
 

@@ -52,6 +52,9 @@ CLAUDE_CONTEXT_CHARS = int(os.environ.get("RB_CLAUDE_CONTEXT_CHARS", "180000"))
 security.harden_process(VAULT)  # umask 077, vault folder 0700 (app/security.py)
 _migrate.run(VAULT)  # schema version check + migrations, backup first (app/migrate.py)
 store = Store(VAULT)
+from . import privacy  # noqa: E402  (what may be sent to AI agents or exported; see app/privacy.py)
+from . import questions as questions_mod, questions_api  # noqa: E402  (open questions; installed near the end)
+privacy.configure(store)
 embedder = Embedder(store.index_dir)
 # No Swagger page: FastAPI's loads its scripts from a CDN (a request off this machine, and blocked by our CSP).
 # The schema is still at /openapi.json; API.md documents every endpoint.
@@ -62,6 +65,8 @@ app = FastAPI(title="research_brain", docs_url=None, redoc_url=None)
 # pages served from that address are this app too. Wildcard binds (0.0.0.0) add nothing.
 _RB_HOST = os.environ.get("RB_HOST", "").strip()
 _HOST_ALT = "|" + re.escape(_RB_HOST) if _RB_HOST and _RB_HOST not in ("0.0.0.0", "::", "127.0.0.1", "localhost") else ""
+# names listed in RB_ALLOWED_HOSTS (a Tailscale MagicDNS name, for a paired phone) are this app's pages too
+_HOST_ALT += "".join("|" + re.escape(h.strip().lower()) for h in os.environ.get("RB_ALLOWED_HOSTS", "").split(",") if h.strip())
 # (app/security.py's middleware runs first and is stricter: this app's own port and the pinned extension id only)
 ALLOWED_ORIGIN_RE = re.compile(r"^(chrome-extension://[a-z0-9]+|https?://(127\.0\.0\.1|localhost|\[::1\]" + _HOST_ALT
                                + r")(:\d+)?)$")
@@ -117,7 +122,7 @@ def _root(n: dict) -> str:
 # [[target]] or [[target|alias]] in a note's summary, body or quote. target = a note id, else a
 # case-insensitive exact title (non-fragments win ties, then the oldest note). Code spans are ignored.
 WIKILINK_RE = re.compile(r"\[\[([^\[\]\n|]+?)(?:\|([^\[\]\n]*))?\]\]")
-WIKI_FIELDS = ("summary", "body", "quote")
+WIKI_FIELDS = ("summary", "body", "quote", "answer")  # answer: an open question's current thinking
 _CODE_RE = re.compile(r"(?:^|(?<=\n))[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\1[ \t]*(?=\n|$)|$)"
                       r"|(`+)(?!`)[\s\S]*?[^`]\2(?!`)")
 _KEEP_WHOLE_RE = re.compile(r"\[\[[^\[\]\n]*\]\]|\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|`[^`\n]*`")
@@ -279,7 +284,10 @@ def index() -> dict:
 def _with_extras(note: dict) -> dict:
     idx = index()
     by_id = idx["by_id"]
+    explicit = privacy.explicit_flag({k: v for k, v in note.items() if k not in ("private", "private_explicit")})
     note = dict(note)
+    note["private"] = privacy.is_private(note)   # effective: its own flag, its type's default or its parent
+    note["private_explicit"] = explicit          # what the note itself says (None = the default applies)
     note["similar"] = [{"id": j, "title": by_id[j]["title"], "type": by_id[j]["type"], "score": round(s, 4)}
                        for j, s in idx["neighbours"].get(note["id"], []) if j in by_id]
     note["fragments"] = [{k: f[k] for k in ("id", "title", "quote", "locator", "page", "body")}
@@ -341,12 +349,41 @@ AI_ERRORS = (claude_cli.ClaudeError, agents.AgentError)
 GUARD_ERRORS = (claude_cli.ToolGuardError, agents.ToolGuardError)
 
 
-def _ask(instruction: str, context: str) -> str:
+def _ask(instruction: str, context: str, purpose: str = "ask", sources=None) -> str:
     """One answer from the active AI agent (app/agents: Claude Code, Codex, Gemini, Ollama, ...)."""
     try:
-        return agents.ask_parts(instruction, context, SYSTEM)
+        return agents.ask_parts(instruction, context, SYSTEM, purpose=purpose, sources=sources)
+    except privacy.PrivacyError as e:
+        raise HTTPException(403, str(e))
     except AI_ERRORS as e:
         raise HTTPException(502, str(e))
+
+
+def _ai_agent():
+    """The agent the next AI call goes to (None if there is none), for privacy.allow_ai."""
+    try:
+        return agents.active()
+    except Exception:
+        return None
+
+
+def _refuse_private(*notes: dict) -> None:
+    """403 with a plain message if any of these notes may not go to the active agent (app/privacy.py)."""
+    agent = _ai_agent()
+    for n in notes:
+        if not privacy.allow_ai(n, agent):
+            what = {"paper": "paper", "fragment": "fragment", "question": "question"}.get(n.get("type"), "note")
+            raise HTTPException(403, f"“{(n.get('title') or n['id'])[:80]}” is a private {what}, so it isn't sent to "
+                                     "the AI agent. Private notes stay on this computer; mark it shareable (the lock "
+                                     "in its header) if you want the AI to read it.")
+
+
+def _ai_visible(by_id: dict) -> dict:
+    """by_id minus the notes the active agent may not see."""
+    priv = privacy.private_ids()
+    if not priv or privacy.local_exception(_ai_agent()):
+        return by_id
+    return {i: n for i, n in by_id.items() if i not in priv}
 
 
 def _describe(n: dict, with_text: bool = False, limit: int = 6000) -> str:
@@ -524,8 +561,9 @@ def _subclusters(ordered: list[list[str]], adj: dict, by_id: dict) -> dict[str, 
 def _cluster_names(groups: list[list[dict]]) -> list[str]:
     if not groups:
         return []
-    texts = [" ".join(f"{n['title']} {' '.join(n['tags'])} {' '.join(n['tags'])} {n['summary']}" for n in g)
-             for g in groups]
+    # open questions never name a region (region names go into the memory map the AI reads; app/questions.py)
+    texts = [" ".join(f"{n['title']} {' '.join(n['tags'])} {' '.join(n['tags'])} {n['summary']}" for n in g
+                      if n["type"] != "question") for g in groups]
     try:
         from sklearn.feature_extraction.text import TfidfVectorizer
         vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2), sublinear_tf=True,
@@ -682,14 +720,28 @@ def _graph_data() -> dict:
         idx["_clusters_out"] = _clusters(idx, links)
         idx["_clusters_sig"] = idx.get("sig")
     cluster_of, clusters = idx["_clusters_out"]
+    private = privacy.private_ids()  # the panel and graph show a lock; nothing private leaves via AI or export
     nodes = [{"id": n["id"], "type": n["type"], "title": n["title"], "year": n["year"], "authors": n["authors"][:3],
               "tags": n["tags"], "parent": n["parent"], "quote": n["quote"][:200], "degree": degree[n["id"]],
               "cluster": cluster_of.get(n["id"], -1), "sub": idx.get("_sub_of", {}).get(n["id"], -1),
               "mass": _mass(n, by_id), "opens": _engagement().get(n["id"], 0), "has_pdf": n["has_pdf"],
               "status": n.get("status") or "", "source": n.get("source") or "",
-              "url": n["url"] if n.get("source") == "linked" else ""}
+              "url": n["url"] if n.get("source") == "linked" else "", "private": n["id"] in private}
              for n in by_id.values()]
-    return {"nodes": nodes, "links": links, "similar": similar, "clusters": clusters, "embedder": embedder.kind}
+    # open questions (app/questions.py): new-evidence counts, and links to the papers their kept evidence is from
+    q_new, q_links = questions_mod.graph_extras(store, by_id)
+    for nd in nodes:
+        if nd["type"] == "question":
+            nd["new_evidence"] = q_new.get(nd["id"], 0)
+    # idea cards (app/cards.py): a count per paper, and card-level links between papers as data only
+    from . import cards_api as _cards_api
+    card_counts, card_links = _cards_api.graph_extras()
+    for nd in nodes:
+        if nd["type"] == "paper":
+            nd["cards"] = card_counts.get(nd["id"], 0)
+    return {"nodes": nodes, "links": links, "similar": similar, "clusters": clusters, "embedder": embedder.kind,
+            "question_links": q_links, "card_links": [ln for ln in card_links
+                                                      if ln["a_paper"] in by_id and ln["b_paper"] in by_id]}
 
 
 @app.get("/api/graph")
@@ -697,7 +749,10 @@ def api_graph():
     # At a few thousand notes the payload is >1 MB, and FastAPI's generic encoder alone took ~75 ms,
     # so serialise once with json.dumps and reuse the bytes until the index changes.
     idx = index()
-    key = (idx.get("sig"), embedder.kind, _eng_rev[0])  # opens (engagement.json) aren't in the index signature
+    # opens (engagement.json) and the privacy settings aren't in the index signature
+    from . import cards_api as _cards_api
+    key = (idx.get("sig"), embedder.kind, _eng_rev[0], privacy.version(), questions_mod.REV[0],  # + evidence
+           _cards_api.signature())  # idea cards
     cached = idx.get("_graph_bytes")
     if not cached or cached[0] != key:
         body = json.dumps(_graph_data(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -715,8 +770,8 @@ def api_get_note(nid: str):
 def api_create_note(body: NoteIn):
     data = body.model_dump()
     t = data.get("type") or "note"
-    if t not in ("note", "paper", "fragment"):
-        raise HTTPException(400, "type must be note, paper or fragment")
+    if t not in ("note", "paper", "fragment", "question"):
+        raise HTTPException(400, "type must be note, paper, fragment or question")
     if t == "fragment":
         parent = data.get("parent") or ""
         if not parent or not store.exists(parent):
@@ -766,6 +821,11 @@ def api_delete_note(nid: str):
     _get(nid)
     gone = {nid, *(k["id"] for k in store.children(nid))}
     store.delete(nid)
+    try:  # a paper's idea cards go to the trash with it (app/cards.py)
+        from . import cards as _cards
+        _cards.card_store().trash(nid, store.trash_dir)
+    except Exception as e:
+        print(f"[research_brain] couldn't move the cards of {nid} to the trash: {e!r}")
     with _eng_lock:  # a later note that reuses this id must not inherit its open count
         data = _engagement()
         if gone & set(data):
@@ -1137,7 +1197,7 @@ def api_clip(body: ClipIn):
 def api_critique(nid: str):
     n = _get(nid)
     instruction, context = _critique_prompt(n)
-    answer = _ask(instruction, context)
+    answer = _ask(instruction, context, "critique", [nid])
     return _save_critique(nid, n, answer)
 
 
@@ -1147,6 +1207,7 @@ def _critique_prompt(n: dict) -> tuple[str, str]:
     nid = n["id"]
     if n["type"] == "fragment":
         raise HTTPException(400, "Critique is for a paper's summary")
+    _refuse_private(n)
     if not n["summary"].strip():
         raise HTTPException(400, "Write your summary first — the critique compares it against the paper")
     text = _fulltext(nid)
@@ -1184,6 +1245,7 @@ def api_explain(body: ExplainIn):
     a, b = _get(body.a), _get(body.b)
     if a["id"] == b["id"]:
         raise HTTPException(400, "Pick two different notes")
+    _refuse_private(a, b)
     key = "|".join(sorted((a["id"], b["id"])))
     sig = hashlib.sha1("".join(sorted((_describe(a), _describe(b)))).encode()).hexdigest()
     cache = store.load_json("explanations.json")
@@ -1197,7 +1259,7 @@ def api_explain(body: ExplainIn):
         "other; and whether one could inform the other's use (e.g. a method from one applied to the other's problem). "
         "If the connection is only superficial (shared vocabulary), say so plainly. Lead with a one-sentence answer "
         "in bold, then at most 5 short bullets. Under 200 words.")
-    text = _ask(instruction, context)
+    text = _ask(instruction, context, "explain", [a["id"], b["id"]])
     cache[key] = {"sig": sig, "text": text, "at": now_iso()}
     store.save_json("explanations.json", cache)
     return {"text": text, "cached": False}
@@ -1206,7 +1268,7 @@ def api_explain(body: ExplainIn):
 @app.post("/api/chat")
 def api_chat(body: ChatIn):
     instruction, context, extra = _chat_prompt(body)
-    answer = _ask(instruction, context)
+    answer = _ask(instruction, context, "chat")
     return {"answer": answer, **extra}
 
 
@@ -1237,8 +1299,9 @@ _chunk_index = ChunkIndex(store, embedder)
 
 
 def _chat_context(idx: dict, q: str, history: list[dict]) -> tuple[str, list[dict], list[dict]]:
-    """(context for Claude, sources [{id,title,score}], passages [{id,title,page,text,score}])."""
-    by_id = idx["by_id"]
+    """(context for Claude, sources [{id,title,score}], passages [{id,title,page,text,score}]).
+    Private notes (app/privacy.py) are left out: they are never retrieved for the AI."""
+    by_id = _ai_visible(idx["by_id"])
     prev = " ".join(h.get("content", "") for h in history[-2:] if h.get("role") == "user")
     query = f"{prev}\n{q}".strip()
     notes: list[tuple[str, float]] = []
@@ -1246,8 +1309,9 @@ def _chat_context(idx: dict, q: str, history: list[dict]) -> tuple[str, list[dic
         qv = embedder.embed_query(query)
         if qv is not None and qv.shape[0] == idx["m"].shape[1]:
             sims = idx["m"] @ qv
-            order = np.argsort(-sims)[:CHAT_NOTES]
-            notes = [(idx["ids"][i], float(sims[i])) for i in order if sims[i] > 0]
+            order = np.argsort(-sims)
+            notes = [(idx["ids"][i], float(sims[i])) for i in order[:CHAT_NOTES + 64]
+                     if sims[i] > 0 and idx["ids"][i] in by_id][:CHAT_NOTES]
     try:
         hits = [p for p in _chunk_index.search(query, k=CHAT_PASSAGES, per_note=CHAT_PER_NOTE,
                                                notes=list(by_id.values())) if p["id"] in by_id]
@@ -1281,6 +1345,15 @@ def _chat_context(idx: dict, q: str, history: list[dict]) -> tuple[str, list[dic
         parts.append("RELEVANT PASSAGES (most relevant first; each heading is how to cite it):\n\n" + "\n\n".join(pblocks))
     if nblocks:
         parts.append("RELEVANT NOTES (whole-note overview):\n\n" + "\n\n".join(nblocks))
+    try:  # idea cards the user confirmed (app/cards.py), privacy-filtered
+        from . import cards_api as _cards_api
+        crows = [c for c in _cards_api.for_ai(query, agents.active(), k=6) if c["paper"] in by_id]
+        if crows:
+            parts.append("CONFIRMED IDEA CARDS (claims, equations, quantities and methods the student confirmed; "
+                         "cite by their heading):\n\n" + "\n\n".join(
+                             _cards_api.fmt_for_ai(c, {c["paper"]: by_id[c["paper"]]["title"]}) for c in crows))
+    except Exception as e:
+        print(f"[research_brain] idea cards for chat failed: {e!r}")
     context = ("\n\n---\n".join(parts) + (f"\n\n---\nEARLIER CONVERSATION:\n{hist}" if hist else "")
                + f"\n\n---\nQUESTION: {q}")
     score: dict[str, float] = {}
@@ -1445,6 +1518,10 @@ def api_review_check(item_id: str, body: RecallIn):
         item = reviewer.get_item(item_id)
     except KeyError:
         raise HTTPException(404, "That review item no longer exists (its note was deleted or emptied)")
+    try:
+        _refuse_private(store.get(item.get("source") or item_id))
+    except KeyError:
+        pass
     p = item["prompt"]
     cue = (f"PAPER: {p['title']}" if item["kind"] == "summary"
            else f"PASSAGE from {p['paper_title']} {p['locator']}:\n{p['quote']}")
@@ -1456,7 +1533,7 @@ def api_review_check(item_id: str, body: RecallIn):
         "ideas they missed or got wrong (quote their words when wrong). Do not restate or rewrite the original, do "
         "not praise, and do not add new information. If nothing important is missing, reply with one line: "
         "'- Nothing important missing.'")
-    text = _ask(instruction, context)
+    text = _ask(instruction, context, "review check", [item.get("source") or item_id])
     lines = [ln for ln in text.strip().splitlines() if ln.strip()][:3]
     return {"text": "\n".join(lines)}
 
@@ -1470,6 +1547,7 @@ from . import export as site_export  # noqa: E402  (kept with its endpoint)
 class ExportIn(BaseModel):
     ids: list[str] | None = None
     include_pdfs: bool = False
+    include_private: bool = False  # private notes (app/privacy.py) are left out unless this is set
     title: str = "Reading list"
 
 
@@ -1478,7 +1556,8 @@ def api_export(body: ExportIn):
     title = re.sub(r"\s+", " ", body.title or "").strip()[:120] or "Reading list"
     try:
         with store.lock:
-            return site_export.export_site(store, body.ids, body.include_pdfs, static_dir=STATIC, title=title)
+            return site_export.export_site(store, body.ids, body.include_pdfs, static_dir=STATIC, title=title,
+                                           include_private=body.include_private)
     except KeyError as e:
         raise HTTPException(404, f"No note with id '{e.args[0]}'")
     except site_export.ExportError as e:
@@ -1564,13 +1643,14 @@ async def api_events(request: Request):
                              headers=SSE_HEADERS)
 
 
-def _claude_sse(instruction: str, context: str, finish):
+def _claude_sse(instruction: str, context: str, finish, purpose: str = "ask", sources=None):
     """Sync generator of SSE text: deltas from the active agent's stream, then finish(full_text) as `done`.
     Starlette runs it in a worker thread, so the blocking CLI read doesn't stall the event loop; if the
     client disconnects, the generator is closed and the agent's process is killed."""
     parts: list[str] = []
     try:
-        for piece in agents.stream_parts(instruction, context, SYSTEM, heartbeat=STREAM_HEARTBEAT):
+        for piece in agents.stream_parts(instruction, context, SYSTEM, heartbeat=STREAM_HEARTBEAT, purpose=purpose,
+                                         sources=sources):
             if piece:
                 parts.append(piece)
                 yield live.sse("delta", {"text": piece})
@@ -1591,14 +1671,15 @@ def _claude_sse(instruction: str, context: str, finish):
 def api_critique_stream(nid: str):
     n = _get(nid)
     instruction, context = _critique_prompt(n)  # 400s happen here, before the stream starts
-    return StreamingResponse(_claude_sse(instruction, context, lambda text: _save_critique(nid, n, text)),
+    return StreamingResponse(_claude_sse(instruction, context, lambda text: _save_critique(nid, n, text),
+                                         "critique", [nid]),
                              media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @app.post("/api/chat/stream")
 def api_chat_stream(body: ChatIn):
     instruction, context, extra = _chat_prompt(body)
-    return StreamingResponse(_claude_sse(instruction, context, lambda text: {"answer": text, **extra}),
+    return StreamingResponse(_claude_sse(instruction, context, lambda text: {"answer": text, **extra}, "chat"),
                              media_type="text/event-stream", headers=SSE_HEADERS)
 
 
@@ -1851,11 +1932,16 @@ def _memory_topics() -> dict | None:
 
 
 def _memory_key() -> str:
-    return memory_mod.library_key(store.signature(), store.load_json("engagement.json"), _memory_topics())
+    return memory_mod.library_key(f"{store.signature()}|{privacy.version()}", store.load_json("engagement.json"),
+                                  _memory_topics())
 
 
 def _build_core() -> str:
-    return memory_mod.build_core(_graph_data(), list(index()["by_id"].values()), _memory_topics())
+    # the map goes to the AI with every Research question, so private notes are not in it (app/privacy.py)
+    priv = privacy.private_ids()
+    g = _graph_data()
+    g = {**g, "nodes": [n for n in g["nodes"] if n["id"] not in priv]}
+    return memory_mod.build_core(g, [n for n in index()["by_id"].values() if n["id"] not in priv], _memory_topics())
 
 
 def _refresh_core() -> None:
@@ -1895,7 +1981,9 @@ class _Lib:
 
     @staticmethod
     def passages(query, k, per_note):
-        return _chunk_index.search(query, k=k, per_note=per_note, notes=list(index()["by_id"].values()))
+        return _chunk_index.search(query, k=k, per_note=per_note, notes=list(_ai_visible(index()["by_id"]).values()))
+
+    agent = staticmethod(_ai_agent)  # app/agent.py's tools hide private notes from this agent
 
     @staticmethod
     def fts(q, limit):
@@ -1912,6 +2000,23 @@ class _Lib:
     @staticmethod
     def neighbours(nid):
         return index()["neighbours"].get(nid, [])
+
+    # idea cards (app/cards.py): confirmed ones only, privacy-filtered for this run's agent
+    @staticmethod
+    def cards(query, k=8, kind=""):
+        from . import cards_api as _cards_api
+        return _cards_api.for_ai(query, _ai_agent(), k=k, kind=kind)
+
+    @staticmethod
+    def has_cards():
+        from . import cards_api as _cards_api
+        return _cards_api.has_known()
+
+    @staticmethod
+    def fmt_card(c):
+        from . import cards_api as _cards_api
+        by_id = index()["by_id"]
+        return _cards_api.fmt_for_ai(c, {c["paper"]: (by_id.get(c["paper"]) or {}).get("title", "")})
 
 
 agent_tools = agent_mod.Tools(_Lib)
@@ -1942,7 +2047,9 @@ def api_agent_tool(name: str, body: AgentToolIn, request: Request):
     if name not in agent_tools.available():
         raise HTTPException(404, f"No tool '{name}'")
     try:
-        return {"text": agent_tools.call(name, body.args, run), "is_error": False}
+        text = agent_tools.call(name, body.args, run)  # private notes filtered and checked (app/agent.py)
+        privacy.log_send(_ai_agent(), "research tool", privacy.mentioned_ids(text), len(text))
+        return {"text": text, "is_error": False}
     except (ValueError, TypeError) as e:
         return {"text": f"Tool error: {e}", "is_error": True}
 
@@ -1963,6 +2070,10 @@ def _research_seed(q: str, history: list[dict], run) -> tuple[str, list[dict]]:
     mem_map = agent_mod.relevant_map(memory.read("core.md"), ids, q)
     finds = memory.search(q, 6)
     finds = [f for f in finds if f["where"] != "map"]
+    priv = privacy.private_ids()
+    if priv and not privacy.local_exception(_ai_agent()):  # findings that cite or copy a private note
+        finds = [f for f in finds if not ({m[0] for m in WIKILINK_RE.findall(f.get("sources") or "")} & priv)
+                 and not privacy.find_leaks(f.get("text") or "")]
     hist = "\n".join(f"{h.get('role', 'user').upper()}: {str(h.get('content', ''))[:1500]}" for h in history[-6:])
     parts = ["PRE-SEARCHED PASSAGES (hybrid search for the question; each heading is how to cite it):\n\n"
              + ("\n\n".join(agent_tools.fmt_passage(p) for p in hits) or "(none matched)")]
@@ -2048,6 +2159,7 @@ def _research_sse(body: ResearchIn):
             from .agents import research as research_loop
             events = research_loop.run(backend, context, agent_tools, run)
         else:
+            (context,) = agents.guard_send(backend, "research", context)  # the privacy choke point (app/privacy.py)
             cfg = agent_mod.mcp_config(f"http://127.0.0.1:{_server_port()}", run.token, names)
             model = (agent_mod.FAST_MODEL if body.fast else None) or None
             events = claude_cli.run_agent(agent_mod.AGENT_INSTRUCTION, context, agent_mod.SYSTEM, cfg,
@@ -2110,6 +2222,7 @@ def _research_sse(body: ResearchIn):
             if fake:
                 pieces = iter([f"**(fake research)** Best answer so far for _{q[:60]}_."])
             elif native:
+                (gathered,) = agents.guard_send(backend, "research", gathered)
                 pieces = claude_cli.ask_stream(agent_mod.FALLBACK_INSTRUCTION, gathered, agent_mod.SYSTEM,
                                                heartbeat=STREAM_HEARTBEAT,
                                                model=agent_mod.FAST_MODEL if body.fast else None)
@@ -2369,15 +2482,33 @@ def urlsplit_path(u: str) -> str:
         return ""
 
 
+# ---------------------------------------------------------------- privacy: settings, audit log, lock (app/privacy_api.py)
+from . import privacy_api  # noqa: E402
+privacy_api.install(app, store=store, with_extras=_with_extras, publish=event_bus.publish)
+
 # ---------------------------------------------------------------- library, profiles, storage (app/storage_api.py)
 from . import storage_api  # noqa: E402
 storage_api.install(app, store=store, resolved=RESOLVED, create_paper=_create_paper, with_extras=_with_extras,
                     match_url=_match_url, same_title=_same_title, guess_title=guess_title, publish=event_bus.publish)
 
+# ---------------------------------------------------------------- open questions (app/questions.py, app/questions_api.py)
+# Evidence is matched locally (passage index, note index, idea cards) in a background thread; nothing about a
+# question goes to an AI agent unless privacy.allow_ai says so.
+questions_api.install(app, store=store, chunk_index=_chunk_index, embedder=embedder, index_fn=index, event_bus=event_bus,
+                      passage_links=passage_links, ask=_ask)
+
 # ---------------------------------------------------------------- citing: styles, keys, .bib/RIS exports (app/cite_api.py)
 from . import cite_api  # noqa: E402
 cite_api.install(app, store=store, vault=VAULT, watcher=_watcher,
                  note_refs=lambda nid: list(_wiki(index())["mentions"].get(nid, [])))
+
+# ---------------------------------------------------------------- idea cards (app/cards.py, app/cards_api.py)
+from . import cards_api  # noqa: E402
+cards_api.install(app, store=store, embedder=embedder, publish=event_bus.publish, article_url=article_url)
+
+# ---------------------------------------------------------------- phones: pairing, web app, share target (app/mobile_api.py)
+from . import mobile_api  # noqa: E402
+mobile_api.install(app, store=store, static=STATIC, port=PORT, publish=event_bus.publish)
 
 
 # ---------------------------------------------------------------- static frontend

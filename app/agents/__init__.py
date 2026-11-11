@@ -26,9 +26,61 @@ log = logging.getLogger("research_brain.agents")
 
 
 def register(backend: Backend) -> Backend:
+    _guard_backend(backend)
     with _lock:
         _backends[backend.id] = backend
     return backend
+
+
+# ---------------------------------------------------------------- the privacy choke point (app/privacy.py)
+# Every backend's ask / ask_stream / ask_parts / stream_parts is wrapped when it is registered, so nothing
+# reaches a model without privacy.check_send: [[links]] to private notes are scrubbed, any private id or
+# copied private text refuses the call (PrivacyError, an AgentError) and the send is written to the audit
+# log. Callers that know more (the purpose, e.g. "chat") call guard_send first; the wrapper then sees the
+# same, already approved, text and neither checks nor logs it twice.
+def guard_send(backend: Backend, purpose: str, *parts: str, sources=None, approve=()) -> list[str]:
+    from .. import privacy
+    return privacy.check_send(backend, purpose, list(parts), sources=sources, approve=approve)
+
+
+def _guard_backend(b: Backend) -> None:
+    if getattr(b, "_rb_privacy_wrapped", False):
+        return
+    import functools
+
+    def wrap_plain(fn):
+        @functools.wraps(fn)
+        def ask(prompt, *a, **kw):
+            (prompt,) = guard_send(b, "other", prompt)
+            return fn(prompt, *a, **kw)
+        return ask
+
+    def wrap_stream(fn):
+        @functools.wraps(fn)
+        def ask_stream(prompt, *a, **kw):
+            (prompt,) = guard_send(b, "other", prompt)  # before the process starts, not at first read
+            return fn(prompt, *a, **kw)
+        return ask_stream
+
+    def wrap_parts(fn):
+        @functools.wraps(fn)
+        def parts(instruction, context="", system="", *a, **kw):
+            instruction, context = guard_send(b, "other", instruction, context)
+            return fn(instruction, context, system, *a, **kw)
+        return parts
+
+    for name, wrap in (("ask", wrap_plain), ("ask_stream", wrap_stream), ("ask_parts", wrap_parts),
+                       ("stream_parts", wrap_parts)):
+        fn = getattr(b, name, None)
+        if callable(fn):
+            try:
+                setattr(b, name, wrap(fn))
+            except (AttributeError, TypeError):  # pragma: no cover (a backend with __slots__)
+                pass
+    try:
+        b._rb_privacy_wrapped = True
+    except AttributeError:  # pragma: no cover
+        pass
 
 
 def unregister(backend_id: str) -> None:
@@ -211,17 +263,23 @@ def join_parts(instruction: str, context: str = "") -> str:
     return f"{context}\n\n---\nTASK: {instruction}"
 
 
-def ask_parts(instruction: str, context: str = "", system: str = "", backend: Backend | None = None) -> str:
+def ask_parts(instruction: str, context: str = "", system: str = "", backend: Backend | None = None,
+              purpose: str = "ask", sources=None) -> str:
     b = backend or active()
+    instruction, context = guard_send(b, purpose, instruction, context, sources=sources,
+                                      approve=lambda c: [join_parts(*c)])
     if hasattr(b, "ask_parts"):
         return b.ask_parts(instruction, context, system)
     return b.ask(join_parts(instruction, context), system=system, timeout=TIMEOUT).strip()
 
 
 def stream_parts(instruction: str, context: str = "", system: str = "", backend: Backend | None = None,
-                 heartbeat: float | None = None):
-    """Yield answer text as it arrives; with `heartbeat`, "" whenever nothing arrived for that long."""
+                 heartbeat: float | None = None, purpose: str = "ask", sources=None):
+    """Yield answer text as it arrives; with `heartbeat`, "" whenever nothing arrived for that long.
+    The privacy check runs when this is first iterated, before anything is sent."""
     b = backend or active()
+    instruction, context = guard_send(b, purpose, instruction, context, sources=sources,
+                                      approve=lambda c: [join_parts(*c)])
     if hasattr(b, "stream_parts"):
         yield from b.stream_parts(instruction, context, system, heartbeat=heartbeat)
         return

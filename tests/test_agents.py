@@ -420,7 +420,8 @@ def test_server_uses_active_backend(server):
         assert lst["active"] == "fake" and lst["chosen"] == "fake"
         assert {a["id"] for a in lst["agents"]} >= {"fake", "claude", "ollama", "openai-local"}
         assert all({"name", "kind", "home", "cost_note", "detection"} <= set(a) for a in lst["agents"])
-        c.post("/api/notes", json={"type": "note", "title": "Plasma notes", "body": "Debye length shields charges."})
+        c.post("/api/notes", json={"type": "note", "private": False, "title": "Plasma notes",
+                                     "body": "Debye length shields charges."})
         r = c.post("/api/chat", json={"question": "What shields charges?", "history": []})
         assert r.status_code == 200 and r.json()["answer"] == "A plain chat answer about plasma."
         prompt, system = fb.prompts[-1]

@@ -70,6 +70,7 @@
       const heading = sel.search ? `Export ${sel.label} matching “${sel.search}”?` : `Export all ${sel.label}?`;
       const name = el('input', { type: 'text', value: sel.title, spellcheck: 'false', 'aria-label': 'Title' });
       const pdfs = el('input', { type: 'checkbox' });
+      const priv = el('input', { type: 'checkbox' }); // private notes (app/privacy.py) are left out unless ticked
       const ok = el('button', { class: 'btn btn-primary', type: 'submit', text: 'Export' });
       const cancel = el('button', { class: 'btn', type: 'button', text: 'Cancel' });
       const form = el('form', { class: 'modal-card ex-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ex-title' },
@@ -77,6 +78,7 @@
         el('div', { class: 'modal-text', text: 'Writes a read-only website (summaries, notes, fragments and math) to the exports folder in your vault. Nothing is uploaded. Claude’s critiques are left out.' }),
         el('label', { class: 'ex-field' }, 'Title', name),
         el('label', { class: 'ex-check' }, pdfs, el('span', null, 'Include PDFs', el('span', { class: 'menu-hint', text: ' Only share PDFs you’re allowed to redistribute.' }))),
+        el('label', { class: 'ex-check' }, priv, el('span', null, 'Include private notes', el('span', { class: 'menu-hint', text: ' Left out unless you tick this.' }))),
         el('div', { class: 'modal-actions' }, cancel, ok));
       const wrap = el('div', { class: 'modal', id: 'export-modal' }, form);
       const prev = document.activeElement;
@@ -88,7 +90,7 @@
       const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(false); } };
       cancel.addEventListener('click', () => close(false));
       wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(false); });
-      form.addEventListener('submit', (e) => { e.preventDefault(); close({ title: name.value.trim() || sel.title, include_pdfs: pdfs.checked }); });
+      form.addEventListener('submit', (e) => { e.preventDefault(); close({ title: name.value.trim() || sel.title, include_pdfs: pdfs.checked, include_private: priv.checked }); });
       document.addEventListener('keydown', onKey, true);
       document.body.appendChild(wrap);
       open = { close };
@@ -103,6 +105,7 @@
     const parts = [`${r.notes} ${r.notes === 1 ? 'page' : 'pages'}`];
     if (r.fragments) parts.push(`${r.fragments} ${r.fragments === 1 ? 'fragment' : 'fragments'}`);
     if (r.pdfs) parts.push(`${r.pdfs} ${r.pdfs === 1 ? 'PDF' : 'PDFs'}`);
+    if (r.private_skipped) parts.push(`${r.private_skipped} private left out`);
     const card = el('div', { class: 'modal-card ex-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ex-done' },
       el('div', { class: 'modal-title', id: 'ex-done', text: 'Export ready' }),
       el('div', { class: 'modal-text', text: `${parts.join(', ')}. Open index.html in a browser, or zip the folder to share it.` }),
@@ -133,7 +136,7 @@
     try {
       const r = await fetch('/api/export', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: sel.ids, include_pdfs: opts.include_pdfs, title: opts.title }),
+        body: JSON.stringify({ ids: sel.ids, include_pdfs: opts.include_pdfs, include_private: !!opts.include_private, title: opts.title }),
       });
       let data = null; try { data = await r.json(); } catch { /* not JSON */ }
       if (!r.ok) throw new Error((data && data.detail) || `HTTP ${r.status}`);

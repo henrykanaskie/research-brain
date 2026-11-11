@@ -23,6 +23,7 @@ dependencies = [
   "mcp>=2.3,<3",
   "citeproc-py>=0.12",
   "defusedxml>=0.7",
+  "pint>=0.24",
 ]
 
 [project.optional-dependencies]

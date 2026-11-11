@@ -1,0 +1,115 @@
+{
+  "_about": "A small, realistic electric-propulsion / plasma corpus for tests/test_questions.py. Each paper's `pages` become text/<id>.txt with [[page N]] markers. `relevant` lists, per question key, the (paper key, page) passages and note keys that bear on it.",
+  "papers": {
+    "breathing": {
+      "title": "Low-frequency breathing-mode oscillations in Hall thrusters",
+      "authors": ["J. P. Boeuf", "L. Garrigues"],
+      "year": 1998,
+      "abstract": "We study the low-frequency discharge current oscillations of Hall effect thrusters with a one-dimensional hybrid model.",
+      "pages": [
+        "Hall effect thrusters are compact electric propulsion devices in which electrons are trapped by a radial magnetic field while ions are accelerated electrostatically by the axial electric field. The thrust efficiency of modern thrusters exceeds fifty percent at discharge powers of a few kilowatts, and they are now flown on many communication satellites.\n\nThis paper describes the numerical model, its boundary conditions and the operating points that were simulated.",
+        "The model treats electrons as a fluid and ions and neutral atoms as particles. The anomalous electron mobility across the magnetic field is represented by an effective Bohm-like collision frequency that is adjusted to reproduce the measured discharge current.",
+        "The breathing mode is a large-amplitude oscillation of the discharge current in the 10 to 30 kHz range. It is an ionization instability: the neutral atoms are depleted by ionization faster than they are replenished from the anode, the ionization front recedes, and the neutral density then recovers. A simple predator-prey description gives the breathing-mode frequency as f = sqrt(V_i V_n) / (2 pi L), where V_i is the ion velocity, V_n the neutral velocity and L the length of the ionization region. The frequency therefore depends on the electron temperature through the ionization rate and the extent of the ionization zone.",
+        "References\n\n[1] Morozov and Savelyev, Fundamentals of stationary plasma thruster theory. [2] Choueiri, Plasma oscillations in Hall thrusters, Physics of Plasmas 8, 1411 (2001). [3] Fife, Hybrid-PIC modeling and electrostatic probe survey of Hall thrusters."
+      ]
+    },
+    "krcrm": {
+      "title": "A collisional-radiative model for krypton plasmas of electric thrusters",
+      "authors": ["M. Priti", "R. K. Gangwar", "R. Srivastava"],
+      "year": 2019,
+      "abstract": "A fine-structure resolved collisional-radiative model of krypton is developed to diagnose electron temperature and density from optical emission spectra.",
+      "pages": [
+        "Krypton is an attractive and cheaper alternative propellant to xenon for Hall thrusters and gridded ion engines. Non-invasive diagnostics of the plasma parameters in krypton discharges are needed to characterise these thrusters.",
+        "The collisional-radiative (CR) model solves the population balance of the 2p excited levels of Kr I, including electron-impact excitation from the ground and metastable states, radiative decay and radiation trapping. The CR model outputs the electron temperature T_e and the electron density n_e that best reproduce the measured intensity ratios of the Kr I lines at 811.3 nm, 826.3 nm and 587.1 nm. Applied to a krypton Hall thruster, the model gives T_e between 10 and 25 eV along the channel.",
+        "Cross sections for electron impact excitation are taken from fully relativistic distorted-wave calculations. Uncertainty in the metastable fraction dominates the error of the inferred electron density."
+      ]
+    },
+    "oes": {
+      "title": "Time-resolved optical emission spectroscopy of discharge oscillations",
+      "authors": ["A. Lazurenko", "V. Vial"],
+      "year": 2021,
+      "abstract": "Fast photomultiplier measurements of plasma emission synchronised with the discharge current of a Hall thruster.",
+      "pages": [
+        "Optical emission spectroscopy is a non-intrusive way to follow the plasma of an electric thruster. We use fast photomultiplier tubes with narrow band-pass filters to record line emission at megahertz sampling rates.",
+        "The experimental set-up consists of a 1.5 kW Hall thruster in a vacuum chamber, collection optics aimed at the channel exit and a current probe on the anode line.",
+        "During the breathing oscillation at 15 to 25 kHz the emission intensity of the neutral and ion lines rises and falls with the discharge current. The phase between the neutral line emission and the current follows the ionization front motion, so line emission recorded in time can track the oscillation frequency and amplitude without a probe in the plasma.",
+        "Machine learning regressors trained on emission time series predicted the discharge current oscillation amplitude to within ten percent, which suggests spectroscopic features carry most of the information about the instability."
+      ]
+    },
+    "erosion": {
+      "title": "Magnetic shielding of the channel walls of a Hall thruster",
+      "authors": ["I. G. Mikellides", "I. Katz"],
+      "year": 2014,
+      "abstract": "Magnetic shielding topologies keep high-energy ions away from the channel walls of Hall thrusters.",
+      "pages": [
+        "Erosion of the boron nitride channel walls by energetic ions limits the life of Hall thrusters. Magnetic shielding shapes the field so that magnetic field lines graze the walls and stay nearly isothermal, keeping the potential near the wall close to the anode potential.",
+        "In the magnetically shielded thruster the wall erosion rate dropped by two to three orders of magnitude compared with the unshielded configuration, as confirmed by profilometry after a 150 hour test."
+      ]
+    },
+    "tokamak": {
+      "title": "Deep learning for disruption prediction in tokamaks",
+      "authors": ["J. Kates-Harbeck", "A. Svyatkovskiy"],
+      "year": 2019,
+      "abstract": "A recurrent neural network predicts disruptive events in tokamak plasmas from diagnostic time series.",
+      "pages": [
+        "Disruptions are sudden losses of confinement in tokamaks that release the stored thermal and magnetic energy onto the vessel. Predicting them early enough allows mitigation by massive gas injection.",
+        "The fusion recurrent neural network takes zero-dimensional signals and one-dimensional profiles from many diagnostics and outputs a disruption score that is compared with an alarm threshold. Trained on JET and DIII-D shots it reaches area under the curve above 0.9."
+      ]
+    },
+    "grasp": {
+      "title": "Learning dexterous grasping with deep reinforcement learning",
+      "authors": ["S. Levine", "P. Pastor"],
+      "year": 2018,
+      "abstract": "A robot learns hand-eye coordination for grasping from monocular images.",
+      "pages": [
+        "We train a convolutional network that predicts the probability that a motor command for the gripper will lead to a successful grasp, using data collected from fourteen robots over two months.",
+        "The servoing policy continuously re-plans grasps, recovering from perturbations and handling objects of varied shape and material in clutter."
+      ]
+    },
+    "battery": {
+      "title": "Capacity fade of lithium-ion cells under fast charging",
+      "authors": ["P. Attia", "W. Chueh"],
+      "year": 2020,
+      "abstract": "Closed-loop optimisation of fast-charging protocols for lithium-ion batteries.",
+      "pages": [
+        "Lithium plating at the graphite anode during fast charging accelerates capacity fade. We use Bayesian optimisation with early prediction of cycle life to search the space of multistep charging protocols.",
+        "The optimal protocols extend cycle life while charging to eighty percent state of charge in ten minutes."
+      ]
+    },
+    "sheath": {
+      "title": "The plasma sheath and the Bohm criterion",
+      "authors": ["K.-U. Riemann"],
+      "year": 1991,
+      "abstract": "A review of the plasma-wall transition, the Bohm criterion and the presheath.",
+      "pages": [
+        "At a wall in contact with a plasma a thin positive space-charge sheath forms, a few Debye lengths thick. Ions must enter the sheath with at least the Bohm speed, the ion sound speed, which requires a quasi-neutral presheath that accelerates them.",
+        "Secondary electron emission from the wall modifies the sheath potential and can lead to space-charge saturated sheaths at high wall temperature."
+      ]
+    }
+  },
+  "notes": {
+    "idea_te": {
+      "title": "Line-ratio electron temperature as a feature",
+      "body": "Idea: use the electron temperature from the krypton line ratios (811.3 / 826.3 nm) as an input feature to predict the breathing-mode oscillation frequency of the thruster."
+    },
+    "shopping": {
+      "title": "Lab supplies to order",
+      "body": "Order more vacuum grease, a spare turbo pump controller fuse and BNC cables for the oscilloscope."
+    }
+  },
+  "questions": {
+    "breathing_crm": {
+      "title": "Could the breathing-mode frequency be predicted from the Kr CRM outputs?",
+      "body": "The collisional-radiative model gives electron temperature and density. The breathing oscillation frequency depends on ionization. Can one be predicted from the other?"
+    },
+    "shielding": {
+      "title": "Does magnetic shielding reduce channel wall erosion?",
+      "body": ""
+    }
+  },
+  "relevant": {
+    "breathing_crm": [["breathing", 3], ["krcrm", 2], ["oes", 3], ["note", "idea_te"]],
+    "shielding": [["erosion", 1], ["erosion", 2]]
+  },
+  "irrelevant_papers": ["tokamak", "grasp", "battery", "sheath"]
+}

@@ -54,10 +54,10 @@ def lib(env):
     paper = _mk(c, type="paper", title="Hall thruster breathing mode", authors=["A. Physicist"], year=2016,
                 doi="10.1063/1.4945558", abstract="Oscillations of $n_e$ in Hall thrusters.",
                 summary="Ionization front moves at $v \\approx \\sqrt{T_e/m_i}$. See [[Plasma notes]].")
-    note = _mk(c, type="note", title="Plasma notes",
+    note = _mk(c, type="note", private=False, title="Plasma notes",
                body="Compare [[Hall thruster breathing mode]] with [[Secret draft|my other idea]] and [[Nowhere]].\n\n"
                     "$$\\omega_{pe} = \\sqrt{\\frac{n e^2}{\\varepsilon_0 m_e}}$$\n\n<script>alert(1)</script>")
-    secret = _mk(c, type="note", title="Secret draft", body="private thoughts")
+    secret = _mk(c, type="note", private=False, title="Secret draft", body="private thoughts")
     frag = _mk(c, type="fragment", parent=paper["id"], quote="$\\nabla \\cdot E = \\rho/\\varepsilon_0$",
                locator="p. 4, Eq. 7", page=4, body="Gauss, links to [[Plasma notes]]")
     c.post(f"/api/notes/{paper['id']}/link", json={"target": secret["id"]})

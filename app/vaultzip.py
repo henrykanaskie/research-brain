@@ -1,8 +1,10 @@
 """Whole-library zip export and import (moving to a new laptop, sharing a copy, a manual backup).
 
 Export: every file that belongs to the library (notes/, pdfs/ unless left out, text/, state/, memory/,
-topics/) plus research_brain-export.json (app version, schema, counts). Derived or disposable folders
+topics/, cards/) plus research_brain-export.json (app version, schema, counts). Derived or disposable folders
 (.index/, .trash/, exports/, backups/, .git/) are left out; the app rebuilds .index/ on start.
+This is a full backup: private notes (app/privacy.py) are included, and so are state/privacy.json and the AI
+audit log (state/ai_log.jsonl). Only reading-list exports (app/export.py) leave private notes out.
 
 Import: only into a NEW, EMPTY vault (a new profile), never on top of an existing library, so nothing can
 be overwritten. Every entry is checked before anything is written:
@@ -25,7 +27,7 @@ from pathlib import Path, PurePosixPath
 from . import __version__
 
 MANIFEST = "research_brain-export.json"
-TOP_DIRS = ("notes", "pdfs", "text", "state", "memory", "topics")
+TOP_DIRS = ("notes", "pdfs", "text", "state", "memory", "topics", "cards")
 SKIP_DIRS = {".index", ".trash", "exports", "backups", ".git"}
 MAX_ENTRIES = int(os.environ.get("RB_IMPORT_MAX_ENTRIES", "200000"))
 MAX_TOTAL = int(os.environ.get("RB_IMPORT_MAX_GB", "50")) << 30

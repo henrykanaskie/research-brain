@@ -176,7 +176,7 @@ def test_stats_streak(env):
 
 def test_check_recall(env):
     c, server, day = env
-    a = note(c, type="note", title="A", summary="aaa")["id"]
+    a = note(c, type="note", private=False, title="A", summary="aaa")["id"]
     assert c.post(f"/api/review/{a}/check", json={"recalled_text": ""}).status_code == 400
     r = c.post(f"/api/review/{a}/check", json={"recalled_text": "aa"})
     assert r.status_code == 200

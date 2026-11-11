@@ -2,13 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#EEEFEB" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121518" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="research brain">
   <title>research brain</title>
   <script>
     // apply saved theme before first paint
     try { var t = JSON.parse(localStorage.getItem('rb.theme')); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
   </script>
   <link rel="icon" type="image/svg+xml" href="/static/brain.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/static/vendor/fonts/fonts.css">
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/static/style.css">
@@ -67,6 +74,7 @@
           <button id="btn-add-pdf" class="menu-item" type="button">Import a PDF<span class="menu-hint">or drop one on the window</span></button>
           <input id="pdf-input" type="file" accept="application/pdf,.pdf" multiple hidden>
           <button id="btn-new-note" class="menu-item" type="button">Write a note<span class="menu-hint">your own idea or synthesis</span></button>
+          <button id="btn-new-question" class="menu-item" type="button">New question<span class="menu-hint">an open question that collects evidence</span></button>
           <button id="btn-zotero" class="menu-item" type="button">Import from Zotero<span class="menu-hint">papers, notes and highlights</span></button>
         </div>
       </div>
@@ -110,8 +118,10 @@
       <div><span class="lg lg-paper"></span>Paper</div>
       <div title="One small red dot for each of your notes or highlights on a paper; a summary on its own shows one dot"><span class="lg lg-mine"></span>Your notes</div>
       <div><span class="lg lg-note"></span>Standalone note</div>
+      <div title="An open question; the dot means new evidence is waiting"><span class="lg lg-q"></span>Question</div>
       <div><span class="lg lg-link"></span>Your link</div>
       <div><span class="lg lg-sim"></span>Similar</div>
+      <div title="Two papers report measurements that disagree"><span class="lg lg-conflict"></span>Disagree</div>
       <div class="legend-count" id="legend-count"></div>
     </div>
     <div class="graph-tools">
@@ -224,9 +234,14 @@
   <script src="/static/topics.js"></script>
   <script src="/static/research.js"></script>
   <script src="/static/memory.js"></script>
+  <script src="/static/privacy.js"></script>
   <script src="/static/settings.js"></script>
   <script src="/static/agentmenu.js"></script>
   <script src="/static/cite.js"></script>
+  <script src="/static/questions.js"></script>
+  <script src="/static/cards.js"></script>
   <script src="/static/shortcuts.js"></script>
+  <script src="/static/vendor/qr.js"></script>
+  <script src="/static/mobile.js"></script>
 </body>
 </html>

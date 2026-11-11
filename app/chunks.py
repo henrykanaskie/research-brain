@@ -265,6 +265,8 @@ class ChunkIndex:
                 self._load(kind)
             want: dict[str, tuple[str, dict, Path | None]] = {}
             for n in notes:
+                if n.get("type") == "question":
+                    continue  # open questions are the user's private ideas, not sources (app/questions.py)
                 tp = None
                 if n["type"] != "fragment":
                     try:
@@ -353,15 +355,28 @@ class ChunkIndex:
     def search(self, query: str, k: int = 12, per_note: int = 3, notes: list[dict] | None = None) -> list[dict]:
         """Top passages for `query`, at most `per_note` from any one note (diversity).
         Hybrid: dense (embedding) ranks and BM25 (exact terms) ranks fused with reciprocal rank fusion,
-        RRF(d) = sum over rankings of 1 / (60 + rank). Returns [{"id","page","src","text","score"}], best first."""
+        RRF(d) = sum over rankings of 1 / (60 + rank). Returns [{"id","page","src","text","score","sim"}], best
+        first. `notes` limits the results to those notes. The index itself always covers the whole library when
+        the store can list it, so callers that hide some notes (private ones from an AI agent) and callers that
+        don't (open-question matching) don't make it drop and re-embed passages in turn."""
+        allowed = None
+        universe = notes
+        if notes is not None:
+            allowed = {n["id"] for n in notes}
+            try:
+                full = self.store.all()
+                if allowed <= {n["id"] for n in full}:
+                    universe = full
+            except Exception:
+                universe = notes
         try:
-            self._refresh_safe(notes)
+            self._refresh_safe(universe)
         except Exception as e:  # e.g. embedding model unavailable offline
             if self.embedder.kind == "tfidf":
                 raise
             print(f"[research_brain] passage embedding failed ({e!r}); falling back to TF-IDF")
             self.embedder.kind = "tfidf"
-            self._refresh_safe(notes)
+            self._refresh_safe(universe)
         with self.lock:
             if not self._rows or self._m is None:
                 return []
@@ -373,11 +388,17 @@ class ChunkIndex:
             else:
                 qv = self._encode([query])[0]
                 sims = self._m @ qv
+            mask = None
+            if allowed is not None:
+                mask = np.fromiter((nid in allowed for nid, _ in self._rows), dtype=bool, count=len(self._rows))
+                sims = np.where(mask, sims, 0.0)
             dense = np.where(sims > 0)[0]
             dense = dense[np.argsort(-sims[dense])][:RRF_DEPTH]
             fused = np.zeros(len(self._rows), dtype=np.float32)
             fused[dense] += 1.0 / (RRF_K + 1 + np.arange(len(dense)))
             lex = self._bm25_scores(query)
+            if lex is not None and mask is not None:
+                lex = np.where(mask, lex, 0.0)
             if lex is not None:
                 hit = np.where(lex > 0)[0]
                 hit = hit[np.argsort(-lex[hit])][:RRF_DEPTH]
@@ -393,11 +414,28 @@ class ChunkIndex:
                     continue
                 per[nid] = per.get(nid, 0) + 1
                 c = self._notes[nid]["chunks"][ci]
-                row = {"id": nid, "page": c["page"], "src": c["src"], "text": c["text"], "score": round(s, 4)}
+                row = {"id": nid, "page": c["page"], "src": c["src"], "text": c["text"], "score": round(s, 4),
+                       "sim": round(float(max(0.0, sims[r])), 4)}  # absolute cosine (the fused score is rank-based)
                 if c.get("section"):
                     row["section"], row["section_title"] = c["section"], c.get("section_title") or c["section"]
                 out.append(row)
             return out
+
+    def similarity(self, query: str, texts: list[str]) -> list[float]:
+        """Cosine similarity of `query` to each of `texts` in the same space as search()'s "sim" (the passage
+        TF-IDF vocabulary, or the sentence-transformers model), so one threshold fits both. Local only."""
+        if not texts:
+            return []
+        with self.lock:
+            if self._kind == "tfidf" or self.embedder.kind == "tfidf":
+                if self._tfidf is None:
+                    return [0.0] * len(texts)
+                m = self._tfidf.transform([query] + list(texts))
+                sims = np.asarray((m[1:] @ m[0].T).todense()).ravel()
+            else:
+                v = self._encode([query] + list(texts))
+                sims = v[1:] @ v[0]
+        return [float(max(0.0, min(1.0, s))) for s in sims]
 
     def _refresh_safe(self, notes):
         self.refresh(notes)
