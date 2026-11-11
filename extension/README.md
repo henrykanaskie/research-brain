@@ -112,14 +112,45 @@ extraction handles well and less well:
   IEEE's full-text view, and elsewhere falls back to the block with the most paragraph text (readability-style).
   The tests use fixture pages (a `citation_*` publisher page, arXiv abstract and HTML pages, a JSON-LD-only page),
   not the live sites, whose markup changes; if a site comes out wrong, the text is still editable in the vault.
-  Headings become sections (`3.2 Results` is cited as §3.2), MathML, KaTeX and MathJax 2 math is kept as
+  Headings become sections (`3.2 Results` is cited as §3.2), MathML, KaTeX, MathJax 2 (`math/tex` and
+  `math/mml` scripts) and MathJax 3 (`mjx-container` with `data-latex` or assistive MathML) math is kept as
   `$TeX$`, figure and table captions are kept, the reference list goes apart.
+- **Metadata:** the extension sends what the page says (title, authors, DOI, arXiv id, PMID, ISBN, OSTI/NTRS id,
+  journal, volume, issue, pages or article number, ISSN, publisher, conference, a CSL type); research_brain then
+  asks Crossref, arXiv & co. for the authoritative record by the identifier, and the page's values only fill gaps.
+  The DOI is looked for in `citation_doi` / `prism.doi` / `dc.identifier` (scheme doi) / `bepress_citation_doi`,
+  IEEE's `xplGlobal.document.metadata`, JSON-LD, `data-doi` attributes outside the reference list, the publisher's
+  URL pattern (`/doi/10…`, `/doi/full|abs|epdf/10…`, `/article/10…`, `journals.aps.org/<j>/abstract/10.1103/…`),
+  the canonical link, and DOI links in the article header.
+
+Publisher coverage (each has a fixture page in `tests/fixtures/linked/pub_*.html` and a test in
+`tests/e2e/test_linked_e2e.py`; "verified" = checked against the publisher's Zotero translator, which encodes the
+live markup; "assumed" = modelled on the publisher's known conventions, not checked against a live page here):
+
+| Publisher | Metadata from | Verified | Assumed |
+| --- | --- | --- | --- |
+| APS (Phys. Rev.) | `citation_*`, URL `journals.aps.org/<j>/abstract/10.1103/…` | URL pattern, `#article-body`, `#abstract-section-content` | `citation_firstpage` = article number, section and reference markup, MathJax 2 |
+| AIP Publishing (Phys. Plasmas, JAP, RSI) | `citation_*` (DOI not in the URL) | Silverchair URL pattern, `a.article-pdfLink` | `citation_doi`, `ArticleFulltext` widget, `.ref-list` |
+| IOP (PSST, Nucl. Fusion, PPCF) | `citation_*`, URL `/article/10.1088/…` | | abstract, `.article-content`, MathJax 3 assistive MathML, `ul.references` |
+| Elsevier ScienceDirect | header markup (`.title-text`, `#author-group`, `a.doi`, volume line) | `citation_pii`, `h1 > .title-text`, `div.abstract` (not highlights) | no `citation_doi`, `#body`, `math/mml` scripts, `dd.reference` |
+| Springer Nature | `citation_*`, `dc.identifier` | | `c-article-*` markup (unchanged from before) |
+| Wiley | `citation_*`, URL `/doi/full/10…` | Atypon-style URL pattern | `article-section__*` markup, `li[data-bib-id]` |
+| Taylor & Francis | `dc.*` (`dc.Identifier scheme="doi"`), URL `/doi/full/10…` | Atypon URL pattern | `.hlFld-Fulltext`, `NLM_sec`, `ul.references` |
+| AIAA ARC (journals + meeting papers) | `dc.*`, `citation_conference_title` | URL `/doi/(abs/)10.2514/…`, `h1.citation__title`, `.abstractSection` | `dc.*` set, `NLM_sec`, `references__item` |
+| IEEE Xplore (Trans. Plasma Sci.) | inline `xplGlobal.document.metadata` JSON | `authors[].firstName/lastName`, `issn[].value` | other JSON keys (title, doi, publicationTitle, volume, startPage, ...), full-text markup |
+| Cambridge Core (J. Plasma Phys.) | `citation_*` | `#maincontent h1`, `div.abstract`, embedded metadata | full-text and reference markup |
+| OSTI.GOV | `citation_*`, OSTI id from `/biblio/<id>` (record from the OSTI API) | | landing-page markup, report tags |
+| NASA NTRS | NTRS id from `/citations/<id>` (record from the NTRS API) | `/citations/<id>` and `/api/citations/<id>` | rendered page markup |
+| arXiv (abs, HTML) | `citation_*`, id from the URL | (existing fixtures) | |
+
+Theses and books are recognised from `citation_dissertation_institution`, `citation_technical_report_*`,
+`citation_isbn` / `citation_inbook_title`; the record then comes from Crossref, DataCite or Open Library.
 - **Abstract only:** landing pages that show just the abstract (an arXiv `abs` page, or a journal page when you
   have no access). The popup says so; open the HTML or PDF version and save again, and the full text replaces
   the abstract on the same paper.
 - **Less good:** pages that load the article text later behind "Show full text" buttons (save after it shows),
-  articles split over several pages (only the one you are on is saved), MathJax 3 pages (math kept as plain text),
-  and sites without any citation metadata (the title falls back to the page's heading; fill in the rest in the
+  articles split over several pages (only the one you are on is saved), MathJax 3 pages whose
+  math has neither `data-latex` nor assistive MathML (kept as its spoken label or plain text), and sites without any citation metadata (the title falls back to the page's heading; fill in the rest in the
   app). Tables are left out except their captions.
 
 ## Annotate a PDF

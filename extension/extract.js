@@ -83,6 +83,9 @@
   /** "Vaswani, Ashish" -> "Ashish Vaswani" (citation_author is often Last, First) */
   function personName(a) {
     a = clean(a);
+    const sfx = /^(jr|sr|ii|iii|iv)\.?$/i;
+    const p3 = a.split(",").map((x) => x.trim());
+    if (p3.length === 3 && p3[0] && p3[1] && sfx.test(p3[2])) return `${p3[1]} ${p3[0]} ${p3[2]}`;  // "King, Martin, Jr."
     const parts = a.split(",");
     if (parts.length === 2 && parts[0].trim() && parts[1].trim() && !/\b(jr|sr|ii|iii|iv)\.?$/i.test(parts[1].trim())) {
       return `${parts[1].trim()} ${parts[0].trim()}`;
@@ -195,6 +198,9 @@
       || (xpl && clean(xpl.title || xpl.displayDocTitle || "")) || (sd && sd.title)
       || ldText(ld.headline) || ldText(ld.name) || first(m, ["og:title", "twitter:title"])
       || clean((doc.querySelector("h1.citation__title, #maincontent h1, h1") || {}).textContent) || clean(doc.title);
+    // single-page apps (NASA NTRS) put the site's name in og:title; the record's title is the page's h1
+    const siteTitle = /^(ntrs\b|nasa technical reports server)/i.test(title);
+    const title2 = siteTitle ? clean((doc.querySelector("h1") || {}).textContent) || title : title;
     let authors = all(m, ["citation_author", "dc.creator", "dcterms.creator", "eprints.creators_name"]).map(personName);
     if (!authors.length && xpl && Array.isArray(xpl.authors)) {
       authors = xpl.authors.map((a) => clean(a && (a.name || [a.firstName, a.lastName].filter(Boolean).join(" ")))).filter(Boolean);
@@ -241,7 +247,7 @@
     const low = decodeURIComponentSafe(href || "").toLowerCase();
     const pick = (re) => (re.exec(low) || [])[1] || "";
     return {
-      title: title.slice(0, 500), authors: authors.slice(0, 300), doi, arxiv, year: ym ? +ym[1] : null,
+      title: title2.slice(0, 500), authors: authors.slice(0, 300), doi, arxiv, year: ym ? +ym[1] : null,
       venue: venue.slice(0, 300), abstract: abstract.replace(/^abstract[:.\s]*/i, "").slice(0, 20000), url, pdf_url: pdf,
       date: (/^\d{4}([-/]\d{1,2}([-/]\d{1,2})?)?/.exec(date || "") || [""])[0],
       volume: first(m, ["citation_volume", "prism.volume"]) || (xpl && String(xpl.volume || "")) || (sd && sd.volume) || "",
@@ -282,7 +288,7 @@
     ".c-article-body", "div.main-content[data-article-body]",                       // Springer Nature, BMC
     "#bodymatter", ".article__body", ".article-body", "#article-body",               // Wiley, ACS, AIP, IOP, APS
     "section.article-section__full", "div[data-widgetname='ArticleFulltext']", ".widget-ArticleFulltext", // Wiley, AIP (Silverchair)
-    "div[itemprop='articleBody']", "div.article-content",                           // IOP
+    "div.article-content", "div[itemprop='articleBody']",                           // IOP
     "#document-body", ".document-text", "#content-container .content-box",          // IEEE Xplore, Cambridge Core
     ".hlFld-Fulltext", ".NLM_sec_level_1",                                          // Taylor & Francis, ACS
     "#body", "div.Body", "#centerInner .Body",                                      // ScienceDirect (Elsevier)
@@ -397,16 +403,7 @@
       }
       if (!top && !refLevel && (REF_BOX_RE.test(attrs(el)) || el.getAttribute("role") === "doc-bibliography")) {
         flush();
-        let items = [];
-        for (const sel of ["li", ".ltx_bibitem", ".c-article-references__item", "dd.reference, dd", ".ref-content",
-          "p.ref, div.ref", ".reference", ".citation", ".bib-item"]) {
-          items = el.querySelectorAll(sel);
-          if (items.length) break;
-        }
-        for (const it of (items.length ? items : [el])) {
-          const r = clean(inlineText(it)).replace(/\s*(Google Scholar|Crossref|CrossRef|Search ADS|PubMed|Web of Science|Scopus|View in Scopus|Find this author)(\s*,?\s*(Google Scholar|Crossref|CrossRef|Search ADS|PubMed|Web of Science|Scopus|View in Scopus))*\s*$/g, "");
-          if (r) refs.push(r.slice(0, 1000));
-        }
+        refs.push(...refItems(el));
         return;
       }
       if (tag === "FIGURE" || /(^|[\s_-])(table-wrap|fig|figure)([\s_-]|$)/i.test(attrs(el)) && !top) {
@@ -431,6 +428,23 @@
     visit(root, true);
     flush();
     return { lines, refs };
+  }
+
+  /** The entries of a reference list: the first item selector that matches, each entry on one line, minus the
+   *  publishers' link labels (Google Scholar, Crossref, ...). */
+  function refItems(el) {
+    let items = [];
+    for (const sel of [".reference-container", "li", ".ltx_bibitem", ".c-article-references__item", "dd.reference, dd", ".ref-content",
+      "p.ref, div.ref", ".reference", ".citation", ".bib-item"]) {
+      items = el.querySelectorAll(sel);
+      if (items.length) break;
+    }
+    const out = [];
+    for (const it of (items.length ? items : [el])) {
+      const r = clean(inlineText(it)).replace(/\s*(Google Scholar|Crossref|CrossRef|Search ADS|PubMed|Web of Science|Scopus|View in Scopus|Find this author)(\s*,?\s*(Google Scholar|Crossref|CrossRef|Search ADS|PubMed|Web of Science|Scopus|View in Scopus))*\s*$/g, "");
+      if (r) out.push(r.slice(0, 1000));
+    }
+    return out;
   }
 
   /** The text of an element on one line, math as $TeX$. */
@@ -486,10 +500,24 @@
     return topN > bestN ? top : best || top || doc.body;
   }
 
+  const REF_CONTAINERS = ["section.bibliography", "section.article-section__references", ".article__references",
+    "#references-list", "#references-section-container", "div.ref-list", "ol.references", "ul.references", "dl.references",
+    "[role='doc-bibliography']", ".c-article-references", "#references", "section.references"];
+
   function run(doc = document, href = location.href) {
     const meta = metadata(doc, href);
     const root = pickRoot(doc);
     const { lines, refs } = root ? walkText(root, { title: meta.title }) : { lines: [], refs: [] };
+    if (!refs.length) {  // the reference list sits outside the article container (ScienceDirect, Wiley, IOP, Cambridge)
+      for (const sel of REF_CONTAINERS) {
+        let box = null;
+        try { box = doc.querySelector(sel); } catch { continue; }
+        if (box && !(root && root.contains(box))) {
+          refs.push(...refItems(box));
+          if (refs.length) break;
+        }
+      }
+    }
     // a trailing heading with nothing under it says nothing
     const out = lines.slice();
     while (out.length && out[out.length - 1].startsWith("[[section ")) out.pop();

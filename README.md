@@ -70,8 +70,8 @@ looks it up and sends back what it found, and the model never gets tools.
 
 | Thing | How |
 | --- | --- |
-| Add a paper | Drag a PDF anywhere onto the window, or **Add PDF**. The app finds the DOI or arXiv id in the PDF and pulls title, authors and abstract from Semantic Scholar (falling back to arXiv or Crossref). |
-| Add without a PDF | **Add by DOI / arXiv / title** (⌘⇧A, or ⌘K and type "add paper"). Accepts `10.xxxx/...`, `2301.01234`, arXiv or doi.org URLs, or a title. |
+| Add a paper | Drag a PDF anywhere onto the window, or **Add PDF**. The app finds the DOI or arXiv id in the PDF (its XMP metadata first, then the first pages) and fills in the citation details from Crossref, arXiv & co. (see "How metadata is found" below). |
+| Add without a PDF | **Add by DOI / arXiv / title** (⌘⇧A, or ⌘K and type "add paper"). Accepts `10.xxxx/...`, `2301.01234`, arXiv or doi.org URLs, a PMID, an ISBN (books), an OSTI or NTRS link, or a title. |
 | Summaries | Write the summary yourself, then **Critique my summary**. Claude reads the full PDF text and reports errors, what's missing, what's vague, and questions to check yourself. It does not rewrite the summary for you. |
 | Review | **Review** in the top bar (it shows how many are due, and hides when nothing is) brings back your own summaries and fragment notes for recall: write what you remember, **Reveal** your original side by side, then grade yourself. Claude can optionally **Check my recall** in at most three lines. Details below. |
 | Graph views | **Filter** at the top left of the graph fades everything except a type, year range, tag or region. Save a filter plus the current search as a named view. Double-click a node (or select it and press **F**) to show only its 2-hop neighbourhood; **Esc** or **Show all** brings everything back. |
@@ -134,6 +134,41 @@ Citations into a linked article point to a **section** (`[[id]] §3.2`, or the h
 and open the article at that passage (a `#:~:text=` link); a PDF read in the browser is cited by page and opens at
 `#page=N`. To save PDFs by default instead, choose **Library settings → When saving from a publisher page → Link +
 text + PDF**; the extension's main button then saves both.
+
+## How metadata is found
+
+Citation details come from **identifiers first, scraping second** (`app/metadata.py`). Whenever a paper is added
+(PDF, DOI/arXiv/title, the browser extension, a URL, Zotero), the app looks up its authoritative record in the
+background and the panel updates by itself (it waits up to 3 s, so usually the first view is already right):
+
+| You have | Asked | Gives |
+| --- | --- | --- |
+| a DOI | Crossref (`api.crossref.org`); a DOI Crossref doesn't know (DataCite: Zenodo, theses in repositories, datasets) by DOI content negotiation on `doi.org` | journal / conference / book / report records: authors with particles and suffixes, container title and its abbreviation (*Phys. Plasmas*), volume, issue, pages or article number (APS `065001`), ISSN, publisher, date |
+| an arXiv id | the arXiv API | the preprint; if arXiv knows the journal DOI, the published version's Crossref record wins and the arXiv id is kept |
+| a PMID / PMCID | NCBI E-utilities | PubMed's record (then Crossref, when it names a DOI) |
+| an ISBN | Open Library | books |
+| an OSTI or NASA NTRS link | the OSTI / NTRS APIs | DOE and NASA reports, conference papers |
+| only a title | a Crossref title search, accepted only for a near-exact title match | |
+| nothing else | Semantic Scholar, then what the page or PDF said | |
+
+The record is stored in the note as CSL-JSON (`csl`, used for citations and exports) with `meta_source` and
+`meta_checked`; title, authors, year, venue, DOI and abstract follow it. Titles keep the publisher's
+capitalisation; HTML and MathML are stripped, TeX math (`$...$`) is kept. A better source replaces a worse one,
+never the other way round; what you edit in the panel is kept (and a later lookup won't undo it); **papers from
+Zotero keep Zotero's metadata**, only blanks are filled in. **Refresh metadata** (panel, or ⌘K) looks a paper up
+again. Answers are cached for 30 days in `vault/.index/metadata_cache.json`, and requests are spaced out per
+service. Only identifiers (and a title, for the title search) are sent; setting the contact email in Library
+settings adds it to the requests (Crossref's "polite pool"). `RB_METADATA=0` turns lookups off.
+
+**Optional: Zotero's translation-server.** For pages that carry no identifier at all, the app can ask Zotero's
+own site translators, if you run the translation-server on this computer:
+
+```bash
+docker run -d -p 127.0.0.1:1969:1969 --rm --name translation-server zotero/translation-server
+```
+
+It is used only when it answers on `127.0.0.1:1969` (`RB_TRANSLATION_SERVER_PORT` to change the port, `0` to never
+ask); the app sends it the page URL, and it fetches the page itself. Stop it with `docker kill translation-server`.
 
 ## Import from Zotero
 
@@ -362,6 +397,9 @@ in Obsidian breaks links. [docs/obsidian.md](docs/obsidian.md) lists what works 
 | `RB_PROFILE` | `default` | Open this profile (overrides the one picked in the app) |
 | `RB_DATA_DIR` | per-user data folder | Move the whole data folder (portable installs, tests) |
 | `RB_ACQUIRE` | `1` | `0` turns off the background open-access PDF download |
+| `RB_METADATA` | `1` | `0` turns off metadata lookups (Crossref, arXiv, PubMed, Open Library, OSTI, NTRS) |
+| `RB_METADATA_CACHE_DAYS` / `RB_METADATA_WAIT` | `30` / `3` | How long answers are cached; seconds an import waits for its lookup before answering |
+| `RB_TRANSLATION_SERVER_PORT` | `1969` | Port of an optional local Zotero translation-server (always 127.0.0.1); `0` = don't use one |
 | `RB_UNPAYWALL_EMAIL` | — | Contact email for Unpaywall (same as the Library settings field) |
 | `RB_OA_MAX_MB` / `RB_OA_DEADLINE` | `60` / `90` | Size cap (MB) and time budget (s) per open-access download |
 | `RB_UPLOAD_MAX_MB` | `150` | Largest PDF the extension's Save PDF may send |
@@ -406,6 +444,7 @@ in Obsidian breaks links. [docs/obsidian.md](docs/obsidian.md) lists what works 
 - `app/agent.py`, `app/agent_mcp.py`: Research mode. The tools and trail live in the app; `agent_mcp.py` is a tiny stdio MCP bridge (standard library only, starts in ~40 ms) that forwards tool calls to the running app.
 - `app/memory.py`: `vault/memory/`: the generated library map (`core.md`), findings (`findings.md`) and their validation.
 - `app/scholar.py`: Semantic Scholar, arXiv, and Crossref lookups.
+- `app/metadata.py`: the citation record (CSL-JSON) from identifiers: Crossref, DOI content negotiation, arXiv, PubMed, Open Library, OSTI, NTRS, a local translation-server, Semantic Scholar; normalisation, merge rules, cache, rate limits, background updates.
 - `app/chunks.py`: the passage index for chat: page-tagged ~800-character chunks of each paper's text and of your notes, embedded and cached per note.
 - `app/citations.py`: citation links from Semantic Scholar references (on import and the backfill job), throttled to about one request per second.
 - `app/export.py`: the static reading-list export.
@@ -456,6 +495,7 @@ you label as related or not, and reports recall@5 and mean similarity. See [eval
 | `tests/test_passages_citations.py` | Chat passage retrieval (a 12-page PDF with a fact on page 9), the passage cache, citation backfill and graph links (mocked Semantic Scholar), the embedding eval harness |
 | `tests/test_agent.py` | Research and memory: the tool guard (unexpected tools abort, missing tool list fails closed), the MCP bridge against a running server, `remember` validation, the map's size cap, findings edit/delete, budget handling, the SSE shape (fake agent) |
 | `tests/test_storage.py` | Data folder and legacy `./vault` (keep, safe move), profiles and the restart supervisor, schema migrations with backup, open-access PDFs (mocked downloads, SSRF guard, sha256 dedupe), PDF bytes from the extension, zip export/import (zip-slip), UI state, the CLI |
+| `tests/test_metadata.py` | Metadata resolvers from fixture answers (Crossref, DataCite, arXiv, PubMed, Open Library, OSTI, NTRS, Semantic Scholar, translation-server), name/title/number normalisation, merge rules, cache, rate limits, the SSRF guard, background updates and Refresh metadata |
 | `tests/test_obsidian.py` | Notes re-saved by Obsidian (block lists, quoting, unquoted dates) parse identically |
 | `tests/e2e/` | Real server + Chromium: empty state, new note + autosave, LaTeX and `[[` autocomplete, backlinks, PDF import + viewer + fragment from a selection, critique and chat (fake Claude), `/` search, export, delete |
 

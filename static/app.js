@@ -1770,6 +1770,13 @@
       const busy = S.ops.has('discover:' + n.id);
       acts.push(h('button', { class: 'btn' + (busy ? ' busy' : ''), disabled: busy, title: 'References, citations and recommendations from Semantic Scholar', onclick: (e) => runDiscover(n.id, e.currentTarget) }, 'Find related papers'));
     }
+    if (n.type === 'paper') {
+      const src = { crossref: 'Crossref', datacite: 'DataCite', arxiv: 'arXiv', pubmed: 'PubMed', openlibrary: 'Open Library', osti: 'OSTI', ntrs: 'NASA NTRS', 'translation-server': 'Zotero translation-server', s2: 'Semantic Scholar', page: 'the article page', zotero: 'Zotero' }[n.meta_source] || '';
+      const when = n.meta_checked ? ` on ${String(n.meta_checked).slice(0, 10)}` : '';
+      acts.push(h('button', { class: 'btn btn-text', 'data-act': 'refresh-metadata',
+        title: (src ? `Metadata from ${src}${when}. ` : '') + 'Look the paper up again by its DOI, arXiv id, PMID or ISBN (Crossref, arXiv, PubMed, Open Library…) and update its details. Fields you edited are kept.',
+        onclick: (e) => refreshMetadata(n.id, e.currentTarget) }, 'Refresh metadata'));
+    }
     if (acts.length) out.push(h('div', { class: 'actions' }, acts));
 
     if (n.type === 'paper') out.push(renderDetailsEditor(n));
@@ -2629,6 +2636,24 @@
     }
     reset(); hint();
     toast(`No free copy found. ${extHint}`, 'info');
+  }
+
+  /** "Refresh metadata": POST /api/notes/{id}/refresh-metadata (Crossref / arXiv / PubMed / ... by identifier). */
+  async function refreshMetadata(id, btn) {
+    if (btn) { btn.disabled = true; btn.replaceChildren(h('span', { class: 'spin' }), 'Looking up'); }
+    try {
+      const out = await api('POST', `/api/notes/${encodeURIComponent(id)}/refresh-metadata`, { keep_edits: true });
+      const m = out.metadata || {};
+      const names = { crossref: 'Crossref', datacite: 'DataCite', arxiv: 'arXiv', pubmed: 'PubMed', openlibrary: 'Open Library', osti: 'OSTI', ntrs: 'NASA NTRS', 'translation-server': 'Zotero translation-server', s2: 'Semantic Scholar', page: 'the article page' };
+      if (!m.found) toast('No record found for this paper’s identifiers. You can edit the details by hand.', 'info');
+      else toast(m.changed ? `Metadata updated from ${names[m.source] || m.source}.` : `Metadata already matches ${names[m.source] || m.source}.`, 'ok');
+      if (S.cur && S.cur.id === id) await reloadCur();
+      refreshGraph();
+    } catch (e) {
+      toastErr(e, 'Could not refresh the metadata');
+    } finally {
+      if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = 'Refresh metadata'; }
+    }
   }
 
   async function lookup(query, btn, input) {

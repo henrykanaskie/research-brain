@@ -71,6 +71,15 @@ Every request passes these checks before any endpoint runs:
 
 ## Imported files and URLs
 
+- **Metadata API requests** go through `app/urlfetch.fetch`: https only; the host must be in the resolver's fixed
+  list (every redirect hop is checked against it, so a redirect elsewhere is refused, not followed); the name
+  must resolve to public addresses only and the connection is pinned to a checked address (no DNS rebinding);
+  `Accept-Encoding: identity` (compressed answers refused), at most 4 MB and 25 s per answer. XML (arXiv) with a
+  DOCTYPE or ENTITY declaration is refused. `urlfetch.fetch_local` reaches only `127.0.0.1:<port>` with a fixed
+  path (the translation-server); a page URL is handed to it only if it passes the same public-address check.
+  Answers are cached as data in `.index/metadata_cache.json`; fields are stripped of markup before they are
+  stored, and the interface renders them as text.
+
 - **PDFs** are parsed in a separate, short-lived process with a time limit (`RB_PDF_TIMEOUT`, 120 s), a
   CPU limit and, on Linux, a memory limit (`RB_PDF_MAX_MEM_MB`, 2048). A PDF that hangs the parser or
   inflates into gigabytes only kills that process, and the import fails with a message. At most 80 pages
@@ -242,6 +251,17 @@ folded into a summary.
 
 - **Semantic Scholar, arXiv, Crossref**: DOIs, arXiv ids and titles, when you add a paper, open
   Discover, or the topic queue refreshes. Set `S2_API_KEY` if you have one.
+- **Metadata lookups** (`app/metadata.py`, when a paper is added or you click Refresh metadata): only these
+  hosts, over https: `api.crossref.org`, `doi.org` (and the registration agencies it redirects to:
+  `data.crossref.org`, `api.datacite.org`, `data.datacite.org`), `export.arxiv.org`, `eutils.ncbi.nlm.nih.gov`,
+  `openlibrary.org`, `www.osti.gov`, `ntrs.nasa.gov`, `api.semanticscholar.org`. What is sent: the identifier
+  (DOI, arXiv id, PMID/PMCID, ISBN, OSTI or NTRS id) or, for a paper without one, its title (Crossref and
+  Semantic Scholar title search). Never your notes, the paper text or the page you were on. The User-Agent names
+  the app and, if you set a contact email in Library settings, includes it (`mailto:`; NCBI also gets it as its
+  `email` parameter). `RB_METADATA=0` turns all of this off.
+- **A Zotero translation-server on this computer**, only if one answers on `127.0.0.1:1969`
+  (`RB_TRANSLATION_SERVER_PORT`): the URL of a page that had no identifier. That server then fetches the page
+  itself.
 - **Your AI agent's provider**, through the CLI you picked (Anthropic for Claude Code, OpenAI for Codex,
   Google for Gemini, GitHub for Copilot, ...): the paper text and notes needed for the question you asked.
   Nothing, if you use Ollama or another local model server.

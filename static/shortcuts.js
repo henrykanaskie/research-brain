@@ -190,6 +190,10 @@
     aliases: ['discover', 'references', 'citations', 'semantic scholar', 'recommend'],
     when: () => panelOpen() && !!$$('#panel-body .actions button').find((b) => b.textContent === 'Find related papers'),
     run: () => $$('#panel-body .actions button').find((b) => b.textContent === 'Find related papers').click() });
+  reg({ id: 'note.refreshMetadata', title: 'Refresh metadata', group: 'Note', description: 'Look the paper up again by its DOI, arXiv id, PMID or ISBN and update its details (fields you edited are kept).',
+    aliases: ['metadata', 'crossref', 'fix metadata', 'update details', 'doi lookup', 'citation details'],
+    when: () => panelOpen() && !!$('#panel-body .actions button[data-act="refresh-metadata"]'),
+    run: () => $('#panel-body .actions button[data-act="refresh-metadata"]').click() });
   reg({ id: 'note.delete', title: 'Delete…', group: 'Note', keys: 'Mod+Backspace', description: 'Moves the open note to the vault’s .trash folder, after you confirm.',
     aliases: ['remove', 'trash', 'discard'], when: () => panelOpen() && !!$('#panel-body .danger-zone .btn-danger'), run: () => $('#panel-body .danger-zone .btn-danger').click() });
 

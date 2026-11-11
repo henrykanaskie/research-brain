@@ -39,6 +39,10 @@ Every request first passes the checks in app/security.py (SECURITY.md has the re
   "has_pdf": true | false,
   "has_text": true | false,                  // extracted full text available for Claude
   "source": "" | "linked" | "pdf",           // papers: "linked" = link + text, no PDF file kept (see "Linked papers")
+  "csl": {CSL-JSON item} | null,             // papers: the bibliographic record (see "Paper metadata")
+  "meta_source": "" | "crossref" | "datacite" | "arxiv" | "pubmed" | "openlibrary" | "osti" | "ntrs"
+               | "translation-server" | "s2" | "page" | "zotero",
+  "meta_checked": "ISO8601" | "",            // when the record was last resolved
   "_extra": {"citekey": "string", ...},      // frontmatter properties the app doesn't model; `citekey` = the paper's
                                              // citation key once copied/exported or set (see "Citing")
   "created": "ISO8601",
@@ -543,6 +547,37 @@ Logic in `app/paths.py`, `app/profiles.py`, `app/migrate.py`, `app/acquire.py`, 
   folder is stripped. The imported library is migrated to the current schema.
 - Every vault has `state/meta.json` `{"schema", "app_version", "created", "migrations": [...]}`. On start, older
   schemas are migrated after a zip backup to `vault/backups/`; a newer schema stops the server with a message.
+
+## ADDED: Paper metadata (identifiers first; app/metadata.py)
+
+```
+POST /api/notes/{id}/refresh-metadata  {"keep_edits": true, "title_search": true}   (body optional)
+  -> Note + {"metadata": {"found": bool, "source": "crossref"|..., "changed": bool, "errors": [str]}}
+     400 for a fragment, 404 unknown id, 503 when RB_METADATA=0. Blocks until done (a few seconds).
+```
+
+- Every import (`/api/import/pdf`, `/lookup`, `/s2`, `/url`, `/pdf-bytes`, `/linked`, `/api/clip` creating a paper,
+  topic-queue accept, Zotero import) schedules a lookup in the background; the sync endpoints wait up to
+  `RB_METADATA_WAIT` (3) seconds, so their response usually carries the resolved note. When a lookup changes a
+  note, `GET /api/events` sends `notes-changed` with `{"ids": [id], "reason": "metadata", "source": ...}`.
+- Order: DOI → Crossref, else DOI content negotiation (DataCite & others) · arXiv id → arXiv API (its journal DOI's
+  Crossref record wins; the arXiv id stays in `arxiv` and `csl.custom.arxiv`) · PMID/PMCID → E-utilities · ISBN →
+  Open Library · OSTI / NTRS id → their APIs · no identifier: local translation-server (if running) for the URL,
+  then a Crossref title search (near-exact match only) · Semantic Scholar · the page's own record.
+- `csl` conventions: `type` CSL 1.0 (`article-journal`, `paper-conference`, `chapter`, `book`, `report`, `thesis`,
+  `dataset`, preprints `article` with `genre: "Preprint"`, `archive: "arXiv"`, `number: <id>`); `DOI` lower-case;
+  `container-title` + `container-title-short`; article numbers (APS/AIP/IOP `063204`) in `number` and, when the
+  record has no page range, in `page`; `ISSN`/`ISBN` one comma-separated string; names `{family, given,
+  non-dropping-particle, suffix}` or `{literal}` for collaborations; `custom` holds `arxiv`, `osti`, `ntrs` and
+  `rb_edited` (legacy fields you edited, kept across lookups).
+- Merge: a record replaces the note's only if its source ranks at least as high (zotero > crossref = datacite >
+  pubmed > openlibrary = osti = ntrs > translation-server > arxiv > s2 > page). Zotero-imported papers keep Zotero's
+  values; only blanks are filled. `PUT /api/notes/{id}` edits of title/authors/year/venue/abstract/url update
+  `csl` too.
+- `POST /api/import/linked` also accepts (all optional, from extension/extract.js): `pmid`, `isbn`, `osti`, `ntrs`,
+  `volume`, `issue`, `pages`, `issn` (list), `publisher`, `journal_abbrev`, `conference`, `genre` (a CSL type),
+  `date`. `POST /api/import/lookup` also accepts a PMID, PMCID, ISBN, OSTI or NTRS link; when Semantic Scholar
+  finds nothing, the resolver above is asked.
 
 ## ADDED: Citing (CSL formatting, citation keys, .bib/RIS/CSL-JSON, auto-export)
 Logic in `app/cite.py` (CSL records, keys, citeproc-py formatting) and `app/bibexport.py` (BibTeX, BibLaTeX, RIS,
