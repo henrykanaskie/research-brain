@@ -135,6 +135,61 @@ body.side-hidden #side{display:none}
 .empty{color:var(--ink-2);padding:24px 28px 48px;line-height:1.6;max-width:30em}
 #side footer{padding:14px 28px 18px;color:var(--ink-2);font-size:12px;line-height:1.8}
 
+/* Side tabs: your notes, or a conversation with your AI agent about this paper */
+#sideTabs{display:flex;gap:20px;padding:0 28px;border-bottom:1px solid var(--rule);flex:none}
+#sideTabs button{background:none;border:0;border-bottom:1px solid transparent;margin-bottom:-1px;padding:14px 0 12px;cursor:pointer;
+  font:500 13px var(--sans);color:var(--ink-2);display:flex;align-items:center;gap:6px}
+#askAgent{margin-left:-2px}
+#sideTabs button:hover{color:var(--ink)}
+#sideTabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--red)}
+#sideTabs button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.ag-dot{width:6px;height:6px;border-radius:50%;background:var(--rule-strong);display:inline-block}
+.ag-dot.on{background:#4F7A5A} .ag-dot.off{background:var(--red)}
+body.ask-tab #fragList, body.ask-tab #side footer{display:none}
+body.ask-tab #title{opacity:1}
+#askPane{flex:1;min-height:0;display:flex;flex-direction:column}
+#askPane[hidden]{display:none}
+.ask-head{display:flex;align-items:center;gap:8px;padding:10px 20px 10px 28px;border-bottom:1px solid var(--rule)}
+.ask-rel{flex:1;display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;cursor:pointer;min-width:0}
+.ask-rel input{margin:0;accent-color:var(--ink)}
+.ask-new{height:28px;line-height:26px;padding:0 8px;color:var(--ink-2);font-weight:400;flex:none}
+#askLog{flex:1;overflow:auto;padding:20px 28px 12px}
+.am{margin:0 0 20px}
+.am .who{font-size:12px;color:var(--ink-2);margin-bottom:4px}
+.am.you .txt{font:15px/1.5 var(--serif);border-left:2px solid var(--red);padding-left:10px;white-space:pre-wrap;word-break:break-word}
+.am .sel-q{font:13.5px/1.45 var(--serif);color:var(--ink-2);margin:0 0 6px;padding-left:12px;border-left:2px solid var(--rule-strong);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.am.ai .txt{font:15px/1.55 var(--serif);word-break:break-word;border-left:1px solid var(--machine);padding-left:12px}
+.am.ai .txt>:first-child{margin-top:0} .am.ai .txt>:last-child{margin-bottom:0}
+.am.ai .txt p{margin:0 0 .7em} .am.ai .txt ul,.am.ai .txt ol{margin:0 0 .7em;padding-left:1.3em}
+.am.ai .txt pre{font:12px/1.45 var(--mono);background:var(--tint);padding:8px 10px;overflow:auto;white-space:pre}
+.am.ai .txt code{font:12.5px var(--mono)}
+.am.ai .txt .katex-display{overflow-x:auto;overflow-y:hidden}
+.am.wait .txt{color:var(--ink-2);font:italic 14px var(--serif)}
+.am.err .txt{color:var(--red);border-left-color:var(--red);font:13px/1.5 var(--sans)}
+.am.err .retry{margin-top:6px;height:26px;line-height:24px;padding:0 10px;border-color:var(--rule)}
+.cite{font:500 12px var(--sans);color:var(--machine);background:none;border:0;padding:0 1px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.cite:hover{text-decoration:underline}
+a.cite{color:var(--machine)}
+.ask-empty{color:var(--ink-2);line-height:1.6}
+.ask-empty p{margin:0 0 12px}
+.ask-empty button{display:block;background:none;border:0;padding:4px 0;color:var(--ink);font:italic 15px/1.4 var(--serif);cursor:pointer;text-align:left}
+.ask-empty button:hover{color:var(--red)}
+.ask-empty .why{font-size:12px;margin-top:16px}
+#askForm{border-top:1px solid var(--rule);padding:12px 20px 14px 28px;flex:none}
+#askCtx{display:flex;align-items:flex-start;gap:6px;margin-bottom:8px;font-size:12px;color:var(--ink-2);min-height:18px}
+#askCtx .sel{flex:1;min-width:0;font:13.5px/1.4 var(--serif);color:var(--ink);border-left:2px solid var(--red);padding-left:8px;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+#askCtx .x{background:none;border:0;color:var(--ink-2);cursor:pointer;padding:0 4px;font-size:15px;line-height:1}
+#askCtx .x:hover{color:var(--ink)}
+#askInput{width:100%;background:var(--ground);border:1px solid transparent;border-radius:3px;color:var(--ink);padding:8px 10px;
+  font:15px/1.45 var(--serif);resize:none;max-height:160px}
+#askInput:hover{border-color:var(--rule)}
+#askInput:focus{outline:none;background:var(--sheet);border-color:var(--rule-strong);box-shadow:0 0 0 3px var(--tint)}
+.ask-foot{display:flex;align-items:center;gap:8px;margin-top:8px}
+.ask-foot .hint{flex:1;color:var(--ink-2);font-size:12px}
+.ask-foot .btn.primary{height:30px;line-height:28px}
+
 /* Selection control and popover */
 /* Same toolbar as the Chrome extension's annotate mode: "Highlight" and "Highlight + note" */
 #selBar{position:fixed;z-index:40;display:none;background:var(--ink);border-radius:3px;overflow:hidden;white-space:nowrap}
@@ -210,16 +265,32 @@ body.side-hidden #side{display:none}
     <div id="status"><div class="box"></div></div>
   </div>
   <aside id="side">
-    <div id="fragList">
+    <div id="sideTabs" role="tablist" aria-label="Side panel">
+      <button type="button" role="tab" id="tabNotes" aria-selected="true" aria-controls="fragList">Notes</button>
+      <button type="button" role="tab" id="tabAsk" aria-selected="false" aria-controls="askPane">Ask<span id="askAgent">AI</span><i class="ag-dot" aria-hidden="true"></i></button>
+    </div>
+    <div id="fragList" role="tabpanel" aria-labelledby="tabNotes">
       <div id="paperHead"><h1 id="pTitle"></h1><div class="by" id="pBy"></div></div>
       <div id="fragHead"><h2>Fragments</h2><span id="fragCount"></span></div>
       <div id="fragItems"><div class="empty">Loading</div></div>
     </div>
+    <section id="askPane" role="tabpanel" aria-labelledby="tabAsk" hidden>
+      <div class="ask-head">
+        <label class="ask-rel" title="Also let it draw on the most similar papers in your library"><input type="checkbox" id="askRelated"> Include similar papers</label>
+        <button type="button" class="btn ask-new" id="askNew" title="Start a new conversation about this paper">New conversation</button>
+      </div>
+      <div id="askLog" aria-live="polite"></div>
+      <form id="askForm" autocomplete="off">
+        <div id="askCtx"></div>
+        <textarea id="askInput" rows="2" placeholder="Ask anything about this paper" aria-label="Question about this paper"></textarea>
+        <div class="ask-foot"><span class="hint"><kbd>↵</kbd> ask &nbsp;<kbd>⇧↵</kbd> new line</span><button class="btn primary" id="askSend" type="submit">Ask</button></div>
+      </form>
+    </section>
     <footer>Select text on a page to add a fragment. <kbd>j</kbd> <kbd>k</kbd> move between pages, <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> zoom.</footer>
   </aside>
 </div>
 
-<div id="selBar" role="toolbar" aria-label="Selection"><button id="hlBtn" type="button" title="Highlight (H)">Highlight <kbd>H</kbd></button><button id="clipBtn" type="button" title="Highlight and write a note (N)">Highlight + note <kbd>N</kbd></button></div>
+<div id="selBar" role="toolbar" aria-label="Selection"><button id="hlBtn" type="button" title="Highlight (H)">Highlight <kbd>H</kbd></button><button id="clipBtn" type="button" title="Highlight and write a note (N)">Highlight + note <kbd>N</kbd></button><button id="askSelBtn" type="button" title="Ask your AI agent about this passage (A)">Ask <kbd>A</kbd></button></div>
 
 <div id="pop" role="dialog" aria-label="New fragment">
   <div class="ph"><b>New fragment</b><span id="pPage"></span></div>
@@ -324,6 +395,7 @@ async function init() {
   $("#title").textContent = note.title || ID;
   $("#title").title = note.title || "";
   $("#pTitle").textContent = note.title || ID;
+  renderAsk();
   const by = [];
   if (note.authors && note.authors.length) by.push(note.authors.length > 3 ? `${note.authors.slice(0, 3).join(", ")} et al.` : note.authors.join(", "));
   if (note.venue) by.push(note.venue);
@@ -494,6 +566,7 @@ function setCurrent(n) {
   if (n === S.current && $("#pageIn").value == n) return;
   S.current = n;
   if (document.activeElement !== $("#pageIn")) $("#pageIn").value = n;
+  if (!ASK.sel && !$("#askPane").hidden) renderAskCtx();
   const h = `#page=${n}`;
   if (location.hash !== h) history.replaceState(null, "", h);
 }
@@ -923,6 +996,230 @@ async function saveFrag() {
   }
 }
 function showPopErr(m) { const el = $("#pErr"); el.textContent = m; el.style.display = "block"; }
+
+
+/* ── Ask: talk to your AI agent about this paper, beside the PDF ─────────────
+   Same endpoint and same thread as "Ask about this paper" in the graph (the thread lives in localStorage
+   under rb.paperChat.<id>, so the two pages continue one conversation). The viewer also sends the page
+   you are on and, when you pick "Ask" on a selection, that passage. */
+const ASK = { busy: false, sel: null, related: false, ai: "AI", ok: null, why: "", thread: [] };
+const askLog = $("#askLog"), askInput = $("#askInput");
+const THREAD_KEY = () => `rb.paperChat.${ID}`;
+const THREAD_MAX = 40;
+function loadThread() {
+  try { const t = JSON.parse(localStorage.getItem(THREAD_KEY()) || "null"); if (Array.isArray(t)) return t; } catch { }
+  return ASK.thread.filter((m) => !m.pending);
+}
+function saveThread() {
+  // a question whose answer failed isn't kept: "Try again" asks it afresh
+  const keep = ASK.thread.filter((m, i, a) => !m.pending && !m.error && !(m.role === "user" && a[i + 1] && a[i + 1].error)).slice(-THREAD_MAX)
+    .map((m) => ({ role: m.role, content: m.content, ...(m.sel ? { sel: m.sel } : {}), ...(m.sources ? { sources: m.sources } : {}) }));
+  try { keep.length ? localStorage.setItem(THREAD_KEY(), JSON.stringify(keep)) : localStorage.removeItem(THREAD_KEY()); } catch { }
+}
+window.addEventListener("storage", (e) => { if (e.key === THREAD_KEY() && !ASK.busy) { ASK.thread = loadThread(); renderAsk(); } });
+
+function setTab(which) {
+  const ask = which === "ask";
+  if (document.body.classList.contains("side-hidden")) $("#sideBtn").click();
+  document.body.classList.toggle("ask-tab", ask);
+  $("#tabNotes").setAttribute("aria-selected", String(!ask));
+  $("#tabAsk").setAttribute("aria-selected", String(ask));
+  $("#askPane").hidden = !ask;
+  try { localStorage.setItem("rb.viewer.tab", ask ? "ask" : "notes"); } catch { }
+  if (ask) { renderAsk(); setTimeout(() => askInput.focus(), 0); }
+}
+$("#tabNotes").onclick = () => setTab("notes");
+$("#tabAsk").onclick = () => setTab("ask");
+$("#sideTabs").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault(); const ask = !document.body.classList.contains("ask-tab");
+  setTab(ask ? "ask" : "notes"); $(ask ? "#tabAsk" : "#tabNotes").focus();
+});
+
+async function loadAgent() {
+  try {
+    const st = await api("/api/status");
+    const SHORT = { claude: "Claude", codex: "Codex", gemini: "Gemini", copilot: "Copilot", opencode: "OpenCode", cursor: "Cursor", qwen: "Qwen", ollama: "your local model", "openai-local": "your local model" };
+    ASK.ai = (st.agent && (SHORT[st.agent.id] || st.agent.name)) || "Claude";
+    ASK.ok = !!(st.claude && st.claude.available);
+    ASK.why = ASK.ok ? "" : ((st.claude && st.claude.detail) || "No AI agent found on this computer.");
+  } catch { ASK.ok = false; ASK.why = "Couldn't reach research_brain. Is it running?"; }
+  $("#askAgent").textContent = /^your /.test(ASK.ai) ? "AI" : ASK.ai;
+  const dot = $("#tabAsk .ag-dot"); dot.className = "ag-dot " + (ASK.ok ? "on" : "off");
+  $("#tabAsk").title = ASK.ok ? `Ask ${ASK.ai} about this paper (A)` : ASK.why;
+  $("#askSelBtn").title = `Ask ${ASK.ai} about this passage (A)`;
+  renderAsk();
+}
+
+/* answers cite "[[id]] p. N": this paper's pages jump here; other papers open in a new viewer tab */
+const CITE_RE = /\[\[([^\[\]\n|]+?)(?:\|([^\[\]\n]*))?\]\](?:,?[  ](?:pp?\.[  ]?(\d{1,4})|\(pp?\.[  ]?(\d{1,4})\)))?/g;
+function citeSub(src, put, sources) {
+  return src.replace(CITE_RE, (m, id, alias, p1, p2) => {
+    id = id.trim(); const page = p1 || p2;
+    const known = (sources || []).find((x) => x.id === id);
+    if (id === ID) {
+      if (!page) return put(`<span class="cite" title="${esc(S.note && S.note.title || "")}">this paper</span>`);
+      return put(`<button type="button" class="cite" data-page="${esc(page)}" title="Go to page ${esc(page)}">p.&nbsp;${esc(page)}</button>`);
+    }
+    const label = alias || (known && known.title) || id;
+    const short = label.length > 48 ? label.slice(0, 47) + "…" : label;
+    const href = page ? `/viewer/${encodeURIComponent(id)}#page=${encodeURIComponent(page)}` : `/#note=${encodeURIComponent(id)}`;
+    return put(`<a class="cite" href="${esc(href)}" target="_blank" rel="noopener" title="${esc(label)}">${esc(short)}${page ? `, p.&nbsp;${esc(page)}` : ""}</a>`);
+  });
+}
+function answerHTML(text, sources) {
+  const LE = window.LatexEditor;
+  if (!LE) return esc(text).replace(/\n/g, "<br>");
+  try { return LE.render(text, { mode: "markdown", transform: (s, put) => citeSub(s, put, sources) }); } catch { return esc(text); }
+}
+/* hold back an unclosed $…$ / $$…$$ while streaming, so half an equation isn't shown as raw TeX */
+function partial(text) {
+  const t = String(text || "");
+  const dd = t.split("$$").length - 1;
+  if (dd % 2) return t.slice(0, t.lastIndexOf("$$"));
+  const single = t.replace(/\$\$[\s\S]*?\$\$/g, "").replace(/\\\$/g, "").split("$").length - 1;
+  return single % 2 ? t.slice(0, t.lastIndexOf("$")) : t;
+}
+
+const EXAMPLES = ["What is the main result, in two sentences?", "Explain the method on this page step by step", "What assumptions does this rely on?", "How does this compare with what I wrote in my notes?"];
+function renderAsk() {
+  if ($("#askPane").hidden) return;
+  if (!ASK.thread.length) {
+    const blocked = ASK.ok === false;
+    askLog.innerHTML = `<div class="ask-empty">
+      <p>${blocked ? esc(ASK.why) : `Ask ${esc(ASK.ai)} anything about <i>${esc(S.note && S.note.title || "this paper")}</i>. It reads the paper and your shareable notes on it, and knows which page you're on.`}</p>
+      ${blocked ? "" : EXAMPLES.map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join("")}
+      ${blocked ? "" : `<p class="why">Select a passage and choose <b>Ask</b> to ask about just that part. Papers you marked private are never sent.</p>`}
+    </div>`;
+  } else {
+    askLog.innerHTML = ASK.thread.map((m, i) => {
+      if (m.role === "user") return `<div class="am you"><div class="who">You${m.sel ? ` · selection on p.&nbsp;${esc(m.sel.page)}` : ""}</div>${m.sel ? `<div class="sel-q">${esc(m.sel.text)}</div>` : ""}<div class="txt">${esc(m.content)}</div></div>`;
+      if (m.error) return `<div class="am ai err"><div class="who">${esc(ASK.ai)}</div><div class="txt">${esc(m.content)}</div><button type="button" class="btn retry" data-retry="${i}">Try again</button></div>`;
+      if (m.pending && !m.live) return `<div class="am ai wait"><div class="who">${esc(ASK.ai)}</div><div class="txt">is reading the paper…</div></div>`;
+      return `<div class="am ai"><div class="who">${esc(ASK.ai)}</div><div class="txt${m.pending ? " live" : ""}">${answerHTML(m.pending ? partial(m.live) : m.content, m.sources)}</div></div>`;
+    }).join("");
+    if (!window.LatexEditor) askLog.querySelectorAll(".txt").forEach(math);
+  }
+  askLog.scrollTop = askLog.scrollHeight;
+  renderAskCtx();
+  $("#askSend").disabled = ASK.busy || ASK.ok === false;
+  askInput.disabled = ASK.ok === false;
+}
+function renderAskCtx() {
+  const c = $("#askCtx");
+  if (ASK.sel) {
+    c.innerHTML = `<span class="sel" title="${esc(ASK.sel.text)}">${esc(ASK.sel.text)}</span><button type="button" class="x" id="askSelClear" title="Ask about the whole paper instead" aria-label="Remove the selection">×</button>`;
+    $("#askSelClear").onclick = () => { ASK.sel = null; renderAskCtx(); askInput.focus(); };
+  } else c.textContent = S.pages.length ? `Reading page ${S.current} of ${S.pages.length}` : "";
+}
+askLog.addEventListener("click", (e) => {
+  const pg = e.target.closest("[data-page]");
+  if (pg) { goPage(+pg.dataset.page, true); const p = S.pages[+pg.dataset.page - 1]; if (p) { p.div.classList.remove("flash"); void p.div.offsetWidth; p.div.classList.add("flash"); } return; }
+  const q = e.target.closest("[data-q]");
+  if (q) { send(q.dataset.q); return; }
+  const r = e.target.closest("[data-retry]");
+  if (r) { const i = +r.dataset.retry, m = ASK.thread[i]; ASK.thread.splice(i - 1, 2); send(m.question, m.sel); }
+});
+
+async function streamChat(body, onDelta) {
+  const res = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    let d = null; try { d = await res.json(); } catch { }
+    const det = d && d.detail; throw new Error(typeof det === "string" ? det : `HTTP ${res.status}`);
+  }
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = "", text = "", done = null;
+  const handle = (frame) => {
+    let ev = "message"; const data = [];
+    for (const line of frame.split("\n")) { if (line.startsWith("event:")) ev = line.slice(6).trim(); else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, "")); }
+    if (!data.length) return;
+    let d; try { d = JSON.parse(data.join("\n")); } catch { return; }
+    if (ev === "delta" && d.text) { text += d.text; onDelta(text); }
+    else if (ev === "done") done = d;
+    else if (ev === "error") throw new Error(d.detail || `${ASK.ai} failed`);
+  };
+  for (;;) {
+    const { value, done: end } = await reader.read();
+    if (value) buf += dec.decode(value, { stream: true });
+    buf = buf.replace(/\r\n?/g, "\n");
+    let i; while ((i = buf.indexOf("\n\n")) !== -1) { const f = buf.slice(0, i); buf = buf.slice(i + 2); handle(f); }
+    if (end) break;
+  }
+  if (buf.trim()) handle(buf);
+  if (!done) throw new Error("The answer stopped early. Try again.");
+  return done;
+}
+
+async function send(question, sel = ASK.sel) {
+  question = String(question || "").trim();
+  if (!question || ASK.busy) return;
+  if (ASK.ok === false) { toast(ASK.why, true); return; }
+  ASK.thread = loadThread();   // pick up anything said about this paper in the graph meanwhile
+  const history = ASK.thread.filter((m) => !m.error).map((m) => ({ role: m.role, content: m.sel ? `[about the passage on p. ${m.sel.page}: "${m.sel.text.slice(0, 300)}"]\n${m.content}` : m.content }));
+  const userMsg = { role: "user", content: question, ...(sel ? { sel: { text: sel.text, page: sel.page } } : {}) };
+  const pending = { role: "assistant", pending: true, live: "" };
+  ASK.thread.push(userMsg, pending);
+  ASK.sel = null; ASK.busy = true;
+  renderAsk();
+  let raf = 0;
+  const paint = () => {
+    raf = 0;
+    const el = askLog.querySelector(".txt.live");
+    if (!el) { renderAsk(); return; }
+    const atEnd = askLog.scrollHeight - askLog.scrollTop - askLog.clientHeight < 40;
+    el.innerHTML = answerHTML(partial(pending.live), null);
+    if (atEnd) askLog.scrollTop = askLog.scrollHeight;
+  };
+  try {
+    const page = sel ? sel.page : (S.pages.length ? S.current : null);
+    const r = await streamChat({ question, history, paper: ID, include_related: ASK.related, page, selection: sel ? sel.text : null },
+      (t) => { pending.live = t; if (!raf) raf = requestAnimationFrame(paint); });
+    Object.assign(pending, { pending: false, content: r.answer || pending.live || "", sources: r.sources || [] });
+    delete pending.live;
+  } catch (e) {
+    Object.assign(pending, { pending: false, error: true, content: e.message || String(e), question, sel });
+    delete pending.live;
+  } finally {
+    if (raf) cancelAnimationFrame(raf);
+    ASK.busy = false;
+    saveThread(); renderAsk();
+  }
+}
+$("#askForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (ASK.busy) { toast(`${ASK.ai} is still answering`); return; }
+  const q = askInput.value; if (!q.trim()) return;
+  askInput.value = ""; askInput.style.height = "";
+  send(q);
+});
+askInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#askForm").requestSubmit(); }
+});
+askInput.addEventListener("input", () => { askInput.style.height = "auto"; askInput.style.height = Math.min(160, askInput.scrollHeight + 2) + "px"; });
+$("#askRelated").addEventListener("change", (e) => { ASK.related = e.target.checked; });
+$("#askNew").onclick = () => {
+  if (ASK.busy) { toast(`Wait for ${ASK.ai} to finish first`); return; }
+  ASK.thread = []; ASK.sel = null; saveThread(); renderAsk(); askInput.focus();
+};
+function askAboutSelection() {
+  const s = S.sel || currentSelection();
+  if (!s) { setTab("ask"); return; }
+  ASK.sel = { text: s.text.slice(0, 4000), page: s.page };
+  hideClipBtn(); window.getSelection().removeAllRanges();
+  setTab("ask");
+}
+$("#askSelBtn").addEventListener("click", askAboutSelection);
+if (RBC) {
+  RBC.register({ id: "viewer.ask", group: "Viewer", title: "Ask about this paper or the selection", keys: ["A"], allowInInput: false,
+    run: askAboutSelection, when: () => !popIsOpen(),
+    description: "Opens the Ask tab beside the PDF. With a passage selected, the question is about that passage.",
+    aliases: ["chat", "ai", "claude", "question", "explain"] });
+  RBC.layer({ id: "viewer.ask-input", order: 55, isOpen: (c) => c && c.target === askInput, close: () => { askInput.blur(); viewer.focus(); } });
+  RBC.tooltip && RBC.tooltip($("#askSelBtn"), "viewer.ask", "Ask about this passage");
+}
+ASK.thread = loadThread();
+try { if (localStorage.getItem("rb.viewer.tab") === "ask") setTab("ask"); } catch { }
+loadAgent();
 
 init().catch((e) => { console.error(e); showStatus("Something went wrong", `<p>${esc(e && e.message || e)}</p>`); });
 </script>

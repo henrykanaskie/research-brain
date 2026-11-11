@@ -441,6 +441,8 @@ class ChatIn(BaseModel):
     history: list[dict] = []
     paper: str | None = None          # talk about one paper (its text, your notes on it) instead of the library
     include_related: bool = False     # with `paper`: also let it draw on the most similar papers
+    page: int | None = None           # with `paper`: the page the student is looking at in the viewer
+    selection: str | None = None      # with `paper`: a passage the student selected on that page
 
 
 class S2In(BaseModel):
@@ -1285,7 +1287,8 @@ def _chat_prompt(body: ChatIn) -> tuple[str, str, dict]:
     if not by_id:
         raise HTTPException(400, "Your library is empty — add a paper or note first")
     if body.paper:
-        context, sources, passages = _paper_chat_context(idx, body.paper, q, body.history, body.include_related)
+        context, sources, passages = _paper_chat_context(idx, body.paper, q, body.history, body.include_related,
+                                                         page=body.page, selection=body.selection)
         return PAPER_CHAT_INSTRUCTION, context, {"sources": sources, "passages": passages, "paper": body.paper}
     context, sources, passages = _chat_context(idx, q, body.history)
     return CHAT_INSTRUCTION, context, {"sources": sources, "passages": passages}
@@ -1392,7 +1395,11 @@ PAPER_CHAT_INSTRUCTION = (
     "unless asked to go deep.")
 
 
-def _paper_chat_context(idx: dict, pid: str, q: str, history: list[dict], include_related: bool):
+PAPER_CHAT_SELECTION = 4000  # characters of a selected passage the viewer may send
+
+
+def _paper_chat_context(idx: dict, pid: str, q: str, history: list[dict], include_related: bool,
+                        page: int | None = None, selection: str | None = None):
     by_all = idx["by_id"]
     paper = by_all.get(pid)
     if not paper:
@@ -1439,6 +1446,19 @@ def _paper_chat_context(idx: dict, pid: str, q: str, history: list[dict], includ
         if blocks:
             parts.append("PASSAGES FROM THE FOCUS PAPER (most relevant first; each heading is how to cite it):\n\n"
                          + "\n\n".join(blocks))
+    if page and page > 0 and not (text and len(text) <= PAPER_CHAT_FULLTEXT):
+        # a long paper is sent as passages, so add the page they are reading in full: "this page" must work
+        from .chunks import split_pages
+        on_page = next((t for pg, t in split_pages(text) if pg == page), "").strip()[:12000]
+        if on_page:
+            parts.append(f"THE PAGE THEY ARE READING ([[{pid}]] p. {page}):\n\n{on_page}")
+    sel = " ".join((selection or "").split())[:PAPER_CHAT_SELECTION]
+    if sel:
+        where = f" on p. {page}" if page and page > 0 else ""
+        parts.append(f"THE STUDENT SELECTED THIS PASSAGE{where} (\"this\", \"here\" or \"it\" in the question "
+                     f"usually means it):\n\n> {sel}")
+    elif page and page > 0:
+        parts.append(f"The student is reading page {page} of the focus paper (\"this page\" means page {page}).")
     mine = [n for n in attached if n["type"] != "paper"]
     if mine:
         parts.append("THE STUDENT'S OWN NOTES AND HIGHLIGHTS ON THIS PAPER:\n\n"

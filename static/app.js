@@ -2535,14 +2535,32 @@
   function closeChat() { $('#chat').hidden = true; document.body.classList.remove('chat-open'); }
   /** Switch the chat to talk about one paper (id) or back to the whole library (null). Each scope keeps its
    *  own conversation. */
+  // a paper's conversation is kept in localStorage (rb.paperChat.<id>), shared with the PDF viewer's Ask tab
+  const PAPER_THREAD_MAX = 40;
+  function loadPaperThread(id) {
+    try {
+      const t = JSON.parse(localStorage.getItem(`rb.paperChat.${id}`) || 'null');
+      if (Array.isArray(t)) return t.map((m) => ({ ...m, passages: [] }));
+    } catch { /* storage unavailable */ }
+    return S.chatThreads[id] || [];
+  }
+  function savePaperThread(id, thread) {
+    S.chatThreads[id] = thread;
+    const keep = thread.filter((m, i, a) => !m.pending && !m.error && !m.failed && !(a[i + 1] && a[i + 1].error)).slice(-PAPER_THREAD_MAX)
+      .map((m) => ({ role: m.role, content: m.content, ...(m.sel ? { sel: m.sel } : {}), ...(m.sources ? { sources: m.sources } : {}) }));
+    try { keep.length ? localStorage.setItem(`rb.paperChat.${id}`, JSON.stringify(keep)) : localStorage.removeItem(`rb.paperChat.${id}`); } catch { /* storage unavailable */ }
+  }
+  window.addEventListener('storage', (e) => {
+    if (S.chatPaper && !S.chatBusy && e.key === `rb.paperChat.${S.chatPaper.id}`) { S.chat = loadPaperThread(S.chatPaper.id); renderChat(); }
+  });
   function setChatScope(id) {
     if (S.chatBusy) { toast(`Wait for ${ai()} to finish the current answer first.`, 'info'); return false; }
-    S.chatThreads[S.chatPaper ? S.chatPaper.id : ''] = S.chat;
+    if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat); else S.chatThreads[''] = S.chat;
     if (id) {
       const t = (S.cur && S.cur.id === id && S.cur.title) || nodeTitle(id) || 'this paper';
       S.chatPaper = { id, title: t };
     } else S.chatPaper = null;
-    S.chat = S.chatThreads[id || ''] || [];
+    S.chat = id ? loadPaperThread(id) : (S.chatThreads[''] || []);
     renderChatScope();
     return true;
   }
@@ -2599,7 +2617,9 @@
       const ext = m.mode === 'research' && window.__rbResearch ? window.__rbResearch.renderMsg(m, i) : null; // static/research.js
       if (ext) { kids.push(ext); return; }
       if (m.role === 'user') {
-        kids.push(h('div', { class: 'msg user' }, h('div', { class: 'msg-role', text: 'You' }), h('div', { class: 'msg-body md', html: renderMD(m.content) })));
+        kids.push(h('div', { class: 'msg user' }, h('div', { class: 'msg-role', text: m.sel ? `You · selection on p. ${m.sel.page}` : 'You' }),
+          m.sel ? h('div', { class: 'msg-sel', text: m.sel.text }) : null,
+          h('div', { class: 'msg-body md', html: renderMD(m.content) })));
       } else if (m.pending && m.live) { // streaming: the answer so far (re-rendered by sendChat)
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine streaming', 'aria-live': 'polite' },
           h('div', { class: 'machine-head' }, h('span', { text: `${ai()}, writing…` })),
@@ -2659,7 +2679,9 @@
     // Research mode searches the whole library; a chat about one paper always answers from that paper
     if (!S.chatPaper && window.__rbResearch && window.__rbResearch.wants(opts)) return window.__rbResearch.send(question);
     const scope = S.chatPaper ? { paper: S.chatPaper.id, include_related: !!S.chatRelated } : {};
-    const history = S.chat.filter((m) => !m.pending && !m.error && !m.failed).map((m) => ({ role: m.role, content: m.content }));
+    if (S.chatPaper) S.chat = loadPaperThread(S.chatPaper.id); // pick up what was asked in the viewer meanwhile
+    const history = S.chat.filter((m) => !m.pending && !m.error && !m.failed)
+      .map((m) => ({ role: m.role, content: m.sel ? `[about the passage on p. ${m.sel.page}: "${String(m.sel.text).slice(0, 300)}"]\n${m.content}` : m.content }));
     const userMsg = { role: 'user', content: question };
     const pending = { role: 'assistant', pending: true, start: Date.now() };
     S.chat.push(userMsg, pending);
@@ -2699,6 +2721,7 @@
       toastErr(e, `${ai()} couldn't answer`);
     } finally {
       S.chatBusy = false;
+      if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat);
       renderChat();
     }
   }
@@ -2728,7 +2751,7 @@
   });
   void chatLE;
   $('#chat-input').addEventListener('input', (e) => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight + 2) + 'px'; });
-  $('#btn-chat-clear').addEventListener('click', () => { if (S.chatBusy) { toast('Wait for the current answer to finish first.', 'info'); return; } S.chat = []; renderChat(); });
+  $('#btn-chat-clear').addEventListener('click', () => { if (S.chatBusy) { toast('Wait for the current answer to finish first.', 'info'); return; } S.chat = []; if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat); renderChat(); });
   $('#cs-clear').addEventListener('click', () => { if (setChatScope(null) !== false) { renderChat(); $('#chat-input').focus(); } });
   $('#cs-open').addEventListener('click', () => S.chatPaper && openNote(S.chatPaper.id, { center: true }));
   $('#cs-related').addEventListener('change', (e) => { S.chatRelated = e.target.checked; });

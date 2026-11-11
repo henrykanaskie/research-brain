@@ -551,10 +551,41 @@ def test_chat_about_one_paper(server):
         assert "RELATED PAPERS" in fb.prompts[-1][0] and "Magnetized presheath" in fb.prompts[-1][0]
         r = c.post("/api/chat/stream", json={**q, "paper": focus["id"]})
         assert _sse_events(r.text)[-1][0] == "done"
+        # from the PDF viewer: the page being read and a selected passage go along with the question
+        r = c.post("/api/chat", json={**q, "paper": focus["id"], "page": 2,
+                                      "selection": "Secondary electron emission weakens the sheath potential drop."})
+        assert r.status_code == 200
+        prompt = fb.prompts[-1][0]
+        assert "THE STUDENT SELECTED THIS PASSAGE on p. 2" in prompt and "> Secondary electron emission weakens" in prompt
+        r = c.post("/api/chat", json={**q, "paper": focus["id"], "page": 2})
+        assert "reading page 2" in fb.prompts[-1][0]
+        r = c.post("/api/chat", json={**q, "paper": focus["id"], "selection": "x" * 9000})
+        assert "x" * 4000 in fb.prompts[-1][0] and "x" * 4001 not in fb.prompts[-1][0]  # selections are capped
         c.post(f"/api/notes/{focus['id']}/privacy", json={"private": True})
         n = len(fb.prompts)
         r = c.post("/api/chat", json={**q, "paper": focus["id"]})
         assert r.status_code == 403 and "private" in r.json()["detail"] and len(fb.prompts) == n
         assert c.post("/api/chat", json={**q, "paper": "nope-404"}).status_code == 404
+    finally:
+        agents.unregister("fake")
+
+
+def test_chat_about_a_long_paper_includes_the_page_being_read(server, monkeypatch):
+    """A paper too long to send whole goes as its best passages, plus the full page the student is on."""
+    srv, c = server
+    from app import agents
+    monkeypatch.setattr(srv, "PAPER_CHAT_FULLTEXT", 200)
+    fb = FakeBackend("fake", script=["ok"] * 3)
+    agents.register(fb)
+    try:
+        c.put("/api/agents/active", json={"id": "fake"})
+        p = c.post("/api/notes", json={"type": "paper", "title": "Long krypton paper"}).json()
+        pages = [f"[[page {i}]]\n" + (f"Filler text about topic {i}. " * 20) for i in range(1, 6)]
+        pages[3] = "[[page 4]]\nThe zebra-marker sentence lives only on page four. " + "More words. " * 30
+        srv.store.text_path(p["id"]).write_text("\n".join(pages), encoding="utf-8")
+        r = c.post("/api/chat", json={"question": "What is on this page?", "history": [], "paper": p["id"], "page": 4})
+        assert r.status_code == 200
+        prompt = fb.prompts[-1][0]
+        assert f"THE PAGE THEY ARE READING ([[{p['id']}]] p. 4)" in prompt and "zebra-marker" in prompt
     finally:
         agents.unregister("fake")

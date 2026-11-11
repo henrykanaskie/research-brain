@@ -31,6 +31,17 @@ def blur(page):
     page.evaluate("document.activeElement && document.activeElement.blur()")
 
 
+def import_pdf_with_shortcut(page, pdf):
+    """Mod+O opens the PDF picker. Headless Chromium only sometimes shows a native file chooser for a
+    keyboard-triggered input.click() (it depends on user activation across pages), so check that the shortcut
+    opened the picker, then hand the file to the same <input> the picker fills."""
+    page.evaluate("""() => { const i = document.querySelector('#pdf-input'); window.__pickerOpened = 0;
+        i.addEventListener('click', (e) => { window.__pickerOpened++; e.preventDefault(); }, { capture: true }); }""")
+    page.keyboard.press(f"{MOD}+o")  # Import a PDF
+    page.wait_for_function("window.__pickerOpened === 1")
+    page.locator("#pdf-input").set_input_files(str(pdf))
+
+
 def sheet_rows(page):
     return page.locator(".rbk-shortcuts .rbk-row")
 
@@ -271,9 +282,7 @@ def test_viewer_keys_with_a_pdf(ctx, server, tmp_path):
     pdf = tmp_path / "sheath.pdf"
     pdf.write_bytes(_pdf_bytes())
     page = open_app(ctx, server)
-    with page.expect_file_chooser() as fc:
-        page.keyboard.press(f"{MOD}+o")  # Import a PDF
-    fc.value.set_files(str(pdf))
+    import_pdf_with_shortcut(page, pdf)
     page.wait_for_function("window.__rb.S.cur && window.__rb.S.cur.has_pdf", timeout=30_000)
     nid = page.evaluate("window.__rb.S.cur.id")
 
@@ -335,3 +344,54 @@ def test_region_tags_focus_and_escape(ctx, server):
     page.wait_for_function("window.__rb.S.focusCluster != null")
     assert page.evaluate("window.RB.commands.conflicts()") == []
     assert not page.errors
+
+
+def test_viewer_ask_tab_about_a_selection(ctx, server, tmp_path):
+    """Beside the PDF: select a passage, press A, ask; the request carries the paper, page and passage; a page
+    citation in the answer jumps to that page; the graph's "Ask about this paper" continues the same thread."""
+    import json as _json
+    from test_e2e import _pdf_bytes
+    clear_vault(server)
+    pdf = tmp_path / "sheath.pdf"
+    pdf.write_bytes(_pdf_bytes())
+    page = open_app(ctx, server)
+    import_pdf_with_shortcut(page, pdf)
+    page.wait_for_function("window.__rb.S.cur && window.__rb.S.cur.has_pdf", timeout=30_000)
+    nid = page.evaluate("window.__rb.S.cur.id")
+
+    v = ctx.new_page()
+    errors, sent = [], []
+    v.on("pageerror", lambda e: errors.append(str(e)))
+
+    def fake_stream(route):
+        sent.append(_json.loads(route.request.post_data))
+        answer = f"It means ions must reach the sound speed [[{nid}]] p. 2."
+        body = (f"event: delta\ndata: {_json.dumps({'text': answer})}\n\n"
+                f"event: done\ndata: {_json.dumps({'answer': answer, 'sources': [{'id': nid, 'title': 'Sheath', 'score': 1}]})}\n\n")
+        route.fulfill(status=200, headers={"Content-Type": "text/event-stream"}, body=body)
+    v.route("**/api/chat/stream", fake_stream)
+    v.goto(f"{server['base']}/viewer/{nid}")
+    span = v.locator(".page[data-page='1'] .textLayer span", has_text="Bohm criterion")
+    expect(span).to_be_visible(timeout=30_000)
+    box = span.bounding_box()
+    v.mouse.move(box["x"] + 2, box["y"] + box["height"] / 2)
+    v.mouse.down()
+    v.mouse.move(box["x"] + box["width"] - 2, box["y"] + box["height"] / 2, steps=8)
+    v.mouse.up()
+    expect(v.locator("#askSelBtn")).to_be_visible()
+    v.keyboard.press("a")  # Ask about the selection
+    expect(v.locator("#askPane")).to_be_visible()
+    expect(v.locator("#askCtx .sel")).to_contain_text("Bohm criterion")
+    expect(v.locator("#askInput")).to_be_focused()
+    v.keyboard.type("What does this mean?")
+    v.keyboard.press("Enter")
+    expect(v.locator("#askLog .am.ai .txt")).to_contain_text("sound speed")
+    assert sent and sent[0]["paper"] == nid and sent[0]["page"] == 1 and "Bohm criterion" in sent[0]["selection"]
+    expect(v.locator("#askCtx")).to_contain_text("Reading page 1")  # the selection was used once, then cleared
+    v.locator("#askLog .cite[data-page='2']").click()
+    v.wait_for_function("document.querySelector('#pageIn').value === '2'")
+
+    page.locator('[data-act="ask-paper"]').click()
+    page.wait_for_function("window.__rb.S.chatPaper && window.__rb.S.chat.length === 2")
+    expect(page.locator("#chat-log .msg-sel")).to_contain_text("Bohm criterion")
+    assert not errors, errors

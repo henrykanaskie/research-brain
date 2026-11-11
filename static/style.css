@@ -1017,3 +1017,6 @@ html .tp-add:focus { border-style: solid; border-color: var(--ink-2); background
 }
 /* a paper-scoped chat always answers from that paper; the library-wide Research mode doesn't apply */
 body.chat-scoped .rs-mode { display: none; }
+/* a question asked about a selected passage in the PDF viewer */
+.msg-sel { font: 13.5px/1.45 var(--serif); color: var(--ink-2); margin: 2px 0 6px; padding-left: 12px; border-left: 2px solid var(--rule);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
