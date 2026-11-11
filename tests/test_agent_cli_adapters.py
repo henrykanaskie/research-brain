@@ -298,7 +298,7 @@ def test_lockdown_command_env_and_cwd(fake, bid):
         assert k not in env, (bid, k)
     # a private, empty-but-for-our-files folder that is removed afterwards
     cwd = Path(r["cwd"])
-    assert r["cwd_mode"] == 0o700
+    assert os.name == "nt" or r["cwd_mode"] == 0o700  # Windows: folder privacy comes from ACLs, not modes
     assert not cwd.exists()
     base_dir = base.private_base()
     if base_dir is not None:
@@ -346,7 +346,7 @@ def test_gemini_specifics(fake):
     assert 'toolName = "*"' in r["files"][".rb/deny-all.toml"] and 'decision = "deny"' in r["files"][".rb/deny-all.toml"]
     env = r["env"]
     assert env["GEMINI_CLI_TRUST_WORKSPACE"] == "true" and env["GEMINI_TELEMETRY_ENABLED"] == "false"
-    assert env["GEMINI_SYSTEM_MD"].endswith(".rb/system.md") and "GEMINI_CLI_SYSTEM_SETTINGS_PATH" not in env
+    assert env["GEMINI_SYSTEM_MD"].replace("\\", "/").endswith(".rb/system.md") and "GEMINI_CLI_SYSTEM_SETTINGS_PATH" not in env
     policy = r["argv"][r["argv"].index("--admin-policy") + 1]
     assert policy.endswith(".rb/deny-all.toml")
 
@@ -390,7 +390,7 @@ def test_opencode_specifics(fake):
     for k in ("OPENCODE_DISABLE_PROJECT_CONFIG", "OPENCODE_DISABLE_CLAUDE_CODE", "OPENCODE_PURE",
               "OPENCODE_DISABLE_DEFAULT_PLUGINS", "OPENCODE_DISABLE_AUTOUPDATE"):
         assert env[k] == "1"
-    assert env["OPENCODE_CONFIG"].endswith(".rb/opencode.json")
+    assert env["OPENCODE_CONFIG"].replace("\\", "/").endswith(".rb/opencode.json")
     assert env["XDG_CONFIG_HOME"].startswith(r["cwd"])  # the user's ~/.config/opencode is not read
     assert b.models() == ["opencode/free-model", "anthropic/claude-x"]
 

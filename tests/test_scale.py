@@ -118,7 +118,8 @@ def test_corrupt_db_is_rebuilt(tmp_path, monkeypatch):
     assert server.store.meta.ok and server.store.meta.rebuilds >= 1
     assert len(server.store.all()) == 33
     assert client.get("/api/search", params={"q": "study"}).status_code == 200
-    with sqlite3.connect(db) as c:
+    # where the rows went: meta.sqlite, or beside it when Windows still had the damaged file open
+    with sqlite3.connect(server.store.meta.path) as c:
         assert c.execute("SELECT count(*) FROM notes").fetchone()[0] == 33
     # deleted while running: the next query rebuilds instead of failing
     server.store.meta.conn.close()
