@@ -348,7 +348,7 @@ def test_gemini_specifics(fake):
     assert env["GEMINI_CLI_TRUST_WORKSPACE"] == "true" and env["GEMINI_TELEMETRY_ENABLED"] == "false"
     assert env["GEMINI_SYSTEM_MD"].replace("\\", "/").endswith(".rb/system.md") and "GEMINI_CLI_SYSTEM_SETTINGS_PATH" not in env
     policy = r["argv"][r["argv"].index("--admin-policy") + 1]
-    assert policy.endswith(".rb/deny-all.toml")
+    assert policy.replace("\\", "/").endswith(".rb/deny-all.toml")
 
 
 def test_copilot_specifics(fake, tmp_path, monkeypatch):
