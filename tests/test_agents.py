@@ -510,6 +510,6 @@ def test_status_without_any_agent(server, monkeypatch):
 
 def test_status_text_in_app_js():
     js = (ROOT / "static" / "app.js").read_text()
-    assert "`${agentName} ready`" in js and "'Claude ready'" not in js
+    assert "'Claude ready'" not in js and "st-model" in js  # name (+ model) only; the dot shows ready
     s = (ROOT / "static" / "settings.js").read_text()
     assert "id: 'agent.choose'" in s and "It never needs an API key." in s

@@ -540,8 +540,11 @@ kbd { font: 500 11px/16px var(--sans); border-radius: 2px; border-color: var(--r
 .lg-frag { width: 3px; height: 3px; }
 .lg-link { width: 20px; border-top: .75px solid var(--red); }
 .lg-sim { width: 20px; border-top: .75px solid var(--machine); opacity: .7; }
-.lg-mine { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); position: relative; }
-.lg-mine::after { content: ""; position: absolute; inset: 2.6px; border-radius: 50%; background: var(--red); }
+.lg-mine { width: 12px; height: 12px; position: relative; background:
+  radial-gradient(circle at 50% 50%, var(--ink) 0 2.6px, transparent 2.7px),
+  radial-gradient(circle at 50% 4%, var(--red) 0 1.1px, transparent 1.2px),
+  radial-gradient(circle at 92% 70%, var(--red) 0 1.1px, transparent 1.2px),
+  radial-gradient(circle at 8% 70%, var(--red) 0 1.1px, transparent 1.2px); }
 .graph-tools .btn { background: var(--ground); }
 .empty-card h1 { font: 400 54px/1.02 var(--display); letter-spacing: -.02em; font-variation-settings: "opsz" 96; }
 

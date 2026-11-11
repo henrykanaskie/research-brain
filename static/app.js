@@ -502,7 +502,12 @@
       if (rn && window.__rbResearch) rn.textContent = window.__rbResearch.NOTICE;
       S.claudeWhy = c.available ? '' : (c.detail || 'No AI agent found on this computer.');
       el.className = 'status ' + (S.claudeOK ? 'ok' : 'bad');
-      $('.status-text', el).textContent = S.claudeOK ? `${agentName} ready` : `${agentName} unavailable`;
+      // just the agent (and model) with a green or red dot; the dot carries ready/unavailable
+      const stText = $('.status-text', el);
+      stText.textContent = window.RB_AI === 'Your local model' ? agentName : window.RB_AI;
+      const mdl = st.agent && st.agent.model;
+      if (mdl) stText.append(h('span', { class: 'st-model', text: mdl }));
+      el.setAttribute('aria-label', `${agentName}${mdl ? ' ' + mdl : ''}, ${S.claudeOK ? 'ready' : 'unavailable'}. Click to switch agent or model.`);
       const emb = st.embedder || '';
       el.title = [
         S.claudeOK ? `${agentName} available${c.path ? ' — ' + c.path : ''}${c.detail ? '\n' + c.detail : ''}` : `${agentName} unavailable — ${S.claudeWhy}`,
@@ -777,7 +782,9 @@
     if (!g) return;
     const st = linkStyle(l);
     if (st.a <= 0.01) return;
-    const r0 = nodeRadius(l.source) + 1.2 / k, r1 = nodeRadius(l.target) + 1.2 / k;
+    // traces end exactly on the edge of the drawn dot (same radius drawNode uses at this zoom), so
+    // they meet it flush and on its centre line; the red note-dots are drawn on top of them
+    const r0 = drawnRadius(l.source, k), r1 = drawnRadius(l.target, k);
     if (Math.hypot(g.x1 - g.x0, g.y1 - g.y0) <= r0 + r1) return;
     ctx.beginPath();
     tracePath(ctx, g, r0, r1);
@@ -1094,9 +1101,18 @@
     kick(200);
   }
 
+  /** the radius a node is drawn at for zoom k: zooming in reveals structure rather than inflating dots */
+  function drawnRadius(n, k) { return nodeRadius(n) * (k > 1.5 ? Math.sqrt(1.5 / k) : 1); }
+
+  /** how many red note-dots sit around a document: attached notes/highlights, or 1 for a summary alone */
+  function markCount(n) {
+    if (!n || n.type === 'fragment') return 0;
+    return Math.max(Number(n.parts) || 0, (Number(n.mass) || 0) > 0 ? 1 : 0);
+  }
+
   function drawNode(n, ctx, k) {
     // zooming in should reveal structure, not inflate the dots: grow slower than the zoom
-    const r = nodeRadius(n) * (k > 1.5 ? Math.sqrt(1.5 / k) : 1);
+    const r = drawnRadius(n, k);
     const sel = S.selected === n.id;
     const hov = S.hover === n.id;
     const alpha = n.__a ?? 1;
@@ -1115,18 +1131,27 @@
         ctx.fillStyle = C.ground; ctx.fill();
         ctx.strokeStyle = C.ink; ctx.lineWidth = Math.min(0.9, 0.85 * px); ctx.stroke();
       }
-      // a red core once you have written about it (size already shows how much)
-      if ((Number(n.mass) || 0) > 0 && r > 2.2) {
-        ctx.beginPath(); ctx.arc(n.x, n.y, Math.max(0.8 * px, r * 0.32), 0, 2 * Math.PI);
-        ctx.fillStyle = C.red; ctx.fill();
-      }
-      // a red orbit: you have written about this one (summary, notes or fragment notes)
-
     }
+    // your notes on this document: one small red dot per attached note or highlight, on a ring just
+    // outside the dot (a written summary with nothing attached shows as one dot). Drawn in every state,
+    // hover and selection included, so they never disappear.
+    const nMarks = markCount(n);
+    const ringR = r + 2.6 * px;
+    if (nMarks) {
+      const shown = Math.min(nMarks, 12);
+      const a0 = ((strHash(n.id) % 360) / 360) * Math.PI * 2;
+      const dr = Math.max(0.85 * px, Math.min(1.25 * px, r * 0.22));
+      ctx.fillStyle = C.red;
+      for (let i = 0; i < shown; i++) {
+        const a = a0 + (i / shown) * Math.PI * 2;
+        ctx.beginPath(); ctx.arc(n.x + Math.cos(a) * ringR, n.y + Math.sin(a) * ringR, dr, 0, 2 * Math.PI); ctx.fill();
+      }
+    }
+    const outer = nMarks ? ringR + 2 * px : r;
     if (sel) {
       // reticle: a hairline circle with four ticks
       ctx.globalAlpha = 1;
-      const R = r + 7 * px;
+      const R = outer + 6 * px;
       ctx.strokeStyle = C.ink; ctx.lineWidth = 0.75 * px;
       ctx.beginPath(); ctx.arc(n.x, n.y, R, 0, 2 * Math.PI); ctx.stroke();
       ctx.beginPath();
@@ -1136,7 +1161,7 @@
       }
       ctx.stroke();
     } else if (hov) {
-      ctx.beginPath(); ctx.arc(n.x, n.y, r + 4 * px, 0, 2 * Math.PI);
+      ctx.beginPath(); ctx.arc(n.x, n.y, outer + 3 * px, 0, 2 * Math.PI);
       ctx.strokeStyle = C.ink2; ctx.lineWidth = 0.6 * px; ctx.stroke();
     }
 
@@ -1154,7 +1179,7 @@
       if ('fontStretch' in ctx) ctx.fontStretch = big ? 'normal' : 'semi-condensed';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       const label = truncate(n.title || n.id, big ? 72 : 34);
-      const y = n.y + r + (sel ? 15 : big ? 8 : 4) * px;
+      const y = n.y + outer + (sel ? 15 : big ? 8 : 4) * px;
       const w = ctx.measureText(label).width, box = [n.x - w / 2 - 8 * px, y - 3 * px, n.x + w / 2 + 8 * px, y + fs + 4 * px];
       const hit = (S.labelBoxes || []).some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1]);
       if (hit && !must) { ctx.restore(); return; }

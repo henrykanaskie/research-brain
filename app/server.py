@@ -573,7 +573,7 @@ def _agent_status() -> dict:
         detail = ("No AI agent found on this computer. research_brain uses the AI tool you already have "
                   "(Claude Code, Codex, Gemini, Copilot, Ollama, ...); open Library settings › AI agent.")
     return {"claude": {"available": det.available, "path": det.path or None, "detail": detail},
-            "agent": {"id": b.id, "name": b.name, "kind": b.kind, **det.as_dict()}}
+            "agent": {"id": b.id, "name": b.name, "kind": b.kind, "model": agents.model_for(b.id) or "", **det.as_dict()}}
 
 
 @app.get("/api/status")

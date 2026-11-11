@@ -82,6 +82,8 @@ class GeminiBackend(CliBackend):
     install_hint = "Install it with `npm i -g @google/gemini-cli`, then run `gemini` once to sign in with Google."
     signin_hint = "Open Terminal, run `gemini` once and choose “Sign in with Google”."
 
+    lists_models_cheaply = True
+
     def models(self) -> list[str]:
         return list(MODELS)
 

@@ -175,6 +175,16 @@ def describe(b: Backend, fresh: bool = False) -> dict:
     det = detection(b, fresh)
     out = {"id": b.id, "name": b.name, "kind": b.kind, "home": b.home, "cost_note": b.cost_note,
            "detection": det.as_dict()}
+    if b.kind != "local-server":
+        out["model"] = model_for(b.id)
+        # suggested models, only where listing them is free (no process start, no network)
+        if getattr(b, "lists_models_cheaply", False) and det.available:
+            try:
+                out["models"] = b.models()
+            except Exception:
+                out["models"] = []
+        else:
+            out["models"] = []
     if b.kind == "local-server":
         out["model"] = model_for(b.id)
         try:

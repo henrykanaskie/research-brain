@@ -291,7 +291,12 @@ def test_critique_fake(ctx, server):
     expect(crit).to_contain_text("fake Claude")
     expect(crit).to_contain_text("Claude's critique")
     expect(crit.locator(".katex").first).to_be_visible()
-    assert api(server, "GET", f"/api/notes/{p['id']}")["critique"]["text"]
+    # the page streams the critique before the server finishes saving it, so poll for the saved copy
+    import time
+    deadline = time.time() + 10
+    while not (api(server, "GET", f"/api/notes/{p['id']}").get("critique") or {}).get("text"):
+        assert time.time() < deadline, "critique was shown but never saved"
+        time.sleep(0.1)
 
 
 def test_chat_fake(ctx, server):

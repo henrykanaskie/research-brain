@@ -43,6 +43,12 @@ class ClaudeBackend(Backend):
         return Detection(bool(st.get("available")), version=version, path=st.get("path") or "", signed_in=None,
                          note=note)
 
+    lists_models_cheaply = True
+
+    def models(self) -> list[str]:
+        # the CLI's own aliases; they always point at the current model of each family
+        return ["sonnet", "opus", "haiku"]
+
     def _model(self) -> str | None:
         return model_for(self.id) or None
 
