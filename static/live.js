@@ -52,6 +52,7 @@
   function connect() {
     try { es = new EventSource('/api/events'); } catch { return; }
     es.addEventListener('hello', () => { retryMs = 2000; });
+    es.addEventListener('server-stopped', () => stopped());
     es.addEventListener('notes-changed', (e) => {
       let data = null;
       try { data = JSON.parse(e.data); } catch { return; }
@@ -68,6 +69,29 @@
       }
     };
   }
+
+  // research brain stopped (Quit on the Dock icon, the menu, or no window for a few minutes): the window the
+  // app opened (?app=1) closes itself, so no dead window is left behind; any other tab says what happened
+  try {
+    if (new URLSearchParams(location.search).get('app') === '1') {
+      sessionStorage.setItem('rb.appWindow', '1');
+      history.replaceState(null, '', location.pathname + location.hash);
+    }
+  } catch { /* storage unavailable */ }
+  function stopped() {
+    if (es) { es.close(); es = null; }
+    let app = false;
+    try { app = sessionStorage.getItem('rb.appWindow') === '1'; } catch { /* storage unavailable */ }
+    if (app) window.close();
+    setTimeout(() => {  // still here: not the app's window, or the browser kept it open
+      if (document.getElementById('rb-stopped')) return;
+      const d = document.createElement('div');
+      d.id = 'rb-stopped'; d.className = 'rb-stopped'; d.setAttribute('role', 'status');
+      d.innerHTML = '<div><b>research brain has stopped.</b> Open it again from its icon, or run <code>research-brain open</code>.</div>';
+      document.body.appendChild(d);
+    }, 400);
+  }
+  window.__rbStopped = stopped;
 
   window.addEventListener('beforeunload', () => { if (es) es.close(); });
   connect();

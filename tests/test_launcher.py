@@ -19,7 +19,7 @@ def test_open_reuses_a_running_server(monkeypatch):
     monkeypatch.setattr(launcher, "open_window", lambda url: opened.append(url) or "app")
     monkeypatch.setattr(launcher.subprocess, "Popen", lambda *a, **k: started.append(a))
     assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 0
-    assert opened == ["http://127.0.0.1:8799"] and started == []
+    assert opened == ["http://127.0.0.1:8799/?app=1"] and started == []
 
 
 def test_open_starts_a_server_that_quits_when_closed(monkeypatch, tmp_path):

@@ -1048,3 +1048,7 @@ body.chat-scoped .rs-mode { display: none; }
   background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px 6px 12px; font-size: 13px; color: var(--ink);
   box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--ink) 22%, transparent); }
 .linking, .linking canvas { cursor: crosshair !important; }
+/* research brain stopped while this tab was open (static/live.js) */
+.rb-stopped { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: color-mix(in srgb, var(--ground) 88%, transparent); font-size: 15px; color: var(--ink); text-align: center; }
+.rb-stopped code { font-size: 13px; }

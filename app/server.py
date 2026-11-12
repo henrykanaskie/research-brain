@@ -2343,7 +2343,7 @@ def _end_streams_on_exit():
             continue
 
         def _handler(signum, frame, prev=prev):
-            event_bus.close()
+            event_bus.close({"type": "server-stopped"})  # the app's window closes itself (static/live.js)
             prev(signum, frame)
         signal.signal(sig, _handler)
 

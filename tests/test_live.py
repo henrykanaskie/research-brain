@@ -197,3 +197,23 @@ def test_event_stream_ends_when_bus_closes():
         return rest, bus.count
     rest, count = asyncio.run(asyncio.wait_for(go(), 5))
     assert rest == [] and count == 0
+
+
+def test_open_pages_hear_that_the_server_stopped():
+    """Quit on the Dock icon or the idle exit: the stream sends server-stopped before it ends, so the app's
+    window closes itself instead of staying open on a dead map (static/live.js)."""
+    import asyncio
+    from app import live
+
+    class Req:
+        async def is_disconnected(self):
+            return False
+
+    async def go():
+        bus = live.EventBus()
+        gen = live.event_stream(bus, Req(), keepalive=30)
+        assert "hello" in await gen.__anext__()
+        asyncio.get_running_loop().call_later(0.05, bus.close, {"type": "server-stopped"})
+        return [x async for x in gen]
+    rest = asyncio.run(asyncio.wait_for(go(), 5))
+    assert len(rest) == 1 and rest[0].startswith("event: server-stopped\n")

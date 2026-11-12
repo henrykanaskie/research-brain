@@ -93,7 +93,7 @@ def cmd_open(a) -> int:
     port = a.port
     url = f"http://127.0.0.1:{port}"
     if _status_ok(url):
-        open_window(url)
+        open_window(url + "/?app=1")
         return 0
     log = paths.user_data_dir() / "app.log"
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +105,7 @@ def cmd_open(a) -> int:
                          cwd=str(paths.PKG_DIR.parent), **_detached())
     for _ in range(480):  # up to two minutes: the first start builds the search index
         if _status_ok(url, 0.5):
-            open_window(url)
+            open_window(url + "/?app=1")  # ?app=1: the window closes itself when research brain stops
             return 0
         time.sleep(0.25)
     print(f"research brain didn't start. What it said is in {log}", file=sys.stderr)

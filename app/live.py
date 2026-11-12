@@ -34,8 +34,11 @@ class EventBus:
         with self._lock:
             self._listeners.append(fn)
 
-    def close(self) -> None:
-        """End every open stream (server shutdown). Safe from a signal handler or any thread."""
+    def close(self, final: dict | None = None) -> None:
+        """End every open stream (server shutdown). Safe from a signal handler or any thread. `final` is sent
+        first, so a page waiting on its stream gets it before the stream ends."""
+        if final is not None and not self.closed:
+            self.publish(final)
         self.closed = True
         self.publish(None)
 

@@ -1173,6 +1173,7 @@
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
+      .onLinkRightClick((l, e) => linkMenu(l, e))
       .onBackgroundClick((e) => {
         if (regionTagClick(e)) return;
         if (S.backgroundClickHook) S.backgroundClickHook(e);
@@ -2504,23 +2505,40 @@
   // ---------- right-click a dot: link it ----------
   let nodeMenuEl = null;
   function closeNodeMenu() { if (nodeMenuEl) { nodeMenuEl.remove(); nodeMenuEl = null; } }
+  const menuItem = (label, hint, fn) => h('button', { class: 'menu-item', type: 'button', onclick: () => { closeNodeMenu(); fn(); } },
+    h('span', { text: label }), hint ? h('span', { class: 'menu-hint', text: hint }) : null);
+  /** Your links touching dot `id` on the map, with their real ends (a highlight's link is drawn from its paper). */
+  function manualLinksOf(id) {
+    return (fg ? fg.graphData().links : []).filter((l) => l.kind === 'manual' && (lid(l.source) === id || lid(l.target) === id))
+      .map((l) => { const a = l.sPart || lid(l.source), b = l.tPart || lid(l.target); return lid(l.source) === id ? { mine: a, other: b } : { mine: b, other: a }; });
+  }
   function nodeMenu(n, e) {
     closeNodeMenu();
     if (!n) return;
-    const item = (label, hint, fn) => h('button', { class: 'menu-item', type: 'button', onclick: () => { closeNodeMenu(); fn(); } },
-      h('span', { text: label }), hint ? h('span', { class: 'menu-hint', text: hint }) : null);
     const items = [];
     const cur = S.cur && S.cur.id !== n.id && n.type !== 'fragment' ? S.cur : null;
-    if (cur) {
-      const linked = (cur.links || []).includes(n.id);
-      items.push(linked
-        ? item(`Unlink from “${truncate(cur.title || cur.id, 40)}”`, 'the note open in the panel', () => unlinkNotes(cur.id, n.id))
-        : item(`Link to “${truncate(cur.title || cur.id, 40)}”`, 'the note open in the panel', () => linkNotes(cur.id, n.id)));
+    const curLinked = cur && (cur.links || []).includes(n.id);
+    if (cur && !curLinked) items.push(menuItem(`Link to “${truncate(cur.title || cur.id, 40)}”`, 'the note open in the panel', () => linkNotes(cur.id, n.id)));
+    if (n.type !== 'fragment') items.push(menuItem('Link to another dot…', 'then click the dot to link it to', () => startLinkMode(n)));
+    // unlink: every link this dot has, the open note's first
+    const own = manualLinksOf(n.id).sort((x, y) => (cur && y.other === cur.id) - (cur && x.other === cur.id));
+    for (const { mine, other } of own.slice(0, 8)) {
+      items.push(menuItem(`Unlink from “${truncate(nodeTitle(other), 40)}”`, cur && other === cur.id ? 'the note open in the panel' : null, () => unlinkNotes(mine, other)));
     }
-    if (n.type !== 'fragment') items.push(item('Link to another dot…', 'then click the dot to link it to', () => startLinkMode(n)));
-    items.push(item('Open', null, () => openNote(n.id, { center: true })));
-    nodeMenuEl = h('div', { class: 'menu node-menu', role: 'menu' },
-      h('div', { class: 'menu-label', text: truncate(n.title || n.id, 60) }), items);
+    items.push(menuItem('Open', null, () => openNote(n.id, { center: true })));
+    showMenu(truncate(n.title || n.id, 60), items, e);
+  }
+  /** Right-click one of your links (a red line): unlink the two. */
+  function linkMenu(l, e) {
+    closeNodeMenu();
+    if (!l || l.kind !== 'manual') return;
+    const a = l.sPart || lid(l.source), b = l.tPart || lid(l.target);
+    showMenu('Your link', [
+      menuItem('Unlink', `${truncate(nodeTitle(a), 34)} and ${truncate(nodeTitle(b), 34)}`, () => unlinkNotes(a, b)),
+      menuItem('Why are they connected?', null, () => openExplain(a, b))], e);
+  }
+  function showMenu(label, items, e) {
+    nodeMenuEl = h('div', { class: 'menu node-menu', role: 'menu' }, h('div', { class: 'menu-label', text: label }), items);
     document.body.appendChild(nodeMenuEl);
     const w = nodeMenuEl.offsetWidth, ht = nodeMenuEl.offsetHeight;
     Object.assign(nodeMenuEl.style, { left: Math.min(e.clientX, innerWidth - w - 8) + 'px', top: Math.min(e.clientY, innerHeight - ht - 8) + 'px' });
@@ -2567,6 +2585,7 @@
     try {
       const upd = await api('POST', `/api/notes/${encodeURIComponent(a)}/link`, { target: b });
       if (S.cur && S.cur.id === a && upd) { S.cur.links = upd.links || [...(S.cur.links || []), b]; rerenderLists(); }
+      else if (S.cur && S.cur.id === b && !(S.cur.links || []).includes(a)) { S.cur.links = [...(S.cur.links || []), a]; rerenderLists(); }
       refreshGraph();
     } catch (e) {
       toastErr(e, 'Could not link');
@@ -2578,6 +2597,7 @@
     try {
       const upd = await api('DELETE', `/api/notes/${encodeURIComponent(a)}/link/${encodeURIComponent(b)}`);
       if (S.cur && S.cur.id === a) { S.cur.links = upd && upd.links ? upd.links : (S.cur.links || []).filter((x) => x !== b); rerenderLists(); }
+      else if (S.cur && S.cur.id === b) { S.cur.links = (S.cur.links || []).filter((x) => x !== a); rerenderLists(); }
       refreshGraph();
     } catch (e) {
       toastErr(e, 'Could not unlink');
