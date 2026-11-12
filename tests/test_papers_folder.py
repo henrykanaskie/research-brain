@@ -117,3 +117,26 @@ def test_zip_export_takes_pdfs_from_the_papers_folder(client, home, tmp_path):
     names = zipfile.ZipFile(out).namelist()
     assert f"pdfs/{b['id']}.pdf" in names and m["pdfs"] == 1
     assert "state/papers.json" not in names and not any("Removed from library" in n for n in names)
+
+
+def test_quick_import_into_a_topic_and_bookmarks(client, home):
+    from app import server, topics as T
+    a = client.post("/api/import/pdf?quick=1&topic=Plasma%20sheaths", files={"file": ("a.pdf", _pdf("Sheath one"), "application/pdf")}).json()
+    b = client.post("/api/import/pdf?quick=1&topic=plasma%20SHEATHS", files={"file": ("b.pdf", _pdf("Sheath two"), "application/pdf")}).json()
+    tops = T.list_topics(server.store)
+    assert len(tops) == 1 and tops[0]["name"] == "Plasma sheaths" and a["topic"] == b["topic"] == tops[0]["slug"]
+    assert set(T.get_topic(server.store, tops[0]["slug"])["members"]) == {a["id"], b["id"]}
+    # bookmarks: a DOI link and an arXiv link become papers from their records (no download); a plain link a paper
+    r1 = client.post("/api/import/bookmark", json={"url": "https://pubs.aip.org/aip/pop/article/doi/10.1063/5.0010332/123",
+                                                   "title": "Some AIP paper", "topic": "Hall thrusters"}).json()
+    n1 = client.get(f"/api/notes/{r1['id']}").json()
+    assert r1["kind"] == "record" and n1["doi"] == "10.1063/5.0010332"
+    r2 = client.post("/api/import/bookmark", json={"url": "https://arxiv.org/abs/1706.03762v5", "title": "Attention", "topic": "Hall thrusters"}).json()
+    assert client.get(f"/api/notes/{r2['id']}").json()["arxiv"] == "1706.03762"
+    again = client.post("/api/import/bookmark", json={"url": "https://arxiv.org/pdf/1706.03762", "title": "x"}).json()
+    assert again["duplicate"] and again["id"] == r2["id"]
+    r3 = client.post("/api/import/bookmark", json={"url": "https://lab.example.edu/notes/thruster-tips", "title": "Thruster tips"}).json()
+    assert r3["kind"] == "link"
+    assert client.post("/api/import/bookmark", json={"url": "javascript:alert(1)", "title": "x"}).status_code == 400
+    hall = next(t for t in T.list_topics(server.store) if t["name"] == "Hall thrusters")
+    assert set(T.get_topic(server.store, hall["slug"])["members"]) == {r1["id"], r2["id"]}

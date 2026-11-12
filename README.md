@@ -255,6 +255,14 @@ vault/backups/     automatic zips made before a library format upgrade
 Next to the profiles: `settings.json` (open profile, Unpaywall email) and `storage.log` (moves,
 migrations, imports, exports).
 
+**Bringing in what you already have.** *Add › Import a folder of PDFs* opens your computer's folder picker:
+every PDF in the folder (and its subfolders) is added, and each subfolder can become a topic, the way bookmark
+folders work (or everything in one topic, or none). The same file twice is stored once, and titles, authors and
+DOIs fill in over the next minutes. *Add › Import browser bookmarks* takes the bookmarks file any browser exports
+(Chrome or Edge: Bookmarks › Export bookmarks; Firefox: Bookmarks › Manage › Import and Backup › Export; Safari:
+File › Export Bookmarks): each bookmark folder becomes a topic; links that look like papers are ticked; a DOI
+or arXiv link is added from its record, a PDF link is downloaded. Zotero libraries have their own importer.
+
 **Your PDFs, one copy each.** Every PDF is one file named after its paper (`<paper id>.pdf`) in one folder:
 `vault/pdfs/` until you pick another in **Library settings › Papers folder** (for example
 `~/Documents/Research papers` or a synced folder; *Move here* moves the files, *Open folder* shows them).

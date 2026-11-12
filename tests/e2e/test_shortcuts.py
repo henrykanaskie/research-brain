@@ -493,3 +493,42 @@ def test_rough_citation_marks_a_stretch_with_a_margin_bar(ctx, server, tmp_path)
     v.goto(f"{server['base']}/viewer/{nid}#page=1&hl={__import__('urllib.parse').parse.quote(q)}&near=1")
     expect(v.locator(".rb-cite-bar.near")).to_be_visible(timeout=30_000)
     assert v.locator(".textLayer span.rb-cite-near").count() > 0 and v.locator(".textLayer span.rb-cite").count() == 0
+
+
+def test_bulk_import_a_folder_and_bookmarks(ctx, server, tmp_path):
+    """A folder of PDFs (subfolders become topics) and a bookmarks export (folders become topics)."""
+    from test_e2e import _pdf_bytes
+    clear_vault(server)
+    root = tmp_path / "My papers"
+    (root / "Sheaths").mkdir(parents=True)
+    (root / "Thrusters").mkdir()
+    one = _pdf_bytes()
+    (root / "Sheaths" / "a.pdf").write_bytes(one)
+    (root / "Thrusters" / "b.pdf").write_bytes(_pdf_bytes().replace(b"Sheath physics", b"Thruster physics"))
+    (root / "Thrusters" / "same.pdf").write_bytes(one)  # the same file twice: stored once
+    (root / "readme.txt").write_text("not a pdf")
+    page = open_app(ctx, server)
+    page.set_input_files("#bulk-folder-input", str(root))
+    dlg = page.locator(".bk-card")
+    expect(dlg).to_contain_text("3 PDFs in 2 subfolders")
+    dlg.locator("button.btn-primary").click()
+    expect(dlg.locator(".bk-status")).to_contain_text("added", timeout=60_000)
+    assert "1 already in your library" in dlg.locator(".bk-status").inner_text()
+    topics = page.evaluate("fetch('/api/topics').then(r => r.json())")
+    names = sorted(t["name"] for t in (topics if isinstance(topics, list) else topics.get("topics", [])))
+    assert names == ["Sheaths", "Thrusters"]
+    dlg.locator("button", has_text="Done").click()
+    # bookmarks: parsed in the page; paper-looking links are ticked, others not
+    bm = tmp_path / "bookmarks.html"
+    bm.write_text("""<!DOCTYPE NETSCAPE-Bookmark-file-1><DL><p>
+      <DT><H3>Bookmarks bar</H3><DL><p>
+        <DT><H3>Plasma reading</H3><DL><p>
+          <DT><A HREF="https://arxiv.org/abs/2101.00001">An arXiv paper</A>
+          <DT><A HREF="https://news.example.com/story">A news story</A>
+        </DL><p>
+      </DL><p></DL>""", encoding="utf-8")
+    page.set_input_files("#bulk-bookmarks-input", str(bm))
+    expect(dlg).to_contain_text("2 bookmarks in 1 folder. 1 look like papers")
+    expect(dlg.locator(".bk-folder")).to_contain_text("Plasma reading")
+    boxes = dlg.locator(".bk-item input")
+    assert boxes.nth(0).is_checked() and not boxes.nth(1).is_checked()

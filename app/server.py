@@ -26,6 +26,7 @@ import numpy as np
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1154,22 +1155,116 @@ def _downloads_copy(out: dict, filename: str, nid: str) -> dict:
     return out
 
 
+_sha_locks: dict[str, threading.Lock] = {}
+_sha_locks_guard = threading.Lock()
+
+
+def _import_once(tmp: Path, filename: str, quick: bool = False) -> dict:
+    """Import a PDF unless the library already has these exact bytes. Two uploads of the same file at once
+    (a bulk import holding a copy twice) wait for each other, so it is still stored once."""
+    sha = papers_mod._sha(tmp)
+    with _sha_locks_guard:
+        lock = _sha_locks.setdefault(sha, threading.Lock())
+    with lock:
+        try:
+            same = papers_mod.find_by_hash(store, sha)
+            if same:  # the very same file is already in the library: open it, don't make a second copy
+                shutil.rmtree(tmp.parent, ignore_errors=True)
+                out = _with_extras(store.get(same))
+                out["duplicate"] = True
+                out["same_file"] = True
+                return out
+            return _import_pdf_tmp(tmp, filename, quick)
+        finally:
+            with _sha_locks_guard:  # keep the table small: drop locks nobody holds
+                if len(_sha_locks) > 256:
+                    for k in [k for k, v in _sha_locks.items() if not v.locked() and v is not lock]:
+                        _sha_locks.pop(k, None)
+
+
+def _file_in_topic(nid: str, name: str) -> str:
+    """Put a note in the topic called `name` (any case), making the topic if there isn't one. Its slug."""
+    name = re.sub(r"\s+", " ", (name or "").strip())[:80]
+    if not name:
+        return ""
+    def find():
+        return next((t for t in topics_mod.list_topics(store) if t["name"].casefold() == name.casefold()), None)
+    have = find()
+    if not have:
+        try:
+            have = topics_mod.create_topic(store, name)
+        except topics_mod.TopicError:  # made a moment ago by a parallel import
+            have = find()
+    if not have:
+        return ""
+    topics_mod.add_notes(store, have["slug"], [nid])
+    return have["slug"]
+
+
 @app.post("/api/import/pdf", status_code=201)
-async def api_import_pdf(file: UploadFile = File(...)):
+async def api_import_pdf(file: UploadFile = File(...), quick: bool = False, topic: str = ""):
+    """?quick=1: no Semantic Scholar lookups now (bulk imports); ?topic=Name: file it in that topic (made if new)."""
     tmp = await _save_upload(file)
-    same = _same_file(tmp)
-    if same:  # the very same file is already in the library: open it, don't make a second copy
-        shutil.rmtree(tmp.parent, ignore_errors=True)
-        out = _with_extras(store.get(same))
-        out["duplicate"] = True
-        out["same_file"] = True
-        return _downloads_copy(out, file.filename or "", same)
-    out = _import_pdf_tmp(tmp, file.filename or "")
-    return _downloads_copy(out, file.filename or "", out["id"])
+    out = await run_in_threadpool(_import_once, tmp, file.filename or "", quick)
+    if topic:
+        out["topic"] = _file_in_topic(out["id"], topic)
+    return _downloads_copy(out, file.filename or "", out["id"]) if not quick else out
 
 
-def _import_pdf_tmp(tmp: Path, filename: str) -> dict:
-    """The rest of a PDF import (read it, identify it, match or create the paper, store the file)."""
+class BookmarkIn(BaseModel):
+    url: str
+    title: str = ""
+    topic: str = ""
+
+
+_DOI_IN_URL = re.compile(r"(10\.\d{4,9}/[^\s?#&]+)")
+
+
+@app.post("/api/import/bookmark", status_code=201)
+def api_import_bookmark(body: BookmarkIn):
+    """One bookmark from a browser's bookmarks export. A DOI or arXiv id in the link: the paper is added from
+    its record (no download). A link to a PDF: the PDF is downloaded and added. Anything else: a paper with
+    the bookmark's title and link, which the metadata resolver then tries to identify."""
+    url = (body.url or "").strip()
+    if not re.match(r"^https?://", url, re.I):
+        raise HTTPException(400, "Only http(s) links can be imported")
+    title = re.sub(r"\s+", " ", body.title or "").strip()[:300]
+    kind, value = scholar.parse_identifier(unquote(url))
+    doi = arxiv = ""
+    if kind == "arxiv" and "arxiv" in url.lower():
+        arxiv = re.sub(r"v\d+$", "", value)
+    else:
+        m = _DOI_IN_URL.search(unquote(url))
+        doi = m.group(1).rstrip(".)/").removesuffix(".pdf") if m else (value if kind == "doi" else "")
+        if doi and m and "doi.org/" not in url.lower():
+            # inside a publisher's URL the DOI ends where the site's own path goes on (/123, /full, /pdf);
+            # only a doi.org link is a DOI to the end (a few DOIs contain slashes)
+            prefix, _, rest = doi.partition("/")
+            doi = f"{prefix}/{rest.split('/')[0]}"
+    dup = store.find_duplicate(doi, arxiv, "") if (doi or arxiv) else _match_url(url)
+    if dup:
+        n = store.get(dup["id"])
+        out = {"id": n["id"], "title": n["title"], "duplicate": True}
+    elif doi or arxiv:
+        n = _create_paper({"title": title or (f"arXiv:{arxiv}" if arxiv else doi), "doi": doi, "arxiv": arxiv, "url": url},
+                          meta_hint={"url": url})
+        out = {"id": n["id"], "title": n["title"], "kind": "record"}
+    elif re.search(r"\.pdf($|[?#])", url, re.I):
+        r = api_import_url(ImportUrlIn(url=url))
+        n = store.get(r["id"])
+        out = {"id": n["id"], "title": n["title"], "kind": "pdf", "duplicate": bool(r.get("duplicate"))}
+    else:
+        n = _create_paper({"title": title or url, "url": url}, meta_hint={"url": url})
+        out = {"id": n["id"], "title": n["title"], "kind": "link"}
+    if body.topic:
+        out["topic"] = _file_in_topic(out["id"], body.topic)
+    return out
+
+
+def _import_pdf_tmp(tmp: Path, filename: str, quick: bool = False) -> dict:
+    """The rest of a PDF import (read it, identify it, match or create the paper, store the file).
+    quick: skip the Semantic Scholar lookups here (bulk imports: hundreds of files would hit its rate limit);
+    the background metadata resolver still finds the record from the PDF's DOI / arXiv id / title."""
     info: dict = {}
     try:
         text, meta_title = extract(tmp, info=info)
@@ -1180,11 +1275,13 @@ def _import_pdf_tmp(tmp: Path, filename: str) -> dict:
     guess = meta_title or guess_title(text) or Path(filename or "Untitled").stem.replace("_", " ")
     meta = None
     try:
-        if ids["arxiv"]:
+        if quick:
+            pass
+        elif ids["arxiv"]:
             meta = scholar.lookup(f"arXiv:{ids['arxiv']}")
-        if not meta and ids["doi"]:
+        if not quick and not meta and ids["doi"]:
             meta = scholar.lookup(ids["doi"])
-        if not meta and guess:
+        if not quick and not meta and guess:
             cand = scholar.lookup(guess)
             if cand and _same_title(cand["title"], guess):
                 meta = cand

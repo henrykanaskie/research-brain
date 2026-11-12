@@ -3139,6 +3139,8 @@
   document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.menu-wrap')) closeMenus(); });
 
   $('#btn-add-pdf').addEventListener('click', () => { closeMenus(); $('#pdf-input').click(); });
+  $('#btn-import-folder').addEventListener('click', () => { closeMenus(); if (window.__rbBulk) window.__rbBulk.pickFolder(); });
+  $('#btn-import-bookmarks').addEventListener('click', () => { closeMenus(); if (window.__rbBulk) window.__rbBulk.pickBookmarks(); });
   $('#pdf-input').addEventListener('change', (e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) importPdfs(fs); });
   $('#lookup-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3340,6 +3342,7 @@
     // static/shortcuts.js (keyboard commands, palette actions, tour)
     openMenu, addById, openChat, closeChat, closeExplain, newNote, runCritique, updateSearch, setShowSim, linkNotes, offerCreate,
     pickPdf: () => $('#pdf-input').click(),
+    upload, task,
     zoomFit: () => fg && fg.zoomToFit(T(600), 70),
     focusRegion, unfocusRegion, chooseRegion,
   });
