@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from . import metadata, scout
 from . import questions as Q
 
 router = APIRouter()
@@ -71,6 +72,16 @@ def _enrich(q: dict, item: dict, by_id: dict) -> dict:
     ref = item.get("ref") or {}
     out = dict(item)
     out["new"] = Q.is_new(q, item)
+    if item.get("kind") == "external":  # a published paper the scout found; not in the library (yet)
+        p = item.get("paper") or {}
+        lib = _in_library(ref, by_id)
+        out["where"] = ""
+        out["href"] = ref.get("url") or ""
+        out["source"] = {"id": lib or "", "title": item.get("title") or "", "type": "paper", "year": p.get("year"),
+                         "authors": (p.get("authors") or [])[:3], "exists": bool(lib), "external": True,
+                         "venue": p.get("venue") or "", "access": p.get("access") or "", "found_via": p.get("found_via") or "",
+                         "doi": ref.get("doi") or "", "arxiv": ref.get("arxiv") or ""}
+        return out
     nid = ref.get("note") or ""
     n = by_id.get(nid)
     owner = by_id.get(n.get("parent")) if n is not None and n.get("type") == "fragment" else n
@@ -94,6 +105,15 @@ def _enrich(q: dict, item: dict, by_id: dict) -> dict:
             href = ""
     out["href"] = href
     return out
+
+
+def _in_library(ref: dict, by_id: dict) -> str:
+    """The library paper a scouted paper became (after "Add to library"), if any."""
+    doi, arxiv = (ref.get("doi") or "").lower(), (ref.get("arxiv") or "").lower()
+    for n in by_id.values():
+        if n.get("type") == "paper" and ((doi and (n.get("doi") or "").lower() == doi) or (arxiv and (n.get("arxiv") or "").lower() == arxiv)):
+            return n["id"]
+    return ""
 
 
 ORDER = ("new", "supports", "against", "related", "dismissed")
@@ -146,8 +166,11 @@ def api_question_evidence(qid: str):
     items.sort(key=lambda i: (ORDER.index(i["verdict"]), not i["new"], -(i.get("score") or 0)))
     groups = [{"verdict": v, "label": LABELS[v], "count": sum(1 for i in items if i["verdict"] == v)} for v in ORDER]
     ok, why = Q.ai_allowed(q)
+    sc = data.get("scout") or {}
     return {"question": {"id": q["id"], "title": q["title"], "question_status": q.get("question_status") or "open",
-                         "last_seen": q.get("last_seen") or ""},
+                         "last_seen": q.get("last_seen") or "", "reach": scout.reach(q)},
+            "scout": {"query": scout.query_for(q), "last": sc.get("last") or "", "error": sc.get("error") or "",
+                      "looked_at": sc.get("looked_at") or 0, "online": metadata.enabled()},
             "items": items, "groups": groups, "counts": Q.counts(q, data),
             "ai": {"available": ok, "reason": why}}
 
@@ -187,6 +210,45 @@ def api_question_rescan(qid: str):
     return {"added": len(added), "counts": Q.counts(q, Q.load(ctx.store, qid))}
 
 
+class ReachIn(BaseModel):
+    reach: str
+
+
+@router.put("/api/questions/{qid}/reach")
+def api_question_reach(qid: str, body: ReachIn):
+    """private | library | scout (app/scout.py). Private also marks the note private for every AI feature."""
+    if body.reach not in scout.REACHES:
+        raise HTTPException(400, f"reach must be one of {', '.join(scout.REACHES)}")
+    with ctx.store.lock:
+        _question(qid)
+        ctx.store.update(qid, {"private": body.reach == "private"})
+        n = ctx.store.get(qid)
+        n["_extra"] = {**(n.get("_extra") or {}), "reach": body.reach}
+        n = ctx.store.save(n, touch=False)
+    if body.reach == "scout":
+        ctx.matcher.poke(qid, force=True)  # the first search happens shortly, in the background
+    ok, why = Q.ai_allowed(n)
+    return {"reach": body.reach, "ai": {"available": ok, "reason": why}, "query": scout.query_for(n)}
+
+
+@router.post("/api/questions/{qid}/scout")
+def api_question_scout(qid: str):
+    """Search published papers for this question now (only when its reach is scout)."""
+    q = _question(qid)
+    if scout.reach(q) != "scout":
+        raise HTTPException(400, "Set this question's reach to Scout first: its key words would be sent to OpenAlex and arXiv.")
+    if not metadata.enabled():
+        raise HTTPException(503, "Online lookups are turned off (RB_METADATA=0).")
+    try:
+        r = Q.scout_scan(ctx.matcher.ctx, qid)
+    except KeyError:
+        raise HTTPException(404, f"No question with id '{qid}'")
+    if r["error"] and not r["looked_at"]:
+        raise HTTPException(503, f"Couldn't search published papers ({r['error']}). Check your connection and try again.")
+    return {"added": len(r["added"]), "query": r["query"], "looked_at": r["looked_at"], "error": r["error"],
+            "counts": Q.counts(q, Q.load(ctx.store, qid))}
+
+
 SUMMARY_INSTRUCTION = (
     "The user's open research QUESTION and the evidence they kept for it are on stdin, each piece marked "
     "supports, against or related, with its source. Summarise where the evidence stands in at most 6 short "
@@ -208,7 +270,8 @@ def api_question_summarize(qid: str):
         raise HTTPException(400, "Keep some evidence first (supports, against or related), then summarise it")
     # evidence from private notes (your own notes are private by default) stays out of the prompt
     by_id = {n["id"]: n for n in ctx.store.all()}
-    shareable = [i for i in kept if Q.source_allowed(by_id.get((i.get("ref") or {}).get("note") or ""))]
+    # published papers the scout found are public: they may always go
+    shareable = [i for i in kept if i.get("kind") == "external" or Q.source_allowed(by_id.get((i.get("ref") or {}).get("note") or ""))]
     left_out = len(kept) - len(shareable)
     if not shareable:
         raise HTTPException(403, "All the evidence you kept comes from private notes, so there is nothing an AI agent may read.")
@@ -218,6 +281,11 @@ def api_question_summarize(qid: str):
         ref = i.get("ref") or {}
         where = (" " + _where(ref)) if _where(ref) else ""
         note = f"\nUser's note: {i['user_note']}" if i.get("user_note") else ""
+        if i.get("kind") == "external":
+            p = i.get("paper") or {}
+            cite = f"{i.get('title', '')} ({', '.join((p.get('authors') or [])[:2])} {p.get('year') or ''}; {ref.get('doi') or ref.get('url') or ''}, not in the library)"
+            blocks.append(f"### {cite} ({i['verdict']})\nAbstract: {i.get('snippet', '')}{note}")
+            continue
         blocks.append(f"### [[{ref.get('note', '')}]]{where} ({i['verdict']})\n{i.get('snippet', '')}{note}")
     context = (f"QUESTION: {q['title']}\n{q.get('body') or ''}\n\nUSER'S CURRENT ANSWER:\n{q.get('answer') or '(none yet)'}"
                f"\n\n---\nEVIDENCE:\n\n" + "\n\n".join(blocks))

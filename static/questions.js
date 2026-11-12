@@ -23,13 +23,25 @@
   const VERDICTS = [['supports', 'Supports', 'S'], ['against', 'Against', 'A'], ['related', 'Related', 'R'], ['dismissed', 'Dismiss', 'D']];
   const KEY_VERDICT = { s: 'supports', a: 'against', r: 'related', d: 'dismissed' };
   const GROUPS = [['new', 'To triage'], ['supports', 'Supports'], ['against', 'Against'], ['related', 'Related'], ['dismissed', 'Dismissed']];
-  const KIND = { passage: 'Passage', paper: 'Paper', note: 'Your note', card: 'Idea card' };
+  const KIND = { passage: 'Passage', paper: 'Paper', note: 'Your note', card: 'Idea card', external: 'Published paper' };
+  // how far a question may reach (app/scout.py)
+  const REACH = [
+    ['private', 'Private', 'Stays on this computer. Evidence comes from your library by local search; no AI agent and no outside service sees the question.'],
+    ['library', 'Library', 'Evidence comes from your library by local search, and AI features (the evidence summary, Ask, Research) may read the question.'],
+    ['scout', 'Scout', 'Also searches published papers about once a day: the question’s key words go to OpenAlex and arXiv (no AI). Papers that match closely arrive as evidence to triage. Don’t use for an unpublished idea.'],
+  ];
 
   const STYLE = `
   .tdot.question { width: 7px; height: 7px; border: 1.5px solid var(--red); border-radius: 1px; transform: rotate(45deg); box-sizing: border-box; }
   #panel-body .title-input.oq-title { font-style: italic; }
   .oq-status { display: flex; align-items: center; gap: 14px; margin: 0 0 12px; flex-wrap: wrap; }
   .oq-status .oq-private { font-size: 12px; color: var(--ink-3); }
+  .oq-reach-wrap { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .oq-scout-line { font-size: 12.5px; color: var(--ink-2); margin: 0 0 6px; }
+  .oq-scout-line q { font-style: italic; color: var(--ink); }
+  .oq-scout-err { color: var(--red); }
+  .oq-ext { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .oq-ext .oq-acc.open { color: var(--green, #3d7a52); }
   .oq-sec { margin-top: 28px; }
   .oq-sec > .sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
   .oq-sec > .sec-head .sp { flex: 1; }
@@ -117,10 +129,37 @@
       })));
     };
     draw();
-    // the privacy lock in the panel header (static/privacy.js) says private or shareable; this says what it means here
-    const priv = h('span', { class: 'oq-private', text: n.private === false ? 'Evidence is found on this computer' : 'Evidence is found on this computer; no AI sees it',
-      title: 'Questions are private by default. Matching uses the local search index, never an AI agent.' });
-    return h('div', { class: 'oq-status', id: 'oq-status' }, seg, priv);
+    return h('div', { class: 'oq-status', id: 'oq-status' }, seg, reachControl(n));
+  }
+
+  /** Private / Library / Scout, with a line saying what the chosen one means. */
+  function reachControl(n) {
+    const seg = h('div', { class: 'seg oq-reach', role: 'radiogroup', 'aria-label': 'Who may see this question' });
+    const say = h('span', { class: 'oq-private', id: 'oq-reach-say' });
+    const cur0 = (Q.evidence.get(n.id) || {}).question;
+    let cur = (cur0 && cur0.reach) || (n.private === false ? 'library' : 'private');
+    const draw = () => {
+      seg.replaceChildren(...REACH.map(([v, label, tip]) => h('button', {
+        type: 'button', role: 'radio', 'aria-checked': String(cur === v), class: cur === v ? 'on' : '', 'data-reach': v, text: label, title: tip,
+        onclick: () => setReach(n.id, v),
+      })));
+      say.textContent = { private: 'Only on this computer; no AI sees it', library: 'Your library; AI features may read it', scout: 'Your library, and new published papers daily' }[cur];
+    };
+    async function setReach(qid, v) {
+      if (v === cur) return;
+      if (v === 'scout' && !confirm('Scout sends this question’s key words to OpenAlex and arXiv once a day to look for new papers. Nothing goes to an AI agent. Fine for a question you’d ask in public; keep an unpublished idea Private or Library. Turn on Scout?')) return;
+      try {
+        await api('PUT', `/api/questions/${enc(qid)}/reach`, { reach: v });
+        cur = v; draw();
+        if (S.cur && S.cur.id === qid) S.cur.private = v === 'private';
+        toast({ private: 'Private: this question stays on this computer.', library: 'Library: AI features may read this question.', scout: 'Scout on: the first search runs in a moment.' }[v], 'ok');
+        if (v === 'scout') setTimeout(() => loadEvidence(qid, { keepFocus: true }), 6000);
+        loadEvidence(qid, { keepFocus: true });
+      } catch (e) { toastErr(e, 'Could not change who may see this question'); }
+    }
+    draw();
+    seg.__set = (v) => { cur = v; draw(); };
+    return h('span', { class: 'oq-reach-wrap' }, seg, say);
   }
 
   function detailField(n) {
@@ -207,6 +246,7 @@
     }
     Q.evidence.set(qid, ev);
     if (!S.cur || S.cur.id !== qid) return;
+    const rseg = $('.oq-reach'); if (rseg && rseg.__set && ev.question.reach) rseg.__set(ev.question.reach);
     drawEvidence(qid, { keepFocus });
     const ai = $('#oq-ai'); if (ai && ai.__fill) ai.__fill(ev);
   }
@@ -224,7 +264,21 @@
       title: 'Clears the new count. Evidence you haven’t triaged stays under To triage.', onclick: () => markSeen(qid) });
     const again = h('button', { class: 'btn btn-text', type: 'button', text: 'Look again', id: 'oq-rescan',
       title: 'Search your library for this question now (on this computer)', onclick: () => rescan(qid, again) });
-    const kids = [h('div', { class: 'oq-tools' }, seenBtn, again)];
+    const tools = [seenBtn, again];
+    let scoutLine = null;
+    if (ev.question.reach === 'scout') {
+      const sc = ev.scout || {};
+      const go = h('button', { class: 'btn btn-text', type: 'button', text: 'Search papers now', id: 'oq-scout',
+        title: 'Search OpenAlex and arXiv for this question now', onclick: () => scoutNow(qid, go) });
+      tools.push(go);
+      const when = sc.last ? `last searched ${rb.ago ? rb.ago(sc.last) : new Date(sc.last).toLocaleString()}` : 'first search pending';
+      scoutLine = h('div', { class: 'oq-scout-line', title: 'These words are what leaves your computer, to OpenAlex and arXiv. Edit the question to change them.' },
+        h('span', { text: 'Scouting published papers for ' }), h('q', { text: sc.query || '' }),
+        h('span', { text: ` · ${sc.online === false ? 'online lookups are off' : when}` }),
+        sc.error ? h('span', { class: 'oq-scout-err', text: ` · ${sc.error}` }) : null);
+    }
+    const kids = [h('div', { class: 'oq-tools' }, ...tools)];
+    if (scoutLine) kids.push(scoutLine);
     if (!ev.items.length) {
       kids.push(h('div', { class: 'oq-empty', text: 'No evidence yet. Passages, notes and idea cards that bear on this question appear here as you add papers and write. Matching runs on this computer.' }));
     }
@@ -249,7 +303,10 @@
       if (it.href && /^https?:/i.test(it.href)) { window.open(it.href, '_blank', 'noopener,noreferrer'); return; }
       if (src.exists) rb.openNote(src.id, { center: true });
     };
-    const paperOf = src.paper ? h('span', { class: 'oq-kind', text: `in ${truncate(src.paper.title, 60)}` }) : null;
+    if (src.external && src.exists) it = { ...it, href: '' }; // added to the library: open the note instead
+    const paperOf = src.paper ? h('span', { class: 'oq-kind', text: `in ${truncate(src.paper.title, 60)}` })
+      : src.external ? h('span', { class: 'oq-kind', text: [(src.authors || [])[0] ? `${src.authors[0]}${(src.authors || []).length > 1 ? ' et al.' : ''}` : '', src.year, src.venue].filter(Boolean).join(' · ') }) : null;
+    const ext = src.external ? externalActs(qid, it, src) : null;
     const where = it.where
       ? (it.href ? h('a', { class: 'oq-where', href: it.href, target: '_blank', rel: 'noopener noreferrer', text: it.where, title: 'Open the source at this place' })
         : h('span', { class: 'oq-where', text: it.where }))
@@ -273,10 +330,45 @@
         h('span', { class: 'oq-kind', text: KIND[it.kind] || it.kind }),
         h('span', { class: 'oq-score', title: 'How closely it matches your question (local similarity)', text: (Number(it.score) || 0).toFixed(2) })),
       h('div', { class: 'oq-snip', text: it.snippet || '' }),
+      ext,
       h('div', { class: 'oq-acts' }, acts, note));
     row.addEventListener('keydown', (e) => onRowKey(e, qid, it, row));
     row.addEventListener('focus', () => { Q.focus = it.id; });
     return row;
+  }
+
+  /** A published paper the scout found: how readable it is, and Add to library (linked to the question). */
+  function externalActs(qid, it, src) {
+    const acc = { open: 'Free to read', free: 'Free on the publisher’s site', closed: 'Paywalled' }[src.access];
+    const bits = [h('span', { class: 'oq-kind', text: `Found on ${src.found_via || 'the web'}` })];
+    if (acc) bits.push(h('span', { class: `oq-kind oq-acc ${src.access}`, text: acc }));
+    if (src.exists) bits.push(h('button', { class: 'btn btn-sm btn-text', type: 'button', text: 'In your library', onclick: () => rb.openNote(src.id, { center: true }) }));
+    else {
+      const add = h('button', { class: 'btn btn-sm', type: 'button', text: 'Add to library',
+        title: 'Add it with its metadata (and a free PDF when one exists), linked to this question' });
+      add.onclick = async (e) => {
+        e.stopPropagation();
+        add.disabled = true; add.textContent = 'Adding';
+        try {
+          const q = src.doi || (src.arxiv ? 'arXiv:' + src.arxiv : it.title);
+          const note = await api('POST', '/api/import/lookup', { query: q, link_to: qid });
+          toast(`Added “${truncate(note.title || it.title, 60)}”.`, 'ok', { action: { label: 'Open', fn: () => rb.openNote(note.id, { center: true }) } });
+          loadEvidence(qid, { keepFocus: true });
+        } catch (err) { add.disabled = false; add.textContent = 'Add to library'; toastErr(err, 'Could not add it'); }
+      };
+      bits.push(add);
+    }
+    return h('div', { class: 'oq-ext' }, ...bits);
+  }
+
+  async function scoutNow(qid, btn) {
+    btn.disabled = true; btn.textContent = 'Searching';
+    try {
+      const r = await api('POST', `/api/questions/${enc(qid)}/scout`);
+      toast(r.added ? `Found ${r.added} new paper${r.added === 1 ? '' : 's'} for this question.` : `Looked at ${r.looked_at} papers; nothing new matched closely enough.`, r.added ? 'ok' : 'info');
+      await loadEvidence(qid, { keepFocus: true });
+    } catch (e) { toastErr(e, 'Could not search published papers'); }
+    finally { if (btn.isConnected) { btn.disabled = false; btn.textContent = 'Search papers now'; } }
   }
 
   function onRowKey(e, qid, it, row) {
@@ -450,7 +542,7 @@
   function settingsSection(say) {
     const sec = h('section', { class: 'ls-sec', id: 'ls-questions' },
       h('div', { class: 'ls-h', text: 'Open questions' }),
-      h('p', { class: 'ls-p', text: 'Evidence for your questions is found on this computer, with the same local search as the rest of the library. Questions never go to an AI agent unless you mark one shareable.' }));
+      h('p', { class: 'ls-p', text: 'Evidence for your questions is found on this computer, with the same local search as the rest of the library. Each question has a reach: Private (the default: only this computer), Library (AI features may read it) or Scout (also searches published papers daily on OpenAlex and arXiv, with no AI).' }));
     const body = h('div', null, h('div', { class: 'ls-p', text: 'Loading' }));
     sec.append(body);
     api('GET', '/api/questions/settings').then((s) => {

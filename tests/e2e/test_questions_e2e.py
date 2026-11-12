@@ -187,3 +187,47 @@ def test_question_evidence_triage_badge_list(server, browser):
     page.wait_for_function("fetch('/api/questions/settings').then(r => r.json()).then(s => s.daily_cap === 4)")
     assert not errors, errors
     page.close()
+
+
+def test_question_reach_and_scouted_papers(server, browser):
+    base = server["base"]
+    q = _call(base, "POST", "/api/notes", {"type": "question", "title": "Does wall erosion change the breathing mode?",
+                                           "body": "Boron nitride erosion over long tests."})
+    page = browser.new_page(viewport={"width": 1400, "height": 900}, bypass_csp=True)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("dialog", lambda d: d.accept())  # the Scout confirmation
+    page.set_default_timeout(15_000)
+
+    def with_external(route):
+        r = route.fetch()
+        data = r.json()
+        data["items"].append({"id": "ext1", "key": "external:doi:10.1/x", "kind": "external", "verdict": "new", "new": True,
+                              "score": 0.5, "snippet": "We measured channel widening over 7000 h.", "title": "Erosion and breathing",
+                              "where": "", "href": "https://doi.org/10.1/x", "user_note": "",
+                              "ref": {"doi": "10.1/x", "arxiv": "", "url": "https://doi.org/10.1/x"},
+                              "source": {"id": "", "title": "Erosion and breathing", "type": "paper", "year": 2025, "authors": ["A. B", "C. D"],
+                                         "exists": False, "external": True, "venue": "J. Prop.", "access": "closed", "found_via": "OpenAlex",
+                                         "doi": "10.1/x", "arxiv": ""}})
+        route.fulfill(response=r, json=data)
+    page.route(f"**/api/questions/{q['id']}/evidence", with_external)
+    page.goto(base + "/")
+    page.wait_for_function("window.__rb && window.__rbQuestions")
+    page.evaluate(f"window.__rb.openNote({json.dumps(q['id'])})")
+    reach = page.locator("#oq-status .oq-reach")
+    expect(reach.locator("[data-reach=private]")).to_have_attribute("aria-checked", "true")
+    reach.locator("[data-reach=library]").click()
+    expect(page.locator("#oq-reach-say")).to_contain_text("AI features may read it")
+    expect(page.locator("#oq-ai button")).to_be_enabled()
+    reach.locator("[data-reach=scout]").click()
+    expect(page.locator(".oq-scout-line")).to_contain_text("Scouting published papers for")
+    assert "erosion" in page.locator(".oq-scout-line q").inner_text().lower()
+    row = page.locator(".oq-ev[data-kind=external]")
+    expect(row.locator(".oq-ext")).to_contain_text("Paywalled")
+    expect(row.locator(".oq-ext button")).to_have_text("Add to library")
+    expect(row).to_contain_text("A. B et al. · 2025 · J. Prop.")
+    n = _call(base, "GET", f"/api/notes/{q['id']}")
+    assert n.get("private") in (False, None) or n.get("private") is False
+    reach.locator("[data-reach=private]").click()
+    _wait(lambda: _call(base, "GET", f"/api/questions/{q['id']}/evidence")["question"]["reach"] == "private")
+    assert errors == []

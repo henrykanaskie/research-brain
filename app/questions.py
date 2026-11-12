@@ -46,7 +46,7 @@ from pathlib import Path
 
 VERDICTS = ("new", "supports", "against", "related", "dismissed")
 KEPT = ("supports", "against", "related")
-KINDS = ("passage", "card", "note", "paper")
+KINDS = ("passage", "card", "note", "paper", "external")  # external: a published paper the scout found
 # TF-IDF: calibrated on tests/fixtures/questions/plasma_corpus.json, where relevant passages score 0.15-0.29
 # and the best unrelated one 0.08 (tests/test_questions.py keeps that margin). The dense value is for
 # all-MiniLM-L6-v2, whose cosine for a relevant passage vs. a short question is typically 0.45-0.7 and
@@ -587,6 +587,93 @@ def scan(ctx: Context, qid: str, notes: list[dict] | None = None, settings: dict
         return added
 
 
+# ---------------------------------------------------------------- the scout (questions whose reach is "scout")
+def scout_scan(ctx: Context, qid: str, notes: list[dict] | None = None, settings: dict | None = None,
+               sources: dict | None = None) -> dict:
+    """Search published papers for a scouting question now (app/scout.py). Returns {added, query, error}.
+    Only the question's key words leave the computer; ranking is local, and no AI is involved."""
+    from . import scout
+    q = ctx.store.get(qid)
+    if not is_question(q):
+        raise KeyError(qid)
+    if scout.reach(q) != "scout":
+        return {"added": [], "query": "", "error": "This question doesn't scout: set its reach to Scout first."}
+    notes = ctx.store.all() if notes is None else notes
+    settings = settings or get_settings()
+    query = scout.query_for(q)
+    data = load(ctx.store, qid)
+    st = data.get("scout") or {}
+    today = dt.date.today()
+    since = today - dt.timedelta(days=scout.LOOKBACK_DAYS)
+    if st.get("searched_to") and st.get("query") == query:
+        try:  # later scouts look only at what's new, with a week's overlap for late indexing
+            since = dt.date.fromisoformat(st["searched_to"]) - dt.timedelta(days=7)
+        except ValueError:
+            pass
+    found, errors = [], []
+    for name, fn in (sources or scout.SOURCES).items():
+        try:
+            found += fn(query, since)
+        except Exception as e:  # offline, rate limited, a bad answer: the other source may still work
+            errors.append(f"{name}: {e.__class__.__name__}")
+    in_lib = scout.library_keys(notes)
+    seen, cands = set(), []
+    for p in found:
+        ks = scout.paper_keys(p)
+        if not ks or not p.get("title") or any(k in in_lib or k in seen for k in ks):
+            continue
+        seen.update(ks)
+        cands.append(p)
+    added = []
+    if cands:
+        text = question_text(q)
+        fam = embedder_family(ctx.embedder.kind)
+        sims = scout.similarity(text, [f"{p['title']}. {p.get('abstract') or ''}" for p in cands],
+                                ctx.chunk_index if fam != "tfidf" else None)
+        floor = scout.THRESHOLDS["dense" if fam != "tfidf" else "tfidf"]
+        qs = _stems(text)
+        ranked = []
+        for p, sim in zip(cands, sims):
+            if sim < floor:
+                continue
+            if fam == "tfidf" and overlap(qs, f"{p['title']} {p.get('abstract') or ''}") < min(scout.MIN_OVERLAP, max(1, len(qs))):
+                continue
+            ranked.append((sim, p))
+        ranked.sort(key=lambda x: -x[0])
+        with _lock:
+            data = load(ctx.store, qid)
+            items = data["items"]
+            have = {i["key"] for i in items}
+            added_today = sum(1 for i in items if str(i.get("found_at") or "")[:10] == _today())
+            room = min(scout.PER_SCAN, settings["daily_cap"] - added_today)
+            for sim, p in ranked:
+                if room <= 0:
+                    break
+                key = scout.ev_key(p)
+                if not key or key in have:
+                    continue
+                item = {"id": _eid(key), "key": key, "kind": "external",
+                        "ref": {"doi": p.get("doi") or "", "arxiv": p.get("arxiv") or "", "url": p.get("url") or ""},
+                        "paper": {k: p.get(k) for k in ("title", "year", "date", "authors", "venue", "access", "found_via")},
+                        "score": round(float(sim), 4), "found_at": now_iso(), "verdict": "new", "user_note": "",
+                        "snippet": _snippet(p.get("abstract") or ""), "title": p["title"]}
+                items.append(item)
+                have.add(key)
+                added.append(item)
+                room -= 1
+    with _lock:
+        data = load(ctx.store, qid)
+        if added:
+            have = {i["key"] for i in data["items"]}
+            data["items"] += [i for i in added if i["key"] not in have]
+        ok = len(errors) < len(sources or scout.SOURCES)
+        data["scout"] = {"last": now_iso(), "query": query,
+                         "searched_to": today.isoformat() if ok else (st.get("searched_to") or ""),
+                         "looked_at": len(found), "error": "; ".join(errors)}
+        _save(ctx.store, qid, data)
+    return {"added": added, "query": query, "error": "; ".join(errors), "looked_at": len(found)}
+
+
 # ---------------------------------------------------------------- triage and counts
 def set_verdict(store, qid: str, eid: str, verdict: str | None = None, user_note: str | None = None) -> dict:
     if verdict is not None and verdict not in VERDICTS:
@@ -819,7 +906,23 @@ class Matcher:
                 continue
             self._done[q["id"]] = key
             out[q["id"]] = len(added)
+        self.scout_due(notes, settings)
         return out
+
+    def scout_due(self, notes: list[dict], settings: dict) -> None:
+        """Questions set to scout: search published papers about once a day while the app runs."""
+        from . import metadata, scout
+        if not metadata.enabled():
+            return  # RB_METADATA=0: no online lookups at all
+        for q in notes:
+            if not is_question(q) or scout.reach(q) != "scout" or (q.get("question_status") or "open") != "open":
+                continue
+            if not scout.due(load(self.ctx.store, q["id"])):
+                continue
+            try:
+                scout_scan(self.ctx, q["id"], notes, settings)
+            except Exception as e:
+                self.last_error = repr(e)
 
     def rescan(self, qid: str) -> list[dict]:
         """Scan one question now, in the caller's thread (POST /api/questions/{id}/rescan)."""
