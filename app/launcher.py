@@ -298,10 +298,14 @@ def _mac_applet(app: Path) -> str:
         src.unlink(missing_ok=True)
     res = tmp / "Contents" / "Resources"
     icns = _mac_icon(res)
+    plist = tmp / "Contents" / "Info.plist"
     if icns:
         shutil.copyfile(icns, res / "applet.icns")
         icns.unlink(missing_ok=True)
-    plist = tmp / "Contents" / "Info.plist"
+        # osacompile also adds the script icon as an asset catalog (CFBundleIconName), which macOS
+        # prefers over applet.icns: without this the Dock and Launchpad showed the script icon
+        (res / "Assets.car").unlink(missing_ok=True)
+        subprocess.run(["plutil", "-remove", "CFBundleIconName", str(plist)], capture_output=True)
     for key, val in (("CFBundleIdentifier", "local.research-brain.launcher"), ("CFBundleName", APP_NAME),
                      ("CFBundleDisplayName", APP_NAME)):
         subprocess.run(["plutil", "-replace", key, "-string", val, str(plist)], capture_output=True)

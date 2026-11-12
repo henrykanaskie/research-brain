@@ -162,6 +162,8 @@ def test_mac_applet_really_compiles(tmp_path, monkeypatch):
                            capture_output=True, text=True).stdout
     assert "local.research-brain.launcher" in plist and "LSUIElement" not in plist
     assert "OSAAppletStayOpen" in plist  # stays open: the Dock icon lives as long as research brain runs
+    # the brain icon, not the script icon osacompile puts in its asset catalog
+    assert "CFBundleIconName" not in plist and not (app / "Contents" / "Resources" / "Assets.car").exists()
     src = subprocess.run(["osadecompile", str(app / "Contents" / "Resources" / "Scripts" / "main.scpt")],
                          capture_output=True, text=True).stdout
     assert "/opt/rb/bin/research-brain" in src
