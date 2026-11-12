@@ -365,22 +365,26 @@
     };
   }
 
-  function confirmDialog(title, text, okLabel = 'Delete') {
+  /** Resolves true (OK), false (Cancel) or 'alt' when altLabel gives a third choice. */
+  function confirmDialog(title, text, okLabel = 'Delete', altLabel = '') {
     return new Promise((resolve) => {
       const m = $('#modal');
       $('#modal-title').textContent = title;
       $('#modal-text').textContent = text;
-      const ok = $('#modal-ok'), cancel = $('#modal-cancel');
+      const ok = $('#modal-ok'), cancel = $('#modal-cancel'), alt = $('#modal-alt');
       ok.textContent = okLabel;
+      alt.hidden = !altLabel; alt.textContent = altLabel || '';
       m.hidden = false;
       const prevFocus = document.activeElement;
       setTimeout(() => cancel.focus(), 0);
       const done = (v) => {
-        m.hidden = true; ok.onclick = cancel.onclick = m.onclick = null; m.onkeydown = null;
+        m.hidden = true; ok.onclick = cancel.onclick = alt.onclick = m.onclick = null; m.onkeydown = null;
+        alt.hidden = true;
         S.modalClose = null;
         if (prevFocus && prevFocus.focus) prevFocus.focus();
         resolve(v);
       };
+      alt.onclick = () => done('alt');
       ok.onclick = () => done(true);
       cancel.onclick = () => done(false);
       m.onclick = (e) => { if (e.target === m) done(false); };
@@ -2480,14 +2484,27 @@
     const del = h('button', { class: 'btn btn-danger', type: 'button', text: n.type === 'fragment' ? 'Delete fragment' : n.type === 'paper' ? 'Delete paper' : 'Delete note' });
     del.onclick = async () => {
       const nf = (n.fragments || []).length;
-      const ok = await confirmDialog(`Delete “${truncate(n.title || n.id, 60)}”?`,
-        `It${nf ? ` and its ${nf} fragment${nf > 1 ? 's' : ''}` : ''} will be moved to the vault's .trash folder, so you can still recover ${nf ? 'them' : 'it'} from disk.`);
-      if (!ok) return;
+      const frag = nf ? ` and its ${nf} fragment${nf > 1 ? 's' : ''}` : '';
+      let q = '';
+      if (n.type === 'paper' && n.has_pdf) {
+        // a paper with a PDF: from research brain only, or the PDF from the computer too
+        const choice = await confirmDialog(`Delete “${truncate(n.title || n.id, 60)}”?`,
+          `The paper${frag} leaves your library (recoverable from the library's .trash). Its PDF can stay on your computer, in your papers folder under “Removed from library”, or go to your computer's Trash.`,
+          'Delete the PDF too', 'Keep the PDF');
+        if (!choice) return;
+        q = choice === 'alt' ? '?pdf=keep' : '?pdf=trash';
+      } else {
+        const ok = await confirmDialog(`Delete “${truncate(n.title || n.id, 60)}”?`,
+          `It${frag} will be moved to the library's .trash folder, so you can still recover ${nf ? 'them' : 'it'} from disk.`);
+        if (!ok) return;
+      }
       del.disabled = true;
       try {
         clearTimeout(S.saveTimer); S.saveTimer = null; S.patch = {};
-        await api('DELETE', `/api/notes/${encodeURIComponent(n.id)}`);
-        toast('Moved to trash', 'ok');
+        const r = await api('DELETE', `/api/notes/${encodeURIComponent(n.id)}${q}`);
+        toast(r.pdf === 'kept' ? 'Removed from your library. The PDF is in your papers folder under “Removed from library”.'
+          : r.pdf === 'trash' ? 'Deleted, and the PDF is in your computer’s Trash.'
+          : r.pdf === 'library-trash' ? 'Deleted. There’s no system Trash here, so the PDF is in the library’s .trash.' : 'Moved to trash', 'ok');
         const parent = n.type === 'fragment' ? n.parent : null;
         S.cur = null; S.selected = null;
         setPanelOpen(false);
@@ -2920,13 +2937,29 @@
       try {
         const note = await upload('/api/import/pdf', f, (p) => t.progress(p));
         last = note;
-        if (note.duplicate) toast(`Already in your library: “${truncate(note.title, 60)}”`, 'info');
+        if (note.duplicate) toast(note.same_file ? `You already have this exact file: “${truncate(note.title, 60)}”. No second copy was made.` : `Already in your library: “${truncate(note.title, 60)}”`, 'info');
         else toast(`Added “${truncate(note.title, 70)}”`, 'ok');
+        if (note.downloads_copy) offerTrashDownload(note.downloads_copy);
       } catch (e) {
         toastErr(e, `Could not add ${f.name}`);
       } finally { t.done(); }
     }
     if (last) { await refreshGraph(); openOrOffer(last, seq0); }
+  }
+
+  /** The file just added is still in Downloads (same name, same bytes): offer to send that copy to the Trash,
+   *  so the papers folder holds the only one. */
+  function offerTrashDownload(path) {
+    const name = path.split(/[\\/]/).pop();
+    toast(`“${truncate(name, 50)}” is also in your Downloads. Your library has its own copy.`, 'info', {
+      ms: 12000,
+      action: { label: 'Move that copy to Trash', fn: async () => {
+        try {
+          const r = await api('POST', '/api/papers/trash-copies', { paths: [path] });
+          toast(r.trashed.length ? 'Moved to the Trash.' : 'Left it where it is (it no longer matches the library copy).', r.trashed.length ? 'ok' : 'info');
+        } catch (e) { toastErr(e, 'Could not move it to the Trash'); }
+      } },
+    });
   }
 
   /** Open a freshly imported note unless the user opened something else meanwhile (then offer it). */

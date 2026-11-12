@@ -50,6 +50,10 @@
   .rb-update-chip:hover { opacity: 1; }
   .ls-code { font: 12.5px/1.4 ui-monospace, Menlo, Consolas, monospace; background: var(--sheet, rgba(0,0,0,.04)); padding: 4px 8px; border-radius: 3px; }
   .ls-notes pre { white-space: pre-wrap; font: 12.5px/1.5 var(--sans); color: var(--ink-2); margin: 6px 0 0; max-height: 160px; overflow: auto; }
+  .ls-h2 { font: 600 12.5px var(--sans); color: var(--ink); margin: 14px 0 2px; }
+  .ls-scan-list { list-style: none; margin: 4px 0 6px; padding: 0; max-height: 200px; overflow: auto; font: 12.5px/1.6 var(--sans); }
+  .ls-scan-list .m { color: var(--ink-3); }
+  .ls-check { display: flex; gap: 6px; align-items: center; }
   .ls-notes summary { font: 12.5px var(--sans); color: var(--ink-2); cursor: pointer; }
   .ls-agents { list-style: none; margin: 6px 0 0; padding: 0; }
   .ls-agents li { padding: 8px 0; border-bottom: 1px solid var(--rule); font: 13px/1.45 var(--sans); }
@@ -216,6 +220,10 @@
       el('p', { class: 'ls-p', text: 'Related papers, citations and metadata come from Semantic Scholar, with OpenAlex as a backup when it is busy. Both are free. Without a key, Semantic Scholar shares one allowance among everyone, so it sometimes says “rate limited”; a free personal key fixes that. Keys stay on this computer and are sent only to their own service.' }));
     renderKeys(keySec, say);
 
+    // Papers folder (app/papers.py)
+    const papSec = el('section', { class: 'ls-sec', id: 'ls-papers' }, el('div', { class: 'ls-h', text: 'Papers folder' }));
+    renderPapers(papSec, say);
+
     // Updates (app/updates.py)
     const updSec = el('section', { class: 'ls-sec', id: 'ls-updates' },
       el('div', { class: 'ls-h', text: 'Updates' }));
@@ -270,7 +278,7 @@
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
     const card = el('div', { class: 'modal-card ls-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-title' },
       el('div', { class: 'modal-title', id: 'ls-title', text: 'Library settings' }),
-      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, keySec, updSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
+      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, papSec, keySec, updSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
     const wrap = el('div', { class: 'modal', id: 'library-settings' }, card);
     wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
     document.body.appendChild(wrap);
@@ -282,8 +290,90 @@
       if (focus === 'privacy' && privSec) privSec.scrollIntoView({ block: 'start' });
       if (focus === 'lookup') keySec.scrollIntoView({ block: 'start' });
       if (focus === 'updates') updSec.scrollIntoView({ block: 'start' });
+      if (focus === 'papers') papSec.scrollIntoView({ block: 'start' });
       (focus === 'profiles' && !prof.pinned ? newName : done).focus({ preventScroll: true });
     }, 0);
+  }
+
+  // ---------------------------------------------------------------- papers folder (app/papers.py)
+  const fmtMB = (b) => (b / 1e6 < 10 ? (b / 1e6).toFixed(1) : Math.round(b / 1e6)) + ' MB';
+  async function renderPapers(sec, say) {
+    let f;
+    try { f = await api('/api/papers-folder'); } catch { return; }
+    const where = el('div', { class: 'ls-path', id: 'ls-papers-path', text: f.folder });
+    const count = el('p', { class: 'ls-p' });
+    const setCount = (x) => { count.textContent = `${x.pdfs} PDF${x.pdfs === 1 ? '' : 's'}, one file per paper, named after it. Every PDF you add lands here, and the same file is never stored twice.${x.removed ? ` ${x.removed} in “Removed from library”.` : ''}`; };
+    setCount(f);
+    const open = el('button', { class: 'btn', type: 'button', text: 'Open folder', onclick: () => api('/api/papers-folder/reveal', json('POST', {})).catch((e) => say(e.message, true)) });
+    const dest = el('input', { type: 'text', id: 'ls-papers-dest', spellcheck: 'false', value: f.default ? f.suggested : f.folder, 'aria-label': 'Papers folder' });
+    const move = el('button', { class: 'btn', type: 'button', text: 'Move here' });
+    move.addEventListener('click', async () => {
+      const to = dest.value.trim();
+      if (!to || to === f.folder) return;
+      move.disabled = true;
+      try {
+        const r = await api('/api/papers-folder', json('PUT', { folder: to }));
+        f = r; where.textContent = r.folder; setCount(r);
+        say(`Moved ${r.moved} PDF${r.moved === 1 ? '' : 's'} to ${r.folder}.`);
+      } catch (e) { say(e.message, true); } finally { move.disabled = false; }
+    });
+    sec.append(where, count, el('div', { class: 'ls-row' }, open),
+      el('label', { class: 'ls-p', for: 'ls-papers-dest', text: f.default ? 'Keep them somewhere you can find them, like your Documents folder or a synced folder:' : 'Move them somewhere else:' }),
+      el('div', { class: 'ls-row' }, dest, move));
+
+    // check a folder you pick for papers you already have, or haven't added
+    const scanIn = el('input', { type: 'text', id: 'ls-scan-folder', spellcheck: 'false', value: f.downloads, 'aria-label': 'Folder to check' });
+    const deep = el('input', { type: 'checkbox', id: 'ls-scan-deep' });
+    const scanBtn = el('button', { class: 'btn', type: 'button', text: 'Check' });
+    const out = el('div', { class: 'ls-scan-out', id: 'ls-scan-out' });
+    scanBtn.addEventListener('click', async () => {
+      scanBtn.disabled = true; out.replaceChildren(el('p', { class: 'ls-p', text: 'Reading the PDFs in that folder…' }));
+      try { drawScan(out, await api('/api/papers/scan', json('POST', { folder: scanIn.value.trim(), recursive: deep.checked })), say); }
+      catch (e) { out.replaceChildren(); say(e.message, true); } finally { scanBtn.disabled = false; }
+    });
+    sec.append(el('div', { class: 'ls-h2', text: 'Papers already on this computer' }),
+      el('p', { class: 'ls-p', text: 'Only when you ask, and only the folder you pick: finds PDFs that are already in your library (the same file) and ones that aren’t yet.' }),
+      el('div', { class: 'ls-row' }, scanIn, scanBtn),
+      el('label', { class: 'ls-p ls-check', for: 'ls-scan-deep' }, deep, ' Include folders inside it'), out);
+  }
+  function drawScan(out, r, say) {
+    const kids = [];
+    if (r.in_library.length) {
+      const trash = el('button', { class: 'btn', type: 'button', text: `Move ${r.in_library.length} extra cop${r.in_library.length === 1 ? 'y' : 'ies'} to Trash` });
+      trash.addEventListener('click', async () => {
+        trash.disabled = true;
+        try {
+          const t = await api('/api/papers/trash-copies', json('POST', { paths: r.in_library.map((x) => x.path) }));
+          say(`Moved ${t.trashed.length} cop${t.trashed.length === 1 ? 'y' : 'ies'} to the Trash${t.refused.length ? `; left ${t.refused.length} that no longer match` : ''}.`);
+          trash.textContent = 'Done';
+        } catch (e) { trash.disabled = false; say(e.message, true); }
+      });
+      kids.push(el('div', { class: 'ls-p' }, el('b', { text: `${r.in_library.length} already in your library` }), ' (the same file):'),
+        el('ul', { class: 'ls-scan-list' }, r.in_library.slice(0, 50).map((x) => el('li', { title: x.path }, el('span', { text: x.name }), el('span', { class: 'm', text: ` → ${x.title}` })))),
+        el('div', { class: 'ls-row' }, trash));
+    }
+    if (r.new.length) {
+      const boxes = r.new.map((x) => el('input', { type: 'checkbox', checked: true, 'data-path': x.path, 'aria-label': x.name }));
+      const copy = el('input', { type: 'checkbox', id: 'ls-scan-copy' });
+      const add = el('button', { class: 'btn', type: 'button', text: 'Add selected' });
+      add.addEventListener('click', async () => {
+        const paths = boxes.filter((b) => b.checked).map((b) => b.dataset.path);
+        if (!paths.length) return;
+        add.disabled = true; add.textContent = `Adding ${paths.length}…`;
+        try {
+          const a = await api('/api/papers/import-files', json('POST', { paths, mode: copy.checked ? 'copy' : 'move' }));
+          say(`Added ${a.added.length}${a.duplicates.length ? `, ${a.duplicates.length} were already in your library` : ''}${a.failed.length ? `, ${a.failed.length} couldn’t be read` : ''}.`);
+          add.textContent = 'Done';
+          if (window.__rb && window.__rb.refreshGraph) window.__rb.refreshGraph();
+        } catch (e) { add.disabled = false; add.textContent = 'Add selected'; say(e.message, true); }
+      });
+      kids.push(el('div', { class: 'ls-p' }, el('b', { text: `${r.new.length} not in your library` }), ':'),
+        el('ul', { class: 'ls-scan-list' }, r.new.slice(0, 200).map((x, i) => el('li', null, el('label', { title: x.path }, boxes[i], ` ${x.name} `, el('span', { class: 'm', text: fmtMB(x.size) }))))),
+        el('label', { class: 'ls-p ls-check', for: 'ls-scan-copy' }, copy, ' Leave the originals where they are (otherwise they move into your papers folder, and the old copy goes to the Trash)'),
+        el('div', { class: 'ls-row' }, add));
+    }
+    if (!kids.length) kids.push(el('p', { class: 'ls-p', text: `No PDFs in ${r.folder}.` }));
+    out.replaceChildren(...kids);
   }
 
   // ---------------------------------------------------------------- updates (app/updates.py)

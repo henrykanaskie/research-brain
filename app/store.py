@@ -182,7 +182,8 @@ class Store:
     def __init__(self, root: Path):
         self.root = Path(root)
         self.notes_dir = self.root / "notes"
-        self.pdf_dir = self.root / "pdfs"
+        from .papers import folder_for  # <library>/pdfs, or the papers folder chosen in settings (app/papers.py)
+        self.pdf_dir = folder_for(self.root)
         self.text_dir = self.root / "text"
         self.index_dir = self.root / ".index"
         self.trash_dir = self.root / ".trash"

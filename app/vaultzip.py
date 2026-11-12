@@ -52,15 +52,20 @@ def iter_files(vault: Path, include_pdfs: bool = True):
         if top == "pdfs" and not include_pdfs:
             continue
         base = vault / top
+        if top == "pdfs":  # the papers folder may live elsewhere (app/papers.py); in the zip it is pdfs/
+            from .papers import REMOVED, folder_for
+            base = folder_for(vault)
         if not base.is_dir():
             continue
         for root, dirs, files in os.walk(base):
-            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not (top == "pdfs" and d == REMOVED))
             for f in sorted(files):
                 p = Path(root) / f
                 if p.is_symlink() or f.endswith(".tmp") or f.startswith(".") and f.endswith(".lock"):
                     continue
-                yield p, p.relative_to(vault).as_posix()
+                if top == "state" and f == "papers.json":
+                    continue  # where this computer keeps the PDFs: meaningless on another one
+                yield p, (f"pdfs/{p.relative_to(base).as_posix()}" if top == "pdfs" else p.relative_to(vault).as_posix())
 
 
 def export_zip(vault: Path, dest: Path, include_pdfs: bool = True) -> dict:

@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import access as access_mod, agents, apikeys, budget, citations, claude_cli, locate as locate_mod, metadata, openalex, scholar, security, updates as updates_mod
+from . import access as access_mod, agents, papers as papers_mod, apikeys, budget, citations, claude_cli, locate as locate_mod, metadata, openalex, scholar, security, updates as updates_mod
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .pdftext import extract, guess_title
@@ -913,9 +913,17 @@ def api_update_note(nid: str, body: dict):
 
 
 @app.delete("/api/notes/{nid}")
-def api_delete_note(nid: str):
+def api_delete_note(nid: str, pdf: str = ""):
+    """?pdf=keep: the PDF moves to <papers folder>/Removed from library/; ?pdf=trash: to the computer's Trash.
+    Without it (older clients), the PDF goes to the library's .trash with the note, as before."""
     _get(nid)
     gone = {nid, *(k["id"] for k in store.children(nid))}
+    pdf_out = {}
+    if pdf:
+        try:
+            pdf_out = papers_mod.remove_pdf(store, nid, pdf)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     store.delete(nid)
     try:  # a paper's idea cards go to the trash with it (app/cards.py)
         from . import cards as _cards
@@ -927,7 +935,111 @@ def api_delete_note(nid: str):
         if gone & set(data):
             store.save_json("engagement.json", {k: v for k, v in data.items() if k not in gone})
             _eng_rev[0] += 1
-    return {"ok": True}
+    return {"ok": True, **pdf_out}
+
+
+# ---------------------------------------------------------------- the papers folder (app/papers.py)
+class FolderIn(BaseModel):
+    folder: str
+
+
+@app.get("/api/papers-folder")
+def api_papers_folder():
+    f = Path(store.pdf_dir)
+    n = len(list(f.glob("*.pdf"))) if f.is_dir() else 0
+    removed = f / papers_mod.REMOVED
+    return {"folder": str(f), "default": f.resolve() == (Path(store.root) / "pdfs").resolve(), "pdfs": n,
+            "removed": len(list(removed.glob("*.pdf"))) if removed.is_dir() else 0,
+            "suggested": str(papers_mod.suggested_folder()), "downloads": str(Path.home() / "Downloads")}
+
+
+@app.put("/api/papers-folder")
+def api_papers_folder_move(body: FolderIn):
+    try:
+        out = papers_mod.move_folder(store, body.folder.strip())
+    except (ValueError, OSError) as e:
+        raise HTTPException(400, str(e))
+    return {**api_papers_folder(), "moved": out["moved"]}
+
+
+@app.post("/api/papers-folder/reveal")
+def api_papers_folder_reveal(which: str = ""):
+    f = Path(store.pdf_dir) / (papers_mod.REMOVED if which == "removed" else "")
+    try:
+        papers_mod.reveal(f)
+    except OSError as e:
+        raise HTTPException(500, f"Couldn't open the folder: {e}")
+    return {"ok": True, "folder": str(f)}
+
+
+class ScanIn(BaseModel):
+    folder: str
+    recursive: bool = False
+
+
+@app.post("/api/papers/scan")
+def api_papers_scan(body: ScanIn):
+    """Only when asked, and only the folder given: which PDFs are already in the library (same bytes)."""
+    try:
+        return papers_mod.scan(store, body.folder.strip(), body.recursive)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class PathsIn(BaseModel):
+    paths: list[str]
+    mode: str = "move"   # import-files: move the originals into the papers folder, or copy them
+
+
+@app.post("/api/papers/trash-copies")
+def api_papers_trash_copies(body: PathsIn):
+    """Send extra copies to the Trash: only files byte-identical to a library PDF, inside your home folder."""
+    try:
+        return papers_mod.trash_copies(store, body.paths)
+    except ImportError:
+        raise HTTPException(503, "Moving files to the Trash needs the send2trash package (pip install send2trash)")
+
+
+@app.post("/api/papers/import-files")
+def api_papers_import_files(body: PathsIn):
+    """Add PDFs from this computer. mode=move: once the library has each file, the original goes to the
+    computer's Trash (so one copy is left, in the papers folder, and the original is still recoverable);
+    mode=copy: the original stays where it is."""
+    if body.mode not in ("move", "copy"):
+        raise HTTPException(400, "mode is move or copy")
+    added, dup, failed = [], [], []
+    for s in body.paths[:200]:
+        src = Path(s).expanduser()
+        if not src.is_file() or src.suffix.lower() != ".pdf" or not papers_mod._inside_home(src):
+            failed.append({"path": s, "error": "not a PDF in your home folder"})
+            continue
+        if Path(store.pdf_dir).resolve() in src.resolve().parents:
+            continue
+        tmpdir = Path(tempfile.mkdtemp(prefix="rb_local_"))
+        tmp = tmpdir / "upload.pdf"
+        try:
+            shutil.copy2(src, tmp)  # the original is only touched once the library has the file
+            same = _same_file(tmp)
+            if same:
+                dup.append({"path": s, "note": same})
+            else:
+                note = _import_pdf_tmp(tmp, src.name)
+                (dup if note.get("duplicate") else added).append({"path": s, "note": note["id"], "title": note["title"]})
+        except HTTPException as e:
+            failed.append({"path": s, "error": e.detail})
+            continue
+        except OSError as e:
+            failed.append({"path": s, "error": str(e)})
+            continue
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        if body.mode == "move":  # the library has it now (or already had it): the original goes to the Trash
+            try:
+                from send2trash import send2trash
+                send2trash(str(src))
+            except Exception:
+                pass  # no Trash available: leave the original where it was
+    return {"added": added, "duplicates": dup, "failed": failed}
 
 
 class RefreshMetaIn(BaseModel):
@@ -1022,9 +1134,42 @@ def _store_pdf(nid: str, tmp_pdf: Path, text: str) -> None:
         store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
 
 
+def _same_file(tmp: Path) -> str | None:
+    """The paper whose stored PDF has exactly these bytes, if any (app/papers.py: one copy each)."""
+    try:
+        return papers_mod.find_by_hash(store, papers_mod._sha(tmp))
+    except OSError:
+        return None
+
+
+def _downloads_copy(out: dict, filename: str, nid: str) -> dict:
+    """After an upload from the file picker: is the very same file still in ~/Downloads? (one exact name)"""
+    try:
+        p = store.pdf_path(nid)
+        twin = papers_mod.downloads_twin(filename, papers_mod._sha(p)) if p.is_file() else None
+    except OSError:
+        twin = None
+    if twin:
+        out["downloads_copy"] = twin
+    return out
+
+
 @app.post("/api/import/pdf", status_code=201)
 async def api_import_pdf(file: UploadFile = File(...)):
     tmp = await _save_upload(file)
+    same = _same_file(tmp)
+    if same:  # the very same file is already in the library: open it, don't make a second copy
+        shutil.rmtree(tmp.parent, ignore_errors=True)
+        out = _with_extras(store.get(same))
+        out["duplicate"] = True
+        out["same_file"] = True
+        return _downloads_copy(out, file.filename or "", same)
+    out = _import_pdf_tmp(tmp, file.filename or "")
+    return _downloads_copy(out, file.filename or "", out["id"])
+
+
+def _import_pdf_tmp(tmp: Path, filename: str) -> dict:
+    """The rest of a PDF import (read it, identify it, match or create the paper, store the file)."""
     info: dict = {}
     try:
         text, meta_title = extract(tmp, info=info)
@@ -1032,7 +1177,7 @@ async def api_import_pdf(file: UploadFile = File(...)):
         shutil.rmtree(tmp.parent, ignore_errors=True)
         raise HTTPException(400, f"Couldn't read that PDF: {e}")
     ids = _pdf_ids(text, info)
-    guess = meta_title or guess_title(text) or Path(file.filename or "Untitled").stem.replace("_", " ")
+    guess = meta_title or guess_title(text) or Path(filename or "Untitled").stem.replace("_", " ")
     meta = None
     try:
         if ids["arxiv"]:
@@ -2712,6 +2857,10 @@ def api_import_url(body: ImportUrlIn):
         tmp, final_url = urlfetch.download_pdf(url)
     except urlfetch.FetchError as e:
         raise HTTPException(e.status, str(e))
+    same = _same_file(tmp)
+    if same:
+        shutil.rmtree(tmp.parent, ignore_errors=True)
+        return _viewer_out(same, existing=True, duplicate=True)
     info: dict = {}
     try:
         text, meta_title = extract(tmp, info=info)

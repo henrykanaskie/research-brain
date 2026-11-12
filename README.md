@@ -236,7 +236,7 @@ Inside your library folder (`research-brain where` prints it; below it's called 
 
 ```
 vault/notes/*.md   your notes (YAML frontmatter + Markdown body); plain files, editable in any editor
-vault/pdfs/        imported PDFs           vault/text/   extracted text (for Claude)
+vault/pdfs/        imported PDFs (or your chosen papers folder)   vault/text/   extracted text
 vault/state/       your Review schedule and history (review.json), open counts (engagement.json),
                    UI state (ui.json), open-access results (acquire.json), library format (meta.json),
                    privacy settings (privacy.json) and the log of what was sent to AI (ai_log.jsonl),
@@ -254,6 +254,17 @@ vault/backups/     automatic zips made before a library format upgrade
 
 Next to the profiles: `settings.json` (open profile, Unpaywall email) and `storage.log` (moves,
 migrations, imports, exports).
+
+**Your PDFs, one copy each.** Every PDF is one file named after its paper (`<paper id>.pdf`) in one folder:
+`vault/pdfs/` until you pick another in **Library settings › Papers folder** (for example
+`~/Documents/Research papers` or a synced folder; *Move here* moves the files, *Open folder* shows them).
+Adding a file the library already has, by any route (drag and drop, the file picker, a URL, the extension),
+opens that paper instead of storing a second copy. After you add a file from Downloads, the app offers to send
+the Downloads copy to the Trash. Deleting a paper asks about its PDF: **Keep the PDF** (it moves to
+*Removed from library* inside the papers folder) or **Delete the PDF too** (it goes to your computer's Trash,
+restorable from there). **Papers already on this computer** checks a folder you pick, only when you ask:
+copies of PDFs you already have can go to the Trash in one click, and the rest can be added, moving them
+into the papers folder (or copying, if you'd rather leave the originals).
 
 ## Private notes (your own ideas stay on your computer)
 
