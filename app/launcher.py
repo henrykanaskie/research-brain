@@ -89,25 +89,35 @@ def _detached() -> dict:
 
 
 # ---------------------------------------------------------------- open
-def cmd_open(a) -> int:
-    port = a.port
-    url = f"http://127.0.0.1:{port}"
+def _start_server(a, url: str) -> bool:
+    """Start the server in the background unless it's running; True once it answers (up to two minutes:
+    the first start builds the search index)."""
     if _status_ok(url):
-        open_window(url + "/?app=1")
-        return 0
+        return True
     log = paths.user_data_dir() / "app.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    args = [sys.executable, "-m", f"{__package__ or 'app'}.cli", "serve", "--no-open", "--port", str(port), "--quit-when-closed"]
+    args = [sys.executable, "-m", f"{__package__ or 'app'}.cli", "serve", "--no-open", "--port", str(a.port), "--quit-when-closed"]
     if a.profile:
         args += ["--profile", a.profile]
     with open(log, "ab") as out:
         subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                          cwd=str(paths.PKG_DIR.parent), **_detached())
-    for _ in range(480):  # up to two minutes: the first start builds the search index
+    for _ in range(480):
         if _status_ok(url, 0.5):
-            open_window(url + "/?app=1")  # ?app=1: the window closes itself when research brain stops
-            return 0
+            return True
         time.sleep(0.25)
+    return False
+
+
+def cmd_open(a) -> int:
+    url = f"http://127.0.0.1:{a.port}"
+    from . import macwindow
+    if macwindow.available():  # a Mac: research brain's own window, no title bar (app/macwindow.py)
+        return macwindow.run(url, lambda: _start_server(a, url))
+    if _start_server(a, url):
+        open_window(url + "/?app=1")  # ?app=1: the window closes itself when research brain stops
+        return 0
+    log = paths.user_data_dir() / "app.log"
     print(f"research brain didn't start. What it said is in {log}", file=sys.stderr)
     _tell("research brain didn't start", f"What it said is at the end of {log}")
     return 1
@@ -336,7 +346,61 @@ def _mac_applet(app: Path) -> str:
     return f"Added {app}: open it from Applications, Launchpad or Spotlight, and keep it in the Dock (right-click its icon > Options > Keep in Dock)."
 
 
+def _mac_window_script(cmd: str) -> str:
+    """The native-window app's executable: it becomes `research-brain open` (exec), so the app in the Dock is
+    the window itself (app/macwindow.py): it answers macOS at once, and Quit closes it."""
+    log = paths.user_data_dir() / "app.log"
+    return f"""#!/bin/sh
+RB="{cmd}"
+LOG="{log}"
+mkdir -p "$(dirname "$LOG")"
+if [ ! -x "$RB" ]; then
+  [ -n "$RB_NO_ALERT" ] || /usr/bin/osascript -e 'display alert "research brain is not installed where this app expects it" message "Run ./install.sh again (it remakes this app), or run: research-brain install-app"' >/dev/null 2>&1
+  exit 1
+fi
+echo "--- $(date): opened from the app" >>"$LOG"
+exec "$RB" open >>"$LOG" 2>&1 </dev/null
+"""
+
+
+def _mac_window_app(app: Path) -> str:
+    """research brain's own window (app/macwindow.py): no Chrome window, no title bar, one Dock icon."""
+    tmp = app.parent / f".{APP_NAME}.building.app"
+    shutil.rmtree(tmp, ignore_errors=True)
+    macos, res = tmp / "Contents" / "MacOS", tmp / "Contents" / "Resources"
+    macos.mkdir(parents=True)
+    res.mkdir(parents=True)
+    exe = macos / "research-brain"
+    exe.write_text(_mac_window_script(_command()), encoding="utf-8", newline="\n")
+    exe.chmod(0o755)
+    icns = _mac_icon(res)
+    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>{APP_NAME}</string>
+  <key>CFBundleDisplayName</key><string>{APP_NAME}</string>
+  <key>CFBundleIdentifier</key><string>local.research-brain.launcher</string>
+  <key>CFBundleExecutable</key><string>research-brain</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>2</string>
+  <key>CFBundleVersion</key><string>2</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.education</string>
+  {'<key>CFBundleIconFile</key><string>rb</string>' if icns else ''}
+</dict></plist>
+"""
+    (tmp / "Contents" / "Info.plist").write_text(plist, encoding="utf-8", newline="\n")
+    shutil.rmtree(app, ignore_errors=True)
+    tmp.rename(app)
+    _mac_register(app)
+    return f"Added {app}: open it from Applications, Launchpad or Spotlight, and keep it in the Dock (right-click its icon > Options > Keep in Dock)."
+
+
 def _mac_bundle(app: Path) -> str:
+    from . import macwindow
+    if macwindow.available() and os.environ.get("RB_MAC_SCRIPT_APP") != "1":
+        return _mac_window_app(app)
     if shutil.which("osacompile") and os.environ.get("RB_MAC_SCRIPT_APP") != "1":
         return _mac_applet(app)
     # without osacompile (never on a real Mac): a background-only shell-script app

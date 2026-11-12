@@ -1052,3 +1052,5 @@ body.chat-scoped .rs-mode { display: none; }
 .rb-stopped { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 16px;
   background: color-mix(in srgb, var(--ground) 88%, transparent); font-size: 15px; color: var(--ink); text-align: center; }
 .rb-stopped code { font-size: 13px; }
+/* research brain's own Mac window (app/macwindow.py): no title bar, the window buttons sit here */
+html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-select: none; }

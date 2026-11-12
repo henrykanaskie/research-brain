@@ -72,17 +72,59 @@
 
   // research brain stopped (Quit on the Dock icon, the menu, or no window for a few minutes): the window the
   // app opened (?app=1) closes itself, so no dead window is left behind; any other tab says what happened
+  // ?app=mac: research brain's own Mac window (app/macwindow.py), no title bar
+  let appKind = '';
   try {
-    if (new URLSearchParams(location.search).get('app') === '1') {
-      sessionStorage.setItem('rb.appWindow', '1');
+    const q = new URLSearchParams(location.search).get('app');
+    if (q === '1' || q === 'mac') {
+      sessionStorage.setItem('rb.appWindow', q);
       history.replaceState(null, '', location.pathname + location.hash);
     }
+    appKind = sessionStorage.getItem('rb.appWindow') || '';
   } catch { /* storage unavailable */ }
+  if (appKind === 'mac') {
+    // the window buttons sit at the left of the header, and pressing an empty part of the header drags the
+    // window (app/macwindow.py): tell it where the header's buttons and fields are, so those still click
+    document.documentElement.classList.add('mac-window');
+    // research brain's own channel to the window (app/macwindow.py)
+    const post = (msg) => {
+      const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
+      if (!h) return false;
+      h.postMessage(JSON.stringify(msg));
+      return true;
+    };
+    const nativeOpen = window.open.bind(window);
+    // the window has no tabs: new windows (the PDF viewer, articles) open in your browser
+    window.open = (u, ...rest) => {
+      if (u && post({ open: new URL(String(u), location.href).href })) return null;
+      return nativeOpen(u, ...rest);
+    };
+    const CLICKABLE = 'button, input, select, textarea, a[href], label, summary, [role="button"], [role="menuitem"], [tabindex]:not([tabindex="-1"]), [contenteditable=""], [contenteditable="true"]';
+    let sendT = 0;
+    const send = () => {
+      clearTimeout(sendT);
+      sendT = setTimeout(() => {
+        const bar = document.getElementById('topbar');
+        if (!bar) return;
+        const rects = [...bar.querySelectorAll(CLICKABLE)].map((el) => el.getBoundingClientRect())
+          .filter((r) => r.width && r.height).map((r) => [r.left - 2, r.top - 2, r.width + 4, r.height + 4]);
+        post({ keep_clear: rects });
+      }, 60);
+    };
+    window.addEventListener('resize', send);
+    window.addEventListener('load', send);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(send);
+    const watch = () => {
+      const bar = document.getElementById('topbar');
+      if (!bar) return;
+      new MutationObserver(send).observe(bar, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'style'] });
+      send();
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch); else watch();
+  }
   function stopped() {
     if (es) { es.close(); es = null; }
-    let app = false;
-    try { app = sessionStorage.getItem('rb.appWindow') === '1'; } catch { /* storage unavailable */ }
-    if (app) window.close();
+    if (appKind === '1') window.close();  // the Mac window is closed by app/macwindow.py
     setTimeout(() => {  // still here: not the app's window, or the browser kept it open
       if (document.getElementById('rb-stopped')) return;
       const d = document.createElement('div');

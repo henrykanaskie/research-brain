@@ -12,6 +12,13 @@ import pytest
 from test_api import client  # noqa: F401  (fixture)
 
 
+@pytest.fixture(autouse=True)
+def _browser_window(monkeypatch):
+    """Tests use the browser path unless they ask for the native Mac window (app/macwindow.py): never pop
+    up a real window."""
+    monkeypatch.setenv("RB_APP_WINDOW", "browser")
+
+
 def test_open_reuses_a_running_server(monkeypatch):
     from app import launcher
     opened, started = [], []
@@ -151,7 +158,7 @@ def test_mac_applet_source_starts_in_background_and_quits_with_the_server():
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="osacompile is part of macOS")
 def test_mac_applet_really_compiles(tmp_path, monkeypatch):
-    from app import launcher
+    from app import launcher  # (RB_APP_WINDOW=browser: the AppleScript app, used without pywebview)
     monkeypatch.setenv("RB_MAC_APP_DIR", str(tmp_path))
     monkeypatch.setattr(launcher, "_command", lambda: "/opt/rb/bin/research-brain")
     monkeypatch.setattr(launcher, "_mac_register", lambda app: None)  # don't register a test app with Spotlight
@@ -247,3 +254,89 @@ def test_a_failed_start_says_so_without_a_terminal(monkeypatch, tmp_path):
     assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 1
     dialog = shown[-1]
     assert dialog[:2] == ["zenity", "--error"] and "app.log" in dialog[-1]
+
+
+def test_open_uses_the_native_mac_window_when_it_can(monkeypatch):
+    from app import launcher, macwindow
+    monkeypatch.setattr(macwindow, "available", lambda: True)
+    ran = []
+    monkeypatch.setattr(macwindow, "run", lambda url, start: ran.append((url, start)) or 0)
+    monkeypatch.setattr(launcher, "open_window", lambda url: pytest.fail("no Chrome window on a Mac"))
+    assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 0
+    assert ran[0][0] == "http://127.0.0.1:8799" and callable(ran[0][1])
+
+
+def test_native_window_switch():
+    from app import macwindow
+    assert not macwindow.available()  # RB_APP_WINDOW=browser (the fixture) switches it off
+
+
+def test_mac_app_becomes_the_window(monkeypatch, tmp_path):
+    """With the native window, the app's executable becomes `research-brain open` (exec): one Dock icon,
+    which is the window itself, and Quit closes it."""
+    from app import launcher, macwindow
+    monkeypatch.setenv("RB_MAC_APP_DIR", str(tmp_path))
+    monkeypatch.setattr(macwindow, "available", lambda: True)
+    monkeypatch.setattr(launcher, "_command", lambda: "/opt/rb/bin/research-brain")
+    monkeypatch.setattr(launcher, "_mac_register", lambda app: None)
+    assert "Keep in Dock" in launcher._mac_app(False)
+    app = tmp_path / "research brain.app" / "Contents"
+    plist = (app / "Info.plist").read_text(encoding="utf-8")
+    assert "<key>CFBundleExecutable</key><string>research-brain</string>" in plist
+    assert "LSUIElement" not in plist and "local.research-brain.launcher" in plist
+    exe = app / "MacOS" / "research-brain"
+    script = exe.read_text(encoding="utf-8")
+    assert 'exec "$RB" open >>"$LOG" 2>&1' in script and 'RB="/opt/rb/bin/research-brain"' in script
+    if os.name != "nt":
+        assert os.access(exe, os.X_OK)
+        r = subprocess.run(["sh", str(exe)], capture_output=True, env=dict(os.environ, RB_NO_ALERT="1"), timeout=20)
+        assert r.returncode == 1  # the command isn't there: says so, doesn't hang
+
+
+def test_window_messages_from_the_page(monkeypatch):
+    from app import macwindow
+    opened = []
+    monkeypatch.setattr(macwindow.webbrowser, "open", lambda u: opened.append(u))
+    h = macwindow._Header()
+    macwindow._on_message(h, '{"keep_clear": [[1, 2, 3, 4], [10, 0, 5, 5]]}')
+    assert h.keep_clear == [[1.0, 2.0, 3.0, 4.0], [10.0, 0.0, 5.0, 5.0]]
+    macwindow._on_message(h, '{"open": "http://127.0.0.1:8765/viewer/x"}')
+    macwindow._on_message(h, '{"open": "file:///etc/passwd"}')
+    macwindow._on_message(h, "not json")
+    assert opened == ["http://127.0.0.1:8765/viewer/x"]
+
+
+def test_window_header_drags_except_on_its_buttons(monkeypatch):
+    """A press on an empty part of research brain's header drags the window (a double-click zooms it);
+    its buttons and fields, the window's own buttons and everything below the header work as usual."""
+    from app import macwindow
+    did = []
+    monkeypatch.setattr(macwindow, "_drag", lambda w, e: did.append("drag"))
+    monkeypatch.setattr(macwindow, "_zoom", lambda w: did.append("zoom"))
+    S = types.SimpleNamespace
+
+    class WebKitHost:
+        pass
+
+    class ThemeWidget:
+        pass
+
+    def window(full_screen=False):
+        w = S(frame=lambda: S(size=S(height=800)), styleMask=lambda: (1 << 14) if full_screen else 0)
+        w.contentView = lambda: S(superview=lambda: S(hitTest_=lambda p: ThemeWidget() if p.x < 70 and p.y > 780 else WebKitHost()))
+        return w
+    nsw = window()
+    header = macwindow._Header()
+    header.keep_clear = [[300, 10, 200, 32]]  # the search box
+
+    def press(x, y_from_top, clicks=1, w=nsw):
+        ev = S(window=lambda: w, locationInWindow=lambda: S(x=x, y=800 - y_from_top), clickCount=lambda: clicks)
+        return macwindow._header_press(w, header, ev)
+    assert press(150, 26) is None and did == ["drag"]          # empty header: drags
+    assert press(150, 26, clicks=2) is None and did[-1] == "zoom"
+    n = len(did)
+    assert press(400, 26) is not None                          # the search box
+    assert press(30, 12) is not None                           # the red button
+    assert press(150, 300) is not None                         # the map
+    assert press(150, 26, w=window(full_screen=True)) is not None
+    assert len(did) == n
