@@ -109,7 +109,28 @@ def cmd_open(a) -> int:
             return 0
         time.sleep(0.25)
     print(f"research brain didn't start. What it said is in {log}", file=sys.stderr)
+    _tell("research brain didn't start", f"What it said is at the end of {log}")
     return 1
+
+
+def _tell(title: str, msg: str) -> None:
+    """Show an error when there's no terminal to print it in: opened from the Start menu or the app menu,
+    a failed start would otherwise do nothing at all. The Mac app shows its own alert. RB_NO_ALERT=1 (tests)
+    switches it off."""
+    if sys.platform == "darwin" or os.environ.get("RB_NO_ALERT") == "1" or (sys.stderr and sys.stderr.isatty()):
+        return
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, msg, title, 0x10)  # MB_ICONERROR
+        except (AttributeError, OSError):
+            pass
+        return
+    for cmd in (["zenity", "--error", f"--title={title}", f"--text={msg}"], ["kdialog", "--title", title, "--error", msg],
+                ["notify-send", "--icon=dialog-error", title, msg]):
+        if shutil.which(cmd[0]):
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **_detached())
+            return
 
 
 # ---------------------------------------------------------------- the dock / Start menu / app menu entry
@@ -364,10 +385,15 @@ def _windows_shortcut(remove: bool) -> str:
         return f"Removed {lnk}"
     programs.mkdir(parents=True, exist_ok=True)
     icon = paths.app_root() / "static" / "icons" / "icon.ico"
-    ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');"
-          f"$s.TargetPath='{_command()}';$s.Arguments='open';$s.WindowStyle=7;"
+    # pythonw (next to this Python) runs it with no console window at all; the research-brain command
+    # is a console program, so it would sit minimized in the taskbar while research brain starts
+    pyw = Path(sys.executable).with_name("pythonw.exe")
+    target, args = (str(pyw), f"-m {__package__ or 'app'}.cli open") if pyw.exists() else (_command(), "open")
+    q = lambda v: "'" + str(v).replace("'", "''") + "'"  # a PowerShell string, whatever the path holds
+    ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut({q(lnk)});"
+          f"$s.TargetPath={q(target)};$s.Arguments={q(args)};$s.WindowStyle=7;"
           f"$s.Description='research brain: your papers and notes';"
-          + (f"$s.IconLocation='{icon}';" if icon.exists() else "") + "$s.Save()")
+          + (f"$s.IconLocation={q(icon)};" if icon.exists() else "") + "$s.Save()")
     r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], capture_output=True, text=True)
     if r.returncode != 0:
         raise OSError(r.stderr.strip() or "PowerShell couldn't make the shortcut")

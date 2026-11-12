@@ -198,3 +198,52 @@ def test_server_imports_under_its_installed_name(tmp_path):
     r = subprocess.run([sys.executable, "-c", code, str(tmp_path)], cwd=str(tmp_path), capture_output=True,
                        text=True, timeout=120, env=dict(os.environ, RB_DATA_DIR=str(tmp_path / "data")))
     assert r.returncode == 0, r.stderr[-2000:]
+
+
+def test_windows_shortcut_has_the_brain_icon_and_no_console(monkeypatch, tmp_path):
+    """The Start-menu entry: pythonw (no console window), `open`, and static/icons/icon.ico."""
+    from app import launcher
+    env = tmp_path / "it's here" / "Scripts"  # an apostrophe must not break the PowerShell string
+    env.mkdir(parents=True)
+    (env / "pythonw.exe").write_bytes(b"")
+    monkeypatch.setattr(launcher.sys, "executable", str(env / "python.exe"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+    ran = []
+    monkeypatch.setattr(launcher.subprocess, "run", lambda cmd, **k: ran.append(cmd) or types.SimpleNamespace(returncode=0, stderr=""))
+    assert "Start menu" in launcher._windows_shortcut(False)
+    ps = ran[0][-1]
+    assert "$s.TargetPath='" + str(env / "pythonw.exe").replace("'", "''") + "'" in ps
+    assert f"$s.Arguments='-m {launcher.__package__}.cli open'" in ps
+    assert "icon.ico'" in ps and (launcher.paths.app_root() / "static" / "icons" / "icon.ico").is_file()
+
+
+def test_windows_icon_is_a_real_ico_with_the_sizes_windows_uses():
+    import struct
+    from pathlib import Path
+    data = (Path(__file__).resolve().parent.parent / "static" / "icons" / "icon.ico").read_bytes()
+    reserved, kind, count = struct.unpack_from("<HHH", data)
+    assert (reserved, kind) == (0, 1)
+    sizes = set()
+    for i in range(count):
+        w, _h, _c, _r, _p, _b, size, off = struct.unpack_from("<BBBBHHII", data, 6 + 16 * i)
+        assert data[off:off + 8] == b"\x89PNG\r\n\x1a\n" and off + size <= len(data)
+        sizes.add(w or 256)
+    assert {16, 32, 48, 256} <= sizes
+
+
+def test_a_failed_start_says_so_without_a_terminal(monkeypatch, tmp_path):
+    """From the Start menu or app menu there's no terminal: a failed start shows a dialog instead of nothing."""
+    from app import launcher
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("RB_NO_ALERT", raising=False)
+    monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: False)
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
+    monkeypatch.setattr(launcher.sys, "platform", "linux")
+    monkeypatch.setattr(launcher.os, "name", "posix")
+    monkeypatch.setattr(launcher.sys, "stderr", None)  # what pythonw and a menu launch give you
+    monkeypatch.setattr(launcher.shutil, "which", lambda n: "/usr/bin/zenity" if n == "zenity" else None)
+    shown = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **k: shown.append(cmd))
+    assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 1
+    dialog = shown[-1]
+    assert dialog[:2] == ["zenity", "--error"] and "app.log" in dialog[-1]
