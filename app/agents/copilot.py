@@ -84,6 +84,8 @@ class CopilotBackend(CliBackend):
     bin_names = ("copilot",)
     bin_env = "RB_COPILOT_BIN"
     verified_version = "1.0.109"
+    min_version = "1.0.109"  # --disable-client-telemetry and --trust-folder: not in 1.0.40, for one
+    update_hint = "Update it: open Terminal and run `copilot update` (or `npm i -g @github/copilot`)."
     install_hint = "Install it with `npm i -g @github/copilot` (or `brew install copilot-cli`), then run `copilot` and `/login`."
     signin_hint = "Open Terminal, run `copilot` and sign in with `/login`."
 

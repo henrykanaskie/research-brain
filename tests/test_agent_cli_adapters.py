@@ -555,7 +555,13 @@ def _real(bid: str) -> str | None:
     for k in (b.bin_env,):
         if os.environ.get(k):
             return None
-    return shutil.which(BIN[bid])
+    path = shutil.which(BIN[bid])
+    if path and getattr(b, "min_version", ""):  # too old for the lockdown: the app says so instead (detect)
+        from app.agents import _cli
+        ok, ver = _cli.version_of(path, b.version_args)
+        if ok and b.too_old(ver):
+            pytest.skip(f"{bid} {ver.splitlines()[0]} is older than {b.min_version}, which research brain needs")
+    return path
 
 
 def _help(path: str, *args: str) -> str:
@@ -911,3 +917,19 @@ def test_real_qwen_offers_no_tools(settings_dir, monkeypatch, tmp_path, mock_llm
     _wrap(monkeypatch, b, _no_proxy)
     answer = b.ask("Say hi.", system="SYSTEM-MARKER", timeout=120)
     _check(mock_llm, marker_dir, answer)
+
+
+def test_a_too_old_cli_says_how_to_update(monkeypatch):
+    """Copilot CLI 1.0.40 lacks switches the lockdown needs: it shows as too old with how to update, not as
+    a bare "unknown option" error on every question."""
+    from app.agents import _cli, copilot
+    b = copilot.CopilotBackend()
+    monkeypatch.setattr(b, "find", lambda: "/usr/local/bin/copilot")
+    monkeypatch.setattr(b, "signed_in", lambda path: (True, ""))
+    monkeypatch.setattr(_cli, "version_of", lambda path, args: (True, "GitHub Copilot CLI 1.0.40.\nRun 'copilot update'"))
+    d = b.detect()
+    assert not d.available and "1.0.40 is too old" in d.note and "copilot update" in d.note
+    monkeypatch.setattr(_cli, "version_of", lambda path, args: (True, "GitHub Copilot CLI 1.0.109."))
+    assert b.detect().available
+    err = str(b.error("error: unknown option '--disable-client-telemetry'"))
+    assert "too old" in err and "copilot update" in err

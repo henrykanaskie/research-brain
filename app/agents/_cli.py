@@ -102,6 +102,12 @@ def tool_guard(name: str, what: str) -> ToolGuardError:
 SAFE_NAME = re.compile(r"^[A-Za-z0-9_.@:/ -]{1,120}$")
 
 
+def _version_tuple(text: str) -> tuple[int, ...]:
+    """(1, 0, 40) from "GitHub Copilot CLI 1.0.40." and the like; () when there's no version in it."""
+    m = re.search(r"(\d+(?:\.\d+)+)", text or "")
+    return tuple(int(x) for x in m.group(1).split(".")) if m else ()
+
+
 class CliBackend(Backend):
     kind = "cli"
     bin_names: tuple[str, ...] = ()
@@ -109,6 +115,8 @@ class CliBackend(Backend):
     extra_paths: tuple[str, ...] = ()
     version_args: tuple[str, ...] = ("--version",)
     verified_version: str = ""        # the CLI version the lockdown was verified against (docs/agents.md)
+    min_version: str = ""             # older versions lack flags the lockdown needs: shown as "too old"
+    update_hint: str = ""             # e.g. "Open Terminal and run `copilot update`."
     install_hint: str = ""            # e.g. "Install it with `npm i -g @openai/codex`."
     signin_hint: str = ""             # e.g. "Run `codex` once and sign in with ChatGPT."
     experimental: bool = False        # off unless named in RB_EXPERIMENTAL_AGENTS
@@ -153,6 +161,8 @@ class CliBackend(Backend):
         ok, ver = version_of(path, self.version_args)
         if not ok:
             return Detection(False, path=path, note=f"`{os.path.basename(path)} --version` failed: {ver[:200]}")
+        if self.too_old(ver):
+            return Detection(False, version=ver, path=path, note=self.too_old_note(ver))
         if not self.enabled():
             return Detection(False, version=ver, path=path, note=(
                 f"Experimental and off by default: research_brain can't fully remove {self.name}'s tools. "
@@ -163,9 +173,23 @@ class CliBackend(Backend):
             signed, note = None, self.signin_hint
         return Detection(True, version=ver, path=path, signed_in=signed, note=note)
 
+    def too_old(self, version_text: str) -> bool:
+        """The installed CLI is older than min_version (False when either can't be read)."""
+        have, need = _version_tuple(version_text), _version_tuple(self.min_version)
+        return bool(have and need) and have < need
+
+    def too_old_note(self, version_text: str) -> str:
+        have = ".".join(map(str, _version_tuple(version_text))) or version_text[:40]
+        return (f"{self.name} {have} is too old: research brain needs {self.min_version} or newer, for the "
+                f"switches that keep it from using tools on your computer. {self.update_hint}").strip()
+
     def error(self, msg: str) -> AgentError:
         msg = (msg or "").strip()
         low = msg.lower()
+        if "unknown option" in low or "unknown flag" in low or "unrecognized option" in low:
+            # an older CLI without a switch the lockdown uses
+            return AgentError(f"{self.name} is too old for research brain (it said: {msg[:200]}). "
+                              f"{self.update_hint or self.install_hint}".strip())
         if any(h in low for h in _LIMIT_HINTS):
             return AgentError(f"{self.name} usage limit reached: {msg[:300]}")
         if any(h in low for h in _AUTH_HINTS):
