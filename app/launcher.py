@@ -159,6 +159,88 @@ exit 0
 """
 
 
+def _as_str(v) -> str:
+    """An AppleScript string literal."""
+    return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _mac_applet_source(cmd: str, port: int) -> str:
+    """A stay-open AppleScript app: a real Mac app, so it has a Dock icon (with the running dot) and answers
+    the Dock, unlike a shell script. It starts `research-brain open` in the background and returns at once;
+    clicking the Dock icon again opens another window; it quits by itself once research brain has stopped
+    (its windows closed a few minutes ago), and Quit from the Dock stops research brain too."""
+    data = paths.user_data_dir()
+    return f"""property rbCmd : {_as_str(cmd)}
+property logDir : {_as_str(data)}
+property logPath : {_as_str(data / "app.log")}
+property failFlag : {_as_str(data / "launch-failed")}
+property base : {_as_str(f"http://127.0.0.1:{port}")}
+property startedAt : missing value
+property wasUp : false
+property selfQuit : false
+
+on run
+	set startedAt to current date
+	set wasUp to false
+	set selfQuit to false
+	try
+		do shell script "test -x " & quoted form of rbCmd
+	on error
+		display alert "research brain isn't installed where this app expects it" message "It looked for " & rbCmd & ". Run ./install.sh again (it remakes this app), or run: research-brain install-app"
+		set selfQuit to true
+		quit
+		return
+	end try
+	launchRB()
+end run
+
+on reopen
+	if isUp() then launchRB()
+end reopen
+
+on launchRB()
+	set L to quoted form of logPath
+\tdo shell script "mkdir -p " & quoted form of logDir & "; rm -f " & quoted form of failFlag & "; date '+--- %c: opened from the app' >> " & L & "; (" & quoted form of rbCmd & " open >> " & L & " 2>&1 || touch " & quoted form of failFlag & ") </dev/null >/dev/null 2>&1 &"
+end launchRB
+
+on isUp()
+	try
+		do shell script "curl -sf -m 2 " & base & "/api/status >/dev/null"
+		return true
+	on error
+		return false
+	end try
+end isUp
+
+on idle
+	try
+		do shell script "test -e " & quoted form of failFlag
+		do shell script "rm -f " & quoted form of failFlag
+		display alert "research brain didn't start" message "What it said is at the end of " & logPath
+		set selfQuit to true
+		quit
+		return 5
+	end try
+	if isUp() then
+		set wasUp to true
+	else if wasUp or ((current date) - startedAt) > 150 then
+		set selfQuit to true
+		quit
+	end if
+	return 5
+end idle
+
+on quit
+	if not selfQuit then
+		try
+			do shell script "curl -sf -m 3 -X POST -H 'Content-Type: application/json' -d '{{}}' " & base & "/api/quit >/dev/null"
+		end try
+	end if
+	continue quit
+end quit
+"""
+
+
 def _mac_app(remove: bool) -> str:
     if remove:
         gone = []
@@ -177,7 +259,59 @@ def _mac_app(remove: bool) -> str:
     raise last_err or OSError("no Applications folder to write to")
 
 
+def _mac_icon(res: Path) -> Path | None:
+    icon = paths.app_root() / "static" / "icons" / "icon-512.png"
+    if not (icon.exists() and shutil.which("sips") and shutil.which("iconutil")):
+        return None
+    iconset = res / "rb.iconset"
+    iconset.mkdir(parents=True, exist_ok=True)
+    for s in (16, 32, 128, 256, 512):
+        subprocess.run(["sips", "-z", str(s), str(s), str(icon), "--out", str(iconset / f"icon_{s}x{s}.png")], capture_output=True)
+    out = res / "rb.icns"
+    ok = subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(out)], capture_output=True).returncode == 0
+    shutil.rmtree(iconset, ignore_errors=True)
+    return out if ok else None
+
+
+def _mac_register(app: Path) -> None:
+    """Sign it for this computer only (no developer account), and tell Launch Services and Spotlight now."""
+    for cmd in (["codesign", "--force", "--deep", "--sign", "-", str(app)], [LSREGISTER, "-f", str(app)], ["mdimport", str(app)]):
+        if shutil.which(cmd[0]) or Path(cmd[0]).exists():
+            subprocess.run(cmd, capture_output=True)
+
+
+def _mac_applet(app: Path) -> str:
+    """The Dock-icon app, compiled with osacompile (part of macOS)."""
+    port = int(os.environ.get("RB_PORT", "8765"))
+    src = app.parent / f".{APP_NAME}.applescript"
+    src.write_text(_mac_applet_source(_command(), port), encoding="utf-8")
+    tmp = app.parent / f".{APP_NAME}.building.app"
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        r = subprocess.run(["osacompile", "-s", "-o", str(tmp), str(src)], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise OSError(r.stderr.strip() or "osacompile failed")
+    finally:
+        src.unlink(missing_ok=True)
+    res = tmp / "Contents" / "Resources"
+    icns = _mac_icon(res)
+    if icns:
+        shutil.copyfile(icns, res / "applet.icns")
+        icns.unlink(missing_ok=True)
+    plist = tmp / "Contents" / "Info.plist"
+    for key, val in (("CFBundleIdentifier", "local.research-brain.launcher"), ("CFBundleName", APP_NAME),
+                     ("CFBundleDisplayName", APP_NAME)):
+        subprocess.run(["plutil", "-replace", key, "-string", val, str(plist)], capture_output=True)
+    shutil.rmtree(app, ignore_errors=True)
+    tmp.rename(app)
+    _mac_register(app)
+    return f"Added {app}: open it from Applications, Launchpad or Spotlight, and keep it in the Dock (right-click its icon > Options > Keep in Dock)."
+
+
 def _mac_bundle(app: Path) -> str:
+    if shutil.which("osacompile") and os.environ.get("RB_MAC_SCRIPT_APP") != "1":
+        return _mac_applet(app)
+    # without osacompile (never on a real Mac): a background-only shell-script app
     macos, res = app / "Contents" / "MacOS", app / "Contents" / "Resources"
     macos.mkdir(parents=True, exist_ok=True)
     res.mkdir(parents=True, exist_ok=True)

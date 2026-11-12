@@ -780,6 +780,23 @@ if IDLE_EXIT > 0:
     threading.Thread(target=_idle_watch, daemon=True, name="rb-idle-exit").start()
 
 
+@app.post("/api/quit")
+def api_quit(body: dict):
+    """Stop the server (what Quit on the Dock icon does). A JSON body is required, and the security
+    middleware only lets JSON POSTs through from this app's own pages or non-browser clients on this
+    computer, so another website can't stop it."""
+    import signal as _signal
+
+    def _stop():
+        time.sleep(0.3)  # let this response go out first
+        try:
+            _signal.raise_signal(_signal.SIGINT)
+        except (AttributeError, ValueError, OSError):
+            os._exit(0)
+    threading.Thread(target=_stop, daemon=True, name="rb-quit").start()
+    return {"ok": True, "stopping": True}
+
+
 @app.get("/api/agents")
 def api_agents(fresh: bool = False):
     if fresh:

@@ -9,6 +9,8 @@ import urllib.request
 
 import pytest
 
+from test_api import client  # noqa: F401  (fixture)
+
 
 def test_open_reuses_a_running_server(monkeypatch):
     from app import launcher
@@ -114,3 +116,44 @@ def test_server_stops_after_its_windows_close(tmp_path):
     finally:
         if p.poll() is None:
             p.kill()
+
+
+def test_quit_endpoint_stops_the_server(client, monkeypatch):  # noqa: F811
+    import signal
+    import time as _t
+    hits = []
+    monkeypatch.setattr(signal, "raise_signal", lambda s: hits.append(s))
+    assert client.post("/api/quit", json={}).json()["stopping"]
+    for _ in range(40):
+        if hits:
+            break
+        _t.sleep(0.05)
+    assert hits == [signal.SIGINT]
+    # not as a form post (what another website could send without asking)
+    assert client.post("/api/quit", data={"x": "1"}).status_code in (400, 403, 415, 422)
+
+
+def test_mac_applet_source_starts_in_background_and_quits_with_the_server():
+    from app import launcher
+    src = launcher._mac_applet_source('/opt/my "rb"/research-brain', 8765)
+    assert 'property rbCmd : "/opt/my \\"rb\\"/research-brain"' in src
+    assert "on reopen" in src and "on idle" in src and "continue quit" in src
+    assert "/api/quit" in src and "http://127.0.0.1:8765" in src and "</dev/null >/dev/null 2>&1 &" in src
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="osacompile is part of macOS")
+def test_mac_applet_really_compiles(tmp_path, monkeypatch):
+    from app import launcher
+    monkeypatch.setenv("RB_MAC_APP_DIR", str(tmp_path))
+    monkeypatch.setattr(launcher, "_command", lambda: "/opt/rb/bin/research-brain")
+    monkeypatch.setattr(launcher, "_mac_register", lambda app: None)  # don't register a test app with Spotlight
+    out = launcher._mac_app(False)
+    app = tmp_path / "research brain.app"
+    assert "Keep in Dock" in out and (app / "Contents" / "Resources" / "Scripts" / "main.scpt").is_file()
+    plist = subprocess.run(["plutil", "-convert", "xml1", "-o", "-", str(app / "Contents" / "Info.plist")],
+                           capture_output=True, text=True).stdout
+    assert "local.research-brain.launcher" in plist and "LSUIElement" not in plist
+    assert "OSAAppletStayOpen" in plist  # stays open: the Dock icon lives as long as research brain runs
+    src = subprocess.run(["osadecompile", str(app / "Contents" / "Resources" / "Scripts" / "main.scpt")],
+                         capture_output=True, text=True).stdout
+    assert "/opt/rb/bin/research-brain" in src
