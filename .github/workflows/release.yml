@@ -1,0 +1,65 @@
+name: release
+
+# Push a tag like v0.7.0 (matching __version__ in app/__init__.py) to publish a release:
+#   git tag v0.7.0 && git push origin v0.7.0
+# The full test suite runs first on Linux, Windows and macOS. The release gets the wheel, the install
+# scripts, constraints.txt, the browser extension as a zip and latest.json, the file `research-brain
+# update` reads. Copy the assets into the lab's update folder to roll it out (see docs/releasing.md).
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  release:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches the app's version
+        run: |
+          V=$(python -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('app/__init__.py').read()).group(1))")
+          if [ "v$V" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match __version__ $V in app/__init__.py"; exit 1
+          fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+      - name: Build the wheel and source archive
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - name: Smoke-test the wheel in a clean environment
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install -q -c constraints.txt dist/*.whl
+          /tmp/smoke/bin/research-brain --version
+          /tmp/smoke/bin/python -c "import research_brain.paths as p; assert (p.app_root() / 'static' / 'index.html').is_file()"
+      - name: Package the extension, write latest.json and the notes
+        run: |
+          (cd extension && zip -qr "../dist/research-brain-extension-$VERSION.zip" .)
+          PREV=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          if [ -n "$PREV" ]; then RANGE="$PREV..$GITHUB_REF_NAME"; else RANGE="$GITHUB_REF_NAME"; fi
+          git log --no-merges --pretty='- %s' $RANGE > notes.md
+          python - <<'PY'
+          import datetime, glob, json, os
+          wheel = os.path.basename(glob.glob("dist/*.whl")[0])
+          json.dump({"version": os.environ["VERSION"], "wheel": wheel,
+                     "notes": open("notes.md", encoding="utf-8").read().strip(),
+                     "published": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")},
+                    open("dist/latest.json", "w", encoding="utf-8"), indent=1)
+          PY
+          cp install.sh install.ps1 constraints.txt dist/
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "research brain $VERSION" --notes-file notes.md

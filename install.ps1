@@ -13,7 +13,18 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Src = $env:RB_SOURCE
 if (-not $Src) {
   if ((Test-Path (Join-Path $Here "pyproject.toml")) -and (Test-Path (Join-Path $Here "app"))) { $Src = $Here }
-  else { Write-Error "Set RB_SOURCE to a research_brain wheel, or git+https://github.com/henrykanaskie/research-brain.git"; exit 2 }
+  elseif (Test-Path (Join-Path $Here "latest.json")) { $Src = $Here }   # a release / the lab's update folder
+  else { Write-Error "Set RB_SOURCE to a research_brain wheel, a release folder, or git+https://github.com/henrykanaskie/research-brain.git"; exit 2 }
+}
+$UpdateSource = ""
+if ((Test-Path $Src -PathType Container) -and (Test-Path (Join-Path $Src "latest.json"))) {
+  # a release folder: install the wheel latest.json names, and update from this folder from now on
+  $UpdateSource = (Resolve-Path $Src).Path
+  $Latest = Get-Content (Join-Path $UpdateSource "latest.json") -Raw | ConvertFrom-Json
+  $Wheel = Join-Path $UpdateSource $Latest.wheel
+  if (-not (Test-Path $Wheel)) { Write-Error "latest.json in $UpdateSource names $($Latest.wheel), which isn't there"; exit 2 }
+  $Src = $Wheel
+  if (Test-Path (Join-Path $UpdateSource "constraints.txt")) { $Here = $UpdateSource }
 }
 $Spec = $Src
 if ($env:RB_EMBEDDINGS -eq "1") {
@@ -44,9 +55,19 @@ function Add-UserPath($dir) {
   if (($env:Path -split ";") -notcontains $dir) { $env:Path = "$env:Path;$dir" }
 }
 
+# uv brings its own Python, so nobody has to install one first. Get it if it's missing (RB_NO_UV=1 skips).
+if (-not (Get-Command uv -ErrorAction SilentlyContinue) -and $env:RB_NO_UV -ne "1") {
+  Write-Host "-> Installing uv (Astral's Python installer)"
+  try {
+    powershell -ExecutionPolicy ByPass -NoProfile -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Null
+    $UvBin = Join-Path $env:USERPROFILE ".local\bin"
+    if (($env:Path -split ";") -notcontains $UvBin) { $env:Path = "$env:Path;$UvBin" }
+  } catch { Write-Host "  Couldn't install uv; falling back to pipx or your Python." }
+}
 if (Get-Command uv -ErrorAction SilentlyContinue) {
   Write-Host "-> Installing with uv"
-  if ($Constraints) { uv tool install --force --python ">=3.10" -c $Constraints $Spec } else { uv tool install --force --python ">=3.10" $Spec }
+  # Python 3.12: what constraints.txt's pinned versions are built and tested for (uv downloads it if needed)
+  if ($Constraints) { uv tool install --force --python 3.12 -c $Constraints $Spec } else { uv tool install --force --python 3.12 $Spec }
   uv tool update-shell 2>$null | Out-Null
 } elseif (Get-Command pipx -ErrorAction SilentlyContinue) {
   Write-Host "-> Installing with pipx"
@@ -61,6 +82,9 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
   & $exe @rest -m venv $Venv
   $VPy = Join-Path $Venv "Scripts\python.exe"
   & $VPy -m pip install -q --upgrade pip
+  # constraints.txt pins wheels built for Python 3.12+; an older Python gets the newest versions that fit it
+  & $VPy -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)"
+  if ($LASTEXITCODE -ne 0) { $Constraints = "" }
   if ($Constraints) { & $VPy -m pip install -q --upgrade -c $Constraints $Spec } else { & $VPy -m pip install -q --upgrade $Spec }
   Add-UserPath (Join-Path $Venv "Scripts")
 }
@@ -68,6 +92,10 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
 $Cmd = Get-Command research-brain -ErrorAction SilentlyContinue
 if (-not $Cmd) { Write-Error "research-brain was installed but isn't on PATH yet. Open a new terminal and run: research-brain"; exit 1 }
 Write-Host "-> Installed: $(& $Cmd.Source --version)"
+if ($UpdateSource) {
+  & $Cmd.Source update --source $UpdateSource | Out-Null
+  Write-Host "  Updates will come from $UpdateSource (research-brain update)."
+}
 
 # Start menu shortcut: starts the app and opens it in your browser (close the window to stop it)
 try {

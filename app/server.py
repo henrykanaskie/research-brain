@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import access as access_mod, agents, apikeys, budget, citations, claude_cli, locate as locate_mod, metadata, openalex, scholar, security
+from . import access as access_mod, agents, apikeys, budget, citations, claude_cli, locate as locate_mod, metadata, openalex, scholar, security, updates as updates_mod
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .pdftext import extract, guess_title
@@ -459,6 +459,25 @@ def api_ai_usage_set(body: AIUsageIn):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {**out, "usage": budget.usage(privacy.read_log(5000), days=7)}
+
+
+@app.get("/api/update")
+def api_update(refresh: bool = False):
+    """Whether a newer release exists in the update source (checked at most daily; see app/updates.py)."""
+    return updates_mod.check(force=refresh)
+
+
+class UpdateSourceIn(BaseModel):
+    source: str = ""
+
+
+@app.put("/api/update/source")
+def api_update_source(body: UpdateSourceIn):
+    try:
+        updates_mod.set_source(body.source)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return updates_mod.check(force=True)
 
 
 class LookupKeyIn(BaseModel):

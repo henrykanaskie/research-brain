@@ -2,7 +2,9 @@ name: tests
 
 on:
   push:
+    branches: ["**"]   # tags run through release.yml, which calls this workflow first
   pull_request:
+  workflow_call:
 
 jobs:
   # Everything, browser tests included, on Linux.

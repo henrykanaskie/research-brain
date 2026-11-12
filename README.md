@@ -12,29 +12,35 @@ Markdown files, so your library folder also opens as an Obsidian vault.
 
 ## Install and start it
 
-It runs on macOS, Windows and Linux. You need Python 3.10 or newer.
+It runs on macOS, Windows and Linux. You don't need Python first: the installer gets
+[uv](https://docs.astral.sh/uv/), which brings its own Python 3.12.
 
-**macOS and Linux**
+**From the lab's update folder** (the usual way; no GitHub account needed). Open the shared folder your
+lab publishes releases to (a synced drive or network share) and run the installer inside it:
+
+```bash
+./install.sh                                            # macOS and Linux
+powershell -ExecutionPolicy Bypass -File .\install.ps1  # Windows: also adds "research brain" to the Start menu
+research-brain                                          # starts the app and opens the browser; Ctrl+C stops it
+```
+
+It installs the newest release there and remembers the folder, so **`research-brain update`** brings you up
+to date later. When a newer release lands in the folder, a small **Update** chip appears next to the logo;
+**Library settings › Updates** shows what's new. Updating never touches your library, and a library that a
+newer version has converted won't open in an older one (it stops with a clear message instead).
+
+**From the repository** (you have access to it on GitHub):
 
 ```bash
 git clone https://github.com/henrykanaskie/research-brain.git
 cd research-brain
-./install.sh        # installs the `research-brain` command (uv, pipx or a venv); Linux also gets an app-menu entry
-research-brain      # starts the app and opens the browser; Ctrl+C stops it
-```
-
-**Windows** (PowerShell)
-
-```powershell
-git clone https://github.com/henrykanaskie/research-brain.git
-cd research-brain
-powershell -ExecutionPolicy Bypass -File .\install.ps1   # the command, plus "research brain" in the Start menu
-research-brain
+./install.sh        # or install.ps1 on Windows; Linux also gets an app-menu entry
 ```
 
 Or double-click `research_brain.cmd` in File Explorer: it installs on first use, then starts the app.
-No Python yet? `winget install Python.Python.3.12`. If you already use `uv`, one line works on every OS:
-`uv tool install git+https://github.com/henrykanaskie/research-brain.git`.
+With uv, one line installs a release on every OS:
+`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v0.7.0"`.
+Publishing a release and rolling it out to the lab: [docs/releasing.md](docs/releasing.md).
 
 Or, without installing, from a checkout:
 
@@ -53,7 +59,7 @@ login is your identity and everything autosaves. An older `./vault` with notes k
 is; **View → Library settings** offers to move it. Details, and how PDFs are obtained:
 [docs/storage-and-distribution.md](docs/storage-and-distribution.md).
 
-**Requirements:** Python 3.10+, plus one AI tool installed and signed in (see "Choosing an AI agent"
+**Requirements:** Python 3.10+ (the installers get 3.12 through uv), plus one AI tool installed and signed in (see "Choosing an AI agent"
 below). Everything except critiques, explanations and questions works without one. For Claude Code, the
 app finds `claude` on your PATH, `~/.local/bin` (`%USERPROFILE%\.local\bin\claude.exe` on Windows), Homebrew,
 npm (`%APPDATA%\npm` on Windows), WinGet, Scoop, snap or nvm; if it lives somewhere else, set

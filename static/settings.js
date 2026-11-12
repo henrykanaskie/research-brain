@@ -45,6 +45,12 @@
   .rb-profile-tag { margin-left: 8px; font: 500 11.5px/1 var(--sans); color: var(--ink-2); border: 1px solid var(--rule);
     border-radius: 3px; padding: 3px 6px; cursor: pointer; background: transparent; }
   .rb-profile-tag:hover { color: var(--ink); }
+  .rb-update-chip { margin-left: 8px; font: 500 11.5px/1 var(--sans); color: var(--red); border: 1px solid currentColor;
+    border-radius: 3px; padding: 3px 6px; cursor: pointer; background: transparent; opacity: .85; }
+  .rb-update-chip:hover { opacity: 1; }
+  .ls-code { font: 12.5px/1.4 ui-monospace, Menlo, Consolas, monospace; background: var(--sheet, rgba(0,0,0,.04)); padding: 4px 8px; border-radius: 3px; }
+  .ls-notes pre { white-space: pre-wrap; font: 12.5px/1.5 var(--sans); color: var(--ink-2); margin: 6px 0 0; max-height: 160px; overflow: auto; }
+  .ls-notes summary { font: 12.5px var(--sans); color: var(--ink-2); cursor: pointer; }
   .ls-agents { list-style: none; margin: 6px 0 0; padding: 0; }
   .ls-agents li { padding: 8px 0; border-bottom: 1px solid var(--rule); font: 13px/1.45 var(--sans); }
   .ls-agents li:last-child { border-bottom: 0; }
@@ -210,6 +216,11 @@
       el('p', { class: 'ls-p', text: 'Related papers, citations and metadata come from Semantic Scholar, with OpenAlex as a backup when it is busy. Both are free. Without a key, Semantic Scholar shares one allowance among everyone, so it sometimes says “rate limited”; a free personal key fixes that. Keys stay on this computer and are sent only to their own service.' }));
     renderKeys(keySec, say);
 
+    // Updates (app/updates.py)
+    const updSec = el('section', { class: 'ls-sec', id: 'ls-updates' },
+      el('div', { class: 'ls-h', text: 'Updates' }));
+    renderUpdates(updSec, say);
+
     // Saving from publisher pages (the browser extension's primary button)
     const modeSec = el('section', { class: 'ls-sec', id: 'ls-save-mode' },
       el('div', { class: 'ls-h', text: 'When saving from a publisher page' }));
@@ -259,7 +270,7 @@
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
     const card = el('div', { class: 'modal-card ls-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-title' },
       el('div', { class: 'modal-title', id: 'ls-title', text: 'Library settings' }),
-      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, keySec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
+      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, keySec, updSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
     const wrap = el('div', { class: 'modal', id: 'library-settings' }, card);
     wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
     document.body.appendChild(wrap);
@@ -270,9 +281,59 @@
       if (focus === 'citations' && citeSec) citeSec.scrollIntoView({ block: 'start' });
       if (focus === 'privacy' && privSec) privSec.scrollIntoView({ block: 'start' });
       if (focus === 'lookup') keySec.scrollIntoView({ block: 'start' });
+      if (focus === 'updates') updSec.scrollIntoView({ block: 'start' });
       (focus === 'profiles' && !prof.pinned ? newName : done).focus({ preventScroll: true });
     }, 0);
   }
+
+  // ---------------------------------------------------------------- updates (app/updates.py)
+  function updateLine(u) {
+    if (!u.enabled) return 'Update checks are off (RB_UPDATE_CHECK=0).';
+    if (u.newer) return `research_brain ${u.latest} is available (you have ${u.current}).`;
+    if (u.latest) return `You have the newest version, ${u.current}.`;
+    return u.source === 'github'
+      ? `You have ${u.current}. No release found: the repository is private, so set your lab’s update folder below (or sign in with the gh command).`
+      : `You have ${u.current}. Nothing readable at the update source yet.`;
+  }
+  async function renderUpdates(sec, say) {
+    let u;
+    try { u = await api('/api/update'); } catch { return; }
+    const line = el('p', { class: 'ls-p', text: updateLine(u) });
+    const how = el('div', { class: 'ls-upd-how', hidden: !u.newer },
+      el('p', { class: 'ls-p', text: 'Quit research brain, then run this in a terminal (it keeps your library as it is):' }),
+      el('div', { class: 'ls-row' }, el('code', { class: 'ls-code', text: u.command }),
+        el('button', { class: 'btn btn-text', type: 'button', text: 'Copy', onclick: () => navigator.clipboard.writeText(u.command).then(() => say('Copied.')) })));
+    const notes = u.notes ? el('details', { class: 'ls-notes' }, el('summary', { text: `What’s new in ${u.latest}` }), el('pre', { text: u.notes })) : null;
+    const inp = el('input', { type: 'text', id: 'ls-upd-src', spellcheck: 'false', value: u.source === 'github' ? '' : u.source,
+      placeholder: 'Lab update folder (e.g. a shared drive) or an https URL of latest.json', 'aria-label': 'Update source' });
+    const save = el('button', { class: 'btn', type: 'button', text: 'Save' });
+    const check = el('button', { class: 'btn btn-text', type: 'button', text: 'Check now' });
+    const refresh = (nu) => { u = nu; line.textContent = updateLine(u); how.hidden = !u.newer; how.querySelector('code').textContent = u.command; renderUpdateChip(u); };
+    save.addEventListener('click', async () => {
+      try { refresh(await api('/api/update/source', json('PUT', { source: inp.value.trim() }))); say(inp.value.trim() ? 'Update source saved.' : 'Using GitHub for updates.'); }
+      catch (e) { say(e.message, true); }
+    });
+    check.addEventListener('click', async () => {
+      check.disabled = true;
+      try { refresh(await api('/api/update?refresh=true')); say(updateLine(u)); } catch (e) { say(e.message, true); } finally { check.disabled = false; }
+    });
+    sec.append(line, how, notes || '',
+      el('label', { class: 'ls-p', for: 'ls-upd-src', text: 'Where your lab publishes releases. The folder only needs to be synced to this computer; no GitHub account required.' }),
+      el('div', { class: 'ls-row' }, inp, save, check));
+  }
+  /** A small "Update" chip beside the logo when a newer release exists; it opens Settings → Updates. */
+  function renderUpdateChip(u) {
+    const brand = document.querySelector('#topbar .brand');
+    let chip = document.getElementById('rb-update-chip');
+    if (!brand || !u || !u.newer) { if (chip) chip.remove(); return; }
+    if (!chip) {
+      chip = el('button', { id: 'rb-update-chip', class: 'rb-update-chip', type: 'button', onclick: () => openSettings('updates') });
+      (document.getElementById('rb-profile-tag') || brand).after(chip);
+    }
+    chip.textContent = `Update ${u.latest}`;
+    chip.title = `research_brain ${u.latest} is available (you have ${u.current}). Click for how to update.`;
+  }
+  setTimeout(() => { api('/api/update').then(renderUpdateChip).catch(() => {}); }, 4000);
 
   // ---------------------------------------------------------------- paper lookup keys (app/apikeys.py)
   const KEY_HELP = {

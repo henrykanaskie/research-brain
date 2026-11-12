@@ -227,6 +227,62 @@ def cmd_move_legacy(a) -> int:
     return 0
 
 
+def cmd_update(a) -> int:
+    from . import updates
+    if a.source is not None:
+        try:
+            v = updates.set_source(a.source)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        print(f"Update source: {v or 'the GitHub repository (needs a GitHub token or the gh command)'}")
+        return 0
+    info = updates.fetch() if not a.to else None
+    if a.to:
+        info = {"version": a.to.lstrip("v"), "tag": "v" + a.to.lstrip("v"), "wheel": ""}
+        base = updates.fetch()  # a folder source may hold that version's wheel
+        if base and base.get("source") and Path(base["source"]).is_dir():
+            w = next(Path(base["source"]).glob(f"research_brain-{info['version']}-*.whl"), None)
+            if w:
+                info.update(wheel=str(w), source=base["source"])
+    if not info:
+        src = updates.source()
+        print("Couldn't find a release. " + (f"Nothing readable at {src}." if src else
+              "Set the lab's update folder with: research-brain update --source <folder>, or sign in with `gh auth login`."),
+              file=sys.stderr)
+        return 1
+    print(f"Installed: {__version__}   Latest: {info['version']}")
+    if a.check:
+        return 0
+    if not a.to and not updates.newer(info["version"]):
+        print("You're up to date.")
+        return 0
+    how = updates.how_installed()
+    if how == "checkout":
+        print("This is a source checkout: update it with `git pull` (then restart the app).")
+        return 0
+    cmd = updates.install_command(info, how)
+    if cmd is None or not shutil.which(cmd[0]) and cmd[0] != sys.executable:
+        print(f"Couldn't find {cmd[0] if cmd else 'an installer'}. Reinstall with install.sh / install.ps1.", file=sys.stderr)
+        return 1
+    if _port_in_use("127.0.0.1", int(os.environ.get("RB_PORT", "8765"))):
+        print("research brain is running. Quit it first (Ctrl+C in its window), then run this again.", file=sys.stderr)
+        return 1
+    print("→ " + " ".join(f'"{c}"' if " " in c else c for c in cmd))
+    if os.name == "nt" and how in ("uv", "pipx"):
+        # Windows can't replace research-brain.exe while it's the program running this: hand the install
+        # to a new window that starts after this one exits.
+        line = subprocess.list2cmdline(cmd)
+        subprocess.Popen(["cmd", "/c", f"timeout /t 2 /nobreak >nul & {line} & echo. & echo Done. Start it with: research-brain & pause"],
+                         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
+        print("Updating in a new window…")
+        return 0
+    r = subprocess.run(cmd)
+    if r.returncode == 0:
+        print(f"Updated to {info['version']}. Start it with: research-brain")
+    return r.returncode
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="research-brain", description="A local research library for papers and notes.")
     ap.add_argument("--version", action="version", version=f"research_brain {__version__}")
@@ -272,6 +328,14 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--unschedule", action="store_true", help="stop the nightly snapshot")
     lib_opts(b)
     b.set_defaults(fn=cmd_backup)
+
+    u = sub.add_parser("update", help="install the newest release (from the lab's update folder or GitHub)")
+    u.add_argument("--check", action="store_true", help="only say whether there's a newer version")
+    u.add_argument("--to", metavar="VERSION", help="install this version (also to go back to an older one)")
+    u.add_argument("--source", metavar="FOLDER_OR_URL",
+                   help="where releases are published: the lab's shared folder holding latest.json, or its https URL "
+                        "(\"\" goes back to GitHub)")
+    u.set_defaults(fn=cmd_update)
 
     m = sub.add_parser("move-legacy-vault", help="move an old ./vault into the data folder")
     m.add_argument("--port", type=int, default=int(os.environ.get("RB_PORT", "8765")))

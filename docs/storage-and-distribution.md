@@ -297,11 +297,11 @@ its `.venv` and then runs `python -m app.cli serve`.
    `~/.local/bin`. Running it again updates. `RB_EMBEDDINGS=1` adds sentence-transformers.
 4. From a checkout: `./run.sh`, as before.
 
-**Releases.** Tag `vX.Y.Z`. CI runs the tests, builds the wheel (`python -m build`), and attaches the
-wheel, `install.sh` and a zip of `extension/` to a release on the lab's (private) GitHub. The version
-comes from `app/__init__.py` (`__version__`), which `research-brain --version` and `/api/library`
-report. *Design only:* the release workflow file isn't added yet, because the repository's hosting and
-signing aren't decided. The CI test workflow already exists.
+**Releases.** Tag `vX.Y.Z`. `.github/workflows/release.yml` runs the tests on every OS, builds and
+smoke-tests the wheel, and publishes it with the installers, `constraints.txt`, the extension zip and
+`latest.json` as a GitHub release. The lab copies those files into a shared update folder; installs from
+there remember it, show an **Update** chip when a newer version lands, and update with `research-brain
+update`. See [releasing.md](releasing.md).
 
 **Browser extension.**
 
