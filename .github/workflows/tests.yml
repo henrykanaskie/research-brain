@@ -68,3 +68,5 @@ jobs:
           pip install .
           research-brain --version
           research-brain where
+          research-brain install-app
+          research-brain install-app --remove

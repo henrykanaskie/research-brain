@@ -97,19 +97,9 @@ if ($UpdateSource) {
   Write-Host "  Updates will come from $UpdateSource (research-brain update)."
 }
 
-# Start menu shortcut: starts the app and opens it in your browser (close the window to stop it)
-try {
-  $Programs = [Environment]::GetFolderPath("Programs")
-  $Lnk = Join-Path $Programs "research brain.lnk"
-  $Shell = New-Object -ComObject WScript.Shell
-  $S = $Shell.CreateShortcut($Lnk)
-  $S.TargetPath = $Cmd.Source
-  $S.WorkingDirectory = $env:USERPROFILE
-  $S.Description = "research brain: your research library"
-  $S.WindowStyle = 7   # minimized
-  $S.Save()
-  Write-Host "  Added 'research brain' to the Start menu."
-} catch { Write-Host "  (Couldn't add a Start menu shortcut: $($_.Exception.Message))" }
+# Start menu shortcut: opens research brain like an app only when you click it; it stops by itself a few
+# minutes after its window closes (research-brain open). Nothing runs at login.
+& $Cmd.Source install-app | ForEach-Object { Write-Host "  $_" }
 
 $Agents = @("claude", "codex", "gemini", "copilot", "opencode", "ollama") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue }
 if (-not $Agents) {

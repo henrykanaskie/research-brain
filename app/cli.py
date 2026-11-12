@@ -1,6 +1,8 @@
 """The `research-brain` command.
 
     research-brain                       start the app (same as `serve`) and open it in the browser
+    research-brain open                  open it like an app: starts it if needed, stops after its windows close
+    research-brain install-app [--remove] add it to the Dock/Launchpad (macOS), Start menu or app menu
     research-brain serve [--host H] [--port P] [--vault DIR | --profile NAME] [--no-open]
     research-brain --version
     research-brain where                 print the data folder and the library this would use
@@ -106,9 +108,12 @@ def cmd_serve(a) -> int:
             print(f"research_brain {__version__}: {url}  library: {r.vault}"
                   + (f"  profile: {r.profile}" if r.profile else "") + "  (Ctrl+C to stop)")
             env = dict(os.environ, RB_RESTART_FILE=str(restart_file), RB_PORT=str(port))
+            if getattr(a, "quit_when_closed", False):
+                env.setdefault("RB_IDLE_EXIT", "180")
             args = [sys.executable, "-m", "uvicorn", f"{__package__ or 'app'}.server:app", "--host", host, "--port", str(port),
                     "--log-level", a.log_level]
-            child = subprocess.Popen(args, env=env, cwd=str(paths.PKG_DIR.parent))
+            quiet = {"creationflags": 0x08000000} if os.name == "nt" and getattr(a, "quit_when_closed", False) else {}
+            child = subprocess.Popen(args, env=env, cwd=str(paths.PKG_DIR.parent), **quiet)  # no console window when opened as an app
             if first and not a.no_open:
                 _open_when_ready(url)
             first = False
@@ -299,8 +304,20 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-open", action="store_true", default=bool(os.environ.get("RB_NO_OPEN")),
                    help="don't open a browser tab")
     s.add_argument("--log-level", default="warning")
+    s.add_argument("--quit-when-closed", action="store_true",
+                   help="stop by itself a few minutes after the last research brain window closes (what `open` uses)")
     lib_opts(s)
     s.set_defaults(fn=cmd_serve)
+
+    from . import launcher
+    o = sub.add_parser("open", help="open research brain like an app: starts it if needed, stops when its windows close")
+    o.add_argument("--port", type=int, default=int(os.environ.get("RB_PORT", "8765")))
+    o.add_argument("--profile", default="")
+    o.set_defaults(fn=launcher.cmd_open)
+
+    ia = sub.add_parser("install-app", help="add research brain to the Dock/Launchpad, Start menu or app menu")
+    ia.add_argument("--remove", action="store_true", help="take the entry away again")
+    ia.set_defaults(fn=launcher.cmd_install_app)
 
     w = sub.add_parser("where", help="print the data folder and which library would be used")
     lib_opts(w)

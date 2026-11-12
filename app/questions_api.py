@@ -268,6 +268,43 @@ def api_question_agent_search(qid: str):
     return {"started": started, "running": True}
 
 
+class DirectionsIn(BaseModel):
+    dry: bool = False            # only say what would be sent
+    exclude: list[str] = []      # evidence ids you unticked
+    include_answer: bool = False # your current answer goes only if you tick it
+    focus: str = ""              # what kind of directions you want, in your words
+
+
+@router.post("/api/questions/{qid}/directions")
+def api_question_directions(qid: str, body: DirectionsIn):
+    """Research directions from the question's kept evidence (app/directions.py). dry=true: the preview."""
+    from . import directions as D
+    q = _question(qid)
+    ok, why = Q.ai_allowed(q)
+    if not ok:
+        raise HTTPException(403, why)
+    data = Q.load(ctx.store, qid)
+    by_id = {n["id"]: n for n in ctx.store.all()}
+    sources = D.question_sources(q, data, by_id, Q.source_allowed)
+    if not sources:
+        raise HTTPException(400, "Keep some evidence first (supports, against or related): directions are built from it.")
+    head = f"OPEN QUESTION: {q['title']}\n{q.get('body') or ''}"
+    extra = f"THEIR CURRENT ANSWER:\n{q.get('answer')}" if body.include_answer and (q.get("answer") or "").strip() else ""
+    context, used, left = D.build(head, sources, set(body.exclude), extra)
+    instr = D.instruction("open research question", body.focus)
+    pv = {**D.preview(context, used, left, instr), "answer_included": bool(extra), "has_answer": bool((q.get("answer") or "").strip())}
+    if body.dry:
+        return {**pv, "runs": D.runs(ctx.store, f"question:{qid}")}
+    if not used:
+        raise HTTPException(403, "Nothing is left to send: every source is private or unticked.")
+    if ctx.ask is None:
+        raise HTTPException(503, "No AI agent is set up")
+    text = ctx.ask(instr, context, purpose="research directions", sources=[s["note"] for s in used if s.get("note")])
+    run = {"at": D.now(), "text": text, "used": len(used), "left_out": len(left), "focus": body.focus.strip()[:300],
+           "answer_included": bool(extra)}
+    return {**pv, "run": run, "runs": D.save_run(ctx.store, f"question:{qid}", run)}
+
+
 SUMMARY_INSTRUCTION = (
     "The user's open research QUESTION and the evidence they kept for it are on stdin, each piece marked "
     "supports, against or related, with its source. Summarise where the evidence stands in at most 6 short "

@@ -104,7 +104,7 @@ def test_question_evidence_triage_badge_list(server, browser):
     page.wait_for_function(f"fetch('/api/notes/{qid}').then(r => r.json()).then(n => n.answer.includes('sqrt') && n.title.startsWith('Could'))")
     expect(page.locator("#oq-status .oq-private")).to_contain_text("no AI sees it")
     expect(page.locator("#oq-ai .oq-ai-off")).to_contain_text("private")
-    expect(page.locator("#oq-ai button")).to_be_disabled()
+    expect(page.locator("#oq-ai button").first).to_be_disabled()
     expect(page.locator("#oq-evidence .oq-empty")).to_contain_text("No evidence yet")
 
     # add the relevant papers: evidence arrives in the background
@@ -218,7 +218,7 @@ def test_question_reach_and_scouted_papers(server, browser):
     expect(reach.locator("[data-reach=private]")).to_have_attribute("aria-checked", "true")
     reach.locator("[data-reach=library]").click()
     expect(page.locator("#oq-reach-say")).to_contain_text("AI features may read it")
-    expect(page.locator("#oq-ai button")).to_be_enabled()
+    expect(page.locator("#oq-ai button").first).to_be_enabled()
     reach.locator("[data-reach=scout]").click()
     expect(page.locator(".oq-scout-line")).to_contain_text("Scouting published papers for")
     assert "erosion" in page.locator(".oq-scout-line q").inner_text().lower()

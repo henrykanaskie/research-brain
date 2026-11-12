@@ -198,6 +198,42 @@ function renderSaveLink() {
   $("#annotateBtn").classList.remove("primary");  // saving is the main thing to do on an article page
 }
 
+/* ── Topic: what you save from the home view is filed in the topic you pick (remembered) ── */
+const TOPIC_KEY = "rb_topic";
+async function loadTopics() {
+  const sel = $("#topicSel");
+  let list = [];
+  try { list = await api("/api/topics", {}, 4000); } catch { return; }
+  let last = "";
+  try { last = (await chrome.storage.local.get(TOPIC_KEY))[TOPIC_KEY] || ""; } catch { }
+  sel.innerHTML = `<option value="">None</option>${(list || []).map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join("")}<option value="__new">New topic…</option>`;
+  if (last && (list || []).some((t) => t.slug === last)) sel.value = last;
+}
+$("#topicSel").addEventListener("change", () => {
+  const v = $("#topicSel").value;
+  $("#topicNew").hidden = v !== "__new";
+  if (v === "__new") $("#topicNew").focus();
+  else chrome.storage.local.set({ [TOPIC_KEY]: v }).catch(() => {});
+});
+/** File a saved note in the chosen topic (making it if "New topic…"). Never fails the save itself. */
+async function fileInTopic(noteId) {
+  if (!noteId) return "";
+  let slug = $("#topicSel").value;
+  st.topicName = slug === "__new" ? $("#topicNew").value.trim() : (($("#topicSel").selectedOptions[0] || {}).textContent || "");
+  try {
+    if (slug === "__new") {
+      const name = $("#topicNew").value.trim();
+      if (!name) return "";
+      const t = await api("/api/topics", { method: "POST", body: JSON.stringify({ name }) }, 5000);
+      slug = t.slug;
+      chrome.storage.local.set({ [TOPIC_KEY]: slug }).catch(() => {});
+    }
+    if (!slug) return "";
+    await api(`/api/topics/${encodeURIComponent(slug)}/notes`, { method: "POST", body: JSON.stringify({ ids: [noteId] }) }, 5000);
+    return slug;
+  } catch { return ""; }
+}
+
 /* ── Save PDF: the browser downloads it with the user's own access; the bytes go to the local app ── */
 function savePdfUrl() {
   const c = st.ctx;
@@ -258,6 +294,7 @@ async function savePdf() {
   try {
     const got = await grabPdf(url, (pc) => { btn.textContent = `Saving the PDF (${pc}%)`; });
     const n = await postPdf(got.bytes, got.finalUrl, { noteId: st.match && st.match.type === "paper" ? st.match.id : "" });
+    await fileInTopic(n.id);
     await chrome.tabs.create({ url: st.server + (n.viewer || `/viewer/${encodeURIComponent(n.id)}`) });
     window.close();
   } catch (e) {
@@ -298,6 +335,7 @@ async function saveLinked({ withPdf = st.saveMode === "pdf", btn = $("#saveLinkB
         }
       }
     }
+    n._topic = await fileInTopic(n.id);
     showSaved(n);
   } catch (e) {
     if (e.offline) { st.online = false; $("#offline").hidden = false; }
@@ -312,7 +350,8 @@ function showSaved(n) {
     : n._partial ? "Linked article: only the abstract is on this page. Open the full text (HTML or PDF) and save again to add it."
     : "Linked article: its link, full text and citation details are saved, without the PDF file.";
   const was = n.duplicate ? (n.text_attached ? "Already in your library; the text was added." : "Already in your library.") : "";
-  $("#doneSub").innerHTML = `<b>${esc(n.title || n.id)}</b><span class="kind">${esc([was, kind].filter(Boolean).join(" "))}${n._pdfError ? ` The PDF couldn't be saved: ${esc(n._pdfError)}` : ""}</span>`;
+  const topic = n._topic ? `In the topic “${st.topicName}”.` : "";
+  $("#doneSub").innerHTML = `<b>${esc(n.title || n.id)}</b><span class="kind">${esc([was, kind, topic].filter(Boolean).join(" "))}${n._pdfError ? ` The PDF couldn't be saved: ${esc(n._pdfError)}` : ""}</span>`;
   $("#anotherBtn").hidden = true;
   $("#donePdfBtn").hidden = !!n.has_pdf || !savePdfUrl();
   const url = st.server + (n.open || `/#note=${encodeURIComponent(n.id)}`);
@@ -387,6 +426,7 @@ async function annotatePdf() {
   btn.disabled = true; btn.textContent = "Importing the PDF";
   try {
     const n = await api("/api/import/url", { method: "POST", body: JSON.stringify({ url: st.ctx.url }) }, 180000);
+    await fileInTopic(n.id);
     const url = st.server + (n.viewer || `/viewer/${encodeURIComponent(n.id)}`);
     await chrome.tabs.create({ url, index: undefined });
     window.close();
@@ -487,6 +527,7 @@ async function checkServer() {
   }
   if (st.view === "home") $("#annotateBtn").disabled = !st.online || $("#annotateBtn").disabled;
   if (!st.online) { renderTargets(); return; }
+  loadTopics();
 
   if (st.ctx.url && /^https?:/i.test(st.ctx.url)) {
     try {
@@ -610,6 +651,23 @@ $("#anotherBtn").addEventListener("click", () => {
   $("#quote").value = ""; $("#note").value = ""; st.ctx.quote = ""; renderContext(); attachEditors(); renderTargets();
 });
 $("#gearBtn").addEventListener("click", () => { $("#settings").hidden = !$("#settings").hidden; if (!$("#settings").hidden) $("#serverIn").focus(); });
+/* ── "Open PDFs in research brain" (off by default; background.js does the work) ── */
+(async () => {
+  const box = $("#autoPdf");
+  try { box.checked = !!(await chrome.storage.local.get("autoPdf")).autoPdf; } catch { }
+  const perm = { origins: ["http://*/*", "https://*/*"] };
+  if (box.checked && !(await chrome.permissions.contains(perm))) box.checked = false;
+  box.addEventListener("change", async () => {
+    if (box.checked) {
+      // the permission prompt must come from this click
+      const ok = await chrome.permissions.request(perm).catch(() => false);
+      if (!ok) { box.checked = false; $("#autoPdfHint").textContent = "Chrome's permission wasn't given, so PDFs open as usual."; return; }
+    }
+    await chrome.storage.local.set({ autoPdf: box.checked });
+    if (!box.checked) chrome.permissions.remove(perm).catch(() => {});
+  });
+})();
+
 $("#serverSave").addEventListener("click", async () => {
   let v = $("#serverIn").value.trim().replace(/\/+$/, "") || DEFAULT_SERVER;
   if (!/^https?:\/\//i.test(v)) v = "http://" + v;

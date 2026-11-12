@@ -507,7 +507,10 @@
     } });
     return [
       h('h2', null, nameIn), desc,
-      h('div', { class: 'td-tools' }, showBtn, refreshBtn, ...(window.__rbCite ? window.__rbCite.topicTools(slug) : [])),
+      h('div', { class: 'td-tools' }, showBtn, refreshBtn, ...(window.__rbCite ? window.__rbCite.topicTools(slug) : []),
+        h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Suggest directions…', id: 'td-directions',
+          title: 'Ask your AI agent for gaps, hypotheses and experiments from this topic’s papers. You see exactly what would be sent first; private notes never go.',
+          onclick: () => window.__rbDirections && window.__rbDirections.open('topic', slug, ((T.list || []).find((x) => x.slug === slug) || {}).name || slug) })),
       qb,
       h('div', { class: 'td-sec' },
         h('div', { class: 'sec-head' }, h('span', { class: 'sec-title' }, 'Papers', h('span', { class: 'n', text: String(d.count) }))),

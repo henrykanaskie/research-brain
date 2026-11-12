@@ -667,6 +667,7 @@
       aliases: ['highlight', 'clip', 'fragment', 'quote', 'annotate', 'excerpt', 'save passage'] },
     { id: 'viewer.save', title: 'Save the fragment', keys: ['Mod+Enter'], allowInInput: true, description: 'Saves the note you are writing on a selected passage.', aliases: ['submit'] },
     { id: 'viewer.ask', title: 'Ask about this paper or the selection', keys: ['A'], description: 'Opens the Ask tab beside the PDF to talk to your AI agent about this paper. With a passage selected, the question is about that passage.', aliases: ['chat', 'ai', 'claude', 'question', 'explain'] },
+    { id: 'viewer.focus', title: 'What matters here for a question or topic', keys: ['F'], description: 'Opens the Focus tab beside the PDF: pick an open question or topic, or type words, and the passages of this paper that bear on it are listed and marked on the pages. On this computer, no AI.', aliases: ['relevant', 'useful', 'skim', 'find', 'question', 'topic'] },
     { id: 'viewer.nextFrag', title: 'Next fragment', keys: [']'], description: 'Jumps to your next saved fragment in this paper.', aliases: ['highlight', 'annotation'] },
     { id: 'viewer.prevFrag', title: 'Previous fragment', keys: ['['], description: 'Jumps to the previous saved fragment.', aliases: ['highlight', 'annotation'] },
     { id: 'viewer.goPage', title: 'Go to page…', keys: ['G then P'], description: 'Puts the cursor in the page number box.', aliases: ['jump', 'page number'] },

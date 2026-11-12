@@ -456,7 +456,7 @@ def test_popup_for_page_and_quick_clip(env):
     pop.locator("#gearBtn").click()
     pop.locator("#serverIn").fill("https://example.com")
     pop.locator("#serverSave").click()
-    expect(pop.locator("#settings .hint")).to_contain_text("isn't on this computer")
+    expect(pop.locator("#settings .hint").first).to_contain_text("isn't on this computer")
     assert env["sw"].evaluate("chrome.storage.local.get('server').then(o => o.server)") == env["base"]
     page.close()
     assert not env["external"], env["external"]
@@ -590,9 +590,21 @@ def test_popup_saves_a_pdf_tab_as_link_and_text(env):
     save = pop.locator("#saveLinkBtn")
     expect(save).to_have_text("Save to research_brain (link + text)")
     expect(pop.locator("#saveLinkHint")).to_contain_text("without the PDF file")
+    # file it in a new topic, right from the popup
+    expect(pop.locator("#topicSel option")).to_have_count(2)  # None, New topic…
+    pop.locator("#topicSel").select_option("__new")
+    pop.locator("#topicNew").fill("Linked reading")
     save.click()
     expect(pop.locator("#done")).to_be_visible(timeout=60_000)
+    expect(pop.locator("#doneSub")).to_contain_text("In the topic “Linked reading”.")
     n = _note_by_url(env, url)
+    topics = api(env, "GET", "/api/topics")
+    t = next(x for x in topics if x["name"] == "Linked reading")
+    assert n["id"] in api(env, "GET", f"/api/topics/{t['slug']}")["members"] or any(
+        m.get("id") == n["id"] for m in api(env, "GET", f"/api/topics/{t['slug']}").get("notes", []))
+    # the popup remembers the topic for next time
+    pop.goto(f"chrome-extension://{env['ext_id']}/clip.html?tab={tid}")
+    expect(pop.locator("#topicSel")).to_have_value(t["slug"])
     assert n["source"] == "linked" and not n["has_pdf"] and n["url"] == url
     text = (env["vault"] / "text" / f"{n['id']}.txt").read_text(encoding="utf-8")
     assert "[[page 1]]" in text and "[[page 2]]" in text and "Linked PDF zqw text only" in text

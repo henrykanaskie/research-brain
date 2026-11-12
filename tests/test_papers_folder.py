@@ -140,3 +140,34 @@ def test_quick_import_into_a_topic_and_bookmarks(client, home):
     assert client.post("/api/import/bookmark", json={"url": "javascript:alert(1)", "title": "x"}).status_code == 400
     hall = next(t for t in T.list_topics(server.store) if t["name"] == "Hall thrusters")
     assert set(T.get_topic(server.store, hall["slug"])["members"]) == {r1["id"], r2["id"]}
+
+
+def test_pdf_with_highlights_has_real_annotations(client, home):
+    import io
+    from pypdf import PdfReader
+    body = ("Ions enter the sheath at the Bohm speed.\nThe presheath accelerates them over many Debye lengths.\n"
+            "Secondary electron emission from the walls changes the potential drop.")
+    a = client.post("/api/import/pdf", files={"file": ("a.pdf", make_pdf("Sheath physics", body), "application/pdf")}).json()
+    client.post("/api/notes", json={"type": "fragment", "parent": a["id"], "page": 1, "quote": "Ions enter the sheath at the Bohm speed.",
+                                    "body": "Key condition for my model"})
+    client.post("/api/notes", json={"type": "fragment", "parent": a["id"], "page": 1, "quote": "the potential   drop"})
+    client.post("/api/notes", json={"type": "fragment", "parent": a["id"], "page": 1, "quote": "A sentence that is nowhere in the paper at all"})
+    r = client.get(f"/pdf/{a['id']}/annotated")
+    assert r.status_code == 200 and r.headers["x-rb-placed"] == "2" and r.headers["x-rb-missed"] == "1"
+    page = PdfReader(io.BytesIO(r.content)).pages[0]
+    annots = [x.get_object() for x in page["/Annots"]]
+    hl = [x for x in annots if x["/Subtype"] == "/Highlight"]
+    assert len(hl) == 2 and any(x.get("/Contents") == "Key condition for my model" for x in hl)
+    assert all(len(x["/QuadPoints"]) % 8 == 0 for x in hl)
+    assert any(x["/Subtype"] == "/FreeText" and "couldn't be placed" in x.get("/Contents", "") for x in annots)
+    # the library's copy is untouched
+    from app import server
+    assert "/Annots" not in PdfReader(str(server.store.pdf_path(a["id"]))).pages[0]
+
+
+def test_find_range_ignores_whitespace_and_hyphenation():
+    from app.annotate_pdf import find_range
+    page = "The breathing mode is an ioniza-\r\ntion instability whose frequency\r\nscales with the neutral velocity."
+    a, b = find_range(page, "an ionization instability whose frequency scales")
+    assert page[a:b].startswith("an ioniza") and page[a:b].endswith("scales")
+    assert find_range(page, "nothing like this") is None

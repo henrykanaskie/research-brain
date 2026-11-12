@@ -48,6 +48,7 @@ citation. PDFs open in research_brain's own viewer, where the same highlight and
 | `storage` | Remembers the server address, whether the notes list is open, and an unsaved quick-clip draft. Stored in Chrome on this computer. |
 | `contextMenus` | The right-click "Add to research_brain…" item, the only way to clip from Chrome's PDF viewer. |
 | Host `http://127.0.0.1:8765/*`, `http://localhost:8765/*` | Talk to research_brain on this computer. Nothing else. |
+| Optional: `http://*/*`, `https://*/*` | **Only if you turn on "Open PDFs in research brain"** (Settings), and Chrome asks you first. It lets the extension notice that a tab finished loading a PDF and download that PDF in the tab with your own access. Turning the setting off gives the permission back. |
 
 `note.html` (the note popover) is the only web-accessible file, with `use_dynamic_url`, so pages can't
 fingerprint the extension by its id.
@@ -161,6 +162,20 @@ PDF (URL ending `.pdf`, `arxiv.org/pdf/…`, or a page served as `application/pd
 (DOI, arXiv id, Semantic Scholar id), fills in metadata, and opens `/viewer/<id>` in a new tab, with
 the same **Highlight** / **Highlight + note** toolbar. If you already have that paper with its PDF,
 the viewer just opens.
+
+### Open every PDF in research brain (optional)
+
+**Settings › Open PDFs in research brain** (off by default; Chrome asks for permission when you turn it on).
+When a tab finishes loading a PDF, the extension downloads it *in that tab* (your session, your access, as with
+**Save PDF**), sends the bytes to research brain on this computer and switches the tab to research brain's
+viewer, where your highlights and notes are saved. Every PDF you open this way is in your library; the same
+file twice is stored once, so a PDF you already have just opens. Going **Back** shows the original PDF and
+leaves it alone. If research brain isn't running, or the site won't hand over the file, the tab stays as it was.
+
+## Topics
+
+The popup's home view has a **Topic** menu: whatever you save from it (link + text, the PDF, a PDF you annotate)
+is filed in that topic, or in a new one (**New topic…**). The popup remembers your last choice.
 
 ## Quick clip (still there)
 

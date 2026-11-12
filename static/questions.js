@@ -205,8 +205,11 @@
         title: ai.available ? 'Ask your AI agent where the kept evidence stands' : ai.reason,
         onclick: () => summarise(n.id, btn, out) });
       const out = h('div');
-      box.replaceChildren(h('div', { class: 'sec-head' }, h('span', { class: 'sec-title', text: 'AI summary' })),
-        h('div', { class: 'oq-tools' }, btn),
+      const dir = h('button', { class: 'btn', type: 'button', text: 'Suggest directions…', disabled: !ai.available, id: 'oq-directions',
+        title: ai.available ? 'Gaps, hypotheses and experiments from the kept evidence. You see what would be sent first.' : ai.reason,
+        onclick: () => window.__rbDirections && window.__rbDirections.open('question', n.id, n.title) });
+      box.replaceChildren(h('div', { class: 'sec-head' }, h('span', { class: 'sec-title', text: 'AI' })),
+        h('div', { class: 'oq-tools' }, btn, dir),
         ai.available ? null : h('div', { class: 'oq-ai-off', text: `Not available: ${ai.reason || 'this question is private.'}` }), out);
     };
     return box;

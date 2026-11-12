@@ -24,6 +24,13 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1  # Windows: also adds "re
 research-brain                                          # starts the app and opens the browser; Ctrl+C stops it
 ```
 
+The installer adds a **research brain** app: in Launchpad and the Dock on macOS (made on your computer, so
+there's no developer signature or Gatekeeper prompt involved), the Start menu on Windows, the app menu on Linux.
+Clicking it runs `research-brain open`: it starts research brain if it isn't running and opens it in its own
+window (Chrome, Edge or Brave's app window; otherwise a browser tab). It stops by itself a few minutes after
+you close that window. Nothing starts when your computer starts. `research-brain install-app` adds the app
+entry again, `--remove` takes it away.
+
 It installs the newest release there and remembers the folder, so **`research-brain update`** brings you up
 to date later. When a newer release lands in the folder, a small **Update** chip appears next to the logo;
 **Library settings › Updates** shows what's new. Updating never touches your library, and a library that a
@@ -477,6 +484,28 @@ nothing outside the selection leaks. Claude's critiques are left out. Tick **Inc
 papers' PDFs too (only if you're allowed to share them). The folder works opened straight from disk:
 zip it and send it, or drop it on any static host. Everything happens locally. API:
 `POST /api/export {"ids": [...] | null, "include_pdfs": false, "title": "Reading list"}`.
+
+## Reading for what matters, directions and writing
+
+- **Focus** (in the PDF viewer, **F**): pick an open question or topic, or type what you're after, and the
+  passages of this paper that bear on it are listed best first and marked on the pages. Local search only, no
+  AI, so it works for private questions too.
+- **Suggest directions…** (on a question's AI section, and in a topic's drawer): your AI agent reads the evidence
+  you kept (or the topic's papers) and suggests gaps, hypotheses, how to test them and what would change the
+  picture, each cited to the passage it rests on. Before anything is sent you see every source that would go,
+  every one that won't and why (private, no summary yet, over your usage level's limit), and about how many
+  tokens; untick any. Your current answer goes only if you tick it. Results are kept with the question or
+  topic; *Save as a note* makes a private note.
+- **Writing help** (on any note): *Cite papers…* (no AI), and an AI helper that reads only the sources you tick
+  (by default the papers and notes your draft links to). Private sources can't be ticked, and your draft goes
+  only if you tick it *and* it isn't private. *Add below my draft* appends the answer; nothing is replaced.
+- **PDF with my highlights** (paper panel) / **Download with highlights** (viewer): a copy of the PDF with your
+  highlights and notes written in as real PDF annotations, which Preview, Acrobat, Zotero and browsers show. The
+  library's copy is unchanged.
+
+Every AI feature follows the same rules: private notes and papers never go; a question's reach decides whether
+it may; the privacy guard checks the outgoing text; each send is in *What was sent to AI*; your usage level caps
+how much goes.
 
 ## Citing and bibliographies
 

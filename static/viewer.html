@@ -152,6 +152,7 @@ body.side-resizing #viewer{pointer-events:none}
 #side footer{padding:14px 28px 18px;color:var(--ink-2);font-size:12px;line-height:1.8}
 
 /* Side tabs: your notes, or a conversation with your AI agent about this paper */
+a.btn{text-decoration:none;display:inline-flex;align-items:center}
 #sideTabs{display:flex;gap:20px;padding:0 28px;border-bottom:1px solid var(--rule);flex:none}
 #sideTabs button{background:none;border:0;border-bottom:1px solid transparent;margin-bottom:-1px;padding:14px 0 12px;cursor:pointer;
   font:500 13px var(--sans);color:var(--ink-2);display:flex;align-items:center;gap:6px}
@@ -161,7 +162,22 @@ body.side-resizing #viewer{pointer-events:none}
 #sideTabs button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .ag-dot{width:6px;height:6px;border-radius:50%;background:var(--rule-strong);display:inline-block}
 .ag-dot.on{background:#4F7A5A} .ag-dot.off{background:var(--red)}
-body.ask-tab #fragList, body.ask-tab #side footer{display:none}
+body.ask-tab #fragList, body.ask-tab #side footer, body.focus-tab #fragList, body.focus-tab #side footer{display:none}
+#focusPane{flex:1;min-height:0;display:flex;flex-direction:column}
+#focusPane[hidden]{display:none}
+#focusForm{padding:16px 28px 14px;border-bottom:1px solid var(--rule);display:flex;flex-direction:column;gap:8px}
+#focusForm .f-lab{font-size:12.5px;color:var(--ink-2)}
+#focusForm select,#focusForm input{font:14px var(--sans);padding:6px 8px;border:1px solid var(--rule-strong);background:var(--sheet);color:var(--ink);border-radius:2px;min-width:0}
+#focusForm .f-row{display:flex;gap:8px;align-items:center}
+#focusForm .f-note{margin-left:auto;font-size:12px;color:var(--ink-3,var(--ink-2))}
+#focusOut{flex:1;overflow:auto;padding:12px 28px 20px}
+.fo-item{display:block;width:100%;text-align:left;background:none;border:0;border-left:2px solid #D8A43A;padding:4px 0 4px 12px;margin:0 0 14px;cursor:pointer;color:var(--ink)}
+.fo-item:hover{border-left-color:var(--red)}
+.fo-item .pg{font:500 12px var(--sans);color:var(--ink-2);margin-bottom:3px}
+.fo-item .q{font:15px/1.5 var(--serif)}
+.fo-item .ctx{font:13px/1.45 var(--serif);color:var(--ink-2);margin-top:4px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.fo-empty{color:var(--ink-2);line-height:1.6}
+.textLayer span.rb-focus{background:rgba(216,164,58,.28);border-radius:2px}
 body.ask-tab #title{opacity:1}
 #askPane{flex:1;min-height:0;display:flex;flex-direction:column}
 #askPane[hidden]{display:none}
@@ -271,6 +287,7 @@ a.cite{color:var(--machine)}
     <button class="btn sym" id="pNextBtn" title="Next page (j)" aria-label="Next page">›</button>
   </div>
   <span class="divider"></span>
+  <a class="btn hide-sm" id="dlAnnot" download title="Download a copy of this PDF with your highlights and notes in it as real PDF annotations. Your library copy is unchanged.">Download with highlights</a>
   <button class="btn on" id="sideBtn" title="Show or hide the side panel">Notes</button>
   <button class="btn" id="themeBtn" title="Theme: follows system">System</button>
 </div>
@@ -284,6 +301,7 @@ a.cite{color:var(--machine)}
     <div id="sideGrip" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0" title="Drag to resize. Double-click to reset."></div>
     <div id="sideTabs" role="tablist" aria-label="Side panel">
       <button type="button" role="tab" id="tabNotes" aria-selected="true" aria-controls="fragList">Notes</button>
+      <button type="button" role="tab" id="tabFocus" aria-selected="false" aria-controls="focusPane" title="What in this paper matters for a question or topic (F). Local, no AI.">Focus</button>
       <button type="button" role="tab" id="tabAsk" aria-selected="false" aria-controls="askPane">Ask<span id="askAgent">AI</span><i class="ag-dot" aria-hidden="true"></i></button>
     </div>
     <div id="fragList" role="tabpanel" aria-labelledby="tabNotes">
@@ -291,6 +309,16 @@ a.cite{color:var(--machine)}
       <div id="fragHead"><h2>Fragments</h2><span id="fragCount"></span></div>
       <div id="fragItems"><div class="empty">Loading</div></div>
     </div>
+    <section id="focusPane" role="tabpanel" aria-labelledby="tabFocus" hidden>
+      <form id="focusForm" autocomplete="off">
+        <label for="focusFor" class="f-lab">What matters in this paper for</label>
+        <select id="focusFor" aria-label="Question or topic"><option value="">Loading…</option></select>
+        <input id="focusText" type="text" placeholder="or type what you're after" aria-label="Words to look for" spellcheck="false">
+        <div class="f-row"><button class="btn primary" id="focusGo" type="submit">Find</button><button class="btn" id="focusClear" type="button" hidden>Clear marks</button>
+          <span class="f-note">On this computer; no AI</span></div>
+      </form>
+      <div id="focusOut" aria-live="polite"></div>
+    </section>
     <section id="askPane" role="tabpanel" aria-labelledby="tabAsk" hidden>
       <div class="ask-head">
         <label class="ask-rel" title="Also let it draw on the most similar papers in your library"><input type="checkbox" id="askRelated"> Include similar papers</label>
@@ -557,6 +585,7 @@ async function renderPage(p) {
     p.tl = tl; p.index = null;
     p.renderedScale = scale;
     applyHighlights(p);
+    if (typeof refocusPage === "function") refocusPage(p); // Focus marks survive a re-render (zoom, resize)
     const w = p.waiters; p.waiters = []; w.forEach((f) => f());
   } catch (e) {
     if (!e || e.name !== "RenderingCancelledException") console.error(`page ${p.num}:`, e);
@@ -1073,22 +1102,113 @@ function saveThread() {
 }
 window.addEventListener("storage", (e) => { if (e.key === THREAD_KEY() && !ASK.busy) { ASK.thread = loadThread(); renderAsk(); } });
 
+const TABS = ["notes", "focus", "ask"];
+let curTab = "notes";
 function setTab(which) {
-  const ask = which === "ask";
+  if (!TABS.includes(which)) which = "notes";
+  curTab = which;
+  const ask = which === "ask", foc = which === "focus";
   if (document.body.classList.contains("side-hidden")) $("#sideBtn").click();
   document.body.classList.toggle("ask-tab", ask);
-  $("#tabNotes").setAttribute("aria-selected", String(!ask));
+  document.body.classList.toggle("focus-tab", foc);
+  $("#tabNotes").setAttribute("aria-selected", String(which === "notes"));
+  $("#tabFocus").setAttribute("aria-selected", String(foc));
   $("#tabAsk").setAttribute("aria-selected", String(ask));
   $("#askPane").hidden = !ask;
-  try { localStorage.setItem("rb.viewer.tab", ask ? "ask" : "notes"); } catch { }
+  $("#focusPane").hidden = !foc;
+  try { localStorage.setItem("rb.viewer.tab", which); } catch { }
   if (ask) { renderAsk(); setTimeout(() => askInput.focus(), 0); }
+  if (foc) loadFocusChoices();
 }
 $("#tabNotes").onclick = () => setTab("notes");
+setInterval(() => fetch("/api/heartbeat", { cache: "no-store" }).catch(() => {}), 60000); // see app/launcher.py
+$("#dlAnnot").href = `/pdf/${encodeURIComponent(ID)}/annotated`;
+$("#tabFocus").onclick = () => setTab("focus");
 $("#tabAsk").onclick = () => setTab("ask");
 $("#sideTabs").addEventListener("keydown", (e) => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-  e.preventDefault(); const ask = !document.body.classList.contains("ask-tab");
-  setTab(ask ? "ask" : "notes"); $(ask ? "#tabAsk" : "#tabNotes").focus();
+  e.preventDefault();
+  const i = (TABS.indexOf(curTab) + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length;
+  setTab(TABS[i]); $("#tab" + TABS[i][0].toUpperCase() + TABS[i].slice(1)).focus();
+});
+
+/* Focus: the passages of this paper that matter for a question, a topic or your own words (POST
+   /api/notes/<id>/focus, app/focus.py: local search, no AI). They stay marked on the pages until cleared. */
+const FOCUS = { loaded: false, marks: [], rows: [] };
+async function loadFocusChoices() {
+  if (FOCUS.loaded) return;
+  FOCUS.loaded = true;
+  const sel = $("#focusFor");
+  const opts = ['<option value="">Your own words (below)</option>'];
+  try {
+    const [qs, ts] = await Promise.all([
+      fetch("/api/questions").then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/topics").then((r) => (r.ok ? r.json() : [])),
+    ]);
+    const ql = (Array.isArray(qs) ? qs : qs.questions || []).filter((q) => (q.question_status || "open") === "open");
+    const tl = Array.isArray(ts) ? ts : ts.topics || [];
+    if (ql.length) opts.push(`<optgroup label="Open questions">${ql.map((q) => `<option value="q:${esc(q.id)}">${esc(q.title)}</option>`).join("")}</optgroup>`);
+    if (tl.length) opts.push(`<optgroup label="Topics">${tl.map((t) => `<option value="t:${esc(t.slug)}">${esc(t.name)}</option>`).join("")}</optgroup>`);
+  } catch { }
+  sel.innerHTML = opts.join("");
+  try { const last = localStorage.getItem("rb.viewer.focus"); if (last && sel.querySelector(`option[value="${CSS.escape(last)}"]`)) sel.value = last; } catch { }
+}
+function refocusPage(p) {
+  FOCUS.marks = FOCUS.marks.filter((s) => s.isConnected);
+  for (const r of FOCUS.rows) {
+    if (r.page !== p.num) continue;
+    const sp = findSpans(p, r.quote) || [];
+    sp.forEach((s) => s.classList.add("rb-focus"));
+    FOCUS.marks.push(...sp);
+  }
+}
+function clearFocus() {
+  FOCUS.marks.forEach((s) => s.classList.remove("rb-focus"));
+  FOCUS.marks = [];
+  $("#focusClear").hidden = true;
+}
+async function markFocus() {
+  clearFocus();
+  for (const r of FOCUS.rows) {
+    const p = S.pages[r.page - 1];
+    if (!p) continue;
+    await whenRendered(p);
+    const sp = findSpans(p, r.quote) || [];
+    sp.forEach((s) => s.classList.add("rb-focus"));
+    FOCUS.marks.push(...sp);
+  }
+  $("#focusClear").hidden = !FOCUS.rows.length;
+}
+$("#focusClear").onclick = () => { FOCUS.rows = []; clearFocus(); };
+$("#focusForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const v = $("#focusFor").value, text = $("#focusText").value.trim();
+  const body = v.startsWith("q:") && !text ? { question: v.slice(2) } : v.startsWith("t:") && !text ? { topic: v.slice(2) } : { text };
+  if (!body.question && !body.topic && !body.text) { $("#focusText").focus(); return; }
+  try { localStorage.setItem("rb.viewer.focus", v); } catch { }
+  const out = $("#focusOut");
+  out.innerHTML = '<p class="fo-empty">Looking through the paper…</p>';
+  let res;
+  try {
+    const r = await fetch(`/api/notes/${encodeURIComponent(ID)}/focus`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    res = await r.json();
+    if (!r.ok) throw new Error(res.detail || r.statusText);
+  } catch (err) { out.innerHTML = `<p class="fo-empty">${esc(err.message)}</p>`; return; }
+  FOCUS.rows = res.passages || [];
+  if (!FOCUS.rows.length) {
+    out.innerHTML = `<p class="fo-empty">Nothing in this paper's text is clearly about “${esc(res.label)}”. Try other words, or the paper may simply not cover it.</p>`;
+    clearFocus(); return;
+  }
+  out.innerHTML = `<p class="fo-empty">${FOCUS.rows.length} passage${FOCUS.rows.length === 1 ? "" : "s"} for “${esc(res.label)}”, best first. They're marked on the pages.</p>` +
+    FOCUS.rows.map((r, i) => `<button type="button" class="fo-item" data-i="${i}"><div class="pg">p.&nbsp;${esc(r.page)}${r.section ? ` · §${esc(r.section)}` : ""}</div><div class="q">${esc(r.quote)}</div>${r.text.length > r.quote.length + 20 ? `<div class="ctx">${esc(r.text)}</div>` : ""}</button>`).join("");
+  markFocus();
+  if (FOCUS.rows[0]) flashQuote(FOCUS.rows[0].page, FOCUS.rows[0].quote);
+});
+$("#focusOut").addEventListener("click", (e) => {
+  const b = e.target.closest(".fo-item");
+  if (!b) return;
+  const r = FOCUS.rows[+b.dataset.i];
+  if (r) flashQuote(r.page, r.quote);
 });
 
 async function loadAgent() {
@@ -1300,11 +1420,15 @@ if (RBC) {
     run: askAboutSelection, when: () => !popIsOpen(),
     description: "Opens the Ask tab beside the PDF. With a passage selected, the question is about that passage.",
     aliases: ["chat", "ai", "claude", "question", "explain"] });
+  RBC.register({ id: "viewer.focus", group: "Viewer", title: "What matters here for a question or topic", keys: ["F"], allowInInput: false,
+    run: () => { setTab("focus"); setTimeout(() => $("#focusFor").focus(), 0); }, when: () => !popIsOpen(),
+    description: "Opens the Focus tab: pick an open question or topic (or type words) and the passages of this paper that bear on it are listed and marked. On this computer, no AI.",
+    aliases: ["relevant", "useful", "skim", "find", "question", "topic"] });
   RBC.layer({ id: "viewer.ask-input", order: 55, isOpen: (c) => c && c.target === askInput, close: () => { askInput.blur(); viewer.focus(); } });
   RBC.tooltip && RBC.tooltip($("#askSelBtn"), "viewer.ask", "Ask about this passage");
 }
 ASK.thread = loadThread();
-try { if (localStorage.getItem("rb.viewer.tab") === "ask") setTab("ask"); } catch { }
+try { const t = localStorage.getItem("rb.viewer.tab"); if (t === "ask" || t === "focus") setTab(t); } catch { }
 loadAgent();
 
 

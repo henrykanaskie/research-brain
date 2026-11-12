@@ -532,3 +532,56 @@ def test_bulk_import_a_folder_and_bookmarks(ctx, server, tmp_path):
     expect(dlg.locator(".bk-folder")).to_contain_text("Plasma reading")
     boxes = dlg.locator(".bk-item input")
     assert boxes.nth(0).is_checked() and not boxes.nth(1).is_checked()
+
+
+def test_focus_tab_directions_and_writing_help(ctx, server, tmp_path):
+    """Focus (local) marks what matters in a PDF; directions and writing help preview what would be sent."""
+    from test_e2e import _pdf_bytes
+    import json as _json
+    import urllib.request as _u
+    clear_vault(server)
+    pdf = tmp_path / "sheath3.pdf"
+    pdf.write_bytes(_pdf_bytes())
+    page = open_app(ctx, server)
+    import_pdf_with_shortcut(page, pdf)
+    page.wait_for_function("window.__rb.S.cur && window.__rb.S.cur.has_pdf", timeout=30_000)
+    nid = page.evaluate("window.__rb.S.cur.id")
+    # the paper panel offers the annotated copy once there's a highlight
+    page.evaluate("""(nid) => fetch('/api/notes', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type: 'fragment', parent: nid, page: 1, quote: 'Bohm criterion'})})""", nid)
+    page.evaluate("(nid) => window.__rb.openNote(nid)", nid)
+    expect(page.locator("[data-act=pdf-annotated]")).to_be_visible()
+    # Focus in the viewer
+    v = ctx.new_page()
+    v.goto(f"{server['base']}/viewer/{nid}")
+    v.keyboard.press("f")
+    expect(v.locator("#focusPane")).to_be_visible()
+    v.locator("#focusText").fill("Bohm criterion sheath edge")
+    v.locator("#focusGo").click()
+    expect(v.locator(".fo-item").first).to_be_visible(timeout=20_000)
+    expect(v.locator(".textLayer span.rb-focus").first).to_be_attached(timeout=20_000)
+    v.locator("#focusClear").click()
+    assert v.locator(".textLayer span.rb-focus").count() == 0
+    v.close()
+    # topic directions: the preview lists what goes, nothing is sent until you press Send
+    def post(path, body):
+        req = _u.Request(server["base"] + path, data=_json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+        return _json.load(_u.urlopen(req))
+    req = _u.Request(server["base"] + f"/api/notes/{nid}", data=b'{"summary": "Sheath physics and the Bohm criterion."}',
+                     headers={"Content-Type": "application/json"}, method="PUT")
+    _u.urlopen(req).close()
+    t = post("/api/topics", {"name": "Sheaths for directions"})
+    post(f"/api/topics/{t['slug']}/notes", {"ids": [nid]})
+    page.evaluate("(slug) => window.__rbDirections.open('topic', slug, 'Sheaths')", t["slug"])
+    dlg = page.locator(".dr-card")
+    expect(dlg).to_contain_text("Goes to the AI (1)")
+    expect(dlg).to_contain_text("The topic’s name and description")
+    expect(dlg.locator(".dr-size")).to_contain_text("tokens")
+    page.keyboard.press("Escape")
+    expect(dlg).to_be_hidden()
+    # writing help on a note: the private draft can't be ticked; the linked paper can
+    n = post("/api/notes", {"type": "note", "title": "Draft", "body": f"See [[{nid}]]."})
+    page.evaluate(f"window.__rb.openNote({_json.dumps(n['id'])})")
+    sec = page.locator("#wr-sec")
+    expect(sec.locator(".wr-src label").first).to_contain_text("Sheath")
+    expect(sec).to_contain_text("Your draft is private")

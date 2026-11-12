@@ -128,3 +128,9 @@ footer .link{margin-right:4px}
 .acts .btn.wide + .hint + .btn.wide{margin-top:14px}
 .acts .hint[hidden]{display:none}
 .ok-sub .kind{display:block;margin-top:6px;color:var(--ink-2);font-size:12.5px;line-height:1.5}
+
+/* topic picker on the home view: the paper you save is filed in it */
+.topic-row { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; font-size: 12.5px; }
+.topic-row label { color: var(--ink-2, #555); }
+.topic-row select, .topic-row input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 3px 6px; }
+label.check { display: flex; gap: 8px; align-items: center; margin-top: 12px; font-size: 13px; }

@@ -1,5 +1,5 @@
 @echo off
-rem Double-click in File Explorer to start research_brain on Windows (installs it the first time).
+rem Double-click in File Explorer to open research_brain on Windows (installs it the first time).
 cd /d "%~dp0"
 where research-brain >nul 2>nul
 if errorlevel 1 (
@@ -8,5 +8,5 @@ if errorlevel 1 (
   if errorlevel 1 ( pause & exit /b 1 )
   for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%PATH%;%%P"
 )
-research-brain
+research-brain open
 if errorlevel 1 pause

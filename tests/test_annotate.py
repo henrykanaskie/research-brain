@@ -291,7 +291,9 @@ FORBIDDEN = [r"/api/chat", r"/api/research", r"critique", r"explain", r"/api/exp
              r"openai", r"/api/review/[^\"'`]*/check"]
 # URLs that may appear in extension files: this computer, plus inert XML namespace / licence strings in vendored libs
 ALLOWED_URL = re.compile(r"^(https?://$|https?://(127\.0\.0\.1|localhost)(:\d+|:PORT|:\*)?(/|$|\s|;)|http://www\.w3\.org/|"
-                         r"https://github\.com/markedjs/)")
+                         r"https://github\.com/markedjs/|"
+                         # the opt-in "Open PDFs in research brain" permission pattern (a match pattern, not a host called)
+                         r"https?://\*/\*$)")
 
 
 def _ext_files():
@@ -332,7 +334,13 @@ def test_extension_manifest_permissions_are_minimal():
     assert set(m["permissions"]) <= {"activeTab", "scripting", "storage", "contextMenus"}
     assert set(m["host_permissions"]) == {"http://127.0.0.1:8765/*", "http://localhost:8765/*"}
     assert "content_scripts" not in m  # annotate.js is injected on demand only
-    assert not set(m.get("optional_host_permissions", [])) - {"http://127.0.0.1:8765/*", "http://localhost:8765/*"}
+    # the only optional permission is the opt-in "Open PDFs in research brain" one: read PDF tabs, asked
+    # for by Chrome when the user turns it on (clip.js, the one permissions.request), given back when off
+    assert not set(m.get("optional_host_permissions", [])) - {"http://127.0.0.1:8765/*", "http://localhost:8765/*",
+                                                            "http://*/*", "https://*/*"}
+    clip = (EXT / "clip.js").read_text(encoding="utf-8")
+    assert clip.count("chrome.permissions.request(") == 1 and "chrome.permissions.remove(" in clip
+    assert "optional_permissions" not in m
     for bad in ("tabs", "<all_urls>", "webRequest", "cookies", "history", "clipboardRead", "downloads", "debugger"):
         assert bad not in m["permissions"] and bad not in m["host_permissions"]
     war = [r for w in m.get("web_accessible_resources", []) for r in w["resources"]]
@@ -358,8 +366,9 @@ def test_extension_says_no_ai():
     assert "Alt+Shift+A" in readme and "| " in readme  # shortcuts table
     # background.js only fetches the local server (and its own bundled files)
     bg = (EXT / "background.js").read_text(encoding="utf-8")
-    targets = re.findall(r"fetch\((base \+ path|chrome\.runtime\.getURL\(`vendor/fonts/\$\{file\}`\))", bg)
-    assert len(targets) == len(re.findall(r"\bfetch\(", bg)) == 2, re.findall(r"fetch\([^\n]{0,40}", bg)
+    # (base = server(): 127.0.0.1 or localhost only; the third is the opt-in PDF hand-off to that server)
+    targets = re.findall(r"fetch\((base \+ path|chrome\.runtime\.getURL\(`vendor/fonts/\$\{file\}`\)|`\$\{base\}/api/import/pdf-bytes\?\$\{q\}`)", bg)
+    assert len(targets) == len(re.findall(r"\bfetch\(", bg)) == 3, re.findall(r"fetch\([^\n]{0,40}", bg)
     # annotate.js / note.js / clip.js never fetch directly except clip.js to st.server
     for name in ("annotate.js", "note.js"):
         assert "fetch(" not in (EXT / name).read_text(encoding="utf-8"), name

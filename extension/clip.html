@@ -26,6 +26,8 @@
       <button class="btn" id="serverSave">Save</button>
     </div>
     <p class="hint">Only this computer is allowed (<code>127.0.0.1</code> or <code>localhost</code>). Shortcuts can be changed at <code>chrome://extensions/shortcuts</code>.</p>
+    <label class="check"><input type="checkbox" id="autoPdf"> Open PDFs in research brain</label>
+    <p class="hint" id="autoPdfHint">When a tab opens a PDF, it's added to your library (a PDF you already have just opens) and shown in research brain's viewer, where your highlights are saved. Chrome asks once for permission to read PDF tabs. Off by default.</p>
   </section>
 
   <div id="offline" class="banner" hidden>
@@ -44,6 +46,11 @@
       <div class="hint" id="savePdfHint" hidden>Downloads this PDF in your browser, with your own access to this site, and saves it to research_brain on this computer.</div>
       <button class="btn primary wide" id="annotateBtn" type="button">Annotate this page</button>
       <div class="hint" id="annotateHint"></div>
+    </div>
+    <div class="topic-row">
+      <label for="topicSel">Topic</label>
+      <select id="topicSel"><option value="">None</option></select>
+      <input id="topicNew" type="text" placeholder="New topic name" hidden spellcheck="false">
     </div>
     <div class="stats">
       <span id="noteCount" class="count"></span>

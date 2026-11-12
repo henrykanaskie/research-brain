@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "research_brain annotator",
   "short_name": "rb annotator",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Highlight and write notes on research pages, saved with citations to research_brain on this computer. No AI.",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA62O+h+5uhl8QiDVSVVLru6Rx3wB6UAVCwshG8QzVSChR3D1GVLuJ8CsD5VAbvqoZmUUiwRtmtdNTTcw4cHj0Vu0hSlB09Thxc9s1Lrc5XNITIvSwyPhOYguY4AI5ZtBx2p1BIcT8HoV6d8VrL/2Wa30nzE10uBCm6f2ELRysr2ITJrDel6/xZw3bNeIFGESTf+FVJITl4eCxHtD5TYQOUtisLSaWNSRMJo6g9LAMLoZUoViAfJavJWdVBFYyLVxbs86dInAp6+l7dqMmLca27YNFYsVsG7TmM+IW4x8ZsDCBCjFL/q1RIcLtFVZENylLAwvMuoIXz67YSuwcJYj0zwIDAQAB",
@@ -66,5 +66,9 @@
       },
       "description": "Turn annotate mode on or off for this page"
     }
-  }
+  },
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ]
 }

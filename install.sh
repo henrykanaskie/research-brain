@@ -10,7 +10,8 @@
 # Uses uv (installed first if missing; it brings its own Python), else pipx, else a private virtualenv in
 # the data folder with a link in ~/.local/bin. Re-running it updates the app. Your library is never touched: it lives in
 #   macOS ~/Library/Application Support/research_brain   Linux ~/.local/share/research_brain
-# On Linux it also adds "research brain" to your desktop's app menu. Windows: use install.ps1.
+# It also adds a "research brain" app (Launchpad/Dock on macOS, the app menu on Linux) that starts it only when
+# you open it and stops it after its window closes. Windows: use install.ps1.
 # Options (environment): RB_EMBEDDINGS=1 also installs sentence-transformers (better similarity, ~500 MB).
 set -euo pipefail
 
@@ -98,22 +99,13 @@ echo "→ Installed: $("$RB" --version)"
 if [ -n "$UPDATE_SOURCE" ]; then
   "$RB" update --source "$UPDATE_SOURCE" >/dev/null && echo "  Updates will come from $UPDATE_SOURCE (research-brain update)."
 fi
-if [ "$(uname -s)" = Linux ] && [ "${RB_NO_DESKTOP:-}" != 1 ]; then
-  BIN="$(command -v research-brain 2>/dev/null || echo "$HOME/.local/bin/research-brain")"
-  APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-  mkdir -p "$APPS"
-  cat > "$APPS/research-brain.desktop" <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=research brain
-Comment=Your research library and second brain
-Exec="$BIN"
-Terminal=true
-Categories=Education;Science;Office;
-DESKTOP
-  echo "  Added 'research brain' to your app menu (RB_NO_DESKTOP=1 skips this)."
+if [ "${RB_NO_DESKTOP:-}" != 1 ]; then
+  # an app entry that opens research brain only when you click it (Launchpad/Dock on macOS, the app menu on
+  # Linux); the app stops by itself a few minutes after its window closes. Nothing runs at login.
+  "$RB" install-app 2>/dev/null | sed 's/^/  /' || true
+  echo "  (RB_NO_DESKTOP=1 skips the app entry; research-brain install-app --remove takes it away.)"
 fi
 if ! command -v claude >/dev/null 2>&1; then
   echo "  The 'claude' CLI isn't installed. Everything except summaries, critiques and Ask/Research works without it."
 fi
-echo "  Start it with: research-brain        (browser extension: see extension/README.md)"
+echo "  Open it from the app icon, or with: research-brain open    (browser extension: see extension/README.md)"

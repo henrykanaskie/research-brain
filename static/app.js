@@ -1955,6 +1955,8 @@
     if (n.has_pdf) {
       acts.push(h('a', { class: 'btn', href: `/viewer/${encodeURIComponent(n.id)}`, target: '_blank', rel: 'noopener', title: 'Read the PDF and select passages to save as fragments' }, 'Open in viewer and highlight'));
       acts.push(h('a', { class: 'btn btn-text', href: `/pdf/${encodeURIComponent(n.id)}`, target: '_blank', rel: 'noopener', title: 'Open the raw PDF in a new tab' }, 'Open PDF'));
+      if ((n.fragments || []).some((f) => f.quote)) acts.push(h('a', { class: 'btn btn-text', href: `/pdf/${encodeURIComponent(n.id)}/annotated`, download: '', 'data-act': 'pdf-annotated',
+        title: 'Download a copy with your highlights and notes in it as real PDF annotations (Preview, Acrobat, Zotero and browsers show them). Your library copy is unchanged.' }, 'PDF with my highlights'));
     } else if (n.type === 'paper' && n.source === 'linked') {
       out.push(h('div', { class: 'linked-line' }, h('span', { class: 'kind-link', html: LINK_SVG }),
         h('span', null, h('b', { text: 'Linked article. ' }), n.has_text ? 'Its link, full text and metadata are saved; search, citations and the AI features use the text. The PDF file isn’t kept.' : 'Its link and metadata are saved, not the PDF file.')));
@@ -3347,4 +3349,8 @@
     focusRegion, unfocusRegion, chooseRegion,
   });
   boot();
+  // when started from the app icon, the server stops a few minutes after the last window closes: say we're here
+  const beat = () => fetch('/api/heartbeat', { cache: 'no-store' }).catch(() => {});
+  setInterval(beat, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) beat(); });
 })();

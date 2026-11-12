@@ -208,3 +208,69 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })().then(sendResponse, (e) => sendResponse({ ok: false, error: String(e && e.message || e) }));
   return true;
 });
+
+/* ── "Open PDFs in research brain" (opt-in, Settings in the popup) ──────────────────────────────────
+   When it's on, and Chrome gave the optional permission for http(s) pages, a tab that finishes loading a
+   PDF is saved to research brain and switched to its viewer. The PDF is downloaded *in that tab*
+   (grab_pdf.js: your own session and access, as with "Save PDF"), the bytes go to the app on this
+   computer (/api/import/pdf-bytes), which keeps one copy of each file: a PDF you already have just opens.
+   Each tab+URL is handled once, so going Back to the original PDF leaves it alone. */
+const AUTO_KEY = "autoPdf";
+const AUTO_PERM = { origins: ["http://*/*", "https://*/*"] };
+const autoDone = new Map(); // tabId -> Set of PDF urls already handled in that tab
+
+async function autoOn() {
+  try {
+    if (!(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY]) return false;
+    return await chrome.permissions.contains(AUTO_PERM);
+  } catch { return false; }
+}
+
+async function grabInTab(tabId, url) {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["grab_pdf.js"] });
+  const run = async (func, args) => (await chrome.scripting.executeScript({ target: { tabId }, func, args: args || [] }))[0].result;
+  const got = await run((u, max) => window.__rbGrab.start(u, max), [url, 150 << 20]);
+  if (!got || !got.ok) throw new Error((got && got.error) || "Couldn't read the PDF");
+  const bytes = new Uint8Array(got.size);
+  for (let i = 0, off = 0; i < got.chunks; i++) {
+    const b64 = await run((k) => window.__rbGrab.chunk(k), [i]);
+    if (b64 == null) throw new Error("The download was interrupted");
+    const bin = atob(b64);
+    for (let j = 0; j < bin.length; j++) bytes[off + j] = bin.charCodeAt(j);
+    off += bin.length;
+  }
+  run(() => window.__rbGrab.clear()).catch(() => {});
+  return { bytes, finalUrl: got.finalUrl || url };
+}
+
+chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  if (info.status !== "complete" || !tab || !/^https?:/i.test(tab.url || "")) return;
+  const base = await server();
+  if ((tab.url || "").startsWith(base)) return;               // our own pages
+  const seen = autoDone.get(tabId) || new Set();
+  if (seen.has(tab.url)) return;                              // handled once; Back leaves it alone
+  if (!(await autoOn())) return;
+  let isPdf = isPdfUrl(tab.url);
+  if (!isPdf) {
+    try {
+      const [{ result } = {}] = await chrome.scripting.executeScript({ target: { tabId }, func: () => document.contentType });
+      isPdf = /application\/pdf/i.test(result || "");
+    } catch { return; }
+  }
+  if (!isPdf) return;
+  seen.add(tab.url);
+  autoDone.set(tabId, seen);
+  try {
+    const got = await grabInTab(tabId, tab.url);
+    const q = new URLSearchParams({ source_url: got.finalUrl, doi: "", title: "" });
+    const r = await fetch(`${base}/api/import/pdf-bytes?${q}`, { method: "POST", body: got.bytes, headers: { "Content-Type": "application/pdf" } });
+    const n = await r.json().catch(() => null);
+    if (!r.ok || !n) throw new Error((n && n.detail) || `HTTP ${r.status}`);
+    const target = base + (n.viewer || `/viewer/${encodeURIComponent(n.id)}`);
+    await chrome.tabs.update(tabId, { url: target });
+  } catch (e) {
+    // the app isn't running, the site refused, it isn't really a PDF: leave the tab as it is
+    console.warn("[research_brain] couldn't open this PDF in research brain:", e && e.message);
+  }
+});
+chrome.tabs.onRemoved.addListener((tabId) => autoDone.delete(tabId));

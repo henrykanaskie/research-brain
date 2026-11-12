@@ -13,6 +13,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -741,6 +742,44 @@ class AgentChoiceIn(BaseModel):
     url: str | None = None
 
 
+# ---------------------------------------------------------------- quitting when the windows close
+# `research-brain open` starts the server with RB_IDLE_EXIT (seconds). Every request counts as activity and
+# the app's pages ping /api/heartbeat every minute, so once no research brain window has been open for that
+# long (and no agent search is running) the server stops by itself. Without RB_IDLE_EXIT it never does.
+IDLE_EXIT = int(os.environ.get("RB_IDLE_EXIT", "0") or 0)
+_last_seen = [time.monotonic()]
+
+
+@app.middleware("http")
+async def _touch(request, call_next):
+    _last_seen[0] = time.monotonic()
+    return await call_next(request)
+
+
+@app.get("/api/heartbeat")
+def api_heartbeat():
+    return {"ok": True, "idle_exit": IDLE_EXIT}
+
+
+def _idle_watch():
+    import signal as _signal
+    from . import questions as _q
+    while True:
+        time.sleep(min(15, max(1, IDLE_EXIT / 4)))
+        if time.monotonic() - _last_seen[0] < IDLE_EXIT or _q.AGENT_RUNNING:
+            continue
+        print(f"[research_brain] no window open for {IDLE_EXIT}s: stopping (start it again from the app icon)")
+        try:
+            _signal.raise_signal(_signal.SIGINT)  # uvicorn's own graceful shutdown
+        except (AttributeError, ValueError, OSError):
+            os._exit(0)
+        return
+
+
+if IDLE_EXIT > 0:
+    threading.Thread(target=_idle_watch, daemon=True, name="rb-idle-exit").start()
+
+
 @app.get("/api/agents")
 def api_agents(fresh: bool = False):
     if fresh:
@@ -1424,6 +1463,27 @@ def get_pdf(nid: str):
                         filename=f"{nid}.pdf")
 
 
+@app.get("/pdf/{nid}/annotated")
+def get_pdf_annotated(nid: str):
+    """A copy of the PDF with your highlights and notes in it as real PDF annotations (app/annotate_pdf.py).
+    The library's own file is untouched."""
+    from . import annotate_pdf
+    n = _get(nid)
+    p = store.pdf_path(nid)
+    if not p.exists():
+        raise HTTPException(404, "This note has no PDF")
+    frags = [{"quote": f.get("quote") or "", "page": f.get("page"), "body": f.get("body") or "", "title": f.get("title") or ""}
+             for f in store.children(nid)]
+    try:
+        data, missed = annotate_pdf.annotate(p, frags, title=n.get("title") or "")
+    except Exception as e:
+        raise HTTPException(500, f"Couldn't write the annotations: {e}")
+    placed = sum(1 for f in frags if f["quote"]) - len(missed)
+    return Response(data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{nid} (annotated).pdf"',
+        "X-RB-Placed": str(placed), "X-RB-Missed": str(len(missed))})
+
+
 # ---------------------------------------------------------------- discovery
 def _s2_key(n: dict) -> str:
     if n["s2_id"]:
@@ -1706,6 +1766,115 @@ CHAT_INSTRUCTION = (
     "the library says and your own general knowledge (label the latter). If the library doesn't cover it, say so "
     "and suggest what to read or add. Be concise.")
 _chunk_index = ChunkIndex(store, embedder)
+
+
+WRITE_INSTRUCTION = (
+    "Help a researcher with their writing. Their REQUEST is at the end of stdin. Above it: the sources they "
+    "chose to let you read (each under a heading that says how to cite it), and, if they included it, their "
+    "DRAFT (or the PART they selected). Do what they ask, in their voice and register; keep their technical "
+    "terms. Take factual claims only from the sources and cite each one inline exactly as its heading shows "
+    "(e.g. [[note-id]] p. 4). Where a claim needs a citation you don't have, write [citation needed]. Never "
+    "invent sources, numbers or quotations. Reply with the text itself, ready to paste (Markdown, math as "
+    "$...$), then one line starting \"Note:\" if something they should check.")
+
+
+class WriteIn(BaseModel):
+    request: str = ""
+    sources: list[str] | None = None  # None: the notes the draft links to
+    include_draft: bool = False       # the draft goes only when ticked, and only if it isn't private
+    selection: str = ""               # the part of the draft they selected, if any
+    dry: bool = False
+
+
+@app.post("/api/notes/{nid}/write")
+def api_write(nid: str, body: WriteIn):
+    """AI help with a draft, from sources you tick (the same safeguards as every AI feature: private notes
+    never go, the draft only if you include it and it is shareable, a preview first, logged, budgeted)."""
+    draft = _get(nid)
+    agent = _ai_agent()
+    if body.sources is not None:
+        ids = list(dict.fromkeys(body.sources))[:60]
+    else:  # what the draft points at: its [[links]] and its manual links
+        ids = list(dict.fromkeys(_wiki(index())["mentions"].get(nid, []) + (draft.get("links") or [])))[:60]
+    by_id = {n["id"]: n for n in store.all()}
+    rows, allowed = [], []
+    for i in ids:
+        n = by_id.get(i)
+        if not n or i == nid:
+            continue
+        ok = privacy.allow_ai(n, agent)
+        rows.append({"id": i, "title": n.get("title") or i, "type": n.get("type"), "allowed": ok, "why": "" if ok else "private"})
+        if ok:
+            allowed.append(n)
+    draft_ok = privacy.allow_ai(draft, agent)
+    text = (body.selection.strip() or draft.get("body") or "").strip()
+    send_draft = body.include_draft and draft_ok and bool(text)
+    # passages of the chosen sources that bear on the request (and the draft, when it goes)
+    query = f"{body.request}\n{text[:800] if send_draft else ''}".strip() or draft.get("title") or ""
+    blocks = []
+    for n in allowed:
+        line = (n.get("summary") or n.get("abstract") or "").strip()
+        if line:
+            blocks.append(f"### [[{n['id']}]] {n.get('title') or ''} (summary)\n{line[:600]}")
+    hits = []
+    if allowed and query:
+        try:
+            _chunk_index._refresh_safe(store.all())
+            hits = _chunk_index.search(query, k=budget.get("chat_passages"), per_note=3, notes=allowed)
+        except Exception as e:
+            print(f"[research_brain] passage search failed: {e!r}")
+    for p in hits:
+        where = f" p. {p['page']}" if p.get("page") else ""
+        blocks.append(f"### [[{p['id']}]]{where}\n{(p.get('text') or '')[:900]}")
+    part = "PART THEY SELECTED" if body.selection.strip() else "DRAFT"
+    context = ("SOURCES:\n\n" + "\n\n".join(blocks) if blocks else "SOURCES: (none chosen)") + \
+        (f"\n\n---\n{part}:\n{text[:12000]}" if send_draft else "") + f"\n\n---\nREQUEST: {body.request.strip()[:1500]}"
+    preview = {"sources": rows, "passages": len(hits), "draft": {"allowed": draft_ok, "included": send_draft,
+               "why": "" if draft_ok else "Your draft is private. Mark it shareable (the lock in its header) to let the AI read it, or ask without it."},
+               "tokens": budget.tokens(len(context) + len(WRITE_INSTRUCTION)), "level": budget.level()}
+    if body.dry:
+        return preview
+    if not body.request.strip():
+        raise HTTPException(400, "Say what you'd like help with")
+    if not allowed and not send_draft:
+        raise HTTPException(400, "Choose at least one shareable source, or include your draft.")
+    out = _ask(WRITE_INSTRUCTION, context, purpose="writing help", sources=[n["id"] for n in allowed] + ([nid] if send_draft else []))
+    return {**preview, "text": out}
+
+
+class FocusIn(BaseModel):
+    question: str = ""   # a question's id
+    topic: str = ""      # a topic's slug
+    text: str = ""       # or your own words
+    k: int = 8
+
+
+@app.post("/api/notes/{nid}/focus")
+def api_focus(nid: str, body: FocusIn):
+    """The passages of this paper that matter for a question, a topic or a phrase (app/focus.py). Local
+    search only: no AI, so it works for private questions and papers too."""
+    from . import focus as focus_mod
+    from .questions import embedder_family
+    n = _get(nid)
+    root = _root(n)
+    paper = store.get(root)
+    if body.question:
+        q = _get(body.question)
+        query, label = focus_mod.focus_text_question(q), q.get("title") or ""
+    elif body.topic:
+        try:
+            t = topics_mod.get_topic(store, body.topic)
+        except (KeyError, topics_mod.TopicError):
+            raise HTTPException(404, "No such topic")
+        query, label = focus_mod.focus_text_topic(t, {x["id"]: x for x in store.all()}), t.get("name") or ""
+    else:
+        query, label = body.text.strip()[:1000], body.text.strip()[:80]
+    if not query:
+        raise HTTPException(400, "Pick a question or topic, or type what you're looking for")
+    _chunk_index._refresh_safe(store.all())
+    rows = focus_mod.relevant(paper, _fulltext(root), query, _chunk_index, embedder_family(embedder.kind),
+                              k=max(1, min(20, body.k)))
+    return {"label": label, "passages": rows, "pdf": root}
 
 
 def _chat_context(idx: dict, q: str, history: list[dict]) -> tuple[str, list[dict], list[dict]]:
@@ -2295,6 +2464,39 @@ def _topic_call(fn, *a, **kw):
 @app.get("/api/topics")
 def api_topics():
     return topics_mod.list_topics(store)
+
+
+class TopicDirectionsIn(BaseModel):
+    dry: bool = False
+    exclude: list[str] = []
+    focus: str = ""
+
+
+@app.post("/api/topics/{slug}/directions")
+def api_topic_directions(slug: str, body: TopicDirectionsIn):
+    """Research directions from a topic's papers and notes (app/directions.py): private ones never go, and
+    dry=true returns exactly what would be sent (the topic's name and description, and each source)."""
+    from . import directions as D
+    try:
+        t = topics_mod.get_topic(store, slug)
+    except (KeyError, topics_mod.TopicError):
+        raise HTTPException(404, "No such topic")
+    agent = _ai_agent()
+    by_id = {n["id"]: n for n in store.all()}
+    sources = D.topic_sources(t, by_id, lambda n: privacy.allow_ai(n, agent))
+    if not sources:
+        raise HTTPException(400, "This topic has no papers or notes yet.")
+    head = f"RESEARCH TOPIC: {t['name']}\n{t.get('description') or ''}"
+    context, used, left = D.build(head, sources, set(body.exclude))
+    instr = D.instruction("research topic", body.focus)
+    pv = D.preview(context, used, left, instr)
+    if body.dry:
+        return {**pv, "runs": D.runs(store, f"topic:{slug}")}
+    if not used:
+        raise HTTPException(403, "Nothing is left to send: every source is private, unticked or has no summary or abstract yet.")
+    text = _ask(instr, context, purpose="research directions", sources=[s["note"] for s in used])
+    run = {"at": D.now(), "text": text, "used": len(used), "left_out": len(left), "focus": body.focus.strip()[:300]}
+    return {**pv, "run": run, "runs": D.save_run(store, f"topic:{slug}", run)}
 
 
 @app.post("/api/topics", status_code=201)
