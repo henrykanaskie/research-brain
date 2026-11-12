@@ -68,11 +68,11 @@ def test_install_app_entries(monkeypatch, tmp_path):
     out = launcher._mac_app(False)
     app = tmp_path / "Apps" / "research brain.app" / "Contents"
     plist = (app / "Info.plist").read_text(encoding="utf-8")
-    assert "<key>CFBundleExecutable</key><string>research-brain</string>" in plist and "LSUIElement" not in plist
+    assert "<key>CFBundleExecutable</key><string>research-brain</string>" in plist and "<key>LSUIElement</key><true/>" in plist
     exe = app / "MacOS" / "research-brain"
     script = exe.read_text(encoding="utf-8")
     assert script.startswith("#!/bin/sh\n") and 'RB="/opt/rb/bin/research-brain"' in script
-    assert '"$RB" open >>"$LOG"' in script and "display alert" in script and str(tmp_path / "Apps") in out
+    assert '"$RB" open >>"$LOG" 2>&1 ||' in script and script.rstrip().endswith("exit 0") and "display alert" in script and str(tmp_path / "Apps") in out
     if os.name != "nt":
         assert os.access(exe, os.X_OK)
         # the command it points at is missing: it says so (the dialog is switched off for the test)

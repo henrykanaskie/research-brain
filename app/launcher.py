@@ -152,7 +152,10 @@ if [ ! -x "$RB" ]; then
   exit 1
 fi
 echo "--- $(date): opened from the app" >>"$LOG"
-"$RB" open >>"$LOG" 2>&1 || alert "research brain didn't start" "What it said is at the end of $LOG"
+# start it in the background and return at once: an app that sits waiting is "not responding" to macOS
+/usr/bin/osascript -e 'display notification "Opening… the first start can take a minute." with title "research brain"' >/dev/null 2>&1 &
+( "$RB" open >>"$LOG" 2>&1 || alert "research brain didn't start" "What it said is at the end of $LOG" ) </dev/null >/dev/null 2>&1 &
+exit 0
 """
 
 
@@ -190,7 +193,8 @@ def _mac_bundle(app: Path) -> str:
             subprocess.run(["sips", "-z", str(s), str(s), str(icon), "--out", str(iconset / f"icon_{s}x{s}.png")], capture_output=True)
         has_icon = subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(res / "rb.icns")], capture_output=True).returncode == 0
         shutil.rmtree(iconset, ignore_errors=True)
-    # no LSUIElement: the icon shows in the Dock while it starts, so you can see the click worked
+    # LSUIElement: no Dock icon. The script returns at once (a notification shows it worked), and a script
+    # can't answer the Dock's Apple events, so a Dock icon would only ever read "not responding".
     plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -202,6 +206,7 @@ def _mac_bundle(app: Path) -> str:
   <key>CFBundleShortVersionString</key><string>1</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSUIElement</key><true/>
   {'<key>CFBundleIconFile</key><string>rb</string>' if has_icon else ''}
 </dict></plist>
 """
