@@ -9,7 +9,8 @@
   minutes (RB_IDLE_EXIT seconds, default 180), unless an agent search or another background job is
   still running. Nothing starts when the computer starts.
 
-`research-brain install-app` adds the entry: on macOS an app in ~/Applications ("research brain.app",
+`research-brain install-app` adds the entry: on macOS an app in /Applications, or ~/Applications when
+/Applications isn't writable ("research brain.app",
 made on this computer, so Gatekeeper has nothing to quarantine and no developer account is needed); on
 Windows a Start-menu shortcut; on Linux an app-menu entry. `--remove` takes it away again.
 """
@@ -102,7 +103,7 @@ def cmd_open(a) -> int:
     with open(log, "ab") as out:
         subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                          cwd=str(paths.PKG_DIR.parent), **_detached())
-    for _ in range(240):  # up to a minute: the first start builds the search index
+    for _ in range(480):  # up to two minutes: the first start builds the search index
         if _status_ok(url, 0.5):
             open_window(url)
             return 0
@@ -121,16 +122,64 @@ def _command() -> str:
     return str(here)
 
 
+LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+
+def _mac_dirs() -> list[Path]:
+    """Where the app can go, best first: /Applications (what Finder's sidebar shows) when you can write
+    there, else the Applications folder in your home folder. RB_MAC_APP_DIR picks one (tests use it)."""
+    env = os.environ.get("RB_MAC_APP_DIR", "").strip()
+    if env:
+        return [Path(env).expanduser()]
+    system = Path("/Applications")
+    user = Path.home() / "Applications"
+    return [system, user] if system.is_dir() and os.access(system, os.W_OK) else [user]
+
+
+def _mac_script(cmd: str) -> str:
+    """The app's executable. It runs `research-brain open`, writes what happens to app.log, and shows a
+    dialog when something goes wrong, so a click never just does nothing."""
+    log = paths.user_data_dir() / "app.log"
+    alert = ("/usr/bin/osascript -e 'on run argv' -e 'display alert (item 1 of argv) message (item 2 of argv)' "
+             "-e 'end run' \"$1\" \"$2\" >/dev/null 2>&1")
+    return f"""#!/bin/sh
+RB="{cmd}"
+LOG="{log}"
+alert() {{ {alert}; }}
+mkdir -p "$(dirname "$LOG")"
+if [ ! -x "$RB" ]; then
+  alert "research brain isn't installed where this app expects it" "It looked for $RB. Run ./install.sh again (it remakes this app), or run: research-brain install-app"
+  exit 1
+fi
+echo "--- $(date): opened from the app" >>"$LOG"
+"$RB" open >>"$LOG" 2>&1 || alert "research brain didn't start" "What it said is at the end of $LOG"
+"""
+
+
 def _mac_app(remove: bool) -> str:
-    app = Path.home() / "Applications" / f"{APP_NAME}.app"
     if remove:
-        shutil.rmtree(app, ignore_errors=True)
-        return f"Removed {app}"
+        gone = []
+        for d in {*_mac_dirs(), Path("/Applications"), Path.home() / "Applications"}:
+            app = d / f"{APP_NAME}.app"
+            if app.exists():
+                shutil.rmtree(app, ignore_errors=True)
+                gone.append(str(app))
+        return "Removed " + ", ".join(gone) if gone else "There was no research brain app to remove."
+    last_err: OSError | None = None
+    for d in _mac_dirs():
+        try:
+            return _mac_bundle(d / f"{APP_NAME}.app")
+        except OSError as e:
+            last_err = e
+    raise last_err or OSError("no Applications folder to write to")
+
+
+def _mac_bundle(app: Path) -> str:
     macos, res = app / "Contents" / "MacOS", app / "Contents" / "Resources"
     macos.mkdir(parents=True, exist_ok=True)
     res.mkdir(parents=True, exist_ok=True)
     exe = macos / "research-brain"
-    exe.write_text(f'#!/bin/sh\nexec "{_command()}" open\n', encoding="utf-8", newline="\n")
+    exe.write_text(_mac_script(_command()), encoding="utf-8", newline="\n")
     exe.chmod(0o755)
     icon = paths.app_root() / "static" / "icons" / "icon-512.png"
     has_icon = False
@@ -141,6 +190,7 @@ def _mac_app(remove: bool) -> str:
             subprocess.run(["sips", "-z", str(s), str(s), str(icon), "--out", str(iconset / f"icon_{s}x{s}.png")], capture_output=True)
         has_icon = subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(res / "rb.icns")], capture_output=True).returncode == 0
         shutil.rmtree(iconset, ignore_errors=True)
+    # no LSUIElement: the icon shows in the Dock while it starts, so you can see the click worked
     plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -150,12 +200,18 @@ def _mac_app(remove: bool) -> str:
   <key>CFBundleExecutable</key><string>research-brain</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
   {'<key>CFBundleIconFile</key><string>rb</string>' if has_icon else ''}
-  <key>LSUIElement</key><true/>
 </dict></plist>
 """
     (app / "Contents" / "Info.plist").write_text(plist, encoding="utf-8", newline="\n")
-    return f"Added {app}: open it from Launchpad, Spotlight or the Dock."
+    # sign it for this computer only (no developer account), and tell Launch Services and Spotlight
+    # about it now instead of whenever they next look
+    for cmd in (["codesign", "--force", "--sign", "-", str(app)], [LSREGISTER, "-f", str(app)], ["mdimport", str(app)]):
+        if shutil.which(cmd[0]) or Path(cmd[0]).exists():
+            subprocess.run(cmd, capture_output=True)
+    return f"Added {app}: open it from Applications, Launchpad or Spotlight (it can take a minute to show in Spotlight)."
 
 
 def _windows_shortcut(remove: bool) -> str:

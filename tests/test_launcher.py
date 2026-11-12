@@ -60,17 +60,24 @@ def test_install_app_entries(monkeypatch, tmp_path):
     assert 'Exec="/opt/rb/bin/research-brain" open' in d and "Terminal=false" in d and "menu" in out
     launcher._linux_desktop(True)
     assert not (tmp_path / "share" / "applications" / "research-brain.desktop").exists()
-    # macOS: an app bundle in ~/Applications made here (no download, so nothing to quarantine)
+    # macOS: an app bundle made here (no download, so nothing to quarantine) that shows errors instead of doing nothing
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
-    monkeypatch.setattr(launcher.shutil, "which", lambda n: None)  # no sips/iconutil here
-    launcher._mac_app(False)
-    app = tmp_path / "home" / "Applications" / "research brain.app" / "Contents"
-    assert "<key>CFBundleExecutable</key><string>research-brain</string>" in (app / "Info.plist").read_text(encoding="utf-8")
+    monkeypatch.setenv("RB_MAC_APP_DIR", str(tmp_path / "Apps"))
+    monkeypatch.setattr(launcher.shutil, "which", lambda n: None)  # no sips/iconutil/codesign here
+    out = launcher._mac_app(False)
+    app = tmp_path / "Apps" / "research brain.app" / "Contents"
+    plist = (app / "Info.plist").read_text(encoding="utf-8")
+    assert "<key>CFBundleExecutable</key><string>research-brain</string>" in plist and "LSUIElement" not in plist
     exe = app / "MacOS" / "research-brain"
-    assert exe.read_text(encoding="utf-8") == '#!/bin/sh\nexec "/opt/rb/bin/research-brain" open\n'
+    script = exe.read_text(encoding="utf-8")
+    assert script.startswith("#!/bin/sh\n") and 'RB="/opt/rb/bin/research-brain"' in script
+    assert '"$RB" open >>"$LOG"' in script and "display alert" in script and str(tmp_path / "Apps") in out
     if os.name != "nt":
         assert os.access(exe, os.X_OK)
+        # the command it points at is missing: it says so (osascript is absent here, so it just exits 1)
+        assert subprocess.run(["sh", str(exe)], capture_output=True, env=dict(os.environ, PATH="/usr/bin:/bin")).returncode == 1
+    assert "Removed" in launcher._mac_app(True) and not (tmp_path / "Apps" / "research brain.app").exists()
 
 
 def _free_port():

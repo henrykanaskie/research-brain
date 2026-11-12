@@ -102,7 +102,8 @@ fi
 if [ "${RB_NO_DESKTOP:-}" != 1 ]; then
   # an app entry that opens research brain only when you click it (Launchpad/Dock on macOS, the app menu on
   # Linux); the app stops by itself a few minutes after its window closes. Nothing runs at login.
-  "$RB" install-app 2>/dev/null | sed 's/^/  /' || true
+  if APP_MSG="$("$RB" install-app 2>&1)"; then echo "$APP_MSG" | sed 's/^/  /'
+  else echo "  ! Couldn't add the app entry: $APP_MSG"; echo "    Try again later with: research-brain install-app"; fi
   echo "  (RB_NO_DESKTOP=1 skips the app entry; research-brain install-app --remove takes it away.)"
 fi
 if ! command -v claude >/dev/null 2>&1; then
