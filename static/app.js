@@ -2507,10 +2507,28 @@
   function closeNodeMenu() { if (nodeMenuEl) { nodeMenuEl.remove(); nodeMenuEl = null; } }
   const menuItem = (label, hint, fn) => h('button', { class: 'menu-item', type: 'button', onclick: () => { closeNodeMenu(); fn(); } },
     h('span', { text: label }), hint ? h('span', { class: 'menu-hint', text: hint }) : null);
-  /** Your links touching dot `id` on the map, with their real ends (a highlight's link is drawn from its paper). */
+  /** Links you made touching dot `id` on the map: your links, and [[mentions]] in your writing, with their
+   *  real ends (a highlight's link is drawn from its paper). */
   function manualLinksOf(id) {
-    return (fg ? fg.graphData().links : []).filter((l) => l.kind === 'manual' && (lid(l.source) === id || lid(l.target) === id))
-      .map((l) => { const a = l.sPart || lid(l.source), b = l.tPart || lid(l.target); return lid(l.source) === id ? { mine: a, other: b } : { mine: b, other: a }; });
+    return (fg ? fg.graphData().links : []).filter((l) => (l.kind === 'manual' || l.kind === 'mention') && (lid(l.source) === id || lid(l.target) === id))
+      .map((l) => { const a = l.sPart || lid(l.source), b = l.tPart || lid(l.target); return { kind: l.kind, ...(lid(l.source) === id ? { mine: a, other: b } : { mine: b, other: a }) }; });
+  }
+  /** Unlink either kind: a link you made, or [[mentions]] (they turn back into plain text, both ways). */
+  const unlinkAny = (kind, a, b) => (kind === 'mention' ? unmentionNotes(a, b) : unlinkNotes(a, b));
+  async function unmentionNotes(a, b) {
+    try {
+      await flushSave();  // what you're typing is saved first, then the [[links]] come out of it
+      let changed = 0;
+      for (const [src, dst] of [[a, b], [b, a]]) {
+        const r = await api('POST', `/api/notes/${encodeURIComponent(src)}/unmention`, { target: dst });
+        changed += (r && r.unmentioned ? r.unmentioned.length : 0);
+      }
+      await refreshGraph();
+      if (S.cur && (S.cur.id === a || S.cur.id === b)) await reloadCur();
+      toast(changed ? `Unlinked: the [[links]] are plain text now` : 'Nothing to unlink', changed ? 'ok' : 'info');
+    } catch (e) {
+      toastErr(e, 'Could not unlink');
+    }
   }
   function nodeMenu(n, e) {
     closeNodeMenu();
@@ -2522,19 +2540,21 @@
     if (n.type !== 'fragment') items.push(menuItem('Link to another dot…', 'then click the dot to link it to', () => startLinkMode(n)));
     // unlink: every link this dot has, the open note's first
     const own = manualLinksOf(n.id).sort((x, y) => (cur && y.other === cur.id) - (cur && x.other === cur.id));
-    for (const { mine, other } of own.slice(0, 8)) {
-      items.push(menuItem(`Unlink from “${truncate(nodeTitle(other), 40)}”`, cur && other === cur.id ? 'the note open in the panel' : null, () => unlinkNotes(mine, other)));
+    for (const { kind, mine, other } of own.slice(0, 8)) {
+      const hint = kind === 'mention' ? 'a [[link]] in your writing; the words stay' : cur && other === cur.id ? 'the note open in the panel' : null;
+      items.push(menuItem(`Unlink from “${truncate(nodeTitle(other), 40)}”`, hint, () => unlinkAny(kind, mine, other)));
     }
     items.push(menuItem('Open', null, () => openNote(n.id, { center: true })));
     showMenu(truncate(n.title || n.id, 60), items, e);
   }
-  /** Right-click one of your links (a red line): unlink the two. */
+  /** Right-click one of your links (a red line) or a [[mention]]: unlink the two. */
   function linkMenu(l, e) {
     closeNodeMenu();
-    if (!l || l.kind !== 'manual') return;
+    if (!l || (l.kind !== 'manual' && l.kind !== 'mention')) return;
     const a = l.sPart || lid(l.source), b = l.tPart || lid(l.target);
-    showMenu('Your link', [
-      menuItem('Unlink', `${truncate(nodeTitle(a), 34)} and ${truncate(nodeTitle(b), 34)}`, () => unlinkNotes(a, b)),
+    const pair = `${truncate(nodeTitle(a), 34)} and ${truncate(nodeTitle(b), 34)}`;
+    showMenu(l.kind === 'mention' ? 'Mentioned in your writing' : 'Your link', [
+      menuItem('Unlink', l.kind === 'mention' ? `${pair}: the [[link]] becomes plain text` : pair, () => unlinkAny(l.kind, a, b)),
       menuItem('Why are they connected?', null, () => openExplain(a, b))], e);
   }
   function showMenu(label, items, e) {

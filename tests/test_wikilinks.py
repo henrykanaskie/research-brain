@@ -160,3 +160,23 @@ def test_rename_skips_ambiguous_title(client):
     # renaming the note the link does NOT resolve to leaves it alone
     r = client.put(f"/api/notes/{b['id']}", json={"title": "Second"})
     assert "rewritten" not in r.json() and get(client, src["id"])["body"] == "[[Same name]]"
+
+
+def test_unlink_a_mention_keeps_the_words(client):
+    """Right-click Unlink on a [[mention]]: the links to that note become plain text; links to other notes,
+    and anything inside code, stay as they are."""
+    target = mk(client, title="Helium line ratios")
+    other = mk(client, title="Stochastic parrots")
+    src = mk(client, title="Cross sections", body=(
+        "See [[Helium line ratios]] and [[" + target["id"] + "|the helium paper]], not [[Stochastic parrots]].\n"
+        "Code keeps it: `[[Helium line ratios]]`"))
+    links = lambda: {(l["source"], l["target"], l["kind"]) for l in client.get("/api/graph").json()["links"]}
+    assert (src["id"], target["id"], "mention") in links()
+    r = client.post(f"/api/notes/{src['id']}/unmention", json={"target": target["id"]})
+    assert r.status_code == 200 and r.json()["unmentioned"] == ["body"]
+    body = client.get(f"/api/notes/{src['id']}").json()["body"]
+    assert body.startswith("See Helium line ratios and the helium paper, not [[Stochastic parrots]].")
+    assert "`[[Helium line ratios]]`" in body
+    assert (src["id"], target["id"], "mention") not in links() and (src["id"], other["id"], "mention") in links()
+    again = client.post(f"/api/notes/{src['id']}/unmention", json={"target": target["id"]}).json()
+    assert again["unmentioned"] == []
