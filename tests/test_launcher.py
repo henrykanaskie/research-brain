@@ -340,3 +340,47 @@ def test_window_header_drags_except_on_its_buttons(monkeypatch):
     assert press(150, 300) is not None                         # the map
     assert press(150, 26, w=window(full_screen=True)) is not None
     assert len(did) == n
+
+
+def test_mac_icon_is_a_rounded_icon_not_a_square():
+    """The Dock wants a rounded square with a transparent margin (Apple's 824-in-1024 grid); the full-bleed
+    web icon showed as a sharp square."""
+    import struct
+    import zlib
+    from pathlib import Path
+    data = (Path(__file__).resolve().parent.parent / "static" / "icons" / "icon-mac.png").read_bytes()
+    w, h, depth, color = struct.unpack(">IIBB", data[16:26])
+    assert data[:8] == b"\x89PNG\r\n\x1a\n" and (w, h, depth, color) == (1024, 1024, 8, 6)  # 8-bit RGBA
+    raw, pos = b"", 8
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        if kind == b"IDAT":
+            raw += data[pos + 8:pos + 8 + n]
+        pos += 12 + n
+    first = zlib.decompress(raw)[:1 + 4 * w]  # filter byte + the top row
+    assert first[0] == 0 and first[1 + 3] == 0 and first[1 + 4 * 512 + 3] == 0  # the top edge is transparent
+
+
+def test_a_stopping_server_says_so(client):  # noqa: F811
+    """Quit stops the server in the background: until it's gone it answers 503, so an app opened again
+    right away doesn't attach to it."""
+    from app import server
+    server.STOPPING[0] = True
+    try:
+        r = client.get("/api/status")
+    finally:
+        server.STOPPING[0] = False
+    assert r.status_code == 503 and r.json()["stopping"]
+
+
+def test_open_waits_for_a_stopping_server_to_let_go(monkeypatch, tmp_path):
+    from app import launcher
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
+    busy = iter([True, True, True, False])
+    monkeypatch.setattr(launcher, "_port_busy", lambda port: next(busy, False))
+    monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: False)
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
+    order = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: order.append("started"))
+    launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799")
+    assert order == ["started"] and next(busy, "done") == "done"  # started only after the port was free

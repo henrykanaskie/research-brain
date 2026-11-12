@@ -89,11 +89,23 @@ def _detached() -> dict:
 
 
 # ---------------------------------------------------------------- open
+def _port_busy(port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.3)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
 def _start_server(a, url: str) -> bool:
     """Start the server in the background unless it's running; True once it answers (up to two minutes:
     the first start builds the search index)."""
     if _status_ok(url):
         return True
+    # one that is stopping (just quit) still holds the port and answers 503: let it go first
+    for _ in range(150):
+        if not _port_busy(a.port):
+            break
+        time.sleep(0.1)
     log = paths.user_data_dir() / "app.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     args = [sys.executable, "-m", f"{__package__ or 'app'}.cli", "serve", "--no-open", "--port", str(a.port), "--quit-when-closed"]
@@ -294,13 +306,16 @@ def _mac_app(remove: bool) -> str:
 
 
 def _mac_icon(res: Path) -> Path | None:
-    icon = paths.app_root() / "static" / "icons" / "icon-512.png"
+    """rb.icns from static/icons/icon-mac.png: the brain as a Mac icon (a rounded square with Apple's margin
+    and shadow, not the full-bleed square the web app uses), every size including Retina (@2x)."""
+    icon = paths.app_root() / "static" / "icons" / "icon-mac.png"
     if not (icon.exists() and shutil.which("sips") and shutil.which("iconutil")):
         return None
     iconset = res / "rb.iconset"
     iconset.mkdir(parents=True, exist_ok=True)
     for s in (16, 32, 128, 256, 512):
-        subprocess.run(["sips", "-z", str(s), str(s), str(icon), "--out", str(iconset / f"icon_{s}x{s}.png")], capture_output=True)
+        for name, px in ((f"icon_{s}x{s}.png", s), (f"icon_{s}x{s}@2x.png", s * 2)):
+            subprocess.run(["sips", "-z", str(px), str(px), str(icon), "--out", str(iconset / name)], capture_output=True)
     out = res / "rb.icns"
     ok = subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(out)], capture_output=True).returncode == 0
     shutil.rmtree(iconset, ignore_errors=True)

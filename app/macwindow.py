@@ -19,7 +19,7 @@ import importlib.util
 import json
 import os
 import sys
-import time
+import threading
 import urllib.request
 import webbrowser
 
@@ -55,15 +55,12 @@ def _status(url: str, path: str = "/api/status", timeout: float = 1.0) -> dict |
 
 
 def _quit_server(url: str) -> None:
-    """Stop the server when this window started it (it runs with an idle exit); leave one you started
-    yourself (`research-brain serve`) running."""
-    beat = _status(url, "/api/heartbeat")
-    if not beat or not beat.get("idle_exit"):
-        return
+    """Ask the server to stop. Its answer comes in milliseconds (it stops afterwards, in the background), and
+    from then on it says it's stopping, so an app opened again right away starts a fresh one."""
     try:
         req = urllib.request.Request(url + "/api/quit", data=b"{}", method="POST",
                                      headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=3).close()
+        urllib.request.urlopen(req, timeout=0.5).close()
     except OSError:
         pass
 
@@ -77,7 +74,7 @@ def _identity() -> None:
         info["CFBundleName"] = APP_NAME
     except (TypeError, AttributeError):
         pass
-    icon = paths.app_root() / "static" / "icons" / "icon-512.png"
+    icon = paths.app_root() / "static" / "icons" / "icon-mac.png"  # rounded, with the Dock's margin
     if icon.exists():
         img = AppKit.NSImage.alloc().initWithContentsOfFile_(str(icon))
         if img:
@@ -211,11 +208,19 @@ def run(url: str, start) -> int:
     win = webview.create_window(APP_NAME, html=LOADING.replace("{more}", ""), width=1400, height=900,
                                 min_size=(900, 600), background_color="#EEEFEB")
     keep: list = []  # the event monitor lives as long as the window
-    state = {"loaded": False, "stopped": False}
+    # ours: this window's server runs with an idle exit (`open` started it), so closing stops it; one you
+    # started yourself (`research-brain serve`) keeps running
+    state = {"loaded": False, "ours": False, "stopped": False}
+    closed = threading.Event()
+    win.events.closed += closed.set
 
     def stop():
-        """Quit (Cmd+Q, the Dock) or the window closed: stop research brain, once."""
-        if state["loaded"] and not state["stopped"]:
+        """Quit (Cmd+Q, the Dock) or the window closed: gone from the screen at once, research brain asked
+        to stop, once."""
+        closed.set()
+        for w in AppKit.NSApplication.sharedApplication().windows() or []:
+            w.orderOut_(None)
+        if state["ours"] and not state["stopped"]:
             state["stopped"] = True
             _quit_server(url)
 
@@ -234,19 +239,28 @@ def run(url: str, start) -> int:
             return
         win.load_url(url + "/?app=mac")
         state["loaded"] = True
+        state["ours"] = bool((_status(url, "/api/heartbeat") or {}).get("idle_exit"))
         misses = 0
-        while True:  # research brain stopped some other way (the idle exit, `research-brain update`): close
-            time.sleep(3)
-            if _status(url, timeout=2) is not None:
+        while not closed.wait(3):  # research brain stopped some other way (`research-brain update`): start
+            if _status(url, timeout=2) is not None:  # it again and reload; close only if it won't start
                 misses = 0
                 continue
             misses += 1
-            if misses >= 2:
+            if misses < 2 or closed.is_set():
+                continue
+            misses = 0
+            if not start():
                 win.destroy()
                 return
+            if not closed.is_set():
+                win.load_url(url + "/?app=mac")
+                state["ours"] = bool((_status(url, "/api/heartbeat") or {}).get("idle_exit"))
 
     storage = paths.user_data_dir() / "window"
     storage.mkdir(parents=True, exist_ok=True)
     webview.start(started, private_mode=False, storage_path=str(storage))
     stop()
-    return 0
+    # end now: Python's own shutdown (WebKit and pyobjc finalizers) adds a second or more to every close
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

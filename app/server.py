@@ -727,8 +727,15 @@ def _agent_status() -> dict:
             "agent": {"id": b.id, "name": b.name, "kind": b.kind, "model": agents.model_for(b.id) or "", **det.as_dict()}}
 
 
+# Set once the server starts stopping (Quit, the idle exit, Ctrl+C): /api/status answers 503 from then on, so
+# an app opened again right away waits for this server to go and starts a fresh one (app/launcher.py)
+STOPPING = [False]
+
+
 @app.get("/api/status")
 def api_status():
+    if STOPPING[0]:
+        return JSONResponse({"stopping": True}, status_code=503)
     return {**_agent_status(), "embedder": embedder.kind, "notes": len(store.all()), "vault": str(VAULT)}
 
 
@@ -786,6 +793,8 @@ def api_quit(body: dict):
     middleware only lets JSON POSTs through from this app's own pages or non-browser clients on this
     computer, so another website can't stop it."""
     import signal as _signal
+
+    STOPPING[0] = True
 
     def _stop():
         time.sleep(0.3)  # let this response go out first
@@ -2343,6 +2352,7 @@ def _end_streams_on_exit():
             continue
 
         def _handler(signum, frame, prev=prev):
+            STOPPING[0] = True
             event_bus.close({"type": "server-stopped"})  # the app's window closes itself (static/live.js)
             prev(signum, frame)
         signal.signal(sig, _handler)
