@@ -17,7 +17,7 @@ group on timeout / tool event / early close, and turns failures into plain-langu
 """
 from __future__ import annotations
 
-from app import fsio
+from .. import fsio
 import json
 import os
 import re

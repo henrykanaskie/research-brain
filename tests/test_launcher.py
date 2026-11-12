@@ -67,6 +67,9 @@ def test_install_app_entries(monkeypatch, tmp_path):
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.setenv("RB_MAC_APP_DIR", str(tmp_path / "Apps"))
     monkeypatch.setattr(launcher.shutil, "which", lambda n: None)  # no sips/iconutil/codesign here
+    # lsregister is found by its full path, so without this every run registered a test copy (same bundle id)
+    # with Launch Services, and Launchpad could open that instead of the real app
+    monkeypatch.setattr(launcher, "_mac_register", lambda app: None)
     out = launcher._mac_app(False)
     app = tmp_path / "Apps" / "research brain.app" / "Contents"
     plist = (app / "Info.plist").read_text(encoding="utf-8")
@@ -79,7 +82,12 @@ def test_install_app_entries(monkeypatch, tmp_path):
         assert os.access(exe, os.X_OK)
         # the command it points at is missing: it says so (the dialog is switched off for the test)
         assert subprocess.run(["sh", str(exe)], capture_output=True, env=dict(os.environ, PATH="/usr/bin:/bin", RB_NO_ALERT="1"), timeout=20).returncode == 1
+    # with RB_MAC_APP_DIR set, --remove touches only that folder: it used to delete the real
+    # /Applications/research brain.app on every test run
+    outside = tmp_path / "home" / "Applications" / "research brain.app"
+    outside.mkdir(parents=True)
     assert "Removed" in launcher._mac_app(True) and not (tmp_path / "Apps" / "research brain.app").exists()
+    assert outside.exists()
 
 
 def _free_port():
@@ -157,3 +165,34 @@ def test_mac_applet_really_compiles(tmp_path, monkeypatch):
     src = subprocess.run(["osadecompile", str(app / "Contents" / "Resources" / "Scripts" / "main.scpt")],
                          capture_output=True, text=True).stdout
     assert "/opt/rb/bin/research-brain" in src
+
+
+def test_package_never_imports_itself_as_app():
+    """Installed, app/ is the research_brain package, so `from app import x` inside it only works from a
+    checkout: the server the Mac app starts died on import and the app never opened."""
+    import ast
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "app"
+    bad = []
+    for f in root.rglob("*.py"):
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            names = [n.name for n in node.names] if isinstance(node, ast.Import) else \
+                [node.module or ""] if isinstance(node, ast.ImportFrom) and node.level == 0 else []
+            bad += [f"{f.relative_to(root)}:{node.lineno}" for n in names if n == "app" or n.startswith("app.")]
+    assert bad == []
+
+
+def test_server_imports_under_its_installed_name(tmp_path):
+    """What `research-brain open` runs: uvicorn research_brain.server:app, with no `app` package around."""
+    import shutil
+    from pathlib import Path
+    repo = Path(__file__).resolve().parent.parent
+    pkg = tmp_path / "research_brain"
+    shutil.copytree(repo / "app", pkg, ignore=shutil.ignore_patterns("__pycache__"))
+    for extra in ("static", "extension", "scripts"):  # what the wheel adds (pyproject.toml: force-include)
+        shutil.copytree(repo / extra, pkg / extra)
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); sys.modules['app'] = None; "
+            "import research_brain.server, research_brain.cli")
+    r = subprocess.run([sys.executable, "-c", code, str(tmp_path)], cwd=str(tmp_path), capture_output=True,
+                       text=True, timeout=120, env=dict(os.environ, RB_DATA_DIR=str(tmp_path / "data")))
+    assert r.returncode == 0, r.stderr[-2000:]

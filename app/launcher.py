@@ -244,7 +244,10 @@ end quit
 def _mac_app(remove: bool) -> str:
     if remove:
         gone = []
-        for d in {*_mac_dirs(), Path("/Applications"), Path.home() / "Applications"}:
+        # both usual places, so an older copy goes too; RB_MAC_APP_DIR (tests) limits it to that folder
+        dirs = _mac_dirs() if os.environ.get("RB_MAC_APP_DIR", "").strip() else \
+            [Path("/Applications"), Path.home() / "Applications"]
+        for d in dirs:
             app = d / f"{APP_NAME}.app"
             if app.exists():
                 shutil.rmtree(app, ignore_errors=True)
@@ -345,11 +348,7 @@ def _mac_bundle(app: Path) -> str:
 </dict></plist>
 """
     (app / "Contents" / "Info.plist").write_text(plist, encoding="utf-8", newline="\n")
-    # sign it for this computer only (no developer account), and tell Launch Services and Spotlight
-    # about it now instead of whenever they next look
-    for cmd in (["codesign", "--force", "--sign", "-", str(app)], [LSREGISTER, "-f", str(app)], ["mdimport", str(app)]):
-        if shutil.which(cmd[0]) or Path(cmd[0]).exists():
-            subprocess.run(cmd, capture_output=True)
+    _mac_register(app)
     return f"Added {app}: open it from Applications, Launchpad or Spotlight (it can take a minute to show in Spotlight)."
 
 

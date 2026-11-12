@@ -30,7 +30,7 @@ Adapters live in app/agents/<name>.py and call app.agents.register(Backend()) at
 """
 from __future__ import annotations
 
-from app import fsio
+from .. import fsio
 import glob
 import os
 import queue
