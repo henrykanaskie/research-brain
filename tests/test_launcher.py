@@ -62,6 +62,7 @@ def test_install_app_entries(monkeypatch, tmp_path):
     assert not (tmp_path / "share" / "applications" / "research-brain.desktop").exists()
     # macOS: an app bundle in ~/Applications made here (no download, so nothing to quarantine)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.setattr(launcher.shutil, "which", lambda n: None)  # no sips/iconutil here
     launcher._mac_app(False)
     app = tmp_path / "home" / "Applications" / "research brain.app" / "Contents"
