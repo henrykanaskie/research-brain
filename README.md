@@ -1,63 +1,199 @@
-# research_brain
+# research brain
 
-A local knowledge graph for papers and notes. Drop in a PDF, write a 2–3 sentence summary in your own
-words, and have your local Claude critique it against the paper. Notes connect automatically by meaning,
-Claude explains *why* two things are connected, Semantic Scholar shows a paper's references and citations,
-and you can ask questions of your whole library.
+A research library that lives on your own computer. Drop in the papers you read (PDFs, DOIs, arXiv links),
+and research brain shows them as a map: papers that are about the same thing sit near each other, and lines
+show how they connect. You highlight passages, write notes and short summaries in your own words, link
+ideas together, and ask questions of everything you have read.
 
-Everything runs on your computer. The AI part uses whichever AI tool you already have on this computer:
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, OpenCode, Cursor's agent, or a local model server
-(Ollama, LM Studio). It never needs an API key, and research_brain itself pays for nothing. Notes are plain
-Markdown files, so your library folder also opens as an Obsidian vault.
+If you want, an AI you already have (or a free one) can critique your summaries, explain why two papers are
+connected, and answer questions about your library with page numbers. It never needs an API key, and
+research brain itself costs nothing. Your library is plain files on your computer: nothing is uploaded, and
+the ideas you mark private never leave it.
 
-## Install and start it
+- **New here?** Follow [Install it](#install-it-no-coding-needed) below, step by step. No coding needed.
+- **Want the free AI?** See [Add an AI (optional, can be free)](#add-an-ai-optional-can-be-free).
+- **Something not working?** See [If something goes wrong](#if-something-goes-wrong).
 
-It runs on macOS, Windows and Linux. You don't need Python first: the installer gets
-[uv](https://docs.astral.sh/uv/), which brings its own Python 3.12.
+## Install it (no coding needed)
 
-**From the lab's update folder** (the usual way; no GitHub account needed). Open the shared folder your
-lab publishes releases to (a synced drive or network share) and run the installer inside it:
+### What you need
+
+| | |
+| --- | --- |
+| A computer | a Mac (macOS 11 or newer), a Windows 10 or 11 PC, or Linux |
+| Free space | about **300 MB**, plus room for your PDFs |
+| Internet | for the install (a few minutes); afterwards it works offline, except looking papers up |
+| Anything else? | **No.** You don't need Python, conda, Anaconda or any coding tools: the installer brings what it needs and keeps it separate from anything else on your computer. |
+
+### Step 1: get the research brain folder
+
+- **From your lab** (the usual way): open the shared folder your lab keeps research brain in (a synced
+  drive such as OneDrive, Box or Google Drive, or a network folder). You'll install from there.
+- **From GitHub** (if you have access): open the research brain page, click the green **Code** button,
+  choose **Download ZIP**, then double-click the downloaded ZIP to unpack it.
+
+### Step 2: run the installer
+
+**On a Mac**
+
+1. In the folder, double-click **`Install-research-brain.command`**.
+2. A Terminal window opens and shows the install. Keep it open; the first time takes a few minutes.
+3. When it says **Done**, research brain opens by itself. You can close the Terminal window.
+
+If the Mac says it *can't be opened* or *Apple could not verify* it: open **System Settings › Privacy &
+Security**, scroll down, and click **Open Anyway** next to the file's name; then double-click it again.
+If that doesn't appear, or it says *permission denied*, use Terminal instead:
+
+1. Press **⌘ Space**, type **Terminal** and press Return.
+2. Type `bash ` (the word bash and a space; don't press Return yet).
+3. Drag `Install-research-brain.command` from the folder into the Terminal window, then press Return.
+
+**On Windows**
+
+1. In the folder, double-click **`Install-research-brain.cmd`**.
+2. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**.
+3. A black window shows the install. Keep it open; the first time takes a few minutes. When it says
+   **Done**, research brain opens by itself, and you can close the window.
+
+**On Linux**
+
+Open a terminal in the folder (right-click › *Open in Terminal*) and type `bash install.sh`, then press
+Return.
+
+### Step 3: open it
+
+From now on, open research brain like any other app:
+
+- **Mac:** Launchpad, the Applications folder, or Spotlight (**⌘ Space**, type *research brain*). To keep it
+  in the Dock, right-click its icon while it's open › **Options › Keep in Dock**.
+- **Windows:** the Start menu, under *research brain*.
+- **Linux:** your app menu.
+
+It opens in about a second. The first time, a short tour shows you around. On a Mac, research brain has its
+own window with no title bar: drag the window by the empty space in its top bar, and close it with the
+red button (or **⌘ Q**). Closing the window stops research brain (on Windows and Linux, a few minutes
+after you close it); nothing runs in the background and nothing starts when your computer starts.
+
+### Add your first papers
+
+Drag PDFs onto the window, or click **Add** and paste a DOI, an arXiv link or a paper's title. research
+brain fills in the authors, year and journal, and looks for a free legal copy of the PDF. Then click a
+paper on the map to read it, highlight it and write about it.
+
+## Add an AI (optional, can be free)
+
+Everything works without an AI: your library and its map, PDFs and highlights, notes, links, tags and
+topics, search, similar papers, citations and exporting a bibliography. An AI adds: critiques of your
+summaries, explanations of why two papers are connected, summaries, and **Ask your library** (questions
+answered from your papers, with page numbers).
+
+research brain doesn't sell or include an AI. It uses one you install and sign in to yourself, so it costs
+whatever that AI costs you, which can be nothing:
+
+| Option | Cost | Good to know |
+| --- | --- | --- |
+| **Gemini CLI** (recommended free option) | free with a personal Google account, within a daily limit (about 1,000 requests a day per Google's docs at the time of writing) | the easiest free one; good answers |
+| **Ollama** or **LM Studio** | free, and works offline | needs a fairly powerful computer and several GB per model; answers are weaker |
+| **GitHub Copilot CLI** | GitHub's free Copilot plan has a small monthly allowance; paid plans more | needs version 1.0.109 or newer |
+| Claude Code, Codex CLI, Cursor | your Claude, ChatGPT or Cursor plan | use them if you already pay for one |
+
+Free plans and their limits change; check the provider's current terms.
+
+### Setting up Gemini (free)
+
+1. **Install Node.js:** go to [nodejs.org](https://nodejs.org), download the **LTS** installer for your
+   computer and run it (click through with the defaults).
+2. **Install Gemini:** open Terminal (Mac: **⌘ Space**, type *Terminal*; Windows: Start menu › *Terminal*
+   or *PowerShell*), type the line below and press Return:
+
+   ```
+   npm install -g @google/gemini-cli
+   ```
+
+   On a Mac, if it says *permission denied*, type `sudo ` in front of it, press Return and enter your Mac
+   password (nothing shows while you type it).
+3. **Sign in once:** in the same window type `gemini`, press Return, choose **Sign in with Google**, and
+   follow the browser page. When Gemini says it's ready, type `/quit` and close the window.
+4. **Choose it in research brain:** click the AI name in research brain's top bar (or **View › Library
+   settings › AI agent**) and pick **Gemini CLI**. A green dot means it's ready.
+
+To keep usage low, research brain sends an AI only the passages a question needs (the *Balanced* setting
+in **Library settings › AI usage**), and nothing ever calls the AI in the background.
+
+## Updating
+
+When a newer version is in your lab's folder, a small **Update** chip appears next to the logo. To update,
+double-click the installer again (step 2), or, if you're comfortable with Terminal, run
+`research-brain update`. Updating never touches your library.
+
+## Uninstalling
+
+1. Mac: quit research brain. In Terminal, run `research-brain install-app --remove` (removes the app from
+   Applications), then `uv tool uninstall research-brain` (removes the program, about 175 MB). Windows:
+   the same two lines in PowerShell. The installer tool, uv, and its Python (about 100 MB together) stay,
+   as other programs may use them; uv's own documentation says how to remove them.
+2. Your library is kept, in case you reinstall. To delete it too, delete its folder:
+   `~/Library/Application Support/research_brain` on a Mac (in Finder: **Go › Go to Folder…** and paste
+   it), `%APPDATA%\research_brain` on Windows (paste it into File Explorer's address bar),
+   `~/.local/share/research_brain` on Linux. **This deletes your notes and PDFs.**
+3. Optional: `uv cache clean` frees the installer's download cache.
+
+## If something goes wrong
+
+| What you see | What to do |
+| --- | --- |
+| The Mac won't open the installer | See the note under "On a Mac" above: **Open Anyway**, or the Terminal way. |
+| *Windows protected your PC* | Click **More info**, then **Run anyway**. |
+| The installer stops with an error | Keep the window open and take a screenshot; send it to whoever helps you. Running the installer again is always safe. |
+| The app doesn't open, or opens and closes | Open the log: in Finder **Go › Go to Folder…** and paste `~/Library/Application Support/research_brain/app.log` (Windows: `%APPDATA%\research_brain\app.log`). The last lines say why. |
+| The first start after installing is slow | Normal once: the computer checks the newly installed files the first time. Later starts take about a second. |
+| The AI shows a red dot, or says it isn't signed in | Open Terminal, type the AI's name (`gemini`, `claude`, `copilot`…), sign in, then pick it again in research brain. |
+| *Copilot … is too old* | In Terminal, run `copilot update`. |
+| Not much disk space | research brain needs about 300 MB. After installing, `uv cache clean` in Terminal frees the download cache. Prefer Gemini over Ollama, whose models take several GB. |
+| Where is my library? | In research brain: **View › Library settings**. Or in Terminal: `research-brain where`. |
+
+## For developers and lab admins: more ways to install
+
+Under the hood the installers use [uv](https://docs.astral.sh/uv/), which downloads its own Python 3.12
+(about 66 MB) and installs research brain in its own environment (about 175 MB), so nothing conflicts with
+Python, conda or Homebrew already on the computer.
+
+**From a terminal**, in the lab's update folder or a checkout:
 
 ```bash
 ./install.sh                                            # macOS and Linux
-powershell -ExecutionPolicy Bypass -File .\install.ps1  # Windows: also adds "research brain" to the Start menu
-research-brain                                          # starts the app and opens the browser; Ctrl+C stops it
+powershell -ExecutionPolicy Bypass -File .\install.ps1  # Windows
+research-brain open                                     # opens it in its own window
+research-brain                                          # or: the server in this terminal + a browser tab (Ctrl+C stops it)
 ```
 
-The installer adds a **research brain** app: in Launchpad and the Dock on macOS (made on your computer, so
-there's no developer signature or Gatekeeper prompt involved), the Start menu on Windows, the app menu on Linux.
-Clicking it runs `research-brain open`: it starts research brain if it isn't running and opens it in its own
-window (Chrome, Edge or Brave's app window; otherwise a browser tab). It stops by itself a few minutes after
-you close that window. Nothing starts when your computer starts. `research-brain install-app` adds the app
-entry again, `--remove` takes it away.
-
-It installs the newest release there and remembers the folder, so **`research-brain update`** brings you up
-to date later. When a newer release lands in the folder, a small **Update** chip appears next to the logo;
-**Library settings › Updates** shows what's new. Updating never touches your library, and a library that a
-newer version has converted won't open in an older one (it stops with a clear message instead).
+From a release folder, the installer installs the newest release there and remembers the folder, so
+**`research-brain update`** brings you up to date later; **Library settings › Updates** shows what's new.
+A library that a newer version has converted won't open in an older one (it stops with a clear message
+instead). Publishing a release and rolling it out to the lab: [docs/releasing.md](docs/releasing.md).
 
 **From the repository** (you have access to it on GitHub):
 
 ```bash
 git clone https://github.com/henrykanaskie/research-brain.git
 cd research-brain
-./install.sh        # or install.ps1 on Windows; Linux also gets an app-menu entry
+./install.sh        # or install.ps1 on Windows
 ```
 
-Or double-click `research_brain.cmd` in File Explorer: it installs on first use, then starts the app.
 With uv, one line installs a release on every OS:
 `uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v0.7.0"`.
-Publishing a release and rolling it out to the lab: [docs/releasing.md](docs/releasing.md).
+Without installing, from a checkout: `./run.sh` (the first run builds `.venv`, a few minutes), or
+double-click `research_brain.command` (Mac) or `research_brain.cmd` (Windows).
 
-Or, without installing, from a checkout:
-
-```bash
-cd ~/coding_projects/research_brain
-./run.sh            # first run builds .venv and installs deps (a few minutes), then opens the browser
-```
-
-On a Mac you can also double-click `research_brain.command` in Finder. `research-brain --version` prints the
-version; `research-brain where` shows where your library is. Updating the app never touches your data.
+**The app entry.** The installer adds a **research brain** app: in Applications, Launchpad and the Dock
+on macOS (made on your computer, so there's no developer signature or Gatekeeper prompt involved), the
+Start menu on Windows, the app menu on Linux. It runs `research-brain open`, which starts research brain if
+it isn't running and opens it in a window. On a Mac that is research brain's own window (WebKit, with no
+title bar); `RB_APP_WINDOW=browser` uses a Chrome, Edge or Brave app window instead, which is what Windows
+and Linux use (otherwise a browser tab). Closing it stops research brain (on Windows and Linux, a few
+minutes after the window closes). Nothing starts when your computer starts. `research-brain install-app`
+adds the app entry again, `--remove` takes it away. `research-brain --version` prints the version;
+`research-brain where` shows where your library is.
 
 **Your data** lives in a per-user folder, separate from the app: `~/Library/Application Support/research_brain/`
 on macOS (`~/.local/share/research_brain/` on Linux, `%APPDATA%\research_brain\` on Windows). Each
@@ -66,12 +202,11 @@ login is your identity and everything autosaves. An older `./vault` with notes k
 is; **View → Library settings** offers to move it. Details, and how PDFs are obtained:
 [docs/storage-and-distribution.md](docs/storage-and-distribution.md).
 
-**Requirements:** Python 3.10+ (the installers get 3.12 through uv), plus one AI tool installed and signed in (see "Choosing an AI agent"
-below). Everything except critiques, explanations and questions works without one. For Claude Code, the
-app finds `claude` on your PATH, `~/.local/bin` (`%USERPROFILE%\.local\bin\claude.exe` on Windows), Homebrew,
-npm (`%APPDATA%\npm` on Windows), WinGet, Scoop, snap or nvm; if it lives somewhere else, set
-`RB_CLAUDE_BIN` to its full path. On Windows, agents installed with npm run through Node directly, never
-through `cmd.exe`, so a prompt can't be misread as a command.
+**Finding the AI tool.** For Claude Code, the app finds `claude` on your PATH, `~/.local/bin`
+(`%USERPROFILE%\.local\bin\claude.exe` on Windows), Homebrew, npm (`%APPDATA%\npm` on Windows), WinGet,
+Scoop, snap or nvm; if it lives somewhere else, set `RB_CLAUDE_BIN` to its full path. On Windows, agents
+installed with npm run through Node directly, never through `cmd.exe`, so a prompt can't be misread as a
+command.
 
 **Using your plan sparingly.** Every request uses your AI plan's limits, so research brain sends as little
 as each job needs. **Library settings › AI usage** sets how much: *Light*, *Balanced* (the default) or

@@ -24,6 +24,7 @@ access to the private GitHub repository.
    | `research_brain-X.Y.Z-py3-none-any.whl` | the app |
    | `latest.json` | the version, the wheel's file name and the notes; what `research-brain update` reads |
    | `install.sh`, `install.ps1` | the installers (they install the wheel `latest.json` names) |
+   | `Install-research-brain.command`, `Install-research-brain.cmd` | double-click installers for macOS and Windows: they run the installer above, then open the app |
    | `constraints.txt` | the exact dependency versions the release was tested with |
    | `research-brain-extension-X.Y.Z.zip` | the browser extension |
    | `research_brain-X.Y.Z.tar.gz` | the source archive |
