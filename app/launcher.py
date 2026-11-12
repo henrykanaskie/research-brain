@@ -125,7 +125,18 @@ def cmd_open(a) -> int:
     url = f"http://127.0.0.1:{a.port}"
     from . import macwindow
     if macwindow.available():  # a Mac: research brain's own window, no title bar (app/macwindow.py)
-        return macwindow.run(url, lambda: _start_server(a, url))
+        # start the server now, while the window is made (about half a second each), not after it
+        import threading
+        box: dict = {}
+        th = threading.Thread(target=lambda: box.update(ok=_start_server(a, url)), daemon=True)
+        th.start()
+
+        def started() -> bool:
+            th.join()
+            if box.pop("ok", False):
+                return True
+            return _start_server(a, url)  # a later restart (the window lost its server): start it again
+        return macwindow.run(url, started)
     if _start_server(a, url):
         open_window(url + "/?app=1")  # ?app=1: the window closes itself when research brain stops
         return 0

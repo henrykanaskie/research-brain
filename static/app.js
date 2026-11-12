@@ -2513,11 +2513,11 @@
     return (fg ? fg.graphData().links : []).filter((l) => (l.kind === 'manual' || l.kind === 'mention') && (lid(l.source) === id || lid(l.target) === id))
       .map((l) => { const a = l.sPart || lid(l.source), b = l.tPart || lid(l.target); return { kind: l.kind, ...(lid(l.source) === id ? { mine: a, other: b } : { mine: b, other: a }) }; });
   }
-  /** Unlink either kind: a link you made, or [[mentions]] (they turn back into plain text, both ways). */
+  /** Unlink either kind: a link you made, or [[mentions]] (the [[...]] text is removed, both ways). */
   const unlinkAny = (kind, a, b) => (kind === 'mention' ? unmentionNotes(a, b) : unlinkNotes(a, b));
   async function unmentionNotes(a, b) {
     try {
-      await flushSave();  // what you're typing is saved first, then the [[links]] come out of it
+      await flushSave();  // what you're typing is saved first, then the [[...]] comes out of it
       let changed = 0;
       for (const [src, dst] of [[a, b], [b, a]]) {
         const r = await api('POST', `/api/notes/${encodeURIComponent(src)}/unmention`, { target: dst });
@@ -2525,7 +2525,7 @@
       }
       await refreshGraph();
       if (S.cur && (S.cur.id === a || S.cur.id === b)) await reloadCur();
-      toast(changed ? `Unlinked: the [[links]] are plain text now` : 'Nothing to unlink', changed ? 'ok' : 'info');
+      if (!changed) toast('Nothing to unlink', 'info');
     } catch (e) {
       toastErr(e, 'Could not unlink');
     }
@@ -2536,15 +2536,15 @@
     const items = [];
     const cur = S.cur && S.cur.id !== n.id && n.type !== 'fragment' ? S.cur : null;
     const curLinked = cur && (cur.links || []).includes(n.id);
-    if (cur && !curLinked) items.push(menuItem(`Link to “${truncate(cur.title || cur.id, 40)}”`, 'the note open in the panel', () => linkNotes(cur.id, n.id)));
-    if (n.type !== 'fragment') items.push(menuItem('Link to another dot…', 'then click the dot to link it to', () => startLinkMode(n)));
-    // unlink: every link this dot has, the open note's first
-    const own = manualLinksOf(n.id).sort((x, y) => (cur && y.other === cur.id) - (cur && x.other === cur.id));
-    for (const { kind, mine, other } of own.slice(0, 8)) {
-      const hint = kind === 'mention' ? 'a [[link]] in your writing; the words stay' : cur && other === cur.id ? 'the note open in the panel' : null;
-      items.push(menuItem(`Unlink from “${truncate(nodeTitle(other), 40)}”`, hint, () => unlinkAny(kind, mine, other)));
-    }
+    if (cur && !curLinked) items.push(menuItem(`Link to ${truncate(cur.title || cur.id, 40)}`, null, () => linkNotes(cur.id, n.id)));
+    if (n.type !== 'fragment') items.push(menuItem('Link to…', null, () => startLinkMode(n)));
     items.push(menuItem('Open', null, () => openNote(n.id, { center: true })));
+    // unlink: just the notes it's linked to, the open note's first
+    const own = manualLinksOf(n.id).sort((x, y) => (cur && y.other === cur.id) - (cur && x.other === cur.id));
+    if (own.length) {
+      items.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Unlink' }));
+      for (const { kind, mine, other } of own.slice(0, 8)) items.push(menuItem(truncate(nodeTitle(other), 44), null, () => unlinkAny(kind, mine, other)));
+    }
     showMenu(truncate(n.title || n.id, 60), items, e);
   }
   /** Right-click one of your links (a red line) or a [[mention]]: unlink the two. */
@@ -2552,9 +2552,8 @@
     closeNodeMenu();
     if (!l || (l.kind !== 'manual' && l.kind !== 'mention')) return;
     const a = l.sPart || lid(l.source), b = l.tPart || lid(l.target);
-    const pair = `${truncate(nodeTitle(a), 34)} and ${truncate(nodeTitle(b), 34)}`;
-    showMenu(l.kind === 'mention' ? 'Mentioned in your writing' : 'Your link', [
-      menuItem('Unlink', l.kind === 'mention' ? `${pair}: the [[link]] becomes plain text` : pair, () => unlinkAny(l.kind, a, b)),
+    showMenu(`${truncate(nodeTitle(a), 30)} and ${truncate(nodeTitle(b), 30)}`, [
+      menuItem('Unlink', null, () => unlinkAny(l.kind, a, b)),
       menuItem('Why are they connected?', null, () => openExplain(a, b))], e);
   }
   function showMenu(label, items, e) {
@@ -2572,7 +2571,7 @@
   });
   window.addEventListener('wheel', closeNodeMenu, { passive: true });
 
-  // "Link to another dot…": the next dot you click is linked to this one
+  // "Link to…": the next dot you click is linked to this one
   let linkModeEl = null;
   function startLinkMode(n) {
     endLinkMode();

@@ -1148,9 +1148,8 @@ def api_unlink(nid: str, target: str):
 
 @app.post("/api/notes/{nid}/unmention")
 def api_unmention(nid: str, body: LinkIn):
-    """Unlink a mention: the [[links]] in this note's text that point at body.target become plain text,
-    what the link showed (its alias, else its text; for [[id]], the target's title). Your words stay; only
-    the link goes. Links inside code are left alone, as they never link."""
+    """Unlink a mention: the [[links]] in this note's text that point at body.target are removed, with the
+    space they leave. Links inside code are left alone, as they never link."""
     with store.lock:
         n, t = _get(nid), _get(body.target)
         if n.get("_yaml_error"):
@@ -1167,13 +1166,14 @@ def api_unmention(nid: str, body: LinkIn):
             hits = [m for m in _iter_wikilinks(text) if points_at_target(m.group(1))]
             if not hits:
                 continue
-            out, pos = [], 0
+            out, pos = "", 0
             for m in hits:
-                raw = m.group(1).strip()
-                shown = (m.group(2) or "").strip() or (t["title"] if raw == t["id"] else raw)
-                out += [text[pos:m.start()], shown]
+                out += text[pos:m.start()]
+                after = text[m.end():]
+                if out.endswith((" ", "\t")) and (not after or after[0] in " \t\n,.;:!?)"):
+                    out = out[:-1]  # "see [[X]] and" -> "see and", "see [[X]]." -> "see."
                 pos = m.end()
-            fields[f] = "".join(out) + text[pos:]
+            fields[f] = out + text[pos:]
         note = store.update(nid, fields) if fields else n
     out = _with_extras(note)
     out["unmentioned"] = sorted(fields)  # the fields that changed

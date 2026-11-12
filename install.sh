@@ -69,8 +69,9 @@ if command -v uv >/dev/null 2>&1; then
   echo "→ Installing with uv"
   # Python 3.12: what the pinned versions in constraints.txt are built and tested for (uv downloads it if
   # you don't have it). Picking the first Python >= 3.10 on PATH could mean compiling numpy from source.
-  if [ -n "$CONSTRAINTS" ]; then uv tool install --force --python 3.12 -c "$CONSTRAINTS" "$SPEC"
-  else uv tool install --force --python 3.12 "$SPEC"; fi
+  # --compile-bytecode: compile now, so the first start after installing isn't seconds slower than the rest
+  if [ -n "$CONSTRAINTS" ]; then uv tool install --force --compile-bytecode --python 3.12 -c "$CONSTRAINTS" "$SPEC"
+  else uv tool install --force --compile-bytecode --python 3.12 "$SPEC"; fi
 elif command -v pipx >/dev/null 2>&1; then
   echo "→ Installing with pipx"
   if [ -n "$CONSTRAINTS" ]; then pipx install --force --pip-args "-c $CONSTRAINTS" "$SPEC"
@@ -96,6 +97,19 @@ fi
 
 RB="$(command -v research-brain 2>/dev/null || echo "$HOME/.local/bin/research-brain")"
 echo "→ Installed: $("$RB" --version)"
+# Load everything once now: macOS checks newly installed native libraries (numpy, scikit-learn, the window)
+# the first time they load, which made the first start after an install take ~20 s instead of ~1 s.
+RB_PY="$(head -1 "$RB" | sed -n 's/^#! *//p')"
+if [ -x "$RB_PY" ]; then
+  echo "→ Getting it ready for its first start (up to half a minute)"
+  "$RB_PY" -c "import research_brain.server
+for m in ('sklearn.feature_extraction.text', 'sklearn.metrics.pairwise', 'pypdfium2', 'pypdf', 'lxml.etree',
+          'watchdog.observers', 'citeproc', 'webview', 'AppKit', 'WebKit'):
+    try:
+        __import__(m)
+    except ImportError:
+        pass" >/dev/null 2>&1 || true
+fi
 if [ -n "$UPDATE_SOURCE" ]; then
   "$RB" update --source "$UPDATE_SOURCE" >/dev/null && echo "  Updates will come from $UPDATE_SOURCE (research-brain update)."
 fi

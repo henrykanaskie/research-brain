@@ -67,7 +67,8 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue) -and $env:RB_NO_UV -ne "
 if (Get-Command uv -ErrorAction SilentlyContinue) {
   Write-Host "-> Installing with uv"
   # Python 3.12: what constraints.txt's pinned versions are built and tested for (uv downloads it if needed)
-  if ($Constraints) { uv tool install --force --python 3.12 -c $Constraints $Spec } else { uv tool install --force --python 3.12 $Spec }
+  # --compile-bytecode: compile now, so the first start after installing isn't seconds slower than the rest
+  if ($Constraints) { uv tool install --force --compile-bytecode --python 3.12 -c $Constraints $Spec } else { uv tool install --force --compile-bytecode --python 3.12 $Spec }
   uv tool update-shell 2>$null | Out-Null
 } elseif (Get-Command pipx -ErrorAction SilentlyContinue) {
   Write-Host "-> Installing with pipx"
