@@ -25,7 +25,8 @@ from urllib.parse import quote
 
 import requests
 
-REACHES = ("private", "library", "scout")
+REACHES = ("private", "library", "scout", "agent")  # agent: Scout plus a weekly AI agent search (app/agent_scout.py)
+SCOUTING = ("scout", "agent")
 EVERY = dt.timedelta(hours=24)
 LOOKBACK_DAYS = 3 * 365   # the first scout looks this far back; later ones only at what's new since
 PER_SCAN = 5              # new papers per question per scout
@@ -47,7 +48,7 @@ def reach(q: dict) -> str:
     except Exception:
         return "private"
     r = str(q.get("reach") or (q.get("_extra") or {}).get("reach") or "").strip().lower()
-    return "scout" if r == "scout" else "library"
+    return r if r in SCOUTING else "library"
 
 
 # ---------------------------------------------------------------- the query

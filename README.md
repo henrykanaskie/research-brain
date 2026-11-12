@@ -321,14 +321,20 @@ question collects it, and shows **3 new since you last looked**.
   aren't in the passage index, chat or Research.
 - **Reach.** Each question says how far it may go, in its header: **Private** (the default: only this
   computer; no AI agent and no outside service sees it), **Library** (the same local matching, and AI features
-  such as the evidence summary may read it) or **Scout**. A scouting question also searches *published*
+  such as the evidence summary may read it), **Scout** or **Agent**. A scouting question also searches *published*
   papers about once a day while the app is open: its key words (the title plus the body's main terms, shown
   under the evidence; never your answer or notes) go to OpenAlex and arXiv, the results are ranked on this
   computer by the same similarity as library evidence, and close matches arrive under *To triage* as
   **Published paper**, with author, year, venue, whether it's free to read, and **Add to library** (linked to the
   question). The first search looks back three years; later ones only at what's new. No AI is involved, so
-  scouting costs nothing from your AI plan. Don't scout an unpublished idea: its key words leave your computer.
-  Marking a question private with the lock always wins.
+  scouting costs nothing from your AI plan. **Agent** adds an AI search about once a week (or **Run agent
+  search**): your AI agent gets the question's title and description, rewords it into the terms papers use,
+  searches OpenAlex and arXiv, reads abstracts, follows reference lists and proposes up to five papers, each
+  with a one-line reason and a suggested stance (supports, against, related) shown on the row. The verdict
+  stays yours. A run is at most the Research step limit plus two turns (7 at *Balanced*, about one Research
+  question of your plan), and the panel shows the last run's searches and tokens. The agent has no tools of
+  its own: it can only ask the app to search, read an abstract, list citations or propose. Don't scout an
+  unpublished idea: its key words leave your computer. Marking a question private with the lock always wins.
 - **Sensitivity.** *Library settings › Open questions* sets the match threshold (default 0.12 for TF-IDF, 0.40 for
   sentence-transformers) and the daily cap. With TF-IDF a match must also share three of the question's words.
 - Files: your triage decisions are in `vault/state/questions/<question-id>.json` (backed up with the library);

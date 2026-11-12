@@ -596,7 +596,7 @@ def scout_scan(ctx: Context, qid: str, notes: list[dict] | None = None, settings
     q = ctx.store.get(qid)
     if not is_question(q):
         raise KeyError(qid)
-    if scout.reach(q) != "scout":
+    if scout.reach(q) not in scout.SCOUTING:
         return {"added": [], "query": "", "error": "This question doesn't scout: set its reach to Scout first."}
     notes = ctx.store.all() if notes is None else notes
     settings = settings or get_settings()
@@ -672,6 +672,89 @@ def scout_scan(ctx: Context, qid: str, notes: list[dict] | None = None, settings
                          "looked_at": len(found), "error": "; ".join(errors)}
         _save(ctx.store, qid, data)
     return {"added": added, "query": query, "error": "; ".join(errors), "looked_at": len(found)}
+
+
+# ---------------------------------------------------------------- agent search (reach "agent")
+AGENT_RUNNING: set[str] = set()
+
+
+def agent_due(data: dict) -> bool:
+    from . import agent_scout
+    a = data.get("agent") or {}
+    if a.get("error") and a.get("last"):  # a failed run (signed out, no agent): try again in a day, not a week
+        try:
+            return dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(a["last"]) >= dt.timedelta(days=1)
+        except ValueError:
+            return True
+    return agent_scout.due(data)
+
+
+def agent_scan(ctx: Context, qid: str, backend=None, sources=None, cites=None) -> dict:
+    """One AI agent search for a question whose reach is "agent" (app/agent_scout.py). Adds the agent's
+    proposals as evidence to triage. Returns {added, turns, lookups, chars_sent, note, error}."""
+    from . import agent_scout, agents, scout
+    q = ctx.store.get(qid)
+    if not is_question(q):
+        raise KeyError(qid)
+    if scout.reach(q) != "agent":
+        return {"added": [], "error": "Agent search is off for this question: set its reach to Agent first."}
+    ok, why = ai_allowed(q)
+    if not ok:
+        return {"added": [], "error": why}
+    data = load(ctx.store, qid)
+    avoid = [i.get("title") or "" for i in data["items"] if i.get("kind") == "external"]
+    since = dt.date.today() - dt.timedelta(days=scout.LOOKBACK_DAYS)
+    stamp = now_iso()
+    try:
+        backend = backend or agents.active()
+        r = agent_scout.run(backend, {"title": q.get("title"), "body": q.get("body")}, since=since, avoid=avoid,
+                            sources=sources, cites=cites)
+        err = ""
+    except Exception as e:  # no agent, signed out, a privacy refusal: say so on the question, retry tomorrow
+        r, err = {"proposals": [], "turns": 0, "lookups": 0, "chars_sent": 0, "note": ""}, str(e)[:300] or e.__class__.__name__
+    in_lib = scout.library_keys(ctx.store.all())
+    added = []
+    with _lock:
+        data = load(ctx.store, qid)
+        have = {i["key"] for i in data["items"]}
+        for prop in r["proposals"]:
+            p = prop["paper"]
+            key = scout.ev_key(p)
+            if not key or key in have or any(k in in_lib for k in scout.paper_keys(p)):
+                continue
+            item = {"id": _eid(key), "key": key, "kind": "external",
+                    "ref": {"doi": p.get("doi") or "", "arxiv": p.get("arxiv") or "", "url": p.get("url") or ""},
+                    "paper": {**{k: p.get(k) for k in ("title", "year", "date", "authors", "venue", "access")}, "found_via": "AI search"},
+                    "ai": {"stance": prop["stance"], "why": prop["why"]},
+                    "score": 0.0, "found_at": now_iso(), "verdict": "new", "user_note": "",
+                    "snippet": _snippet(p.get("abstract") or ""), "title": p.get("title") or ""}
+            data["items"].append(item)
+            have.add(key)
+            added.append(item)
+        data["agent"] = {"last": stamp, "turns": r["turns"], "lookups": r["lookups"], "chars_sent": r["chars_sent"],
+                         "proposed": len(r["proposals"]), "added": len(added), "note": r.get("note") or "", "error": err}
+        _save(ctx.store, qid, data)
+    return {"added": added, "turns": r["turns"], "lookups": r["lookups"], "chars_sent": r["chars_sent"],
+            "note": r.get("note") or "", "error": err}
+
+
+def start_agent_search(ctx: Context, qid: str) -> bool:
+    """Run agent_scan in its own thread (it takes a minute or two). False when one is already running."""
+    with _lock:
+        if qid in AGENT_RUNNING:
+            return False
+        AGENT_RUNNING.add(qid)
+
+    def work():
+        try:
+            agent_scan(ctx, qid)
+        except Exception as e:
+            print(f"[research_brain] agent search failed: {e!r}")
+        finally:
+            AGENT_RUNNING.discard(qid)
+            REV[0] += 1
+    threading.Thread(target=work, daemon=True, name=f"rb-agent-search-{qid[:20]}").start()
+    return True
 
 
 # ---------------------------------------------------------------- triage and counts
@@ -915,14 +998,16 @@ class Matcher:
         if not metadata.enabled():
             return  # RB_METADATA=0: no online lookups at all
         for q in notes:
-            if not is_question(q) or scout.reach(q) != "scout" or (q.get("question_status") or "open") != "open":
+            if not is_question(q) or scout.reach(q) not in scout.SCOUTING or (q.get("question_status") or "open") != "open":
                 continue
-            if not scout.due(load(self.ctx.store, q["id"])):
-                continue
-            try:
-                scout_scan(self.ctx, q["id"], notes, settings)
-            except Exception as e:
-                self.last_error = repr(e)
+            data = load(self.ctx.store, q["id"])
+            if scout.due(data):
+                try:
+                    scout_scan(self.ctx, q["id"], notes, settings)
+                except Exception as e:
+                    self.last_error = repr(e)
+            if scout.reach(q) == "agent" and agent_due(data):
+                start_agent_search(self.ctx, q["id"])
 
     def rescan(self, qid: str) -> list[dict]:
         """Scan one question now, in the caller's thread (POST /api/questions/{id}/rescan)."""

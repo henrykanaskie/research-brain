@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import metadata, scout
+from . import budget, metadata, scout
 from . import questions as Q
 
 router = APIRouter()
@@ -171,6 +171,9 @@ def api_question_evidence(qid: str):
                          "last_seen": q.get("last_seen") or "", "reach": scout.reach(q)},
             "scout": {"query": scout.query_for(q), "last": sc.get("last") or "", "error": sc.get("error") or "",
                       "looked_at": sc.get("looked_at") or 0, "online": metadata.enabled()},
+            "agent": {**{k: (data.get("agent") or {}).get(k) for k in ("last", "turns", "lookups", "proposed", "added", "note", "error")},
+                      "tokens": budget.tokens((data.get("agent") or {}).get("chars_sent") or 0),
+                      "running": qid in Q.AGENT_RUNNING},
             "items": items, "groups": groups, "counts": Q.counts(q, data),
             "ai": {"available": ok, "reason": why}}
 
@@ -225,8 +228,9 @@ def api_question_reach(qid: str, body: ReachIn):
         n = ctx.store.get(qid)
         n["_extra"] = {**(n.get("_extra") or {}), "reach": body.reach}
         n = ctx.store.save(n, touch=False)
-    if body.reach == "scout":
+    if body.reach in scout.SCOUTING:
         ctx.matcher.poke(qid, force=True)  # the first search happens shortly, in the background
+        # (and, for agent, the first agent search: Matcher.scout_due starts it when it's due)
     ok, why = Q.ai_allowed(n)
     return {"reach": body.reach, "ai": {"available": ok, "reason": why}, "query": scout.query_for(n)}
 
@@ -235,7 +239,7 @@ def api_question_reach(qid: str, body: ReachIn):
 def api_question_scout(qid: str):
     """Search published papers for this question now (only when its reach is scout)."""
     q = _question(qid)
-    if scout.reach(q) != "scout":
+    if scout.reach(q) not in scout.SCOUTING:
         raise HTTPException(400, "Set this question's reach to Scout first: its key words would be sent to OpenAlex and arXiv.")
     if not metadata.enabled():
         raise HTTPException(503, "Online lookups are turned off (RB_METADATA=0).")
@@ -247,6 +251,21 @@ def api_question_scout(qid: str):
         raise HTTPException(503, f"Couldn't search published papers ({r['error']}). Check your connection and try again.")
     return {"added": len(r["added"]), "query": r["query"], "looked_at": r["looked_at"], "error": r["error"],
             "counts": Q.counts(q, Q.load(ctx.store, qid))}
+
+
+@router.post("/api/questions/{qid}/agent-search")
+def api_question_agent_search(qid: str):
+    """Start an AI agent search for published papers now (reach must be agent); poll the evidence for results."""
+    q = _question(qid)
+    if scout.reach(q) != "agent":
+        raise HTTPException(400, "Set this question's reach to Agent first.")
+    ok, why = Q.ai_allowed(q)
+    if not ok:
+        raise HTTPException(403, why)
+    if not metadata.enabled():
+        raise HTTPException(503, "Online lookups are turned off (RB_METADATA=0).")
+    started = Q.start_agent_search(ctx.matcher.ctx, qid)
+    return {"started": started, "running": True}
 
 
 SUMMARY_INSTRUCTION = (

@@ -29,6 +29,7 @@
     ['private', 'Private', 'Stays on this computer. Evidence comes from your library by local search; no AI agent and no outside service sees the question.'],
     ['library', 'Library', 'Evidence comes from your library by local search, and AI features (the evidence summary, Ask, Research) may read the question.'],
     ['scout', 'Scout', 'Also searches published papers about once a day: the question’s key words go to OpenAlex and arXiv (no AI). Papers that match closely arrive as evidence to triage. Don’t use for an unpublished idea.'],
+    ['agent', 'Agent', 'Scout, plus a weekly AI agent search: your AI rewords the question, searches OpenAlex and arXiv, follows citations and proposes up to 5 papers with a reason each. Uses your AI plan (about one Research question per run).'],
   ];
 
   const STYLE = `
@@ -42,6 +43,9 @@
   .oq-scout-err { color: var(--red); }
   .oq-ext { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
   .oq-ext .oq-acc.open { color: var(--green, #3d7a52); }
+  .oq-ai-why { font: 13px/1.5 var(--sans); color: var(--machine, var(--ink-2)); margin-top: 4px; }
+  .oq-stance { font-weight: 600; }
+  .oq-agent-note { font-style: italic; color: var(--ink-3); margin-top: 2px; }
   .oq-sec { margin-top: 28px; }
   .oq-sec > .sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
   .oq-sec > .sec-head .sp { flex: 1; }
@@ -143,17 +147,18 @@
         type: 'button', role: 'radio', 'aria-checked': String(cur === v), class: cur === v ? 'on' : '', 'data-reach': v, text: label, title: tip,
         onclick: () => setReach(n.id, v),
       })));
-      say.textContent = { private: 'Only on this computer; no AI sees it', library: 'Your library; AI features may read it', scout: 'Your library, and new published papers daily' }[cur];
+      say.textContent = { private: 'Only on this computer; no AI sees it', library: 'Your library; AI features may read it', scout: 'Your library, and new published papers daily', agent: 'Scout, plus a weekly AI search' }[cur];
     };
     async function setReach(qid, v) {
       if (v === cur) return;
-      if (v === 'scout' && !confirm('Scout sends this question’s key words to OpenAlex and arXiv once a day to look for new papers. Nothing goes to an AI agent. Fine for a question you’d ask in public; keep an unpublished idea Private or Library. Turn on Scout?')) return;
+      if (v === 'scout' && cur !== 'agent' && !confirm('Scout sends this question’s key words to OpenAlex and arXiv once a day to look for new papers. Nothing goes to an AI agent. Fine for a question you’d ask in public; keep an unpublished idea Private or Library. Turn on Scout?')) return;
+      if (v === 'agent' && !confirm('Agent search sends this question’s title and description to your AI agent about once a week; the agent searches OpenAlex and arXiv (so the words also go there) and proposes papers. Each run uses about as much of your AI plan as one Research question. Your answer and notes are never sent. Turn on Agent search?')) return;
       try {
         await api('PUT', `/api/questions/${enc(qid)}/reach`, { reach: v });
         cur = v; draw();
         if (S.cur && S.cur.id === qid) S.cur.private = v === 'private';
-        toast({ private: 'Private: this question stays on this computer.', library: 'Library: AI features may read this question.', scout: 'Scout on: the first search runs in a moment.' }[v], 'ok');
-        if (v === 'scout') setTimeout(() => loadEvidence(qid, { keepFocus: true }), 6000);
+        toast({ private: 'Private: this question stays on this computer.', library: 'Library: AI features may read this question.', scout: 'Scout on: the first search runs in a moment.', agent: 'Agent search on: the first run starts in a moment and takes a minute or two.' }[v], 'ok');
+        if (v === 'scout' || v === 'agent') pollAgent(qid, 6000);
         loadEvidence(qid, { keepFocus: true });
       } catch (e) { toastErr(e, 'Could not change who may see this question'); }
     }
@@ -266,7 +271,7 @@
       title: 'Search your library for this question now (on this computer)', onclick: () => rescan(qid, again) });
     const tools = [seenBtn, again];
     let scoutLine = null;
-    if (ev.question.reach === 'scout') {
+    if (ev.question.reach === 'scout' || ev.question.reach === 'agent') {
       const sc = ev.scout || {};
       const go = h('button', { class: 'btn btn-text', type: 'button', text: 'Search papers now', id: 'oq-scout',
         title: 'Search OpenAlex and arXiv for this question now', onclick: () => scoutNow(qid, go) });
@@ -277,8 +282,21 @@
         h('span', { text: ` · ${sc.online === false ? 'online lookups are off' : when}` }),
         sc.error ? h('span', { class: 'oq-scout-err', text: ` · ${sc.error}` }) : null);
     }
+    let agentLine = null;
+    if (ev.question.reach === 'agent') {
+      const ag = ev.agent || {};
+      const run = h('button', { class: 'btn btn-text', type: 'button', text: ag.running ? 'Agent searching…' : 'Run agent search', id: 'oq-agent', disabled: !!ag.running,
+        title: 'Have your AI agent search for papers now (about one Research question of your plan)', onclick: () => agentNow(qid, run) });
+      tools.push(run);
+      const when = ag.running ? 'searching now' : ag.last ? `last run ${new Date(ag.last).toLocaleDateString()}: ${ag.lookups || 0} searches, ${ag.added || 0} new paper${ag.added === 1 ? '' : 's'}, about ${(ag.tokens || 0).toLocaleString()} tokens` : 'first run pending';
+      agentLine = h('div', { class: 'oq-scout-line' }, h('span', { text: `AI agent search, weekly · ${when}` }),
+        ag.error ? h('span', { class: 'oq-scout-err', text: ` · ${ag.error}` }) : null,
+        ag.note && !ag.running ? h('div', { class: 'oq-agent-note', text: ag.note }) : null);
+      if (ag.running) pollAgent(qid, 4000);
+    }
     const kids = [h('div', { class: 'oq-tools' }, ...tools)];
     if (scoutLine) kids.push(scoutLine);
+    if (agentLine) kids.push(agentLine);
     if (!ev.items.length) {
       kids.push(h('div', { class: 'oq-empty', text: 'No evidence yet. Passages, notes and idea cards that bear on this question appear here as you add papers and write. Matching runs on this computer.' }));
     }
@@ -329,6 +347,8 @@
         where, paperOf,
         h('span', { class: 'oq-kind', text: KIND[it.kind] || it.kind }),
         h('span', { class: 'oq-score', title: 'How closely it matches your question (local similarity)', text: (Number(it.score) || 0).toFixed(2) })),
+      it.ai && it.ai.why ? h('div', { class: 'oq-ai-why', title: 'Why the AI agent proposed it. The verdict is yours.' },
+        h('span', { class: `oq-stance ${it.ai.stance}`, text: `AI: ${it.ai.stance}` }), ` ${it.ai.why}`) : null,
       h('div', { class: 'oq-snip', text: it.snippet || '' }),
       ext,
       h('div', { class: 'oq-acts' }, acts, note));
@@ -340,7 +360,7 @@
   /** A published paper the scout found: how readable it is, and Add to library (linked to the question). */
   function externalActs(qid, it, src) {
     const acc = { open: 'Free to read', free: 'Free on the publisher’s site', closed: 'Paywalled' }[src.access];
-    const bits = [h('span', { class: 'oq-kind', text: `Found on ${src.found_via || 'the web'}` })];
+    const bits = [h('span', { class: 'oq-kind', text: src.found_via === 'AI search' ? 'Found by AI search' : `Found on ${src.found_via || 'the web'}` })];
     if (acc) bits.push(h('span', { class: `oq-kind oq-acc ${src.access}`, text: acc }));
     if (src.exists) bits.push(h('button', { class: 'btn btn-sm btn-text', type: 'button', text: 'In your library', onclick: () => rb.openNote(src.id, { center: true }) }));
     else {
@@ -359,6 +379,20 @@
       bits.push(add);
     }
     return h('div', { class: 'oq-ext' }, ...bits);
+  }
+
+  let pollT = null;
+  function pollAgent(qid, ms) {
+    clearTimeout(pollT);
+    pollT = setTimeout(() => { if (S.cur && S.cur.id === qid) loadEvidence(qid, { keepFocus: true }); }, ms);
+  }
+  async function agentNow(qid, btn) {
+    btn.disabled = true; btn.textContent = 'Agent searching…';
+    try {
+      await api('POST', `/api/questions/${enc(qid)}/agent-search`);
+      toast('Agent search started. Papers it proposes appear under To triage in a minute or two.', 'ok');
+      pollAgent(qid, 3000);
+    } catch (e) { btn.disabled = false; btn.textContent = 'Run agent search'; toastErr(e, 'Could not start the agent search'); }
   }
 
   async function scoutNow(qid, btn) {
@@ -542,7 +576,7 @@
   function settingsSection(say) {
     const sec = h('section', { class: 'ls-sec', id: 'ls-questions' },
       h('div', { class: 'ls-h', text: 'Open questions' }),
-      h('p', { class: 'ls-p', text: 'Evidence for your questions is found on this computer, with the same local search as the rest of the library. Each question has a reach: Private (the default: only this computer), Library (AI features may read it) or Scout (also searches published papers daily on OpenAlex and arXiv, with no AI).' }));
+      h('p', { class: 'ls-p', text: 'Evidence for your questions is found on this computer, with the same local search as the rest of the library. Each question has a reach: Private (the default: only this computer), Library (AI features may read it), Scout (also searches published papers daily on OpenAlex and arXiv, with no AI) or Agent (Scout plus a weekly AI agent search).' }));
     const body = h('div', null, h('div', { class: 'ls-p', text: 'Loading' }));
     sec.append(body);
     api('GET', '/api/questions/settings').then((s) => {

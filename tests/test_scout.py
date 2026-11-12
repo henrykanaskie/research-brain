@@ -136,3 +136,78 @@ def test_openalex_and_arxiv_parsing(monkeypatch):
     assert a["abstract"] == "Hall thrusters oscillate" and a["doi"] == "10.1/x" and a["access"] == "closed" and a["venue"] == "Phys. Plasmas"
     x = scout.search_arxiv("krypton crm", dt.date(2024, 1, 1))
     assert len(x) == 1 and x[0]["arxiv"] == "2501.01234" and x[0]["title"] == "Krypton CRM" and x[0]["access"] == "open"
+
+
+# ---------------------------------------------------------------- agent search (reach "agent")
+def test_agent_search_proposes_papers_with_reasons(server):
+    srv, c = server
+    from app import agents, questions as Q
+    from test_questions import Recorder
+    ids = library(srv, c)
+    lib_title = srv.store.get(ids["breathing"])["title"]
+    q = add_question(c)
+    c.put(f"/api/notes/{q['id']}", json={"answer": "SECRET: my unpublished derivation"})
+    r = c.put(f"/api/questions/{q['id']}/reach", json={"reach": "agent"})
+    assert r.status_code == 200 and r.json()["ai"]["available"]
+    found = [paper("Breathing-mode frequency scaling with electron temperature", "We relate f_b to T_e via line ratios.", doi="10.1/a"),
+             paper(lib_title, "already in the library", doi="10.1/lib"),
+             paper("Krypton collisional-radiative modeling", "A Kr CRM for Hall thrusters.", arxiv="2501.00001")]
+    calls = []
+    cited = [paper("A cited classic on ionization oscillations", "Predator-prey model of the breathing mode.", doi="10.1/c")]
+    fb = Recorder(replies=[
+        '{"action": "search", "queries": ["breathing mode frequency electron temperature", "krypton CRM Hall thruster"]}',
+        '{"action": "read", "paper": "P1"}',
+        '{"action": "propose", "paper": "P1", "stance": "supports", "why": "Directly fits $f_b \\\\propto T_e$."}',
+        '{"action": "propose", "paper": "P3", "stance": "related", "why": "not read yet"}',
+        '{"action": "citations", "paper": "P1", "direction": "references"}',
+        '{"action": "read", "paper": "P4"}',
+        '{"action": "propose", "paper": "P4", "stance": "related", "why": "The classic model."}',
+    ] + ['{"action": "done", "note": "Searched two phrasings and one reference list."}'])
+    out = Q.agent_scan(matcher(srv).ctx, q["id"], backend=fb, sources=fake_sources(found, calls),
+                       cites=lambda p, d: cited)
+    assert out["error"] == ""
+    titles = [i["title"] for i in out["added"]]
+    assert titles == [found[0]["title"], cited[0]["title"]]  # P3 was refused: never read
+    first = out["added"][0]
+    assert first["ai"] == {"stance": "supports", "why": "Directly fits $f_b \\propto T_e$."} and first["verdict"] == "new"
+    sent = "\n".join(fb.prompts)
+    assert "SECRET" not in sent and q["title"] in sent
+    assert "read P3's abstract before proposing it" in sent  # the refusal went back to the agent
+    ev = evidence(c, q["id"])
+    assert ev["agent"]["added"] == 2 and ev["agent"]["tokens"] > 0 and ev["agent"]["turns"] == 7  # 5 + 2 at Balanced
+    row = next(i for i in ev["items"] if i["kind"] == "external" and i.get("ai"))
+    assert row["source"]["found_via"] == "AI search"
+    # the next run is told what was already found, and dedupes it anyway
+    fb.replies = ['{"action": "search", "queries": ["breathing mode"]}', '{"action": "read", "paper": "P1"}',
+                  '{"action": "propose", "paper": "P1", "stance": "supports", "why": "again"}', '{"action": "done"}']
+    again = Q.agent_scan(matcher(srv).ctx, q["id"], backend=fb, sources=fake_sources(found, calls), cites=lambda p, d: [])
+    second = fb.prompts[7]
+    assert again["added"] == [] and "ALREADY FOUND" in second and found[0]["title"] in second.split("ALREADY FOUND")[1]
+
+
+def test_agent_search_needs_agent_reach_and_stops_on_turns(server):
+    srv, c = server
+    from app import questions as Q, agent_scout
+    from test_questions import Recorder
+    q = add_question(c)
+    assert "Agent search is off" in Q.agent_scan(matcher(srv).ctx, q["id"], backend=Recorder())["error"]
+    assert c.post(f"/api/questions/{q['id']}/agent-search").status_code == 400
+    c.put(f"/api/questions/{q['id']}/reach", json={"reach": "agent"})
+    # the lock in the header still wins
+    c.post(f"/api/notes/{q['id']}/privacy", json={"private": True})
+    assert "Agent search is off" in Q.agent_scan(matcher(srv).ctx, q["id"], backend=Recorder())["error"]
+    c.post(f"/api/notes/{q['id']}/privacy", json={"private": False})
+    c.put(f"/api/questions/{q['id']}/reach", json={"reach": "agent"})
+    fb = Recorder(replies=['{"action": "search", "queries": ["x"]}'] * 50)
+    r = agent_scout.run(fb, {"title": "t", "body": ""}, since=dt.date(2020, 1, 1), sources=fake_sources([], []), max_turns=3)
+    assert r["turns"] == 3 and r["stopped"] == "max_turns" and len(fb.prompts) == 3
+    assert "last" in fb.prompts[-1]  # the final turn says so
+    # a failing agent is recorded on the question (and retried after a day, not a week)
+    class Broken(Recorder):
+        def ask_stream(self, prompt, *, system="", timeout=180):
+            raise RuntimeError("signed out")
+            yield ""
+    out = Q.agent_scan(matcher(srv).ctx, q["id"], backend=Broken(), sources=fake_sources([], []))
+    assert "signed out" in out["error"]
+    data = Q.load(srv.store, q["id"])
+    assert data["agent"]["error"] and Q.agent_due(data) is False

@@ -226,6 +226,9 @@ def test_question_reach_and_scouted_papers(server, browser):
     expect(row.locator(".oq-ext")).to_contain_text("Paywalled")
     expect(row.locator(".oq-ext button")).to_have_text("Add to library")
     expect(row).to_contain_text("A. B et al. · 2025 · J. Prop.")
+    reach.locator("[data-reach=agent]").click()
+    expect(page.locator("#oq-agent")).to_have_text("Run agent search")
+    expect(page.locator(".oq-scout-line").nth(1)).to_contain_text("AI agent search, weekly")
     n = _call(base, "GET", f"/api/notes/{q['id']}")
     assert n.get("private") in (False, None) or n.get("private") is False
     reach.locator("[data-reach=private]").click()
