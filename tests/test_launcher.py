@@ -75,8 +75,8 @@ def test_install_app_entries(monkeypatch, tmp_path):
     assert '"$RB" open >>"$LOG"' in script and "display alert" in script and str(tmp_path / "Apps") in out
     if os.name != "nt":
         assert os.access(exe, os.X_OK)
-        # the command it points at is missing: it says so (osascript is absent here, so it just exits 1)
-        assert subprocess.run(["sh", str(exe)], capture_output=True, env=dict(os.environ, PATH="/usr/bin:/bin")).returncode == 1
+        # the command it points at is missing: it says so (the dialog is switched off for the test)
+        assert subprocess.run(["sh", str(exe)], capture_output=True, env=dict(os.environ, PATH="/usr/bin:/bin", RB_NO_ALERT="1"), timeout=20).returncode == 1
     assert "Removed" in launcher._mac_app(True) and not (tmp_path / "Apps" / "research brain.app").exists()
 
 

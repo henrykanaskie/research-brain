@@ -145,7 +145,7 @@ def _mac_script(cmd: str) -> str:
     return f"""#!/bin/sh
 RB="{cmd}"
 LOG="{log}"
-alert() {{ {alert}; }}
+alert() {{ [ -n "$RB_NO_ALERT" ] || {alert}; }}  # RB_NO_ALERT: tests
 mkdir -p "$(dirname "$LOG")"
 if [ ! -x "$RB" ]; then
   alert "research brain isn't installed where this app expects it" "It looked for $RB. Run ./install.sh again (it remakes this app), or run: research-brain install-app"
