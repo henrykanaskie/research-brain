@@ -275,7 +275,7 @@
     ['Reading and thinking', [
       ['Your summary', 'Two or three sentences in your own words. Then ask Claude to critique it against the paper.', ['note.summary', 'note.critique']],
       ['Fragments', 'A quote, equation or passage with your note on it. Add one in the panel, or highlight in the viewer.', ['note.fragment', 'note.viewer']],
-      ['Links', 'Type [[ in any text to link a note, or link from the panel. Your links are red on the graph.', ['note.link']],
+      ['Links', 'Use the Links box near the top of the panel, or right-click a dot on the map. Type [[ in any text to mention a note. Your links are red on the graph.', ['note.link']],
       ['Math', 'Type $…$ for inline math and $$…$$ for display. A backslash opens LaTeX suggestions; Tab accepts.', []],
     ]],
     ['The graph', [

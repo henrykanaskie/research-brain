@@ -325,5 +325,5 @@
     return ctl;
   }
 
-  window.Wikilinks = { attach, version: '1.0.0' };
+  window.Wikilinks = { attach, injectCSS, version: '1.0.0' };  // injectCSS: app.js's Links picker uses the same popup
 })();

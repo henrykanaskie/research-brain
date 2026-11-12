@@ -1142,17 +1142,8 @@
       .nodeId('id')
       .nodeRelSize(1)
       .nodeVal((n) => { const r = nodeRadius(n); return r * r; })
-      .nodeLabel((n) => {
-        const meta = [];
-        meta.push(`<span>${esc(n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : 'Note')}</span>`);
-        if (n.year) meta.push(`<span class="tnum">${esc(n.year)}</span>`);
-        if (n.authors && n.authors.length) meta.push(`<span>${esc(fmtAuthors(n.authors, 2))}</span>`);
-        const q = n.type === 'fragment' && S.quoteIdx.get(n.id) ? `<div class="tt-quote">${esc(truncate(S.quoteIdx.get(n.id), 140))}</div>` : '';
-        const tags = (n.tags || []).length ? `<div class="tt-meta">${n.tags.map(esc).join(', ')}</div>` : '';
-        const reg = n.cluster >= 0 && (S.clusters || []).find((c) => c.id === n.cluster);
-        const region = reg && reg.label ? `<div class="tt-meta">Region: <i>${esc(regionName(reg.label))}</i></div>` : '';
-        return `<div class="tt-title">${esc(n.title || n.id)}</div><div class="tt-meta">${meta.join('')}</div>${q}${tags}${region}`;
-      })
+      // no tooltip that follows the mouse: hovering a dot shows its title and details at the dot (drawNode)
+      .nodeLabel(() => '')
       .nodeCanvasObject(drawNode)
       .nodePointerAreaPaint((n, color, ctx) => {
         const r = Math.max(nodeRadius(n), 4) + 2;
@@ -1180,7 +1171,8 @@
       })
       .onNodeHover((n) => { S.hover = n ? n.id : null; graphEl.style.cursor = n ? 'pointer' : ''; kick(50); })
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
-      .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
+      .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
+      .onNodeRightClick((n, e) => nodeMenu(n, e))
       .onBackgroundClick((e) => {
         if (regionTagClick(e)) return;
         if (S.backgroundClickHook) S.backgroundClickHook(e);
@@ -1418,6 +1410,17 @@
       ctx.strokeText(label, n.x, y);
       ctx.fillStyle = big ? C.ink : C.ink2;
       ctx.fillText(label, n.x, y);
+      if (hov) {  // what the hover tooltip used to say, one small line under the title
+        const meta = [n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : n.type === 'question' ? 'Question' : 'Note',
+          n.year, n.authors && n.authors.length ? fmtAuthors(n.authors, 2) : ''].filter(Boolean).join('  ·  ');
+        const ms = 10.5 * px, my = y + fs + 4 * px;
+        ctx.font = `500 ${ms}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
+        if ('fontStretch' in ctx) ctx.fontStretch = 'semi-condensed';
+        ctx.strokeText(meta, n.x, my);
+        ctx.fillStyle = C.ink2;
+        ctx.fillText(meta, n.x, my);
+        S.labelBoxes.push([n.x - ctx.measureText(meta).width / 2 - 8 * px, my - 3 * px, n.x + ctx.measureText(meta).width / 2 + 8 * px, my + ms + 4 * px]);
+      }
     }
     ctx.restore();
   }
@@ -2004,6 +2007,7 @@
         onclick: (e) => refreshMetadata(n.id, e.currentTarget) }, 'Refresh metadata'));
     }
     if (acts.length) out.push(h('div', { class: 'actions' }, acts));
+    out.push(renderLinked(n));
 
     if (n.type === 'paper') out.push(renderDetailsEditor(n));
 
@@ -2023,7 +2027,6 @@
     fillDiscover(disc, n.id);
     out.push(renderRelated(n));
     out.push(renderBacklinks(n));
-    out.push(renderLinked(n));
     out.push(renderDanger(n));
     return out;
   }
@@ -2342,11 +2345,11 @@
       }).catch(() => {});
     } else drawViewLink();
 
+    out.push(renderLinked(n));
     out.push(renderBodyEditor(n, 'Your note', 'What this passage means to you. Markdown and LaTeX.'));
     out.push(section('Tags', null, renderTags(n)));
     out.push(renderRelated(n));
     out.push(renderBacklinks(n));
-    out.push(renderLinked(n));
     out.push(renderDanger(n));
     return out;
   }
@@ -2435,10 +2438,11 @@
     if (ok) createFromLink(title);
   }
 
+  /** Links: its own section near the top of the panel. Type a title (or [[title) to link a paper,
+   *  note or question; right-clicking a dot on the map does the same from there. */
   function renderLinked(n) {
     const ids = Array.isArray(n.links) ? n.links : [];
     const rows = h('div', { class: 'rows' });
-    if (!ids.length) rows.appendChild(h('div', { class: 'empty-list', text: 'No links yet. Use Link on a similar note to connect it.' }));
     for (const id of ids) {
       const unl = h('button', { class: 'btn btn-text btn-sm', type: 'button', title: 'Remove this link', text: 'Unlink' });
       unl.onclick = () => unlinkNotes(n.id, id, unl);
@@ -2450,7 +2454,112 @@
           h('button', { class: 'btn btn-text btn-sm needs-claude', type: 'button', title: `Ask ${ai()} why these are connected`, text: 'Why', onclick: (e) => { if (!claudeBlocked(e.currentTarget)) openExplain(n.id, id); } }),
           unl)));
     }
-    return section('Your links', ids.length || null, rows);
+    const sec = section('Links', ids.length || null, linkPicker(n), rows);
+    sec.classList.add('links-sec');
+    return sec;
+  }
+
+  /** A search box that links the open note to the paper, note or question you pick. */
+  function linkPicker(n) {
+    const inp = h('input', { type: 'text', class: 'link-input', placeholder: 'Link to… type [[ or a title', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Link to another paper or note' });
+    if (window.Wikilinks && window.Wikilinks.injectCSS) window.Wikilinks.injectCSS();  // the [[ popup's look
+    const pop = h('ul', { class: 'wl-pop', role: 'listbox' });
+    let items = [], on = 0;
+    const close = () => { pop.remove(); items = []; };
+    const draw = () => {
+      pop.replaceChildren(...(items.length ? items.map((m, i) => h('li', { class: i === on ? 'on' : '', role: 'option',
+        onpointerdown: (e) => { e.preventDefault(); pick(m); } },
+        h('span', { class: 'tdot ' + (m.type || 'note') }), h('span', { class: 'wl-t', text: m.title || m.id }),
+        h('span', { class: 'wl-s', text: [m.type === 'paper' ? 'Paper' : m.type === 'question' ? 'Question' : 'Note', m.year].filter(Boolean).join(', ') })))
+        : [h('li', { class: 'wl-empty', text: 'Nothing with that title' })]));
+      const r = inp.getBoundingClientRect();
+      Object.assign(pop.style, { left: r.left + 'px', top: r.bottom + 4 + 'px', width: r.width + 'px' });
+      if (!pop.isConnected) document.body.appendChild(pop);
+    };
+    const update = () => {
+      const q = inp.value.replace(/^\s*\[\[/, '').replace(/\]\]\s*$/, '').trim().toLowerCase();
+      if (!q && !inp.value.includes('[[')) { close(); return; }
+      const linked = new Set(n.links || []);
+      items = [...S.nodes.values()]
+        .filter((m) => m.id !== n.id && !linked.has(m.id) && m.type !== 'fragment')
+        .map((m) => ({ m, at: String(m.title || m.id).toLowerCase().indexOf(q) }))
+        .filter((x) => x.at >= 0)
+        .sort((a, b) => (a.at !== 0) - (b.at !== 0) || String(a.m.title || '').localeCompare(String(b.m.title || '')))  // title starts with it first
+        .slice(0, 8).map((x) => x.m);
+      on = 0; draw();
+    };
+    const pick = (m) => { close(); inp.value = ''; linkNotes(n.id, m.id); };
+    inp.addEventListener('input', update);
+    inp.addEventListener('focus', () => { if (inp.value) update(); });
+    inp.addEventListener('blur', () => setTimeout(close, 100));
+    inp.addEventListener('keydown', (e) => {
+      if (!pop.isConnected || !items.length) { if (e.key === 'Escape' && inp.value) { e.preventDefault(); inp.value = ''; close(); } return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); on = (on + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; draw(); }
+      else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(items[on]); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    return inp;
+  }
+
+  // ---------- right-click a dot: link it ----------
+  let nodeMenuEl = null;
+  function closeNodeMenu() { if (nodeMenuEl) { nodeMenuEl.remove(); nodeMenuEl = null; } }
+  function nodeMenu(n, e) {
+    closeNodeMenu();
+    if (!n) return;
+    const item = (label, hint, fn) => h('button', { class: 'menu-item', type: 'button', onclick: () => { closeNodeMenu(); fn(); } },
+      h('span', { text: label }), hint ? h('span', { class: 'menu-hint', text: hint }) : null);
+    const items = [];
+    const cur = S.cur && S.cur.id !== n.id && n.type !== 'fragment' ? S.cur : null;
+    if (cur) {
+      const linked = (cur.links || []).includes(n.id);
+      items.push(linked
+        ? item(`Unlink from “${truncate(cur.title || cur.id, 40)}”`, 'the note open in the panel', () => unlinkNotes(cur.id, n.id))
+        : item(`Link to “${truncate(cur.title || cur.id, 40)}”`, 'the note open in the panel', () => linkNotes(cur.id, n.id)));
+    }
+    if (n.type !== 'fragment') items.push(item('Link to another dot…', 'then click the dot to link it to', () => startLinkMode(n)));
+    items.push(item('Open', null, () => openNote(n.id, { center: true })));
+    nodeMenuEl = h('div', { class: 'menu node-menu', role: 'menu' },
+      h('div', { class: 'menu-label', text: truncate(n.title || n.id, 60) }), items);
+    document.body.appendChild(nodeMenuEl);
+    const w = nodeMenuEl.offsetWidth, ht = nodeMenuEl.offsetHeight;
+    Object.assign(nodeMenuEl.style, { left: Math.min(e.clientX, innerWidth - w - 8) + 'px', top: Math.min(e.clientY, innerHeight - ht - 8) + 'px' });
+    const first = $('.menu-item', nodeMenuEl); if (first) first.focus({ preventScroll: true });
+  }
+  document.addEventListener('pointerdown', (e) => { if (nodeMenuEl && !nodeMenuEl.contains(e.target)) closeNodeMenu(); }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (nodeMenuEl) closeNodeMenu();
+    else if (S.linkFrom) endLinkMode();
+  });
+  window.addEventListener('wheel', closeNodeMenu, { passive: true });
+
+  // "Link to another dot…": the next dot you click is linked to this one
+  let linkModeEl = null;
+  function startLinkMode(n) {
+    endLinkMode();
+    S.linkFrom = n.id;
+    linkModeEl = h('div', { class: 'link-mode', role: 'status' },
+      h('span', null, 'Click the dot to link to ', h('i', { text: truncate(n.title || n.id, 50) })),
+      h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Cancel', onclick: endLinkMode }));
+    document.body.appendChild(linkModeEl);
+    graphEl.classList.add('linking');
+  }
+  function endLinkMode() {
+    S.linkFrom = null;
+    if (linkModeEl) { linkModeEl.remove(); linkModeEl = null; }
+    graphEl.classList.remove('linking');
+  }
+  /** A dot clicked while linking. Returns true when the click was used. */
+  function finishLinkMode(n) {
+    const from = S.linkFrom;
+    if (!from || n.id === from) return true;  // clicking the same dot again does nothing
+    if (n.type === 'fragment') { toast('Link to the paper or note instead of one of its highlights', 'info'); return true; }
+    endLinkMode();
+    // store it on the note open in the panel when that is one of the two, so the panel shows it at once
+    if (S.cur && S.cur.id === n.id) linkNotes(n.id, from); else linkNotes(from, n.id);
+    toast(`Linked “${truncate(nodeTitle(from), 40)}” and “${truncate(n.title || n.id, 40)}”`, 'ok');
+    return true;
   }
 
   async function linkNotes(a, b, btn) {
@@ -2477,7 +2586,7 @@
   }
   function rerenderLists() {
     if (!S.cur) return;
-    const rel = $('.section[data-sec="Similar"]', pbody), lin = $('.section[data-sec="Your links"]', pbody);
+    const rel = $('.section[data-sec="Similar"]', pbody), lin = $('.section[data-sec="Links"]', pbody);
     if (rel) { const x = renderRelated(S.cur); rel.replaceWith(x); applyClaude(x); }
     if (lin) { const x = renderLinked(S.cur); lin.replaceWith(x); applyClaude(x); }
   }

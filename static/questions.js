@@ -232,8 +232,8 @@
     title.classList.add('oq-title');
     title.placeholder = 'Your question';
     title.setAttribute('aria-label', 'Question');
-    const out = [statusRow(n), title, detailField(n), answerSection(n), evidenceSection(n), aiSection(n),
-      rb.section('Tags', null, rb.renderTags(n)), rb.renderBacklinks(n), rb.renderLinked(n)];
+    const out = [statusRow(n), title, detailField(n), rb.renderLinked(n), answerSection(n), evidenceSection(n), aiSection(n),
+      rb.section('Tags', null, rb.renderTags(n)), rb.renderBacklinks(n)];
     const danger = rb.renderDanger(n);
     const del = $('.btn-danger', danger);
     if (del) del.textContent = 'Delete question';
