@@ -16,7 +16,6 @@ dependencies = [
   "pyyaml>=6.0",
   "requests>=2.31",
   "numpy>=1.26",
-  "scikit-learn>=1.4",
   "pypdf>=4.0",
   "pypdfium2>=4.30",
   "watchdog>=4.0",

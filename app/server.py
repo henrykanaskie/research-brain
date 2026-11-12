@@ -663,7 +663,7 @@ def _cluster_names(groups: list[list[dict]]) -> list[str]:
     texts = [" ".join(f"{n['title']} {' '.join(n['tags'])} {' '.join(n['tags'])} {n['summary']}" for n in g
                       if n["type"] != "question") for g in groups]
     try:
-        from sklearn.feature_extraction.text import TfidfVectorizer
+        from .textvec import TfidfVectorizer
         vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2), sublinear_tf=True,
                               token_pattern=r"(?u)\b[a-zA-Z][a-zA-Z0-9\-]{2,}\b")
         m = vec.fit_transform(texts).toarray()

@@ -105,7 +105,7 @@ class Embedder:
             return [], None
         with self.lock:
             if self.kind == "tfidf":
-                from sklearn.feature_extraction.text import TfidfVectorizer
+                from .textvec import TfidfVectorizer
                 texts = [docs[i] or i for i in ids]
                 vec = TfidfVectorizer(stop_words="english", sublinear_tf=True, ngram_range=(1, 2),
                                       min_df=1, max_df=0.9 if len(ids) > 5 else 1.0)

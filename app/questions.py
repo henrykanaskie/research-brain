@@ -272,10 +272,7 @@ MIN_OVERLAP = 3   # TF-IDF only: distinct question words (stemmed) a candidate m
 
 def _stems(text: str) -> set[str]:
     """Content words of `text`, crudely stemmed (first 5 letters), so "shielded" meets "shielding"."""
-    try:
-        from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS as stop
-    except Exception:  # pragma: no cover
-        stop = frozenset()
+    from .textvec import ENGLISH_STOP_WORDS as stop
     out = set()
     for w in _WORD_RE.findall((text or "").lower()):
         if w in stop or w.isdigit() or len(w) < 2:

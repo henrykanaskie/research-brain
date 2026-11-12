@@ -74,7 +74,7 @@ def load_pairs(path: Path, notes: dict) -> tuple[list[tuple[str, str, int]], lis
 
 # ---------------------------------------------------------------- models
 def embed_tfidf(ids: list[str], docs: dict[str, str]) -> np.ndarray:
-    from sklearn.feature_extraction.text import TfidfVectorizer
+    from app.textvec import TfidfVectorizer
     vec = TfidfVectorizer(stop_words="english", sublinear_tf=True, ngram_range=(1, 2), min_df=1,
                           max_df=0.9 if len(ids) > 5 else 1.0)
     return vec.fit_transform([docs[i] or i for i in ids]).toarray().astype(np.float32)

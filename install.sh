@@ -97,13 +97,13 @@ fi
 
 RB="$(command -v research-brain 2>/dev/null || echo "$HOME/.local/bin/research-brain")"
 echo "→ Installed: $("$RB" --version)"
-# Load everything once now: macOS checks newly installed native libraries (numpy, scikit-learn, the window)
+# Load everything once now: macOS checks newly installed native libraries (numpy, pypdfium2, the window)
 # the first time they load, which made the first start after an install take ~20 s instead of ~1 s.
 RB_PY="$(head -1 "$RB" | sed -n 's/^#! *//p')"
 if [ -x "$RB_PY" ]; then
   echo "→ Getting it ready for its first start (up to half a minute)"
   "$RB_PY" -c "import research_brain.server
-for m in ('sklearn.feature_extraction.text', 'sklearn.metrics.pairwise', 'pypdfium2', 'pypdf', 'lxml.etree',
+for m in ('numpy', 'pypdfium2', 'pypdf', 'lxml.etree',
           'watchdog.observers', 'citeproc', 'webview', 'AppKit', 'WebKit'):
     try:
         __import__(m)

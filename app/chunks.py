@@ -209,7 +209,7 @@ class ChunkIndex:
         self._m: np.ndarray | None = None
         self._tfidf = None
         self._sig = None
-        self._bm25 = None   # (CountVectorizer, sparse doc×term BM25 weight matrix)
+        self._bm25 = None   # (CountVectorizer, doc×term BM25 weight matrix: textvec.Rows)
 
     # ---- cache files
     def _files(self, kind: str) -> tuple[Path, Path]:
@@ -247,7 +247,7 @@ class ChunkIndex:
         return np.asarray(v, dtype=np.float32)
 
     def _fit_tfidf(self, texts: list[str]):
-        from sklearn.feature_extraction.text import TfidfVectorizer
+        from .textvec import TfidfVectorizer
         vec = TfidfVectorizer(stop_words="english", sublinear_tf=True, ngram_range=(1, 2), min_df=1,
                               max_df=0.9 if len(texts) > 20 else 1.0)
         try:
@@ -326,14 +326,15 @@ class ChunkIndex:
     def _build_bm25(texts: list[str], k1: float = 1.5, b: float = 0.75):
         """BM25 term weights per chunk. Tokens keep numbers, decimals, subscripts and LaTeX commands
         ("811.3", "kr", "t_e", "\\nabla"), which embeddings blur and researchers search by."""
-        from sklearn.feature_extraction.text import CountVectorizer
+        from .textvec import CountVectorizer
         vec = CountVectorizer(lowercase=True, token_pattern=BM25_TOKENS, stop_words="english")
         try:
-            tf = vec.fit_transform(texts).tocsr().astype(np.float32)
+            tf = vec.fit_transform(texts)
         except ValueError:
             return None
+        tf.data = tf.data.astype(np.float32)
         n = tf.shape[0]
-        dl = np.asarray(tf.sum(axis=1)).ravel()
+        dl = tf.row_sums()
         avgdl = float(dl.mean()) or 1.0
         df = np.bincount(tf.indices, minlength=tf.shape[1])
         idf = np.log(1 + (n - df + 0.5) / (df + 0.5)).astype(np.float32)
@@ -350,7 +351,7 @@ class ChunkIndex:
         if q.nnz == 0:
             return None
         q.data[:] = 1.0
-        return np.asarray((w @ q.T).todense()).ravel()
+        return w.dot_row(q)
 
     def search(self, query: str, k: int = 12, per_note: int = 3, notes: list[dict] | None = None) -> list[dict]:
         """Top passages for `query`, at most `per_note` from any one note (diversity).
@@ -384,7 +385,7 @@ class ChunkIndex:
                 if self._tfidf is None:
                     return []
                 qv = self._tfidf.transform([query])
-                sims = np.asarray((self._m @ qv.T).todense()).ravel()
+                sims = self._m.dot_row(qv)
             else:
                 qv = self._encode([query])[0]
                 sims = self._m @ qv
@@ -431,7 +432,7 @@ class ChunkIndex:
                 if self._tfidf is None:
                     return [0.0] * len(texts)
                 m = self._tfidf.transform([query] + list(texts))
-                sims = np.asarray((m[1:] @ m[0].T).todense()).ravel()
+                sims = m[1:].dot_row(m[0:1])
             else:
                 v = self._encode([query] + list(texts))
                 sims = v[1:] @ v[0]

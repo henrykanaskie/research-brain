@@ -180,12 +180,12 @@ def similarity(question: str, texts: list[str], dense_index=None) -> list[float]
         return []
     if dense_index is not None:
         return dense_index.similarity(question, texts)
-    from sklearn.feature_extraction.text import TfidfVectorizer
+    from .textvec import TfidfVectorizer
     try:
         m = TfidfVectorizer(stop_words="english", sublinear_tf=True, ngram_range=(1, 2), min_df=1).fit_transform([question] + texts)
     except ValueError:  # nothing but stop words
         return [0.0] * len(texts)
-    sims = (m[1:] @ m[0].T).toarray().ravel()
+    sims = m[1:].dot_row(m[0:1])
     return [float(max(0.0, min(1.0, x))) for x in sims]
 
 

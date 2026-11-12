@@ -991,7 +991,7 @@ class CardIndex:
                 return self._dense(cards, texts), "dense"
             except Exception as e:
                 print(f"[research_brain] card embedding failed ({e!r}); using TF-IDF")
-        from sklearn.feature_extraction.text import TfidfVectorizer
+        from .textvec import TfidfVectorizer
         vec = TfidfVectorizer(stop_words="english", sublinear_tf=True, ngram_range=(1, 2), min_df=1)
         try:
             m = vec.fit_transform(texts)
@@ -1050,7 +1050,7 @@ class CardIndex:
         hit = np.zeros(len(cards), bool)
         try:
             qv = self._encode_query(query, mode)
-            sims = (m @ qv) if mode == "dense" else np.asarray((m @ qv.T).todense()).ravel()
+            sims = (m @ qv) if mode == "dense" else m.dot_row(qv)
             floor = 0.3 if mode == "dense" else 0.05
             order = [i for i in np.argsort(-sims) if sims[i] > floor][:100]
             for r, i in enumerate(order):
@@ -1064,7 +1064,7 @@ class CardIndex:
             qv = vec.transform([query])
             if qv.nnz:
                 qv.data[:] = 1.0
-                lex = np.asarray((w @ qv.T).todense()).ravel()
+                lex = w.dot_row(qv)
                 order = [i for i in np.argsort(-lex) if lex[i] > 0][:100]
                 for r, i in enumerate(order):
                     fused[i] += 1.0 / (RRF_K + 1 + r)
@@ -1129,7 +1129,7 @@ def compute_links(cards: list[dict], index: CardIndex | None = None, top: int = 
         index = index or CardIndex(CardStore(Path(".")))
         m, mode = index.vectors(others)
         thr = LINK_ST if mode == "dense" else LINK_TFIDF
-        sims = (m @ m.T) if mode == "dense" else np.asarray((m @ m.T).todense())
+        sims = (m @ m.T) if mode == "dense" else m.gram()
         seen: set = set()
         for i, a in enumerate(others):
             cand = [(float(sims[i, j]), j) for j in range(len(others))
