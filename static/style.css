@@ -1037,3 +1037,4 @@ body.chat-scoped .rs-mode { display: none; }
 .access-ico { display: inline-flex; margin-right: 3px; vertical-align: -1px; opacity: .85; }
 .disc-src { font: 12px var(--sans); color: var(--ink-3); margin: 4px 0 2px; }
 .ls-key { margin-top: 10px; }
+.cite.cite-rough .cite-page::before { content: "≈\00a0"; opacity: .7; } /* roughly located: no single sentence says it */

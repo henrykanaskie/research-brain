@@ -108,3 +108,22 @@ def test_lookup_keys_are_saved_masked_and_validated(client):
     from app import apikeys
     assert apikeys.get("s2") == "abcDEF1234567890"
     assert not client.put("/api/lookup-keys", json={"service": "s2", "key": ""}).json()["s2"]["set"]
+
+
+ROUGH = """[[page 4]]
+Facility effects matter for thruster tests. Background pressure in the chamber raises the measured thrust.
+Carbon from the beam dump redeposits on the ceramic channel. Over thousands of hours the walls erode and the
+channel widens. Magnetic shielding moves the plasma away from the walls. Our own results begin in Section 5.
+The final paragraph is about something else entirely, namely data acquisition hardware and sample rates.
+"""
+
+
+def test_locate_gives_a_rough_stretch_when_no_sentence_says_it():
+    from app.locate import locate
+    # the claim draws on three neighbouring sentences, none of which says it alone
+    r = locate(ROUGH, 4, "Redeposited carbon and long-duration wall erosion widen ceramic channels unless magnetic shielding is used.")
+    assert r["precision"] in ("rough", "sentence") and r["quote"]
+    assert "erode" in r["quote"] or "Magnetic shielding" in r["quote"]
+    r = locate(ROUGH, 4, "Chamber pressure, beam-dump carbon, channel widening and magnetic shielding interact in facility tests.")
+    assert r["precision"] == "rough" and r["page"] == 4 and "data acquisition" not in r["quote"]
+    assert locate(ROUGH, 4, "Quantum gravity")["precision"] == "page"

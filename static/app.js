@@ -221,14 +221,18 @@
     if (!res || !res.quote) return;
     const m = /^\/viewer\/([^#]+)#page=(\d+)/.exec(a.getAttribute('href') || '');
     if (!m) return;
-    a.setAttribute('href', `/viewer/${encodeURIComponent(res.pdf)}#page=${res.page}&hl=${encodeURIComponent(res.quote)}`);
+    const rough = res.precision === 'rough';
+    a.setAttribute('href', `/viewer/${encodeURIComponent(res.pdf)}#page=${res.page}&hl=${encodeURIComponent(res.quote)}${rough ? '&near=1' : ''}`);
+    if (rough) a.classList.add('cite-rough');
     const pg = a.querySelector('.cite-page');
     if (res.moved && pg) {
       pg.textContent = `p. ${res.page}`;
       a.classList.add('cite-moved');
     }
     const head = (a.getAttribute('title') || '').split('\n')[0].replace(/, page \d+/, `, page ${res.page}`);
-    a.setAttribute('title', `${head}\n\n“${truncate(res.quote, 220)}”${res.moved ? `\n\nThe answer said p. ${m[2]}; this passage is on p. ${res.page}.` : ''}\n\nClick to open the PDF with this passage highlighted.`);
+    a.setAttribute('title', rough
+      ? `${head}\n\nRoughly from the part of the page beginning “${truncate(res.quote, 120)}”\n\nNo single sentence says it, so clicking marks that stretch of the page.`
+      : `${head}\n\n“${truncate(res.quote, 220)}”${res.moved ? `\n\nThe answer said p. ${m[2]}; this passage is on p. ${res.page}.` : ''}\n\nClick to open the PDF with this passage highlighted.`);
   }
   function pinCitations(root) {
     const els = (root || document).querySelectorAll('.md a.cite[href^="/viewer/"]:not([data-pinned])');

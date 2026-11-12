@@ -27,7 +27,10 @@ _TEX_CMD = re.compile(r"\\[A-Za-z]+")
 _WORD = re.compile(r"[A-Za-z][A-Za-z\-]{2,}|\d+(?:\.\d+)?")
 _SENT = re.compile(r"(?<=[.!?])[\"')\]]?\s+(?=[A-Z0-9(\[])")
 _ABBREV = re.compile(r"\b(?:et al|e\.g|i\.e|Fig|Figs|Eq|Eqs|Ref|Refs|Sec|vs|cf|approx|resp|no|vol|pp)\.$", re.I)
-MIN_SCORE = 0.18      # below this the sentence is a guess: open the page without a highlight
+MIN_SCORE = 0.18      # a sentence (or pair) this good is "the" sentence
+ROUGH_MIN = 0.08      # below MIN_SCORE but above this: mark the stretch of the page the claim is roughly from
+ROUGH_SENTS = 4       # how many sentences a rough stretch spans
+MAX_ROUGH = 700
 SWITCH_GAIN = 1.4     # a neighbouring page must score this much better to move the citation there
 MAX_QUOTE = 320
 
@@ -95,16 +98,35 @@ def _best(claim_terms: list[str], sents: list[str], idf: dict[str, float]) -> tu
     return best
 
 
-def _quote(text: str, claim_terms: list[str]) -> str:
-    """At most MAX_QUOTE characters, cut around the claim's words if the sentence is long."""
-    if len(text) <= MAX_QUOTE:
+def _rough(claim_terms: list[str], sents: list[str], idf: dict[str, float]) -> tuple[float, str]:
+    """The stretch of ROUGH_SENTS sentences holding most of the claim's vocabulary: no single sentence says
+    it, but the claim is drawn from around here (a paragraph, not the whole page)."""
+    want = {}
+    for t in claim_terms:
+        want[t] = max(want.get(t, 0.0), idf.get(t, 1.0) * (1.6 if t[0].isdigit() else 1.0))
+    total = sum(want.values())
+    if not total or not sents:
+        return 0.0, ""
+    sets = [set(terms(s)) for s in sents]
+    best = (0.0, "")
+    for i in range(len(sents)):
+        have = set().union(*sets[i:i + ROUGH_SENTS])
+        score = sum(w for t, w in want.items() if t in have) / total
+        if score > best[0] + 1e-9:
+            best = (score, " ".join(sents[i:i + ROUGH_SENTS]))
+    return best
+
+
+def _quote(text: str, claim_terms: list[str], cap: int = MAX_QUOTE) -> str:
+    """At most `cap` characters, cut around the claim's words if the passage is long."""
+    if len(text) <= cap:
         return text
     want = set(claim_terms)
     words = text.split(" ")
     hits = [i for i, w in enumerate(words) if set(terms(w)) & want]
     mid = hits[len(hits) // 2] if hits else 0
     lo, hi = mid, mid
-    while hi - lo < len(words) and len(" ".join(words[lo:hi + 1])) < MAX_QUOTE:
+    while hi - lo < len(words) and len(" ".join(words[lo:hi + 1])) < cap:
         if lo > 0:
             lo -= 1
         if hi < len(words) - 1:
@@ -115,11 +137,12 @@ def _quote(text: str, claim_terms: list[str]) -> str:
 
 
 def locate(fulltext: str, page: int | None, claim: str) -> dict:
-    """{page, quote, score, moved}. quote is "" when nothing on the page clearly matches."""
+    """{page, quote, score, moved, precision}. precision is "sentence" (the sentence or two that say it),
+    "rough" (the few sentences it's roughly drawn from) or "page" (nothing on the page matches; quote "")."""
     pages = dict((p, t) for p, t in chunks.split_pages(fulltext) if p is not None)
     ct = terms(claim)
     if not pages or not page or not ct:
-        return {"page": page, "quote": "", "score": 0.0, "moved": False}
+        return {"page": page, "quote": "", "score": 0.0, "moved": False, "precision": "page"}
     cand = [p for p in (page, page - 1, page + 1) if p in pages]
     sents = {p: sentences(pages[p]) for p in cand}
     # rarity across the candidate pages' sentences
@@ -137,6 +160,12 @@ def locate(fulltext: str, page: int | None, claim: str) -> dict:
     moved = best_p != page and scored[best_p][0] >= MIN_SCORE and scored[best_p][0] >= here[0] * SWITCH_GAIN + 0.05
     use = best_p if moved else page
     score, text = scored.get(use, (0.0, ""))
-    if score < MIN_SCORE:
-        return {"page": page, "quote": "", "score": round(score, 3), "moved": False}
-    return {"page": use, "quote": _quote(text, ct), "score": round(score, 3), "moved": moved}
+    rs, rtext = _rough(ct, sents.get(use, []), idf)
+    # a sentence or two that says it; unless the claim is clearly spread over a longer stretch (a summary
+    # of a paragraph), in which case marking one sentence would point at the wrong thing
+    if score >= MIN_SCORE and not (score < 0.5 and rs >= score + 0.2):
+        return {"page": use, "quote": _quote(text, ct), "score": round(score, 3), "moved": moved, "precision": "sentence"}
+    if rs >= ROUGH_MIN:
+        return {"page": use, "quote": _quote(rtext, ct, MAX_ROUGH), "score": round(rs, 3), "moved": moved,
+                "precision": "rough"}
+    return {"page": page, "quote": "", "score": round(score, 3), "moved": False, "precision": "page"}

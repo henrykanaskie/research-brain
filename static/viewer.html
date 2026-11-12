@@ -108,8 +108,14 @@ body.side-hidden #side{display:none}
 /* a citation's passage: highlighted for a few seconds, then gone (it isn't saved) */
 .textLayer span.rb-cite{animation:scite 3.2s ease-out forwards}
 @keyframes scite{0%,55%{background:rgba(230,170,40,.42);box-shadow:0 0 0 1px rgba(200,140,20,.35)}100%{background:transparent;box-shadow:none}}
+/* a rough location: a faint wash over the stretch and a bar in the margin, held a little longer */
+.textLayer span.rb-cite-near{animation:snear 5s ease-out forwards}
+@keyframes snear{0%,70%{background:rgba(230,170,40,.16)}100%{background:transparent}}
+.rb-cite-bar{position:absolute;left:-10px;width:4px;border-radius:2px;background:rgba(214,150,30,.85);pointer-events:auto;animation:sbar 3.4s ease-out forwards;z-index:3}
+.rb-cite-bar.near{background:repeating-linear-gradient(to bottom,rgba(214,150,30,.85) 0 6px,transparent 6px 10px);animation-duration:5.2s}
+@keyframes sbar{0%,75%{opacity:1}100%{opacity:0}}
 @keyframes sflash{0%,40%{background:rgba(178,58,51,.32)}100%{background:rgba(178,58,51,.10)}}
-@media (prefers-reduced-motion: reduce){.page.flash,.textLayer span.rb-flash{animation:none}.textLayer span.rb-cite{animation:none;background:rgba(230,170,40,.35)}}
+@media (prefers-reduced-motion: reduce){.page.flash,.textLayer span.rb-flash{animation:none}.textLayer span.rb-cite{animation:none;background:rgba(230,170,40,.35)}.textLayer span.rb-cite-near{animation:none;background:rgba(230,170,40,.14)}.rb-cite-bar{animation:none}}
 
 /* Sidebar */
 #side{width:var(--side-w);flex:none;border-left:1px solid var(--rule);background:var(--sheet);display:flex;flex-direction:column;min-height:0;position:relative}
@@ -599,12 +605,12 @@ function applyHash(initial) {
   if (frag) { const f = S.frags.find((x) => x.id === frag); if (f) { jumpToFrag(f); return; } }
   const pg = parseInt(h.get("page"), 10);
   const hl = h.get("hl");
-  if (pg && hl) { history.replaceState(null, "", `#page=${pg}`); flashQuote(pg, hl); }
+  if (pg && hl) { history.replaceState(null, "", `#page=${pg}`); flashQuote(pg, hl, h.get("near") === "1"); }
   else if (pg) goPage(pg); else if (initial) setCurrent(1);
 }
 /* A cited passage: go to its page, scroll it into view and highlight it for a few seconds. Falls back to
    flashing the page when the text layer doesn't contain it (a scanned page, say). */
-async function flashQuote(num, quote) {
+async function flashQuote(num, quote, near = false) {
   if (!S.pages.length) return;
   const p = S.pages[Math.max(1, Math.min(S.pages.length, num)) - 1];
   goPage(p.num);
@@ -613,10 +619,26 @@ async function flashQuote(num, quote) {
   if (sp && sp.length) {
     const r = sp[0].getBoundingClientRect(), vr = viewer.getBoundingClientRect();
     viewer.scrollBy({ top: r.top - vr.top - viewer.clientHeight * 0.3, behavior: "smooth" });
-    p.tl.querySelectorAll(".rb-cite").forEach((s) => s.classList.remove("rb-cite"));
-    sp.forEach((s) => { void s.offsetWidth; s.classList.add("rb-cite"); });
+    p.tl.querySelectorAll(".rb-cite, .rb-cite-near").forEach((s) => s.classList.remove("rb-cite", "rb-cite-near"));
+    p.div.querySelectorAll(".rb-cite-bar").forEach((b) => b.remove());
+    const cls = near ? "rb-cite-near" : "rb-cite";
+    sp.forEach((s) => { void s.offsetWidth; s.classList.add(cls); });
+    // a bar in the margin beside the passage: for a rough location it's the main cue, the wash is faint
+    const pr = p.div.getBoundingClientRect();
+    let top = Infinity, bot = -Infinity;
+    for (const s of sp) { const b = s.getBoundingClientRect(); if (b.height) { top = Math.min(top, b.top); bot = Math.max(bot, b.bottom); } }
+    if (top < bot) {
+      const bar = document.createElement("div");
+      bar.className = "rb-cite-bar" + (near ? " near" : "");
+      bar.style.top = `${top - pr.top - 4}px`; bar.style.height = `${bot - top + 8}px`;
+      bar.title = near ? "Roughly where the answer drew this from" : "The cited passage";
+      p.div.appendChild(bar);
+    }
     clearTimeout(flashQuote.t);
-    flashQuote.t = setTimeout(() => p.tl && p.tl.querySelectorAll(".rb-cite").forEach((s) => s.classList.remove("rb-cite")), 3400);
+    flashQuote.t = setTimeout(() => {
+      p.tl && p.tl.querySelectorAll(".rb-cite, .rb-cite-near").forEach((s) => s.classList.remove("rb-cite", "rb-cite-near"));
+      p.div.querySelectorAll(".rb-cite-bar").forEach((b) => b.remove());
+    }, near ? 5200 : 3400);
     return true;
   }
   p.div.classList.remove("flash"); void p.div.offsetWidth; p.div.classList.add("flash");
@@ -1170,7 +1192,7 @@ function claimBefore(el) {
 }
 async function citeClick(el) {
   const page = +el.dataset.page;
-  if (el.dataset.quote) { flashQuote(+el.dataset.at || page, el.dataset.quote); return; }
+  if (el.dataset.quote) { flashQuote(+el.dataset.at || page, el.dataset.quote, el.dataset.near === "1"); return; }
   goPage(page, true);
   let res = null;
   try {
@@ -1178,10 +1200,10 @@ async function citeClick(el) {
     if (r.ok) res = ((await r.json()).items || [])[0];
   } catch { }
   if (res && res.quote) {
-    el.dataset.quote = res.quote; el.dataset.at = res.page;
+    el.dataset.quote = res.quote; el.dataset.at = res.page; el.dataset.near = res.precision === "rough" ? "1" : "";
     if (res.moved) { el.innerHTML = `p.&nbsp;${esc(res.page)}`; el.classList.add("cite-moved"); el.title = `The answer said p. ${page}; this passage is on p. ${res.page}`; }
-    else el.title = `Highlight the passage on page ${page}`;
-    flashQuote(res.page, res.quote);
+    else el.title = res.precision === "rough" ? `Mark roughly where on page ${page} this comes from` : `Highlight the passage on page ${page}`;
+    flashQuote(res.page, res.quote, res.precision === "rough");
   } else flashQuote(page, "");
 }
 

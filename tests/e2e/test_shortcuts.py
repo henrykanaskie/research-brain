@@ -475,3 +475,21 @@ def test_citation_opens_the_pdf_with_its_sentence_highlighted(ctx, server, tmp_p
     expect(v.locator(".textLayer span.rb-cite").first).to_be_visible(timeout=30_000)
     assert "Bohm criterion" in " ".join(v.locator(".textLayer span.rb-cite").all_inner_texts())
     assert "hl=" not in v.evaluate("location.hash")  # the highlight isn't kept in the address
+
+
+def test_rough_citation_marks_a_stretch_with_a_margin_bar(ctx, server, tmp_path):
+    from test_e2e import _pdf_bytes
+    clear_vault(server)
+    pdf = tmp_path / "sheath2.pdf"
+    pdf.write_bytes(_pdf_bytes())
+    page = open_app(ctx, server)
+    import_pdf_with_shortcut(page, pdf)
+    page.wait_for_function("window.__rb.S.cur && window.__rb.S.cur.has_pdf", timeout=30_000)
+    nid = page.evaluate("window.__rb.S.cur.id")
+    quote = page.evaluate("(nid) => fetch('/api/locate', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+                          "body: JSON.stringify({items: [{id: nid, page: 1, claim: 'sheath'}]})}).then(r => r.json())", nid)
+    q = quote["items"][0]["quote"] or "Bohm criterion"
+    v = ctx.new_page()
+    v.goto(f"{server['base']}/viewer/{nid}#page=1&hl={__import__('urllib.parse').parse.quote(q)}&near=1")
+    expect(v.locator(".rb-cite-bar.near")).to_be_visible(timeout=30_000)
+    assert v.locator(".textLayer span.rb-cite-near").count() > 0 and v.locator(".textLayer span.rb-cite").count() == 0
