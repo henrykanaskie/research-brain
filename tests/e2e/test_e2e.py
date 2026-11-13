@@ -517,3 +517,20 @@ def test_linked_dots_follow_a_dragged_dot(ctx, server):
     assert (bx1 - bx0) > 0.5 * moved[0] and (by1 - by0) > 0.5 * moved[1], ((bx0, by0), (bx1, by1), moved)
     assert abs(cx1 - cx0) < 0.3 * moved[0], ((cx0, cy0), (cx1, cy1))
     assert not page.errors
+
+
+def test_resizing_the_window_refits_the_map(ctx, server):
+    clear_vault(server)
+    for i in range(8):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Resize paper {i} on topic {i % 3}"})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 8")
+    page.wait_for_timeout(2500)
+    inside = """() => { const fg = window.__rb.fg, el = document.getElementById('graph');
+      return [...window.__rb.S.nodes.values()].every(n => { const p = fg.graph2ScreenCoords(n.x, n.y);
+        return p.x >= 0 && p.y >= 0 && p.x <= el.clientWidth && p.y <= el.clientHeight; }); }"""
+    for size in ({"width": 700, "height": 500}, {"width": 1600, "height": 1000}, {"width": 900, "height": 700}):
+        page.set_viewport_size(size)
+        page.wait_for_timeout(1200)  # the refit runs once resizing stops
+        assert page.evaluate(inside), size
+    assert not page.errors

@@ -1292,7 +1292,20 @@
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
     configureLinkForce();
-    const ro = new ResizeObserver(() => fg.width(graphEl.clientWidth).height(graphEl.clientHeight));
+    // Resizing the window (maximise, full screen, dragging an edge): keep the same spot of the map in the
+    // middle while it changes, then refit once it stops, to the whole map or the region you're focused on.
+    let lastW = graphEl.clientWidth, lastH = graphEl.clientHeight, refitT = null;
+    const ro = new ResizeObserver(() => {
+      const w = graphEl.clientWidth, h = graphEl.clientHeight;
+      if (!w || !h || (w === lastW && h === lastH)) return;
+      const mid = lastW && lastH ? fg.screen2GraphCoords(lastW / 2, lastH / 2) : null;
+      lastW = w; lastH = h;
+      fg.width(w).height(h);
+      if (mid && Number.isFinite(mid.x) && Number.isFinite(mid.y)) fg.centerAt(mid.x, mid.y);
+      kick(300);
+      clearTimeout(refitT);
+      refitT = setTimeout(refitView, 250);
+    });
     ro.observe(graphEl);
   }
 
@@ -1854,6 +1867,15 @@
     const p = pins[n.id];
     if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
     n.x = p[0]; n.y = p[1]; n.vx = 0; n.vy = 0; n.__home = [p[0], p[1]]; n.__userPin = true;
+  }
+
+  /** Fit the map to the window again: the focused region, or everything. */
+  function refitView() {
+    if (!fg || !S.nodes.size) return;
+    const pad = window.innerWidth < 700 ? 40 : 80;
+    if (S.focusCluster != null) fg.zoomToFit(T(400), pad, (n) => n.cluster === S.focusCluster);
+    else fg.zoomToFit(T(400), pad);
+    kick(600);
   }
 
   /** The note panel or chat is open: the graph still pans, zooms and drags, but doesn't move on its own. */
