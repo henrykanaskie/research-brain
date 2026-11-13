@@ -235,6 +235,11 @@ class Layout:
         with self.lock:
             return nid in self._by_id
 
+    def names(self) -> dict[str, str]:
+        """{id: file name without .md}: so a link written as Obsidian does ([[File name]]) finds its note."""
+        with self.lock:
+            return {nid: p.stem for nid, p in self._by_id.items()}
+
     def ids(self) -> list[str]:
         with self.lock:
             return sorted(self._by_id)

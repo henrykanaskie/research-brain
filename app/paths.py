@@ -323,5 +323,8 @@ def move_legacy_vault() -> Path:
     return dst
 
 
-if __name__ == "__main__":  # used by scripts/vault_backup.sh:  python3 app/paths.py
-    print(resolve().vault)
+if __name__ == "__main__":  # used by scripts/vault_backup.sh:  python3 app/paths.py [--documents VAULT]
+    if len(sys.argv) == 3 and sys.argv[1] == "--documents":
+        print(documents_dir(Path(sys.argv[2])))
+    else:
+        print(resolve().vault)

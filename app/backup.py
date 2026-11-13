@@ -1,8 +1,9 @@
 """`research-brain backup`: snapshot the library into its own local git history, on any OS.
 
 The same thing scripts/vault_backup.sh does, in Python so it also runs on Windows:
-first run `git init`s the library folder with a .gitignore that leaves out PDFs and derived data; every run
-commits any changes as "library snapshot <date>". Nothing is pushed anywhere. The user's own git identity
+first run `git init`s the library folder, and the documents folder when it is elsewhere (your papers,
+notes, questions and highlights; app/layout.py), each with a .gitignore that leaves out PDFs and derived
+data; every run commits any changes as "library snapshot <date>". Nothing is pushed anywhere. The user's own git identity
 and settings are never used or changed.
 
 `research-brain backup --schedule` adds a nightly run with the system's own scheduler:
@@ -20,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-IGNORE = ("pdfs/", ".index/", ".trash/", "exports/", "backups/", "*.tmp")
+IGNORE = ("pdfs/", "PDFs/", ".index/", ".trash/", "exports/", "backups/", "*.tmp")
 WHO = ["-c", "user.name=research_brain", "-c", "user.email=research_brain@localhost", "-c", "commit.gpgsign=false",
        "-c", "core.autocrlf=false"]
 TASK = "research brain backup"
@@ -43,6 +44,17 @@ def _git(vault: Path, *args: str, check: bool = True) -> subprocess.CompletedPro
     if check and r.returncode != 0:
         raise BackupError(f"git {args[0]} failed: {(r.stderr or r.stdout).strip()[:300]}")
     return r
+
+
+def snapshot_library(vault: Path) -> str:
+    """Snapshot the library folder and, when it is elsewhere, its documents folder. One line each."""
+    from . import paths
+    vault = Path(vault)
+    out = [snapshot(vault)]
+    docs = paths.documents_dir(vault)
+    if docs.is_dir() and docs.resolve() != vault.resolve():
+        out.append(snapshot(docs))
+    return "\n".join(out)
 
 
 def snapshot(vault: Path) -> str:

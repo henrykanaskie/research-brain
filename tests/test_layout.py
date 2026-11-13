@@ -193,3 +193,28 @@ def test_library_settings_show_the_documents_folder(client):  # noqa: F811
     d = client.get("/api/documents-folder").json()
     assert d["papers"] == 1 and d["questions"] == 1 and d["notes"] == 0
     assert (Path(d["folder"]) / "Papers" / "A paper.md").exists()
+
+
+@pytest.mark.skipif(not __import__("shutil").which("git"), reason="git not installed")
+def test_backup_covers_the_documents_folder(tmp_path, monkeypatch):
+    """research-brain backup: the notes live in the documents folder, so it's snapshotted too (PDFs left out)."""
+    import subprocess
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("RB_DOCUMENTS_DIR", str(tmp_path / "docs"))
+    from app import backup
+    from app.store import Store
+    s = Store(tmp_path / "lib")
+    s.create({"type": "note", "title": "Backed up"})
+    (s.docs / "PDFs" / "big.pdf").write_bytes(b"%PDF")
+    out = backup.snapshot_library(tmp_path / "lib")
+    assert out.count("Saved snapshot") == 2
+    files = subprocess.run(["git", "-C", str(s.docs), "ls-files"], capture_output=True, text=True).stdout.split("\n")
+    assert "Notes/Backed up.md" in files and not any(f.startswith("PDFs/") for f in files)
+
+
+def test_obsidian_style_links_by_file_name_resolve(client):  # noqa: F811
+    """[[Title (1996)]] (a paper's file name, how Obsidian links) finds the paper in the app too."""
+    p = client.post("/api/notes", json={"type": "paper", "title": "Helium ratios", "year": 1996}).json()
+    n = client.post("/api/notes", json={"type": "note", "title": "Linker", "body": "see [[Helium ratios (1996)]]"}).json()
+    links = client.get("/api/graph").json()["links"]
+    assert any(l["kind"] == "mention" and {l["source"], l["target"]} == {n["id"], p["id"]} for l in links)

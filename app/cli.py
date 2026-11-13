@@ -161,7 +161,7 @@ def cmd_backup(a) -> int:
         if a.schedule or a.unschedule:
             print(backup.schedule(enable=not a.unschedule))
             return 0
-        print(backup.snapshot(paths.resolve(a.vault, a.profile).vault))
+        print(backup.snapshot_library(paths.resolve(a.vault, a.profile).vault))
         return 0
     except backup.BackupError as e:
         print(f"backup: {e}", file=sys.stderr)

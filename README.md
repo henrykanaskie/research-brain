@@ -80,6 +80,24 @@ Drag PDFs onto the window, or click **Add** and paste a DOI, an arXiv link or a 
 brain fills in the authors, year and journal, and looks for a free legal copy of the PDF. Then click a
 paper on the map to read it, highlight it and write about it.
 
+## Where your things are
+
+Everything you keep is an ordinary file on your computer, in **Documents › research brain**:
+
+```
+research brain/
+  Papers/       one document per paper, named after it: its details, your summary and notes
+  Highlights/   a folder per paper, one document per highlight (the passage, its page, your note)
+  Notes/        your own notes (put them in subfolders here if you like; they stay there)
+  Questions/    your open questions and your answers
+  Topics/       your topics and the papers in each
+  PDFs/         the papers' PDFs
+```
+
+The documents are Markdown, so they open in any text editor (and the folder opens in Obsidian). Each is
+named after its title and follows it when you rename it. To see the folder from the app: **View › Library
+settings › Your documents › Open folder**. (A second profile gets its own *research brain (name)* folder.)
+
 ## Add an AI (optional, can be free)
 
 Everything works without an AI: your library and its map, PDFs and highlights, notes, links, tags and
@@ -132,7 +150,8 @@ double-click the installer again (step 2), or, if you're comfortable with Termin
    Applications), then `uv tool uninstall research-brain` (removes the program, about 175 MB). Windows:
    the same two lines in PowerShell. The installer tool, uv, and its Python (about 100 MB together) stay,
    as other programs may use them; uv's own documentation says how to remove them.
-2. Your library is kept, in case you reinstall. To delete it too, delete its folder:
+2. Your library is kept, in case you reinstall. To delete it too, delete **Documents › research brain**
+   (your papers, notes and PDFs) and the app's data folder:
    `~/Library/Application Support/research_brain` on a Mac (in Finder: **Go › Go to Folder…** and paste
    it), `%APPDATA%\research_brain` on Windows (paste it into File Explorer's address bar),
    `~/.local/share/research_brain` on Linux. **This deletes your notes and PDFs.**
@@ -150,7 +169,7 @@ double-click the installer again (step 2), or, if you're comfortable with Termin
 | The AI shows a red dot, or says it isn't signed in | Open Terminal, type the AI's name (`gemini`, `claude`, `copilot`…), sign in, then pick it again in research brain. |
 | *Copilot … is too old* | In Terminal, run `copilot update`. |
 | Not much disk space | research brain needs about 300 MB. After installing, `uv cache clean` in Terminal frees the download cache. Prefer Gemini over Ollama, whose models take several GB. |
-| Where is my library? | In research brain: **View › Library settings**. Or in Terminal: `research-brain where`. |
+| Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **View › Library settings › Your documents › Open folder**. |
 
 ## For developers and lab admins: more ways to install
 
@@ -195,7 +214,11 @@ minutes after the window closes). Nothing starts when your computer starts. `res
 adds the app entry again, `--remove` takes it away. `research-brain --version` prints the version;
 `research-brain where` shows where your library is.
 
-**Your data** lives in a per-user folder, separate from the app: `~/Library/Application Support/research_brain/`
+**Your data.** Your papers, notes, questions, highlights, topics and PDFs are in your documents folder,
+`~/Documents/research brain` (see [Where your things are](#where-your-things-are); a profile in a folder you
+chose, `RB_DATA_DIR` or `RB_VAULT` keep them in the library folder itself, and `RB_DOCUMENTS_DIR` picks one).
+The app's own data (search index, extracted text, settings, review history, trash) lives in a per-user
+folder, separate from the app: `~/Library/Application Support/research_brain/`
 on macOS (`~/.local/share/research_brain/` on Linux, `%APPDATA%\research_brain\` on Windows). Each
 library ("profile") is a folder under `profiles/`. There are no accounts or passwords: your computer
 login is your identity and everything autosaves. An older `./vault` with notes keeps working where it
@@ -363,7 +386,7 @@ highlights you made in Zotero's PDF reader.
 | --- | --- |
 | Regular item (article, preprint, thesis…) | A paper: title, authors in order, year, DOI, arXiv id (from the URL, Extra or a `10.48550/arXiv.*` DOI), URL, abstract, venue, tags |
 | Child notes | The paper's notes (HTML converted to Markdown) |
-| PDF attachment | Copied into `vault/pdfs/`, with text extracted for Claude |
+| PDF attachment | Copied into `PDFs/` in your documents folder, with text extracted for the AI |
 | Highlights and comments | Fragments under the paper: the highlighted text is the quote, your comment is the note, and the page is filled in (`p. <page label>`) |
 
 - **Zotero is never modified.** The app copies `zotero.sqlite` (and its `-wal` file) to a temp folder and reads the copy, so Zotero can stay open.
@@ -374,24 +397,38 @@ highlights you made in Zotero's PDF reader.
 
 ## Where things live
 
-Inside your library folder (`research-brain where` prints it; below it's called `vault/`):
+Your documents folder (`~/Documents/research brain`; see [Where your things are](#where-your-things-are)):
 
 ```
-vault/notes/*.md   your notes (YAML frontmatter + Markdown body); plain files, editable in any editor
-vault/pdfs/        imported PDFs (or your chosen papers folder)   vault/text/   extracted text
+Papers/*.md            one per paper, named "<title> (<year>).md": YAML frontmatter + your notes
+Highlights/<paper>/    a paper's highlights (fragments), one file each
+Notes/**/*.md          your notes, in any subfolders you make
+Questions/*.md         your open questions
+Topics/*.md            your topics: name, description, ordered members, dismissed and snoozed recommendations
+PDFs/                  the PDFs (or your chosen papers folder)
+```
+
+Each file's `id:` property is what links, topics and citations refer to, so renaming or moving a file
+by hand (inside its type's folder) breaks nothing; a file added without one gets an id from its name.
+Properties that are empty are left out of the file.
+
+The library folder (`research-brain where` prints it; below it's called `vault/`) keeps the app's own data:
+
+```
+vault/text/        extracted text
 vault/state/       your Review schedule and history (review.json), open counts (engagement.json),
                    UI state (ui.json), open-access results (acquire.json), library format (meta.json),
-                   privacy settings (privacy.json) and the log of what was sent to AI (ai_log.jsonl),
-                   evidence you triaged for your open questions (questions/<id>.json);
-                   included in the nightly backup and the zip export
+                   where the documents folder is (library.json), privacy settings (privacy.json) and
+                   the log of what was sent to AI (ai_log.jsonl), evidence you triaged for your open
+                   questions (questions/<id>.json); included in the nightly backup and the zip export
 vault/.index/      embeddings, chat passage index, search index (meta.sqlite), cached explanations
                    (derived only; safe to delete, rebuilt automatically)
-vault/topics/*.md  your topics: name, description, ordered members, dismissed and snoozed recommendations
 vault/memory/      Research memory: core.md (library map, generated), findings.md (Added via AI, editable)
 vault/cards/       idea cards, one JSON file per paper (claims, equations, quantities, methods; your review)
 vault/.trash/      deleted notes (nothing is permanently deleted by the app)
 vault/exports/     read-only HTML sites made with View → Export
-vault/backups/     automatic zips made before a library format upgrade
+vault/backups/     automatic zips made before a library format upgrade (format 2 moved notes/ into the
+                   folders above)
 ```
 
 Next to the profiles: `settings.json` (open profile, Unpaywall email) and `storage.log` (moves,
@@ -406,7 +443,7 @@ File › Export Bookmarks): each bookmark folder becomes a topic; links that loo
 or arXiv link is added from its record, a PDF link is downloaded. Zotero libraries have their own importer.
 
 **Your PDFs, one copy each.** Every PDF is one file named after its paper (`<paper id>.pdf`) in one folder:
-`vault/pdfs/` until you pick another in **Library settings › Papers folder** (for example
+`PDFs/` in your documents folder until you pick another in **Library settings › Papers folder** (for example
 `~/Documents/Research papers` or a synced folder; *Move here* moves the files, *Open folder* shows them).
 Adding a file the library already has, by any route (drag and drop, the file picker, a URL, the extension),
 opens that paper instead of storing a second copy. After you add a file from Downloads, the app offers to send
@@ -464,8 +501,8 @@ sentence or two on what you mean. From then on, whenever a paper, passage, note 
 question collects it, and shows **3 new since you last looked**.
 
 - **Your answer.** Each question has its status (open, answered, parked) and *Your answer*: your current
-  thinking, in Markdown with LaTeX and [[links]], like any note. A question is a note (`type: question` in
-  `vault/notes/`), so it has backlinks, tags, topics, search and a place on the graph.
+  thinking, in Markdown with LaTeX and [[links]], like any note. A question is a note (`type: question`, a
+  file in `Questions/`), so it has backlinks, tags, topics, search and a place on the graph.
 - **Triage.** Evidence is grouped as *To triage*, *Supports*, *Against*, *Related* and *Dismissed*, each with the
   passage, its source and a p. / § link that opens the viewer or the article there. Click a piece and press
   **S** (supports), **A** (against), **R** (related) or **D** (dismiss); ↑ ↓ move. Add a few words of your own on
@@ -530,17 +567,17 @@ On any OS, `research-brain backup` snapshots the library into its own local git 
 timer on Linux (or a crontab line it prints), and on macOS the launchd agents below. Git must be installed
 (`winget install Git.Git` on Windows). The rest of this section is the macOS-specific setup.
 
-`scripts/vault_backup.sh` snapshots your notes into a git repository inside the vault (by default the
-library the app opens; pass a folder to choose another). The first run
-`git init`s `vault/` with a `.gitignore` for `pdfs/`, `.index/`, `.trash/`, `exports/` and `backups/`, then each run
+`scripts/vault_backup.sh` snapshots your notes into git repositories inside the vault and your documents
+folder (by default the library the app opens; pass a folder to choose another). The first run
+`git init`s each with a `.gitignore` for `PDFs/`, `pdfs/`, `.index/`, `.trash/`, `exports/` and `backups/`, then each run
 commits whatever changed as `vault snapshot <date>` (author `research_brain <research_brain@localhost>`;
-your own git identity is never used). PDFs are left out to keep the repo small, so back up `vault/pdfs/`
+your own git identity is never used). PDFs are left out to keep the repo small, so back up `PDFs/`
 some other way (Time Machine, iCloud). Nothing is pushed; add a private remote yourself if you want an
 off-machine copy.
 
 ```bash
 scripts/vault_backup.sh                 # snapshot now
-git -C vault log --oneline              # history;  git -C vault show HEAD~3:notes/<id>.md  to see an old version
+git -C ~/Documents/"research brain" log --oneline   # history of your papers, notes and questions
 ```
 
 To have the server start at login and the backup run every night, install the launchd agents once:
@@ -704,10 +741,12 @@ Pair a phone shows a QR code. [docs/mobile-capture.md](docs/mobile-capture.md) h
 
 ## Obsidian
 
-Open `vault/` as an Obsidian vault and your notes, links, tags and math work there too, because each
-note's file name is its id, so `[[note-id|Title]]` links resolve in Obsidian. Editing properties in
-Obsidian is safe. Summary mentions, manual links and fragment nesting are app-only, and renaming files
-in Obsidian breaks links. [docs/obsidian.md](docs/obsidian.md) lists what works and what doesn't.
+Open **Documents › research brain** as an Obsidian vault and your notes, tags and math work there too.
+Files are named after their titles, so a `[[Title]]` link resolves in Obsidian as well (a paper's file
+also carries its year: `[[Title (1996)]]`); links the app writes as `[[note-id|Title]]` show as unresolved
+there. Editing properties, and renaming or moving files within their folder, are safe: the app finds each
+note by the `id:` inside it. Summary mentions, manual links and highlight nesting are app-only.
+[docs/obsidian.md](docs/obsidian.md) lists what works and what doesn't.
 
 ## Settings (environment variables)
 
@@ -716,6 +755,7 @@ in Obsidian breaks links. [docs/obsidian.md](docs/obsidian.md) lists what works 
 | `RB_VAULT` | — | Use this library folder (pins it: profile switching is off). Default: the open profile in the data folder |
 | `RB_PROFILE` | `default` | Open this profile (overrides the one picked in the app) |
 | `RB_DATA_DIR` | per-user data folder | Move the whole data folder (portable installs, tests) |
+| `RB_DOCUMENTS_DIR` | `~/Documents/research brain` | Where your papers, notes, questions, highlights, topics and PDFs go (a library records its choice) |
 | `RB_ACQUIRE` | `1` | `0` turns off the background open-access PDF download |
 | `RB_METADATA` | `1` | `0` turns off metadata lookups (Crossref, arXiv, PubMed, Open Library, OSTI, NTRS) |
 | `RB_METADATA_CACHE_DAYS` / `RB_METADATA_WAIT` | `30` / `3` | How long answers are cached; seconds an import waits for its lookup before answering |
@@ -742,7 +782,7 @@ in Obsidian breaks links. [docs/obsidian.md](docs/obsidian.md) lists what works 
 | `RB_EMBEDDER` | `auto` | `tfidf` to skip the neural embedding model |
 | `RB_EMBED_MODEL` | `all-MiniLM-L6-v2` | Any sentence-transformers model |
 | `RB_ZOTERO_DIR` | `~/Zotero` | Zotero data directory (the folder containing `zotero.sqlite`) |
-| `RB_WATCH` | `1` | `0` turns off watching `vault/notes/` for outside edits (live updates) |
+| `RB_WATCH` | `1` | `0` turns off watching your documents folder for outside edits (live updates) |
 | `S2_API_KEY` | — | Optional free Semantic Scholar key (avoids occasional rate limiting) |
 | `RB_CITES_ON_IMPORT` | `1` | `0` stops fetching citation links in the background when you import a paper |
 | `RB_ALLOWED_HOSTS` | — | Extra host names the server answers to (e.g. a Tailscale MagicDNS name); see [SECURITY.md](SECURITY.md) |
@@ -757,7 +797,7 @@ in Obsidian breaks links. [docs/obsidian.md](docs/obsidian.md) lists what works 
 - `app/paths.py`, `app/profiles.py`, `app/migrate.py`: which library a run opens (data folder, profiles, legacy `./vault`), and the library format version with backed-up migrations.
 - `app/acquire.py`, `app/vaultzip.py`, `app/storage_api.py`: open-access PDF download, whole-library zip export/import, and their endpoints (plus the extension's PDF upload). `app/cli.py` is the `research-brain` command.
 - `app/meta.py`: a SQLite copy of every note's metadata plus a full-text index (`vault/.index/meta.sqlite`), kept in step with the files, so search and the graph stay fast with thousands of notes. Delete it and it's rebuilt.
-- `app/live.py`: watches `vault/notes/` and tells open pages (Server-Sent Events) when a note changes outside the app.
+- `app/live.py`: watches your documents folder and tells open pages (Server-Sent Events) when a note changes outside the app.
 - `app/embed.py`: each note's text (title, abstract, your summary, notes, quote) is split into chunks, embedded with a local sentence-transformers model, and mean-pooled. Similarity is cosine similarity, and each node shows its top neighbours. A paper's own fragments are excluded from its neighbours.
 - `app/agents/`: the pluggable AI backends. `base.py` is the interface and the shared lockdown helpers (private working folder, clean environment, process-group kill, timeouts); one adapter per agent (`claude.py`, `ollama.py`, `openai_local.py`, and the other CLIs); `__init__.py` is the registry and the saved choice; `research.py` is the app-driven Research loop for agents that aren't Claude.
 - `app/claude_cli.py`: runs `claude -p` with all tools disabled and no saved session, from an empty directory. The paper text goes in on stdin. Critiques and chat answers stream in as Claude writes them (`--output-format stream-json`).

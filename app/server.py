@@ -176,6 +176,9 @@ def _wiki(idx: dict) -> dict:
     titles: dict[str, str] = {}
     for n in sorted(by_id.values(), key=lambda n: (n["type"] == "fragment", n["created"] or "", n["id"])):
         titles.setdefault(_title_key(n["title"]), n["id"])
+    for nid, stem in sorted(store.layout.names().items()):  # [[File name]], as Obsidian writes links
+        if nid in by_id:
+            titles.setdefault(_title_key(stem), nid)
     mentions: dict[str, list[str]] = {}
     unresolved: dict[str, list[str]] = {}
     backlinks: dict[str, list[tuple[str, str]]] = {}
