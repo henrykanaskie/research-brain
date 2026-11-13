@@ -353,9 +353,18 @@ class Store:
 
     def get(self, nid: str) -> dict:
         path = self.note_path(nid)
-        if not path.exists():
-            raise KeyError(nid)
-        return self._parse(nid, path.read_text(encoding="utf-8"))
+        try:
+            return self._parse(nid, path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            pass
+        # Not where it was: a save may be renaming it right now (a new title moves the file). Wait for any
+        # save in progress, then look again; without this a read during the rename said the note was gone.
+        with self.lock:
+            path = self.note_path(nid)
+            try:
+                return self._parse(nid, path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                raise KeyError(nid) from None
 
     def exists(self, nid: str) -> bool:
         try:
