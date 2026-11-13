@@ -456,3 +456,33 @@ def test_question_evidence_links_dont_blank_the_graph(ctx, server):
     assert page.evaluate("window.__rb.fg.graphData().nodes.every(n => Number.isFinite(n.x) && Number.isFinite(n.y))")
     assert page.evaluate("Number.isFinite(window.__rb.fg.zoom())")
     assert not page.errors
+
+
+def test_a_dragged_dot_stays_where_you_drop_it(ctx, server):
+    clear_vault(server)
+    for t in ("Dot one", "Dot two", "Dot three"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": t})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 3")
+    page.wait_for_timeout(2500)
+    nid, sx, sy = page.evaluate("""() => { const fg = window.__rb.fg, n = fg.graphData().nodes[0];
+      const p = fg.graph2ScreenCoords(n.x, n.y); return [n.id, p.x, p.y]; }""")
+    box = page.locator("#graph").bounding_box()
+    page.mouse.move(box["x"] + sx, box["y"] + sy)
+    page.mouse.down()
+    for i in range(1, 11):
+        page.mouse.move(box["x"] + sx + 12 * i, box["y"] + sy + 8 * i)
+    page.mouse.up()
+    page.wait_for_timeout(1500)
+    n = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, n.fx, n.fy, !!n.__userPin]; }", nid)
+    assert n[4] and n[2] is not None and abs(n[0] - n[2]) < 0.01 and abs(n[1] - n[3]) < 0.01  # stays put
+    saved = page.evaluate("JSON.parse(localStorage.getItem('rb.pins'))")
+    assert nid in saved
+    page.reload()
+    page.wait_for_function("(id) => window.__rb && window.__rb.S.nodes.has(id)", arg=nid)
+    page.wait_for_timeout(1500)
+    after = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, !!n.__userPin]; }", nid)
+    assert after[2] and abs(after[0] - saved[nid][0]) < 0.2 and abs(after[1] - saved[nid][1]) < 0.2
+    page.evaluate("RB.commands.run('graph.unpinAll')")
+    assert page.evaluate("(id) => window.__rb.S.nodes.get(id).fx === undefined", nid)
+    assert not page.errors

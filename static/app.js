@@ -1239,6 +1239,8 @@
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
+      // drop a dot where you want it and it stays there (and next time); drag it again any time
+      .onNodeDragEnd((n) => { if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
       .onLinkRightClick((l, e) => linkMenu(l, e))
       .onBackgroundClick((e) => {
         if (regionTagClick(e)) return;
@@ -1540,7 +1542,7 @@
       ctx.fillText(label, n.x, y);
       if (hov) {  // what the hover tooltip used to say, one small line under the title
         const meta = [n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : n.type === 'question' ? 'Question' : 'Note',
-          n.year, n.authors && n.authors.length ? fmtAuthors(n.authors, 2) : ''].filter(Boolean).join('  ·  ');
+          n.year, n.authors && n.authors.length ? fmtAuthors(n.authors, 2) : '', n.__userPin ? 'placed by you' : ''].filter(Boolean).join('  ·  ');
         const ms = 10.5 * px, my = y + fs + 4 * px;
         ctx.font = `500 ${ms}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
         if ('fontStretch' in ctx) ctx.fontStretch = 'semi-condensed';
@@ -1719,6 +1721,7 @@
       if (nb && nb.x !== undefined) {
         n.x = nb.x + (Math.random() - 0.5) * 30; n.y = nb.y + (Math.random() - 0.5) * 30;
       }
+      restoreNodePin(n);  // a dot you placed goes back where you left it
     }
     S.nodes = next;
     S.clusters = Array.isArray(g.clusters) ? g.clusters : [];
@@ -1750,7 +1753,7 @@
       // letting go of them early is what made the graph slingshot. With nothing open they settle after 900 ms.
       if (pinned.length && !calmView()) {
         setTimeout(() => {
-          for (const n of pinned) if (n.__tmpPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
+          for (const n of pinned) if (n.__tmpPin && !n.__userPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
         }, 900);
       }
       const rf = fg.d3Force('regions'); if (rf && rf.relayout) rf.relayout();
@@ -1768,11 +1771,38 @@
     $('.graph-tools').hidden = empty;
   }
 
+  // ---------- dots you placed yourself: pinned where you dropped them, kept on this computer ----------
+  let pins = LS.get('pins', {}) || {};
+  const savePins = () => LS.set('pins', pins);
+  function pinNode(n, x, y) {
+    n.fx = x; n.fy = y; n.__userPin = true; delete n.__tmpPin;
+    pins[n.id] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+    savePins(); kick(200);
+  }
+  function unpinNode(n) {
+    delete pins[n.id]; savePins();
+    if (!n) return;
+    n.__userPin = false; n.fx = undefined; n.fy = undefined;
+    if (fg) fg.d3ReheatSimulation();
+  }
+  function unpinAll() {
+    pins = {}; savePins();
+    for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; n.fx = undefined; n.fy = undefined; }
+    if (fg) fg.d3ReheatSimulation();
+    toast('Every dot moves freely again', 'ok');
+  }
+  /** Put a dot you placed back where you left it (on load, and when it reappears). */
+  function restoreNodePin(n) {
+    const p = pins[n.id];
+    if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
+    n.x = n.fx = p[0]; n.y = n.fy = p[1]; n.vx = 0; n.vy = 0; n.__userPin = true;
+  }
+
   /** The note panel or chat is open: the graph still pans, zooms and drags, but doesn't move on its own. */
   function calmView() { return !$('#panel').hidden || !$('#chat').hidden; }
   /** Let go of dots held in place during a graph update (the layout has stopped, so nothing moves). */
   function releaseTmpPins() {
-    for (const n of S.nodes.values()) if (n.__tmpPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
+    for (const n of S.nodes.values()) if (n.__tmpPin && !n.__userPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
   }
   // when you last panned, zoomed or dragged the graph: an automatic re-centre never undoes that
   let userMovedAt = 0;
@@ -2689,6 +2719,7 @@
     if (cur && !curLinked) items.push(menuItem(`Link to ${truncate(cur.title || cur.id, 40)}`, null, () => linkNotes(cur.id, n.id)));
     if (n.type !== 'fragment') items.push(menuItem('Link to…', null, () => startLinkMode(n)));
     items.push(menuItem('Open', null, () => openNote(n.id, { center: true })));
+    if (n.__userPin) items.push(menuItem('Let it move freely', 'You placed this dot; it stays put until you drag it again or choose this', () => unpinNode(n)));
     // unlink: just the notes it's linked to, the open note's first
     const own = manualLinksOf(n.id).sort((x, y) => (cur && y.other === cur.id) - (cur && x.other === cur.id));
     if (own.length) {
@@ -3535,6 +3566,10 @@
       aliases: ['cluster', 'topic', 'zoom to region', 'isolate', 'only this group'],
       description: 'Zooms to one region and dims the rest. Click a region\'s name on the graph to do the same; Esc shows everything again.',
       run: chooseRegion });
+    CMD.register({ id: 'graph.unpinAll', title: 'Let every dot move freely', group: 'Graph',
+      aliases: ['unpin', 'unpin all', 'reset positions', 'release dots', 'auto layout'],
+      description: 'Dots you dragged stay where you dropped them. This lets all of them move with the layout again.',
+      run: unpinAll });
     CMD.register({ id: 'graph.renameRegion', title: 'Rename this region', group: 'Graph',
       when: () => S.focusCluster != null,
       aliases: ['region name', 'name region', 'rename cluster', 'label region'],
