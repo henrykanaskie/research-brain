@@ -1313,6 +1313,30 @@
       refitT = setTimeout(refitView, 250);
     });
     ro.observe(graphEl);
+    // Moving the window to a screen with a different pixel density (Retina and not) doesn't change its size,
+    // but the canvas was sized for the old density: it drew blurry or at the wrong scale, and what's under
+    // the pointer was looked up in the wrong place. Rebuild the canvas when the density changes.
+    // Checked three ways, as the change event isn't sent everywhere: the media query, any resize, and a cheap
+    // once-a-second look at the number.
+    let lastDpr = window.devicePixelRatio || 1;
+    const checkDensity = () => {
+      const dpr = window.devicePixelRatio || 1;
+      if (dpr === lastDpr) return;
+      lastDpr = dpr;
+      const w = graphEl.clientWidth, h = graphEl.clientHeight;
+      // the size setter re-reads the density; the library batches changes, so step away and back a frame apart
+      if (w && h) { fg.width(w - 1).height(h - 1); requestAnimationFrame(() => { fg.width(w).height(h); kick(300); }); }
+      clearTimeout(refitT);
+      refitT = setTimeout(refitView, 250);
+      watchDensity();
+    };
+    const watchDensity = () => {
+      const mq = window.matchMedia && window.matchMedia(`(resolution: ${lastDpr}dppx)`);
+      if (mq && mq.addEventListener) mq.addEventListener('change', checkDensity, { once: true });
+    };
+    watchDensity();
+    window.addEventListener('resize', checkDensity);
+    setInterval(checkDensity, 1000);
   }
 
   function drawPulses(ctx, k) {

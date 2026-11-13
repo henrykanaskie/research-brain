@@ -765,3 +765,34 @@ def test_panels_can_be_made_wider(ctx, server):
     page.locator("#chat-resizer").dblclick()  # back to the default
     assert abs(chat.bounding_box()["width"] - c0) < 2
     assert not page.errors
+
+
+def test_moving_to_a_screen_with_another_pixel_density(ctx, server):
+    """Dragging the window to a Retina or a regular monitor changes the pixel density, not the size: the map's
+    canvas must follow, or it draws at the wrong scale and the pointer finds the wrong dots."""
+    clear_vault(server)
+    for t in ("Density paper one", "Density paper two"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": t})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 2")
+    page.wait_for_timeout(2500)  # let the layout settle
+    canvas = "() => { const c = document.querySelector('#graph canvas'); return [c.width, document.getElementById('graph').clientWidth, window.devicePixelRatio]; }"
+    w, css, dpr = page.evaluate(canvas)
+    assert abs(w - css * dpr) <= 2
+    cdp = page.context.new_cdp_session(page)
+    vp = page.viewport_size
+    cdp.send("Emulation.setDeviceMetricsOverride", {"width": vp["width"], "height": vp["height"], "deviceScaleFactor": 2 if dpr < 2 else 1, "mobile": False})
+    page.wait_for_function("window.devicePixelRatio !== %s" % dpr)
+    page.wait_for_function("() => { const c = document.querySelector('#graph canvas'); return Math.abs(c.width - document.getElementById('graph').clientWidth * window.devicePixelRatio) <= 2; }", timeout=4000)
+    page.wait_for_timeout(1200)  # the refit after a screen change animates the view
+    w2, css2, dpr2 = page.evaluate(canvas)
+    assert dpr2 != dpr and abs(w2 - css2 * dpr2) <= 2, (w2, css2, dpr2)
+    # and hovering a dot still finds it
+    sx, sy = page.evaluate("() => { const fg = window.__rb.fg, n = [...window.__rb.S.nodes.values()][0]; const p = fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }")
+    box = page.locator("#graph").bounding_box()
+    page.mouse.move(5, box["y"] + 300)
+    page.wait_for_timeout(300)
+    page.mouse.move(box["x"] + sx, box["y"] + sy, steps=6)
+    page.wait_for_function("!!window.__rb.S.hover", timeout=4000)
+    cdp.send("Emulation.clearDeviceMetricsOverride")
+    assert not page.errors
