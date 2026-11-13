@@ -995,16 +995,25 @@
       const dimmed = !isHot && !isFocus && (S.selected || S.search);
       const a = fade * (dimmed ? 0.5 : 1);
       r.box = [x0, y - h / 2, x0 + w, y + h / 2];
+      // No box: the name sits on the map in the display face with a soft halo of the ground colour (it reads
+      // over traces without hiding anything), centred on its real glyph height, with a short red rule under
+      // it like the logo's red dot. The rule runs the whole name when the region is hovered or focused.
       ctx.globalAlpha = a;
-      ctx.fillStyle = C.sheet;
-      ctx.fillRect(x0, y - h / 2, w, h);
-      ctx.lineWidth = (isHot || isFocus ? 1 : 0.6) * px;
-      ctx.strokeStyle = isHot || isFocus ? C.ink : rgba(C.ink3, 0.7);
-      ctx.strokeRect(x0, y - h / 2, w, h);
-      if (isFocus) { ctx.fillStyle = C.red; ctx.fillRect(x0, y + h / 2 - 1.5 * px, w, 1.5 * px); }
-      ctx.textAlign = 'left';
-      ctx.font = nameFont; ctx.fillStyle = C.ink; ctx.fillText(text, x0 + padX, y + 0.5 * px);
-      ctx.font = numFont; ctx.fillStyle = C.ink3; ctx.fillText(num, x0 + padX + wName + gap, y + 0.5 * px);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.font = nameFont;
+      const mN = ctx.measureText(text);
+      const asc = mN.actualBoundingBoxAscent || fs * 0.72, desc = mN.actualBoundingBoxDescent || fs * 0.2;
+      const base = y + (asc - desc) / 2 - 2 * px;  // optical centre, nudged up for the rule below
+      glowText(ctx, text, x0 + padX, base, 14);
+      ctx.lineJoin = 'round'; ctx.lineWidth = 5 * px; ctx.strokeStyle = rgba(C.ground, 0.9);
+      ctx.strokeText(text, x0 + padX, base);
+      ctx.fillStyle = C.ink; ctx.fillText(text, x0 + padX, base);
+      ctx.font = numFont;
+      ctx.strokeText(num, x0 + padX + wName + gap, base);
+      ctx.fillStyle = C.ink3; ctx.fillText(num, x0 + padX + wName + gap, base);
+      const ruleY = base + desc + 4 * px, ruleW = isHot || isFocus ? wName : Math.min(18 * px, wName);
+      ctx.fillStyle = isHot || isFocus ? C.red : rgba(C.red, 0.85);
+      ctx.fillRect(x0 + padX, ruleY, ruleW, (isFocus ? 1.6 : 1.1) * px);
     }
     ctx.restore();
   }
@@ -1125,12 +1134,19 @@
         // safety net: a position that went bad (NaN, Infinity) is put back near its region instead of
         // spreading through every force and blanking the graph
         if (!Number.isFinite(n.x) || !Number.isFinite(n.y) || !Number.isFinite(n.vx) || !Number.isFinite(n.vy)) {
-          const a0 = anchors.get(n.cluster);
+          const a0 = n.__home ? { x: n.__home[0], y: n.__home[1] } : anchors.get(n.cluster);
           n.x = (a0 ? a0.x : 0) + (Math.random() - 0.5) * 20; n.y = (a0 ? a0.y : 0) + (Math.random() - 0.5) * 20;
           n.vx = 0; n.vy = 0;
           if (n.fx !== undefined && !Number.isFinite(n.fx)) { n.fx = undefined; n.fy = undefined; }
         }
         if (n.type === 'fragment' || n.fx !== undefined) continue;
+        if (n.__home) {
+          // a dot you placed: a firm spring to where you left it (not scaled down as the layout cools, so it
+          // always comes back), and extra damping so it sways a little instead of bouncing around
+          const hx = n.__home[0] - n.x, hy = n.__home[1] - n.y;
+          n.vx = n.vx * 0.7 + hx * 0.08; n.vy = n.vy * 0.7 + hy * 0.08;
+          continue;
+        }
         const sa = n.sub >= 0 ? subAnchors.get(n.sub) : null;
         const a = sa || anchors.get(n.cluster);
         const tx = a ? a.x : 0, ty = a ? a.y : 0;
@@ -1240,7 +1256,8 @@
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
-      .onNodeDragEnd((n) => { if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
+      .onNodeDrag((n) => dragNeighbours(n))
+      .onNodeDragEnd((n) => { dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
       .onLinkRightClick((l, e) => linkMenu(l, e))
       .onBackgroundClick((e) => {
         if (regionTagClick(e)) return;
@@ -1505,6 +1522,19 @@
     return c;
   }
   const boxesMeet = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+  /** A soft glow of the ground colour behind text (no box edges): covers the lines passing between words. */
+  function glowText(ctx, text, x, y, blur) {
+    // a backing in exactly the map's own colour, feathered at its edges: invisible on the map (no box to
+    // see), it only hides the traces that run behind the words
+    const m = ctx.measureText(text);
+    const l = x - (m.actualBoundingBoxLeft || 0), r = x + (m.actualBoundingBoxRight || m.width);
+    const t = y - (m.actualBoundingBoxAscent || 0), b = y + (m.actualBoundingBoxDescent || 0);
+    const k = ctx.getTransform().a || 1, pad = 3 / k;
+    ctx.save();
+    ctx.shadowColor = C.ground; ctx.shadowBlur = blur; ctx.fillStyle = C.ground;
+    ctx.fillRect(l - pad, t - pad, r - l + 2 * pad, b - t + 2 * pad);
+    ctx.restore();
+  }
 
   /** Titles under dots: after every dot is drawn. Ordinary titles only where they cover no other dot, no
    *  region tag and no other title (the better-connected first); the hovered, selected and search-matched
@@ -1532,25 +1562,22 @@
       if (!must && (taken.some((b) => boxesMeet(box, b)) || dotsUnder(G, box, n))) { ctx.restore(); continue; }
       taken.push(box);
       ctx.globalAlpha = alpha;
-      if (must) {  // a quiet plate under the title you're looking at, so dots and lines don't show through it
-        ctx.fillStyle = rgba(C.ground, 0.92);
-        ctx.fillRect(box[0], box[1], box[2] - box[0], box[3] - box[1]);
-      }
-      ctx.lineWidth = 3.5 * px; ctx.lineJoin = 'round'; ctx.strokeStyle = C.ground;
+      if (big) glowText(ctx, label, n.x, y, 14);
+      ctx.lineWidth = (big ? 5 : 3.5) * px; ctx.lineJoin = 'round'; ctx.strokeStyle = rgba(C.ground, 0.92);
       ctx.strokeText(label, n.x, y);
       ctx.fillStyle = big ? C.ink : C.ink2;
       ctx.fillText(label, n.x, y);
       if (hov) {  // what the hover tooltip used to say, one small line under the title
         const meta = [n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : n.type === 'question' ? 'Question' : 'Note',
-          n.year, n.authors && n.authors.length ? fmtAuthors(n.authors, 2) : '', n.__userPin ? 'placed by you' : ''].filter(Boolean).join('  ·  ');
+          n.year, n.authors && n.authors.length ? fmtAuthors(n.authors, 2) : ''].filter(Boolean).join('  ·  ');
         const ms = 10.5 * px, my = y + fs + 4 * px;
         ctx.font = `500 ${ms}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
         if ('fontStretch' in ctx) ctx.fontStretch = 'semi-condensed';
         const mw = ctx.measureText(meta).width;
-        ctx.fillStyle = rgba(C.ground, 0.92);
-        ctx.fillRect(n.x - mw / 2 - 4 * px, my - 2 * px, mw + 8 * px, ms + 4 * px);
+        glowText(ctx, meta, n.x, my, 10);
+        ctx.lineWidth = 4 * px;
         ctx.strokeText(meta, n.x, my);
-        ctx.fillStyle = C.ink2;
+        ctx.fillStyle = C.ink3;
         ctx.fillText(meta, n.x, my);
         taken.push([n.x - mw / 2 - 4 * px, my - 2 * px, n.x + mw / 2 + 4 * px, my + ms + 2 * px]);
       }
@@ -1753,7 +1780,7 @@
       // letting go of them early is what made the graph slingshot. With nothing open they settle after 900 ms.
       if (pinned.length && !calmView()) {
         setTimeout(() => {
-          for (const n of pinned) if (n.__tmpPin && !n.__userPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
+          for (const n of pinned) if (n.__tmpPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
         }, 900);
       }
       const rf = fg.d3Force('regions'); if (rf && rf.relayout) rf.relayout();
@@ -1774,35 +1801,66 @@
   // ---------- dots you placed yourself: pinned where you dropped them, kept on this computer ----------
   let pins = LS.get('pins', {}) || {};
   const savePins = () => LS.set('pins', pins);
+  // A placed dot isn't frozen: it gets a home where you dropped it and a spring back to it (regionForce), so
+  // it still sways with its neighbours and links when the layout moves, but settles where you put it.
   function pinNode(n, x, y) {
-    n.fx = x; n.fy = y; n.__userPin = true; delete n.__tmpPin;
+    n.__home = [x, y]; n.__userPin = true;
+    n.fx = undefined; n.fy = undefined; delete n.__tmpPin;  // the drag held it; now the spring does
     pins[n.id] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
     savePins(); kick(200);
   }
   function unpinNode(n) {
     delete pins[n.id]; savePins();
     if (!n) return;
-    n.__userPin = false; n.fx = undefined; n.fy = undefined;
+    n.__userPin = false; delete n.__home;
     if (fg) fg.d3ReheatSimulation();
   }
   function unpinAll() {
     pins = {}; savePins();
-    for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; n.fx = undefined; n.fy = undefined; }
+    for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; delete n.__home; }
     if (fg) fg.d3ReheatSimulation();
     toast('Every dot moves freely again', 'ok');
+  }
+  /** While you drag a dot, the dots connected to it come along: your links and question evidence closely,
+   *  its strongest similar and citing papers about halfway. Dots you placed yourself stay where they are.
+   *  The layout then settles them around the dot's new place. */
+  let dragLast = null;
+  const FOLLOW = { manual: 0.85, mention: 0.75, question: 0.75, cites: 0.45, similar: 0.4 };
+  function dragNeighbours(n) {
+    const x = Number.isFinite(n.fx) ? n.fx : n.x, y = Number.isFinite(n.fy) ? n.fy : n.y;
+    if (!dragLast || dragLast.id !== n.id) { dragLast = { id: n.id, x, y, follow: followersOf(n) }; return; }
+    const dx = x - dragLast.x, dy = y - dragLast.y;
+    dragLast.x = x; dragLast.y = y;
+    if (!dx && !dy) return;
+    for (const [m, w] of dragLast.follow) {
+      if (m.__home || m.fx !== undefined || !Number.isFinite(m.x)) continue;
+      m.x += dx * w; m.y += dy * w;
+    }
+  }
+  function followersOf(n) {
+    const out = new Map();
+    for (const l of S.links) {
+      const w = FOLLOW[l.kind];
+      if (!w || !linkShown(l) || (l.kind === 'similar' && !l.top)) continue;
+      const a = lid(l.source), b = lid(l.target);
+      const other = a === n.id ? b : b === n.id ? a : null;
+      const m = other && S.nodes.get(other);
+      if (m && m !== n) out.set(m, Math.max(out.get(m) || 0, w));
+    }
+    return out;
   }
   /** Put a dot you placed back where you left it (on load, and when it reappears). */
   function restoreNodePin(n) {
     const p = pins[n.id];
     if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
-    n.x = n.fx = p[0]; n.y = n.fy = p[1]; n.vx = 0; n.vy = 0; n.__userPin = true;
+    n.x = p[0]; n.y = p[1]; n.vx = 0; n.vy = 0; n.__home = [p[0], p[1]]; n.__userPin = true;
   }
 
   /** The note panel or chat is open: the graph still pans, zooms and drags, but doesn't move on its own. */
   function calmView() { return !$('#panel').hidden || !$('#chat').hidden; }
   /** Let go of dots held in place during a graph update (the layout has stopped, so nothing moves). */
   function releaseTmpPins() {
-    for (const n of S.nodes.values()) if (n.__tmpPin && !n.__userPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
+    for (const n of S.nodes.values()) if (n.__tmpPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
   }
   // when you last panned, zoomed or dragged the graph: an automatic re-centre never undoes that
   let userMovedAt = 0;

@@ -474,15 +474,46 @@ def test_a_dragged_dot_stays_where_you_drop_it(ctx, server):
         page.mouse.move(box["x"] + sx + 12 * i, box["y"] + sy + 8 * i)
     page.mouse.up()
     page.wait_for_timeout(1500)
-    n = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, n.fx, n.fy, !!n.__userPin]; }", nid)
-    assert n[4] and n[2] is not None and abs(n[0] - n[2]) < 0.01 and abs(n[1] - n[3]) < 0.01  # stays put
     saved = page.evaluate("JSON.parse(localStorage.getItem('rb.pins'))")
     assert nid in saved
+    # not frozen (no fixed position), but it settles where you dropped it
+    page.evaluate("() => { window.__rb.fg.d3ReheatSimulation(); }")
+    page.wait_for_timeout(2500)
+    n = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, n.fx === undefined, !!n.__userPin]; }", nid)
+    assert n[2] and n[3]
+    assert abs(n[0] - saved[nid][0]) < 15 and abs(n[1] - saved[nid][1]) < 15, (n, saved[nid])
     page.reload()
     page.wait_for_function("(id) => window.__rb && window.__rb.S.nodes.has(id)", arg=nid)
     page.wait_for_timeout(1500)
     after = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, !!n.__userPin]; }", nid)
-    assert after[2] and abs(after[0] - saved[nid][0]) < 0.2 and abs(after[1] - saved[nid][1]) < 0.2
+    assert after[2] and abs(after[0] - saved[nid][0]) < 15 and abs(after[1] - saved[nid][1]) < 15, (after, saved[nid])
     page.evaluate("RB.commands.run('graph.unpinAll')")
-    assert page.evaluate("(id) => window.__rb.S.nodes.get(id).fx === undefined", nid)
+    assert page.evaluate("(id) => !window.__rb.S.nodes.get(id).__home", nid)
+    assert not page.errors
+
+
+def test_linked_dots_follow_a_dragged_dot(ctx, server):
+    clear_vault(server)
+    a = api(server, "POST", "/api/notes", {"type": "paper", "title": "Main dot"})["id"]
+    b = api(server, "POST", "/api/notes", {"type": "paper", "title": "Linked dot"})["id"]
+    c = api(server, "POST", "/api/notes", {"type": "paper", "title": "Unrelated dot about something else"})["id"]
+    api(server, "POST", f"/api/notes/{a}/link", {"target": b})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 3")
+    page.wait_for_timeout(2500)
+    pos = lambda i: page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y]; }", i)
+    (bx0, by0), (cx0, cy0) = pos(b), pos(c)
+    sx, sy = page.evaluate("(id) => { const fg = window.__rb.fg, n = window.__rb.S.nodes.get(id); const p = fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }", a)
+    k = page.evaluate("window.__rb.fg.zoom()")
+    box = page.locator("#graph").bounding_box()
+    page.mouse.move(box["x"] + sx, box["y"] + sy)
+    page.mouse.down()
+    for i in range(1, 21):
+        page.mouse.move(box["x"] + sx + 10 * i, box["y"] + sy + 6 * i)
+    page.mouse.up()
+    moved = (200 / k, 120 / k)  # how far the main dot went, in graph units
+    (bx1, by1), (cx1, cy1) = pos(b), pos(c)
+    # the linked dot came most of the way; the unrelated one didn't jump with it
+    assert (bx1 - bx0) > 0.5 * moved[0] and (by1 - by0) > 0.5 * moved[1], ((bx0, by0), (bx1, by1), moved)
+    assert abs(cx1 - cx0) < 0.3 * moved[0], ((cx0, cy0), (cx1, cy1))
     assert not page.errors
