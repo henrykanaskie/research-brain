@@ -243,10 +243,10 @@ def test_tour_and_help(ctx, server):
     page.keyboard.press("Enter")
     coach = page.locator(".rb-coach")
     expect(coach).to_be_visible()
-    expect(coach.locator(".c-step")).to_have_text("1 of 5")
+    expect(coach.locator(".c-step")).to_have_text("1 of 6")
     shot(page, "coach-mark")
     coach.locator("button", has_text="Next").click()
-    expect(coach.locator(".c-step")).to_have_text("2 of 5")
+    expect(coach.locator(".c-step")).to_have_text("2 of 6")
     page.keyboard.press("Escape")
     expect(coach).to_have_count(0)
     assert page.evaluate("localStorage.getItem('rb.tour.done')") == "true"

@@ -281,16 +281,23 @@
     ['The graph', [
       ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. Bigger means more connected and more written about.', []],
       ['Lines', 'Red lines are links you made. Dashed blue-grey lines are text similarity. Click a line to ask Claude why two notes connect.', ['graph.similar', 'graph.citations']],
-      ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region.', ['graph.focus', 'graph.filter', 'graph.fit']],
+      ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region. Zoom in as far as you like; resizing the window refits the map.', ['graph.focus', 'graph.filter', 'graph.fit']],
+      ['Move dots', 'Drag a dot where you want it: it settles there (and stays next time) while still swaying with its neighbours, and the dots linked to it come along. Right-click › Let it move freely gives it back to the layout.', ['graph.unpinAll']],
+      ['Regions', 'Groups of related papers get a name above them. A region with the same papers as a topic shows the topic’s name. Click a name to focus the region, then Rename to change it (the topic follows, unless you keep them different).', ['graph.focusRegion', 'graph.renameRegion']],
     ]],
     ['Finding and recalling', [
       ['Search', 'Highlights matches on the graph. Enter opens the first; ↓ and ↑ step through the rest.', ['nav.search', 'nav.nextResult']],
-      ['Ask your library', 'Claude answers from your papers and notes and cites the pages it used.', ['library.ask']],
+      ['Ask: Library', 'The agent answers from your papers and notes and cites the pages it used. Switch Quick to Research for harder questions.', ['library.ask']],
+      ['Ask: Topics', 'Pick one or more topics: the agent reads every paper in them and the passages that best match. Also Ask about this topic in the Topics drawer.', ['chat.aboutTopics']],
+      ['Ask: General', 'Ask anything, without your library. Attach… adds papers, notes, questions or topics for it to read. Nothing of yours goes along unless you attach it.', ['chat.general']],
+      ['Web search', 'Off until you allow it in Settings › Library settings › AI and privacy. Then tick Search the web in a General chat. Attached papers go with their published parts only; your own notes go along only after you confirm once.', []],
+      ['Conversations', 'Every conversation (library, each paper, each set of topics, General) is kept and comes back next time. Older messages are condensed into a short summary to save space. New conversation starts over.', []],
       ['Review', 'Your own summaries come back for recall. Write what you remember, reveal, grade yourself 1 to 4.', ['library.review']],
       ['Topics', 'Group papers under topics and keep a queue of what to read next.', ['topics.toggle', 'note.park']],
     ]],
     ['Getting around', [
       ['Commands', 'Find any action by name. Every action has a title; frequent ones have a key.', ['general.palette', 'general.shortcuts']],
+      ['Settings', 'The gear at the top right: Library settings (in tabs, with a search box), what the graph shows, and appearance.', []],
       ['History', 'Go back and forward through the notes you opened.', ['nav.back', 'nav.forward']],
       ['Paper lookup keys', 'If adding or searching for papers says rate limited, add free keys: get one at openalex.org/settings/api and one from semanticscholar.org/product/api, then paste them in Settings › Library settings › Paper lookup.', []],
       ['Chrome extension', 'Save papers and clip passages from any web page. To add it: open chrome://extensions in Chrome, turn on Developer mode, click Load unpacked and choose the extension folder inside the research brain folder. research brain must be open for it to work.', ['extension.clip']],
@@ -319,8 +326,9 @@
     { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere.', keys: ['library.addById', 'library.newNote'] },
     { sel: '.search', title: 'Search', text: 'Matching nodes light up on the graph. Enter opens the first match.', keys: ['nav.search'] },
     { sel: '#legend', fallback: '#graph', title: 'Reading the graph', text: 'Dots are papers, rings are notes, red points are fragments. Size grows with what you write and link. Red lines are your links; dashed lines are similar text.', keys: ['graph.fit'] },
-    { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a node to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes.', keys: ['note.summary', 'note.critique'] },
-    { sel: '#btn-view-menu', title: 'Every shortcut', text: 'Press ? to see them all, with a search field. Find any action by name in the command palette.', keys: ['general.shortcuts', 'general.palette'] },
+    { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a node to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes. Drag a dot to place it; linked dots follow.', keys: ['note.summary', 'note.critique'] },
+    { sel: '#btn-chat', title: 'Ask', text: 'Ask about your whole library, about the papers in some topics, or anything at all (General, where you can attach things and, if you allow it, search the web). Conversations are kept.', keys: ['library.ask', 'chat.general'] },
+    { sel: '#btn-view-menu', title: 'Settings and shortcuts', text: 'The gear holds Library settings (tabs and a search box), graph options and appearance. Press ? for every shortcut; find any action by name in the command palette.', keys: ['general.shortcuts', 'general.palette'] },
   ];
   const CSS = `
   .rb-coach { position: fixed; z-index: 67; width: 300px; max-width: calc(100vw - 32px); background: var(--sheet); color: var(--ink); border: 1px solid var(--rule);
