@@ -123,6 +123,22 @@ def _zoom(nsw) -> None:
         nsw.performZoom_(None)
 
 
+def _focus_page(nsw) -> None:
+    """A click in the page: give the web view the keyboard focus again if something else holds it (a window
+    drag from the header can leave it with the window). Without it WebKit takes the typing but draws no
+    blinking cursor, so you can't see where your text will go."""
+    try:
+        view = nsw.contentView()
+        if view is None or "WK" not in type(view).__name__ and "WebKit" not in type(view).__name__:
+            return
+        fr = nsw.firstResponder()
+        if fr is view or (hasattr(fr, "isDescendantOf_") and fr.isDescendantOf_(view)):
+            return
+        nsw.makeFirstResponder_(view)
+    except Exception:  # never lose a click over this
+        pass
+
+
 def _header_press(nsw, header: _Header, event):
     """A mouse-down in the window: on an empty part of the header, drag (or zoom on a double-click) the
     window and keep the click from the page; anything else goes on as usual. Returns the event or None."""
@@ -131,6 +147,7 @@ def _header_press(nsw, header: _Header, event):
     p = event.locationInWindow()
     y = nsw.frame().size.height - p.y  # from the top, like the page
     if y > HEADER_H or nsw.styleMask() & (1 << 14):  # below the header, or full screen
+        _focus_page(nsw)
         return event
     hit = nsw.contentView().superview().hitTest_(p)
     if hit is not None and "WebKit" not in type(hit).__name__ and "WKWebView" not in type(hit).__name__:

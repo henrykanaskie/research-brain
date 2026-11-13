@@ -1030,11 +1030,60 @@
     fg.zoomToFit(T(600), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid);
     kick(800);
   }
+  /** Rename the focused region, in place in its bar. With a matching topic the topic is renamed too (one
+   *  name for both), unless "keep the topic's name" is ticked; then the region gets a name of its own. */
+  function renameRegion(cid = S.focusCluster) {
+    const info = (S.clusters || []).find((c) => c.id === cid);
+    const bar = $('#region-focus');
+    if (!info || !bar || $('.rf-edit', bar)) return;
+    const nameEl = $('.rf-name', bar);
+    const input = h('input', { type: 'text', class: 'rf-input', value: regionName(info.label), maxlength: 80, 'aria-label': 'Region name', spellcheck: true });
+    const topic = info.topic;
+    const keep = topic ? h('input', { type: 'checkbox', id: 'rf-keep-topic' }) : null;
+    const save = h('button', { type: 'button', class: 'btn', text: 'Save' });
+    const cancel = h('button', { type: 'button', class: 'btn btn-text', text: 'Cancel' });
+    const reset = info.name_source === 'custom'
+      ? h('button', { type: 'button', class: 'btn btn-text', text: topic ? 'Use topic name' : 'Use automatic name',
+        title: topic ? `Show the topic’s name, “${topic.name}”, again` : `Back to “${regionName(info.auto_label)}”` })
+      : null;
+    const edit = h('span', { class: 'rf-edit' }, input,
+      keep ? h('label', { class: 'rf-keep', for: 'rf-keep-topic', title: `Renaming also renames the topic “${topic.name}”, so they stay the same. Tick this to give the region a different name.` }, keep, ' Keep the topic’s name') : null,
+      save, reset, cancel);
+    const others = [...bar.querySelectorAll(':scope > .btn')];
+    nameEl.hidden = true; others.forEach((b) => { b.hidden = true; });
+    nameEl.after(edit);
+    input.focus(); input.select();
+    const close = () => { edit.remove(); nameEl.hidden = false; others.forEach((b) => { b.hidden = false; }); };
+    const send = async (body) => {
+      save.disabled = true;
+      try {
+        const r = await api('POST', '/api/regions/name', { region: cid, ...body });
+        await refreshGraph();
+        const now = (S.clusters || []).find((c) => c.id === cid);
+        nameEl.textContent = regionName(now ? now.label : (body.name || ''));
+        close();
+        if (r && r.renamed_topic) toast(`Renamed the region and its topic to “${r.name}”`, 'ok');
+        window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+      } catch (e) { save.disabled = false; toastErr(e, 'Could not rename the region'); }
+    };
+    save.onclick = () => {
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      if (name === regionName(info.label) && !(keep && keep.checked)) { close(); return; }
+      send({ name, rename_topic: !!topic && !(keep && keep.checked) });
+    };
+    if (reset) reset.onclick = () => send({ reset: true });
+    cancel.onclick = close;
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); save.onclick(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+    });
+  }
   function unfocusRegion(refit = true) {
     if (S.focusCluster == null) return;
     S.focusCluster = null;
     const bar = $('#region-focus');
-    if (bar) bar.hidden = true;
+    if (bar) { const ed = $('.rf-edit', bar); if (ed) ed.remove(); $('.rf-name', bar).hidden = false; bar.querySelectorAll(':scope > .btn').forEach((b) => { b.hidden = false; }); bar.hidden = true; }
     if (refit && fg) fg.zoomToFit(T(600), 70);
     kick(800);
   }
@@ -1194,6 +1243,7 @@
         drawPulses(ctx, k);
         if (performance.now() > animUntil && !pulses.length) fg.autoPauseRedraw(true);
       })
+      .onEngineStop(releaseTmpPins)
       .cooldownTime(9000)
       .d3AlphaDecay(0.028)
       .d3VelocityDecay(0.38)
@@ -1443,7 +1493,13 @@
     if (graphReq) { graphAgain = true; return graphReq; }
     graphReq = (async () => {
       try {
-        const g = await api('GET', '/api/graph');
+        let g = await api('GET', '/api/graph');
+        // an empty library right after a full one is almost always a moment when the files couldn't be read
+        // (iCloud Drive, a folder being moved): look again before clearing the graph
+        if (S.nodes.size >= 5 && !(g && Array.isArray(g.nodes) && g.nodes.length)) {
+          await new Promise((r) => setTimeout(r, 2500));
+          g = await api('GET', '/api/graph');
+        }
         mergeGraph(g);
       } catch (e) {
         toastErr(e, 'Could not load the graph');
@@ -1609,7 +1665,10 @@
       S.links = newLinks;
       fg.graphData({ nodes: Array.from(next.values()), links: newLinks });
       configureLinkForce();
-      if (pinned.length) {
+      // A new graph restarts the layout at full heat. With the note panel or chat open you're reading, so the
+      // dots already on screen stay where they are until the layout has cooled (onEngineStop releases them):
+      // letting go of them early is what made the graph slingshot. With nothing open they settle after 900 ms.
+      if (pinned.length && !calmView()) {
         setTimeout(() => {
           for (const n of pinned) if (n.__tmpPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
         }, 900);
@@ -1628,6 +1687,16 @@
     $('#legend').hidden = empty;
     $('.graph-tools').hidden = empty;
   }
+
+  /** The note panel or chat is open: the graph still pans, zooms and drags, but doesn't move on its own. */
+  function calmView() { return !$('#panel').hidden || !$('#chat').hidden; }
+  /** Let go of dots held in place during a graph update (the layout has stopped, so nothing moves). */
+  function releaseTmpPins() {
+    for (const n of S.nodes.values()) if (n.__tmpPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
+  }
+  // when you last panned, zoomed or dragged the graph: an automatic re-centre never undoes that
+  let userMovedAt = 0;
+  for (const ev of ['pointerdown', 'wheel']) graphEl.addEventListener(ev, () => { userMovedAt = performance.now(); }, { passive: true });
 
   function centerOn(id, zoomIn) {
     if (!fg) return;
@@ -1763,6 +1832,7 @@
       $('#panel-type').textContent = '';
       $('#save-indicator').textContent = '';
     }
+    const openedAt = performance.now();
     if (center) setTimeout(() => centerOn(id), 30);
     let note;
     try {
@@ -1779,7 +1849,7 @@
     S.patch = {};
     S.saveErr = null;
     renderPanel();
-    if (center) centerOn(id);
+    if (center && userMovedAt < openedAt) centerOn(id);  // not if you've moved the graph since
     if (focusTitle) { const t = $('.title-input', pbody); if (t) { t.focus(); t.select(); } }
   }
 
@@ -3322,6 +3392,7 @@
   });
   graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
   $('#rf-show-all') && $('#rf-show-all').addEventListener('click', () => unfocusRegion());
+  $('#rf-rename') && $('#rf-rename').addEventListener('click', () => renameRegion());
   $('#btn-regions') && $('#btn-regions').addEventListener('click', (e) => { e.stopPropagation(); chooseRegion(); });
 
   // search
@@ -3384,6 +3455,11 @@
       aliases: ['cluster', 'topic', 'zoom to region', 'isolate', 'only this group'],
       description: 'Zooms to one region and dims the rest. Click a region\'s name on the graph to do the same; Esc shows everything again.',
       run: chooseRegion });
+    CMD.register({ id: 'graph.renameRegion', title: 'Rename this region', group: 'Graph',
+      when: () => S.focusCluster != null,
+      aliases: ['region name', 'name region', 'rename cluster', 'label region'],
+      description: 'Names the focused region. A region with the same papers as a topic shows the topic\'s name; renaming it renames the topic too, unless you choose to keep them different.',
+      run: () => renameRegion() });
     CMD.register({ id: 'chat.aboutPaper', title: 'Ask about this paper', group: 'Note',
       when: () => !!(S.cur && S.cur.type === 'paper'),
       aliases: ['talk about paper', 'chat with paper', 'discuss', 'explain this paper', 'question this paper'],

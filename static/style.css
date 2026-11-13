@@ -108,6 +108,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-2); opacity: .75; }
 input:hover, textarea:hover { border-color: color-mix(in srgb, var(--ink-2) 35%, var(--rule)); }
 input:focus, textarea:focus { outline: none; border-color: var(--ink-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 7%, transparent); }
 textarea { resize: vertical; }
+/* an explicit, easy-to-spot insertion cursor in every field (the default can be hard to see, or missing in the Mac window) */
+input, textarea, [contenteditable="true"] { caret-color: var(--red, var(--ink)); }
 kbd { font: 11px var(--sans); color: var(--ink-2); border: 1px solid var(--rule); border-radius: 2px; padding: 0 4px; line-height: 16px; background: var(--sheet); }
 
 .spacer { flex: 1; }
@@ -979,6 +981,9 @@ html .tp-add:focus { border-style: solid; border-color: var(--ink-2); background
 .region-focus[hidden] { display: none; }
 .region-focus .rf-label { color: var(--ink-3); }
 .region-focus .rf-name { font: italic 500 16px var(--display); color: var(--ink); }
+.region-focus .rf-edit { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.region-focus .rf-input { width: min(260px, 50vw); font: italic 500 15px var(--display); }
+.region-focus .rf-keep { font: 12.5px var(--sans); color: var(--ink-2); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .rf-chooser { position: fixed; z-index: 80; top: 90px; left: 50%; transform: translateX(-50%); width: min(360px, calc(100vw - 32px));
   max-height: 60vh; overflow: auto; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 6px;
   box-shadow: 0 18px 40px -22px color-mix(in srgb, var(--ink) 35%, transparent); }

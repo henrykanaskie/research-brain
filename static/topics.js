@@ -285,6 +285,8 @@
   }
   let refreshT = null;
   function scheduleDrawerRefresh() { clearTimeout(refreshT); refreshT = setTimeout(() => { if (T.open) render({ keepScroll: true }); }, 900); }
+  // a region renamed together with its topic (app.js renameRegion)
+  window.addEventListener('rb:topics-changed', () => { loadTopics().then(() => { if (T.open) render({ keepScroll: true }); }); });
 
   const closeBtn = () => h('button', { class: 'btn btn-icon', title: 'Close (Esc)', 'aria-label': 'Close', onclick: closeDrawer,
     html: '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>' });

@@ -54,6 +54,7 @@ CLAUDE_CONTEXT_CHARS = int(os.environ.get("RB_CLAUDE_CONTEXT_CHARS", "180000"))
 security.harden_process(VAULT)  # umask 077, vault folder 0700 (app/security.py)
 _migrate.run(VAULT)  # schema version check + migrations, backup first (app/migrate.py)
 store = Store(VAULT)
+from . import regions as regions_mod  # noqa: E402  (region names: yours, else the matching topic's)
 from . import privacy  # noqa: E402  (what may be sent to AI agents or exported; see app/privacy.py)
 from . import questions as questions_mod, questions_api  # noqa: E402  (open questions; installed near the end)
 privacy.configure(store)
@@ -885,6 +886,12 @@ def _graph_data() -> dict:
         idx["_clusters_out"] = _clusters(idx, links)
         idx["_clusters_sig"] = idx.get("sig")
     cluster_of, clusters = idx["_clusters_out"]
+    # names: your own, else the topic with the same papers, else the automatic one (app/regions.py)
+    _mem: dict[int, list[str]] = {}
+    for i, c in cluster_of.items():
+        if c >= 0 and by_id[i]["type"] != "fragment":
+            _mem.setdefault(c, []).append(i)
+    clusters = regions_mod.apply(store, clusters, _mem)
     private = privacy.private_ids()  # the panel and graph show a lock; nothing private leaves via AI or export
     nodes = [{"id": n["id"], "type": n["type"], "title": n["title"], "year": n["year"], "authors": n["authors"][:3],
               "tags": n["tags"], "parent": n["parent"], "quote": n["quote"][:200], "degree": degree[n["id"]],
@@ -917,7 +924,7 @@ def api_graph():
     # opens (engagement.json) and the privacy settings aren't in the index signature
     from . import cards_api as _cards_api
     key = (idx.get("sig"), embedder.kind, _eng_rev[0], privacy.version(), questions_mod.REV[0],  # + evidence
-           _cards_api.signature())  # idea cards
+           _cards_api.signature(), regions_mod.signature(store))  # idea cards; region and topic names
     cached = idx.get("_graph_bytes")
     if not cached or cached[0] != key:
         body = json.dumps(_graph_data(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -2597,6 +2604,30 @@ def api_topic_suggest():
             members.setdefault(n["cluster"], []).append(n["id"])
     regions = [{"id": c["id"], "label": c["label"], "members": members.get(c["id"], [])} for c in g["clusters"]]
     return topics_mod.suggest_from_regions(store, regions)
+
+
+class RegionNameIn(BaseModel):
+    region: int
+    name: str = ""
+    rename_topic: bool = True  # a region with a matching topic: the topic takes the same name
+    reset: bool = False  # forget the region's own name (back to its topic's name, or the automatic one)
+
+
+@app.post("/api/regions/name")
+def api_region_name(body: RegionNameIn):
+    g = _graph_data()
+    c = next((c for c in g["clusters"] if c["id"] == body.region), None)
+    if c is None:
+        raise HTTPException(404, "That region changed. Try again.")
+    members = [n["id"] for n in g["nodes"] if n["type"] != "fragment" and n["cluster"] == body.region]
+    if body.reset:
+        regions_mod.reset(store, members)
+        return {"ok": True}
+    topic = (c.get("topic") or {}).get("slug")
+    try:
+        return regions_mod.rename(store, members, body.name, topic, body.rename_topic)
+    except regions_mod.RegionError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/topics/{slug}")
