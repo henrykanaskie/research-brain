@@ -48,6 +48,9 @@ class MetaIndex:
         self._assets: tuple[frozenset, frozenset] = (frozenset(), frozenset())
         self._self_writes: dict[str, tuple[float, tuple[int, int] | None]] = {}
         self._external: set[str] = set()  # ids sync() found changed on disk, not yet reported (live.py)
+        # many notes missing from one scan: held until a later scan confirms it (iCloud Drive, a folder being
+        # moved or backed up can make files vanish for a moment; dropping them emptied the whole graph)
+        self._missing: tuple[frozenset, float] | None = None
         self.rebuilds = 0
         self._fields_sig = hashlib.sha1(",".join(sorted(store_fields(store))).encode()).hexdigest()[:12]
         self._open()
@@ -250,6 +253,7 @@ class MetaIndex:
                     known = self.stat
                 changed = [nid for nid, st in disk.items() if known.get(nid) != st]
                 removed = [nid for nid in known if nid not in disk]
+                removed = self._confirm_missing(removed, len(known))
                 puts = []
                 for nid in changed:
                     n = self._parse_file(nid)
@@ -288,6 +292,29 @@ class MetaIndex:
             except sqlite3.DatabaseError as e:
                 self._recover(e)
                 return list(self.notes)
+
+    MASS_MISSING = 5          # this many notes gone in one scan (and at least a third of them) needs a second look
+    MISSING_CONFIRM_S = 4.0
+
+    def _confirm_missing(self, removed: list[str], known: int) -> list[str]:
+        """Notes missing from the folder. A few go at once (you deleted them): gone now. Many at once is held
+        until a scan at least MISSING_CONFIRM_S later still misses them, so a moment when the files can't be
+        seen (iCloud Drive syncing, a folder being renamed or backed up) doesn't empty the library."""
+        if len(removed) < self.MASS_MISSING or len(removed) * 3 < known:
+            self._missing = None
+            return removed
+        now = time.monotonic()
+        gone = frozenset(removed)
+        if self._missing is None or not (gone & self._missing[0]):
+            self._missing = (gone, now)
+            print(f"[research_brain] {len(removed)} notes are missing from the documents folder; "
+                  "checking again before removing them")
+            return []
+        first, since = self._missing
+        if now - since < self.MISSING_CONFIRM_S:
+            return []
+        self._missing = None
+        return [nid for nid in removed if nid in first]
 
     def _parse_file(self, nid: str) -> dict | None:
         try:

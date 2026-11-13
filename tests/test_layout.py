@@ -218,3 +218,33 @@ def test_obsidian_style_links_by_file_name_resolve(client):  # noqa: F811
     n = client.post("/api/notes", json={"type": "note", "title": "Linker", "body": "see [[Helium ratios (1996)]]"}).json()
     links = client.get("/api/graph").json()["links"]
     assert any(l["kind"] == "mention" and {l["source"], l["target"]} == {n["id"], p["id"]} for l in links)
+
+
+def test_files_vanishing_for_a_moment_dont_empty_the_library(store, monkeypatch):
+    """iCloud Drive (or a folder being moved) can hide every file for a moment: the notes stay until a later
+    scan confirms they're gone. Deleting a few is immediate."""
+    import shutil
+    ids = [store.create({"type": "note", "title": f"Note {i}"})["id"] for i in range(8)]
+    assert len(store.all()) == 8
+    if not store._meta_ok():
+        pytest.skip("no SQLite index here")
+    notes = store.docs / "Notes"
+    hidden = store.docs.parent / "hidden-notes"
+    shutil.move(str(notes), str(hidden))  # every file gone at once
+    assert len(store.all()) == 8          # held: not believed yet
+    shutil.move(str(hidden), str(notes))  # back
+    assert {n["id"] for n in store.all()} == set(ids)
+
+    # gone for real: removed once a later look still misses them
+    clock = [1000.0]
+    monkeypatch.setattr("app.meta.time.monotonic", lambda: clock[0])
+    shutil.rmtree(notes)
+    assert len(store.all()) == 8
+    clock[0] += 10
+    assert store.all() == []
+
+
+def test_deleting_a_few_notes_is_immediate(store):
+    ids = [store.create({"type": "note", "title": f"Note {i}"})["id"] for i in range(8)]
+    os.remove(store.note_path(ids[0]))
+    assert len(store.all()) == 7

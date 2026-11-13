@@ -181,6 +181,8 @@ class Layout:
             hit = old.get(ps)
             p = hit[3] if hit else Path(ps)
             nid = hit[2] if hit and hit[:2] == st else read_id(p)
+            if not nid and hit:  # changed but unreadable for now (iCloud downloading it, a save mid-way): same note
+                nid = hit[2]
             if not nid:
                 unnamed.append((p, *st))
                 continue

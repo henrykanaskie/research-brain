@@ -92,6 +92,9 @@ def _get(url: str, params: dict | None = None, timeout: int = 20) -> requests.Re
             r = requests.get(url, params=params, headers=headers, timeout=timeout)
         except (requests.ConnectionError, requests.Timeout) as e:
             last = e
+            if attempt == 0:  # one quick retry: a dropped connection or a DNS hiccup (after sleep) is common
+                time.sleep(0.6)
+                continue
             break  # offline / unreachable: fail fast, callers fall back
         except requests.RequestException as e:
             last = e

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
+import time
+
 import requests
 
 from . import apikeys
@@ -31,7 +33,11 @@ def _get(path: str, params: dict | None = None, timeout: int = 20) -> dict | Non
     if key:
         params["api_key"] = key
     try:
-        r = requests.get(API + path, params=params, headers=UA, timeout=timeout)
+        try:
+            r = requests.get(API + path, params=params, headers=UA, timeout=timeout)
+        except (requests.ConnectionError, requests.Timeout):  # one quick retry: a dropped connection is common
+            time.sleep(0.6)
+            r = requests.get(API + path, params=params, headers=UA, timeout=timeout)
     except requests.RequestException as e:
         raise OpenAlexError(f"Couldn't reach OpenAlex ({e.__class__.__name__}). Check your internet connection.")
     if r.status_code == 404:
