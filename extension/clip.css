@@ -3,6 +3,7 @@
 @font-face{font-family:"Instrument Sans";font-weight:400;src:url(vendor/fonts/instrument-sans-latin-400-normal.woff2) format("woff2")}
 @font-face{font-family:"Instrument Sans";font-weight:500;src:url(vendor/fonts/instrument-sans-latin-500-normal.woff2) format("woff2")}
 @font-face{font-family:"Instrument Sans";font-weight:600;src:url(vendor/fonts/instrument-sans-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:"Bodoni Moda";font-style:italic;font-weight:400 900;src:url(vendor/fonts/bodoni-moda-latin-opsz-italic.woff2) format("woff2")}
 @font-face{font-family:"STIX Two Text";font-weight:400;src:url(vendor/fonts/stix-two-text-latin-400-normal.woff2) format("woff2")}
 @font-face{font-family:"STIX Two Text";font-style:italic;font-weight:400;src:url(vendor/fonts/stix-two-text-latin-400-italic.woff2) format("woff2")}
 @font-face{font-family:"STIX Two Text";font-weight:600;src:url(vendor/fonts/stix-two-text-latin-600-normal.woff2) format("woff2")}
@@ -36,7 +37,8 @@ body.window{width:auto}
 
 header{display:flex;align-items:center;gap:8px;padding:14px 24px;border-bottom:1px solid var(--rule)}
 header img{display:block}
-.brand{font-weight:600}
+.brand{font:italic 500 16px/1 "Bodoni Moda",Didot,Georgia,serif;letter-spacing:-.01em;font-variation-settings:"opsz" 28}
+.brand-mark{flex:none;color:var(--ink);margin-right:2px}
 #modeLbl{color:var(--ink-2)}
 .grow{flex:1}
 .link{background:none;border:none;padding:0;color:var(--ink-2);cursor:pointer;font:13px var(--sans)}
