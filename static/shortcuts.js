@@ -292,7 +292,8 @@
     ['Getting around', [
       ['Commands', 'Find any action by name. Every action has a title; frequent ones have a key.', ['general.palette', 'general.shortcuts']],
       ['History', 'Go back and forward through the notes you opened.', ['nav.back', 'nav.forward']],
-      ['Chrome extension', 'Clip a selection from any web page as a fragment. See extension/README.md to install it.', ['extension.clip']],
+      ['Paper lookup keys', 'If adding or searching for papers says rate limited, add free keys: get one at openalex.org/settings/api and one from semanticscholar.org/product/api, then paste them in View › Library settings › Paper lookup.', []],
+      ['Chrome extension', 'Save papers and clip passages from any web page. To add it: open chrome://extensions in Chrome, turn on Developer mode, click Load unpacked and choose the extension folder inside the research brain folder. research brain must be open for it to work.', ['extension.clip']],
     ]],
   ];
   function openGuide() {

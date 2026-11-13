@@ -74,6 +74,47 @@ own window with no title bar: drag the window by the empty space in its top bar,
 red button (or **⌘ Q**). Closing the window stops research brain (on Windows and Linux, a few minutes
 after you close it); nothing runs in the background and nothing starts when your computer starts.
 
+### Step 4 (optional): add the Chrome extension
+
+The extension saves papers, highlights and quotes from web pages (arXiv, journal sites, PDFs open in Chrome)
+straight into research brain. It isn't in the Chrome Web Store; it comes in the research brain folder, and you
+add it once:
+
+1. In Chrome, go to `chrome://extensions` (type it in the address bar).
+2. Turn on **Developer mode** (the switch in the top right).
+3. Click **Load unpacked** and choose the **`extension`** folder inside the research brain folder.
+4. Click the puzzle-piece icon in Chrome's toolbar and pin **research_brain**, so its button stays visible.
+
+research brain has to be open for the extension to work: it only talks to research brain on your computer.
+To use it, on a paper's page click the toolbar button and **Save to research_brain**; to clip a passage, select
+it, right-click and choose **Add to research_brain…**; to highlight a page, press **Alt+Shift+A**. After you
+update research brain, press the reload arrow on the extension's card in `chrome://extensions`. More in
+[Chrome extension](#chrome-extension-web-clipping).
+
+### Step 5 (recommended): free keys for looking papers up
+
+research brain finds papers, citations and related work through two free services, **OpenAlex** and
+**Semantic Scholar**. Without a key, each one shares a small allowance with lots of other people (OpenAlex:
+everyone on your network; Semantic Scholar: everyone), and when it runs out, adding or searching for papers
+fails with *rate limited* or *couldn't reach*. A free key of your own fixes that. These keys are only for
+looking papers up, not for the AI, and they cost nothing.
+
+**OpenAlex** (do this one first):
+
+1. Go to [openalex.org](https://openalex.org) and sign up (free; an email is enough).
+2. Open [openalex.org/settings/api](https://openalex.org/settings/api) and copy your API key.
+
+**Semantic Scholar:**
+
+1. Fill in the short form at
+   [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key-form) (name, email,
+   and a line on what it's for, such as "my own research library").
+2. The key arrives by email, usually within a few days.
+
+**Then, in research brain:** **View › Library settings › Paper lookup**, paste each key into its box and save.
+The keys stay on your computer and are sent only to their own service. You can add one now and the other
+later.
+
 ### Add your first papers
 
 Drag PDFs onto the window, or click **Add** and paste a DOI, an arXiv link or a paper's title. research
@@ -169,6 +210,7 @@ double-click the installer again (step 2), or, if you're comfortable with Termin
 | The AI shows a red dot, or says it isn't signed in | Open Terminal, type the AI's name (`gemini`, `claude`, `copilot`…), sign in, then pick it again in research brain. |
 | *Copilot … is too old* | In Terminal, run `copilot update`. |
 | Not much disk space | research brain needs about 300 MB. After installing, `uv cache clean` in Terminal frees the download cache. Prefer Gemini over Ollama, whose models take several GB. |
+| Adding or searching for papers says *rate limited*, *allowance used up* or *couldn't reach* | The free lookup services are busy (your internet is usually fine). Add your own free keys: see [Step 5](#step-5-recommended-free-keys-for-looking-papers-up). |
 | Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **View › Library settings › Your documents › Open folder**. |
 
 ## For developers and lab admins: more ways to install
@@ -315,8 +357,10 @@ Details: [SECURITY.md](SECURITY.md).
 
 ## Chrome extension (web clipping)
 
+The extension isn't in the Chrome Web Store: load it from this folder.
+
 1. Open `chrome://extensions` and turn on **Developer mode**.
-2. Click **Load unpacked** and pick the `extension/` folder.
+2. Click **Load unpacked** and pick the `extension/` folder. Pin it from the puzzle-piece menu so its button stays in the toolbar. research_brain must be running for it to work.
 3. On any page (including arXiv, journal sites, and Chrome's PDF viewer), select text, then right-click and choose **Add to research_brain…**, or use the keyboard shortcut listed in `extension/README.md`.
 4. **Save to research_brain (link + text)** (popup, on a publisher article page, an arXiv page or a PDF tab): saves the paper as a *linked paper*: its link, its full text and its citation details (title, authors, DOI, journal, year, abstract), read from the page you are looking at in your own browser session. No PDF file is kept. **Save PDF too** (the second button) also downloads the PDF in your browser, with your own access to the site (subscription, university login). research_brain never sees your login and never downloads from a paywalled site itself. One paper per click.
 5. To annotate a page in place, click the toolbar icon and choose **Annotate this page** (or press Alt+Shift+A): select text, then **Highlight** or **Highlight + note**. Highlights reappear when you come back. On a PDF tab the popup offers **Annotate this PDF in research_brain**, which imports it and opens the built-in viewer. The extension has no AI and talks only to research_brain on this computer; see `extension/README.md`.
@@ -784,6 +828,7 @@ note by the `id:` inside it. Summary mentions, manual links and highlight nestin
 | `RB_ZOTERO_DIR` | `~/Zotero` | Zotero data directory (the folder containing `zotero.sqlite`) |
 | `RB_WATCH` | `1` | `0` turns off watching your documents folder for outside edits (live updates) |
 | `S2_API_KEY` | — | Optional free Semantic Scholar key (avoids occasional rate limiting) |
+| `OPENALEX_API_KEY` | — | Free OpenAlex key (without one, OpenAlex shares a small daily allowance with your whole network). Same as the box in Library settings › Paper lookup |
 | `RB_CITES_ON_IMPORT` | `1` | `0` stops fetching citation links in the background when you import a paper |
 | `RB_ALLOWED_HOSTS` | — | Extra host names the server answers to (e.g. a Tailscale MagicDNS name); see [SECURITY.md](SECURITY.md) |
 | `RB_EXTENSION_IDS` | — | Extra Chrome extension ids allowed to call the app (the bundled extension's id is pinned) |

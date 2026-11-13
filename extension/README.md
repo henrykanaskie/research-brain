@@ -4,6 +4,17 @@ Highlight passages and write notes on research pages (arXiv abstract and HTML ve
 sites, blogs) and save them to research_brain, each one filed under its paper with the paper's
 citation. PDFs open in research_brain's own viewer, where the same highlight and note tools work.
 
+## Install
+
+It isn't in the Chrome Web Store; load it from this folder:
+
+1. In Chrome, open `chrome://extensions` and turn on **Developer mode** (top right).
+2. Click **Load unpacked** and choose this `extension` folder.
+3. Pin it from the puzzle-piece menu so its button stays in the toolbar.
+
+research_brain must be running for it to work. After updating research_brain, press the reload arrow on the
+extension's card in `chrome://extensions`.
+
 ## No AI, and nothing leaves this computer
 
 - **There is no AI in this extension.** It never calls Claude or any other model, and it has no code

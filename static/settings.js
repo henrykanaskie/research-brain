@@ -442,7 +442,7 @@
   // ---------------------------------------------------------------- paper lookup keys (app/apikeys.py)
   const KEY_HELP = {
     s2: 'Request one on Semantic Scholar’s API page (a short form; the key arrives by email).',
-    openalex: 'Optional: OpenAlex works without a key. A free key (sign up, then Settings → API key) gives ten times the daily allowance.',
+    openalex: 'Recommended: without a key, OpenAlex shares one small daily allowance with everyone on your network, and runs out. A free key (sign up at openalex.org, then Settings → API) gives this app its own.',
   };
   async function renderKeys(sec, say) {
     let st;

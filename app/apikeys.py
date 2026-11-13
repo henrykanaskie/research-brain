@@ -14,7 +14,7 @@ SERVICES = {
     "s2": {"env": "S2_API_KEY", "setting": "s2_api_key", "name": "Semantic Scholar",
            "get": "https://www.semanticscholar.org/product/api#api-key-form"},
     "openalex": {"env": "OPENALEX_API_KEY", "setting": "openalex_api_key", "name": "OpenAlex",
-                 "get": "https://help.openalex.org/api/authentication/"},
+                 "get": "https://openalex.org/settings/api"},
 }
 _OK = re.compile(r"^[A-Za-z0-9_\-.]{8,128}$")
 
