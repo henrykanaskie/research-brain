@@ -44,7 +44,7 @@ If the Mac says it *can't be opened* or *Apple could not verify* it: open **Syst
 Security**, scroll down, and click **Open Anyway** next to the file's name; then double-click it again.
 If that doesn't appear, or it says *permission denied*, use Terminal instead:
 
-1. Press **⌘ Space**, type **Terminal** and press Return.
+1. Open **Terminal**: in Finder, **Applications › Utilities › Terminal**.
 2. Type `bash ` (the word bash and a space; don't press Return yet).
 3. Drag `Install-research-brain.command` from the folder into the Terminal window, then press Return.
 
@@ -64,8 +64,8 @@ Return.
 
 From now on, open research brain like any other app:
 
-- **Mac:** Launchpad, the Applications folder, or Spotlight (**⌘ Space**, type *research brain*). To keep it
-  in the Dock, right-click its icon while it's open › **Options › Keep in Dock**.
+- **Mac:** Launchpad, or the Applications folder in Finder. To keep it in the Dock, right-click its icon
+  while it's open › **Options › Keep in Dock**, then open it from there.
 - **Windows:** the Start menu, under *research brain*.
 - **Linux:** your app menu.
 
@@ -121,7 +121,7 @@ Free plans and their limits change; check the provider's current terms.
 
 1. **Install Node.js:** go to [nodejs.org](https://nodejs.org), download the **LTS** installer for your
    computer and run it (click through with the defaults).
-2. **Install Gemini:** open Terminal (Mac: **⌘ Space**, type *Terminal*; Windows: Start menu › *Terminal*
+2. **Install Gemini:** open Terminal (Mac: Finder › **Applications › Utilities › Terminal**; Windows: Start menu › *Terminal*
    or *PowerShell*), type the line below and press Return:
 
    ```

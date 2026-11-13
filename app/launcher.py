@@ -369,7 +369,7 @@ def _mac_applet(app: Path) -> str:
     shutil.rmtree(app, ignore_errors=True)
     tmp.rename(app)
     _mac_register(app)
-    return f"Added {app}: open it from Applications, Launchpad or Spotlight, and keep it in the Dock (right-click its icon > Options > Keep in Dock)."
+    return f"Added {app}: open it from Launchpad or the Applications folder, and keep it in the Dock (right-click its icon > Options > Keep in Dock)."
 
 
 def _mac_window_script(cmd: str) -> str:
@@ -420,7 +420,7 @@ def _mac_window_app(app: Path) -> str:
     shutil.rmtree(app, ignore_errors=True)
     tmp.rename(app)
     _mac_register(app)
-    return f"Added {app}: open it from Applications, Launchpad or Spotlight, and keep it in the Dock (right-click its icon > Options > Keep in Dock)."
+    return f"Added {app}: open it from Launchpad or the Applications folder, and keep it in the Dock (right-click its icon > Options > Keep in Dock)."
 
 
 def _mac_bundle(app: Path) -> str:
@@ -464,7 +464,7 @@ def _mac_bundle(app: Path) -> str:
 """
     (app / "Contents" / "Info.plist").write_text(plist, encoding="utf-8", newline="\n")
     _mac_register(app)
-    return f"Added {app}: open it from Applications, Launchpad or Spotlight (it can take a minute to show in Spotlight)."
+    return f"Added {app}: open it from Launchpad or the Applications folder."
 
 
 def _windows_shortcut(remove: bool) -> str:
