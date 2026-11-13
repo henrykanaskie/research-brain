@@ -69,7 +69,9 @@ LOG_FILE = "ai_log.jsonl"
 LOG_MAX_BYTES = int(os.environ.get("RB_AI_LOG_MAX_BYTES", str(5 * 1024 * 1024)))
 DEFAULT_PRIVATE = ("question", "note")
 # web_search: the agent may search the web, in General chats only (never with library content); off by default
-DEFAULTS = {"private_by_default": list(DEFAULT_PRIVATE), "private_ok_for_local_ai": False, "web_search": False}
+# web_with_attachments: you confirmed once that attached library items may share a session with web search
+DEFAULTS = {"private_by_default": list(DEFAULT_PRIVATE), "private_ok_for_local_ai": False, "web_search": False,
+            "web_with_attachments": False}
 # Kinds the settings page offers. "note" = a standalone note. Other agents may add types; any type in the
 # library is offered too (see kinds()).
 KNOWN_KINDS = ("note", "question", "paper", "fragment")
@@ -147,6 +149,7 @@ def settings() -> dict:
                "web_search": bool(DEFAULTS["web_search"])}
         if isinstance(data.get("web_search"), bool):
             out["web_search"] = data["web_search"]
+        out["web_with_attachments"] = bool(data.get("web_with_attachments", False))
         kinds = data.get("private_by_default")
         if isinstance(kinds, list):
             out["private_by_default"] = sorted({str(k).strip().lower() for k in kinds if str(k).strip()})
@@ -156,7 +159,7 @@ def settings() -> dict:
         return dict(out, private_by_default=list(out["private_by_default"]))
 
 
-def save_settings(private_by_default=None, private_ok_for_local_ai=None, web_search=None) -> dict:
+def save_settings(private_by_default=None, private_ok_for_local_ai=None, web_search=None, web_with_attachments=None) -> dict:
     """Change the settings (None keeps a value). Returns the new settings."""
     global _settings_cache, _settings_rev
     with _lock:
@@ -172,6 +175,8 @@ def save_settings(private_by_default=None, private_ok_for_local_ai=None, web_sea
             cur["private_ok_for_local_ai"] = bool(private_ok_for_local_ai)
         if web_search is not None:
             cur["web_search"] = bool(web_search)
+        if web_with_attachments is not None:
+            cur["web_with_attachments"] = bool(web_with_attachments)
         d = _state_dir()
         if d is not None:
             from .paths import write_json_atomic

@@ -22,7 +22,7 @@ This page explains what we defend against, how, and what is still up to you.
 | Malicious files you import | A PDF built to hang or exhaust the parser; a note file with a YAML "billion laughs"; a Zotero attachment path pointing at `~/.ssh` | Parser in a limited child process, size and time limits, path checks |
 | Malicious URLs you import | "Annotate this PDF" on a link that redirects to your router or a cloud metadata address | SSRF guard with a pinned, checked IP address for every hop |
 | Prompt injection in paper text | A paper says "ignore your instructions and run `curl …`" | Claude has no tools that could do it; the tool guard kills the run if it does |
-| Prompt injection from the web (General chats with web search on) | A page Claude reads tells it to send something somewhere | Only WebSearch and WebFetch exist in that session, and it holds no library content: only your question and that conversation |
+| Prompt injection from the web (General chats with web search on) | A page Claude reads tells it to send something somewhere | Only WebSearch and WebFetch exist in that session. It holds your question, that conversation and only what you attached: published paper text, and your own writing only after you confirmed once |
 | Rendered content (XSS) | A note or Claude's answer contains `[x](javascript:…)` or `<img onerror=…>` | Markdown renderer escapes HTML and checks link schemes; Content-Security-Policy |
 | A malicious browser extension or web page talking to ours | Another extension, or a page, messages the research_brain extension | No `externally_connectable`; sender checks; the server accepts only our extension's id |
 | Supply chain | A compromised new release of a Python package | Pinned, tested versions (`constraints.txt`); vendored front-end code; no CDNs |
@@ -190,9 +190,15 @@ AI and privacy › Let the agent search the web*, a **General** chat (Ask anythi
 exactly two built-in tools, `WebSearch` and `WebFetch` (`claude_cli.WEB_TOOLS`; nothing else is ever
 passed through), pre-approved with `--allowedTools`, with every other flag below unchanged. The init-event
 guard then allows those two and nothing else, so a session that reports any other tool is killed before
-turn 1, as everywhere else. What goes along is only the user's question and that General conversation
-(its condensed summary and recent messages): **no library content, ever**, so a web page that tries to
-steer the agent (prompt injection) has nothing of the library to send anywhere. The call goes through the
+turn 1, as everywhere else. What goes along is the user's question and that General conversation (its
+condensed summary and recent messages), plus only what the user explicitly **attaches** (papers, notes,
+open questions, topics; private items can never be attached). With web search on, attached **papers** go
+along with their published parts only (title, authors, abstract, their own text): a web page that tries to
+steer the agent (prompt injection) could at most send text that is public anyway. The user's **own
+writing** (notes, questions, highlights, their summaries) shares a web-enabled session only after a
+one-time confirmation that names this risk (privacy setting `web_with_attachments`, enforced by the
+server with HTTP 409, revocable in Settings). Without web search, attachments are handled like a Library
+chat. The call goes through the
 same privacy check and is written to the *What was sent to AI* log (purpose `general-web`). The setting is
 off by default; other agents keep their no-tools setup and can't search the web. Library, topic and paper
 chats, critiques, Research mode and everything else never get these tools.

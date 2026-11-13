@@ -160,3 +160,55 @@ def test_web_calls_get_exactly_the_web_tools(monkeypatch):
     claude_cli._stream_strict_ok = None
     list(claude_cli.ask_stream("i", "c"))
     assert seen["cmd"][seen["cmd"].index("--tools") + 1] == "" and seen["allowed"] is None
+
+
+def test_attachments_in_general_chat(client, server, monkeypatch):
+    sent = {}
+
+    def fake_sse(instruction, context, finish, purpose="ask", sources=None):
+        sent.update(instruction=instruction, context=context, web=False)
+        yield "event: done\ndata: {}\n\n"
+
+    def fake_web(instruction, context, system="", heartbeat=None, model=None, tools=None):
+        sent.update(instruction=instruction, context=context, web=True, tools=tools)
+        yield "answer"
+    monkeypatch.setattr(server, "_claude_sse", fake_sse)
+    monkeypatch.setattr(server.claude_cli, "ask_stream", fake_web)
+
+    class Claude:
+        id, name = "claude", "Claude Code"
+    monkeypatch.setattr(server, "_ai_agent", lambda: Claude())
+    monkeypatch.setattr(server.agents, "guard_send", lambda b, purpose, i, c, **k: [i, c])
+
+    a = paper(client, "Sheath formation at a floating wall", "Published abstract about the Bohm criterion.")
+    client.put(f"/api/notes/{a}", json={"summary": "MY OWN SUMMARY of the sheath paper."})
+    note = client.post("/api/notes", json={"type": "note", "title": "My idea", "body": "MY OWN IDEA about presheaths."}).json()["id"]
+    client.put(f"/api/notes/{note}", json={"private": False})  # notes are private by default; this one is shared
+
+    # nothing attached: just the question
+    client.post("/api/general/stream", json={"question": "What is a sheath?"})
+    assert "Bohm criterion" not in sent["context"] and "MY OWN" not in sent["context"]
+    # attached, no web: everything, your summary too
+    client.post("/api/general/stream", json={"question": "Explain the sheath", "attach": [a, note]})
+    assert "MY OWN SUMMARY" in sent["context"] and "MY OWN IDEA" in sent["context"] and f"[[{a}]]" in sent["context"]
+    assert "ATTACHED" in sent["context"] and "attached items" in sent["instruction"]
+
+    client.put("/api/privacy/settings", json={"web_search": True})
+    # web + a published paper only: no confirmation, and only the published parts go along
+    r = client.post("/api/general/stream", json={"question": "Newer work on this?", "web": True, "attach": [a]})
+    assert r.status_code == 200 and sent["web"] and sent["tools"] == ["WebSearch", "WebFetch"]
+    assert "Bohm criterion" in sent["context"] and "MY OWN SUMMARY" not in sent["context"]
+    # web + your own note: asks you to confirm first
+    r = client.post("/api/general/stream", json={"question": "Is my idea new?", "web": True, "attach": [note]})
+    assert r.status_code == 409
+    # confirmed: your writing goes along too
+    client.put("/api/privacy/settings", json={"web_with_attachments": True})
+    r = client.post("/api/general/stream", json={"question": "Is my idea new?", "web": True, "attach": [a, note]})
+    assert r.status_code == 200 and "MY OWN IDEA" in sent["context"] and "MY OWN SUMMARY" in sent["context"]
+
+
+def test_private_items_cant_be_attached(client, server):
+    note = client.post("/api/notes", json={"type": "note", "title": "Private idea", "body": "secret"}).json()["id"]
+    client.put(f"/api/notes/{note}", json={"private": True})
+    r = client.post("/api/general/stream", json={"question": "Thoughts?", "attach": [note]})
+    assert r.status_code == 403

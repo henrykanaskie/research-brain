@@ -397,9 +397,15 @@ Details: [SECURITY.md](SECURITY.md).
 papers and notes), **Topics…** (every paper in the topics you pick, plus the passages that best match your
 question) and **General** (ask anything). In General, if you allow it under *Settings › Library settings ›
 AI and privacy › Let the agent search the web*, tick **Search the web** and Claude Code can look things up
-and link its sources. Only your question and that General conversation go along, never your library, and the
-session gets exactly two tools (web search and fetching a page). It's off by default, and works with Claude
-Code.
+and link its sources. The session gets exactly two tools (web search and fetching a page). It's off by
+default, and works with Claude Code.
+
+**Attach things to a General chat.** **Attach…** adds papers, notes, open questions or whole topics; the agent
+reads them (an overview plus the passages that best match your question) and cites them, alongside its own
+knowledge and, if ticked, the web. Nothing of yours goes along unless you attach it, and private items can't be
+attached. With web search on, attached papers go with their published parts only (title, authors, abstract,
+text); your own writing (notes, questions, highlights, your summaries) goes along with web search only after you
+confirm once, since a web page could try to get the agent to send it somewhere.
 
 **Conversations are remembered.** Each one (the library, each paper, each set of topics, General) is kept in
 your library (`state/chats/`) and comes back next time. To save space, the last 40 messages are kept in full

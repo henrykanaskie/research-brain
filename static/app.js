@@ -162,6 +162,7 @@
       const txt = await res.text().catch(() => '');
       try { data = JSON.parse(txt); } catch { data = { detail: txt.slice(0, 400) }; }
       const err = new Error(errText(data, res.status));
+      err.status = res.status;
       // a real 4xx answer (e.g. "write your summary first") is final; 404/405 with no detail means an
       // older server without the /stream route, so the caller falls back to the plain endpoint
       if (res.status >= 400 && res.status < 500 && !((res.status === 404 || res.status === 405) && /^(Not Found|Method Not Allowed)$/.test(err.message))) err.claude = true;
@@ -3190,6 +3191,63 @@
     renderChatScope();
     renderChat();
   }
+  // ---------- General: things of yours the agent may read (papers, notes, questions, topics) ----------
+  S.chatAttach = LS.get('generalAttach', []) || [];
+  const saveAttach = () => LS.set('generalAttach', S.chatAttach);
+  const ATTACH_KIND = { paper: 'Paper', note: 'Note', question: 'Question', fragment: 'Highlight', topic: 'Topic' };
+  function renderAttachChips() {
+    const box = $('#cs-chips');
+    if (!box) return;
+    box.replaceChildren(...S.chatAttach.map((a, i) => h('span', { class: 'cs-chip', title: `${ATTACH_KIND[a.kind] || a.kind}: ${a.title}` },
+      h('span', { class: 'cs-chip-k', text: ATTACH_KIND[a.kind] || a.kind }), truncate(a.title, 38),
+      h('button', { type: 'button', 'aria-label': `Remove ${a.title}`, text: '×', onclick: () => { S.chatAttach.splice(i, 1); saveAttach(); renderAttachChips(); renderChatScope(); } }))));
+    const btn = $('#cs-attach');
+    if (btn) btn.textContent = S.chatAttach.length ? 'Attach more…' : 'Attach…';
+  }
+  async function chooseAttachments() {
+    let topics = [];
+    try { topics = (await api('GET', '/api/topics')).filter((t) => t.count > 0); } catch { /* none */ }
+    const input = h('input', { type: 'search', class: 'ca-q', placeholder: 'Search your papers, notes, questions and topics', 'aria-label': 'Search what to attach' });
+    const list = h('div', { class: 'ca-list', role: 'listbox' });
+    const done = h('button', { type: 'button', class: 'btn btn-primary', text: 'Done' });
+    const sheet = h('div', { class: 'menu ca-sheet', role: 'dialog', 'aria-label': 'Attach to this conversation' },
+      h('div', { class: 'menu-label', text: 'The agent may read these in this conversation' }), input, list,
+      h('p', { class: 'ca-hint', text: 'Private items stay on this computer and can’t be attached. With web search on, only the published parts of papers go along unless you allow your own notes too.' }),
+      h('div', { class: 'ct-acts' }, done));
+    const has = (kind, key) => S.chatAttach.some((a) => a.kind === kind && a.key === key);
+    const add = (item) => { if (!has(item.kind, item.key)) { S.chatAttach.push(item); saveAttach(); renderAttachChips(); renderChatScope(); } draw(lastRows); };
+    let lastRows = [], seq = 0;
+    function draw(rows) {
+      lastRows = rows;
+      list.replaceChildren(...(rows.length ? rows.map((r) => h('button', { type: 'button', class: 'ca-row' + (has(r.kind, r.key) ? ' on' : ''), disabled: has(r.kind, r.key),
+        onclick: () => add(r) }, h('span', { class: 'cs-chip-k', text: ATTACH_KIND[r.kind] || r.kind }), h('span', { class: 'ca-t', text: r.title }),
+        r.sub ? h('span', { class: 'ca-n', text: r.sub }) : null)) : [h('div', { class: 'ca-empty', text: 'Nothing matches.' })]));
+    }
+    async function search() {
+      const q = input.value.trim(), my = ++seq;
+      const ql = q.toLowerCase();
+      const trows = topics.filter((t) => !q || t.name.toLowerCase().includes(ql)).slice(0, 6)
+        .map((t) => ({ kind: 'topic', key: t.slug, title: t.name, sub: `${t.count} paper${t.count === 1 ? '' : 's'}` }));
+      let nrows = [];
+      try {
+        nrows = (await api('GET', `/api/search?q=${encodeURIComponent(q)}&limit=20`))
+          .filter((n) => n.type !== 'fragment')
+          .map((n) => ({ kind: n.type, key: n.id, title: n.title || n.id, sub: n.year ? String(n.year) : '' }));
+      } catch { /* show topics only */ }
+      if (my === seq) draw([...trows, ...nrows]);
+    }
+    let t = null;
+    input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(search, 150); });
+    const close = () => { sheet.remove(); document.removeEventListener('pointerdown', off, true); };
+    const off = (e) => { if (!sheet.contains(e.target)) close(); };
+    done.onclick = close;
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+    document.body.append(sheet);
+    setTimeout(() => document.addEventListener('pointerdown', off, true), 0);
+    input.focus();
+    search();
+  }
+
   /** Talk about the papers in one or more topics ([{slug, name}]). */
   function chatAboutTopics(topics) {
     if (!topics || !topics.length) return;
@@ -3249,7 +3307,11 @@
       const web = $('#cs-web'), wrap = $('#cs-web-wrap');
       if (web) { web.disabled = !S.webAllowed; web.checked = !!(S.webAllowed && S.chatWeb); }
       if (wrap) wrap.title = S.webAllowed ? 'The agent may search the web for this answer (only your question and this conversation go along)' : 'Turn it on in Settings › Library settings › AI and privacy';
-      if (ta) ta.placeholder = S.chatWeb && S.webAllowed ? 'Ask anything; the agent can search the web' : 'Ask anything';
+      renderAttachChips();
+      const n = S.chatAttach.length;
+      if (ta) ta.placeholder = (n ? `Ask about what you attached${S.chatWeb && S.webAllowed ? ', and the web' : ''}` : S.chatWeb && S.webAllowed ? 'Ask anything; the agent can search the web' : 'Ask anything');
+      const note = $('#chat-general .cs-note');
+      if (note) note.textContent = n ? `The agent may read the ${n === 1 ? 'item' : `${n} items`} you attached, and nothing else of yours.` : 'Ask anything. Your library isn’t sent unless you attach something.';
       return;
     }
     const rel = $('.cs-related', bar);
@@ -3411,7 +3473,9 @@
       let r;
       try {
         const url = S.chatGeneral ? '/api/general/stream' : '/api/chat/stream';
-        const body = S.chatGeneral ? { question, history, web: pending.web } : { question, history, ...scope };
+        const body = S.chatGeneral ? { question, history, web: pending.web,
+          attach: S.chatAttach.filter((a) => a.kind !== 'topic').map((a) => a.key),
+          topics: S.chatAttach.filter((a) => a.kind === 'topic').map((a) => a.key) } : { question, history, ...scope };
         r = await apiStream(url, body, (t) => {
           if (!pending.live) { pending.live = t; renderChat(); }
           live.push(t);
@@ -3428,6 +3492,21 @@
       delete pending.live;
       Object.assign(pending, { pending: false, content: r.answer || '', sources: r.sources || [], passages: r.passages || [] });
     } catch (e) {
+      if (e.status === 409 && S.chatGeneral) {  // your own writing + web search: confirm once (Settings keep it)
+        S.chat.splice(S.chat.indexOf(userMsg), 2);
+        S.chatBusy = false;
+        renderChat();
+        const ok = await confirmDialog('Send your own notes along with web search?',
+          'Published papers go along as they are. Your own writing (notes, open questions, highlights, your summaries) would share this session with web search, and a web page the agent reads could try to get it to send that text somewhere. Private items never go. You can change this later in Settings › Library settings › AI and privacy.',
+          'Allow and ask');
+        if (ok === true || ok === 'ok') {
+          try { await api('PUT', '/api/privacy/settings', { web_with_attachments: true }); } catch (e2) { toastErr(e2, 'Could not save that'); return; }
+          setTimeout(() => sendChat(question, opts), 0);  // after this call's cleanup (finally) has run
+          return;
+        }
+        const ta = $('#chat-input'); if (ta && !ta.value) ta.value = question;
+        return;
+      }
       userMsg.failed = true;
       delete pending.live;
       Object.assign(pending, { pending: false, error: true, content: e.message, question });
@@ -3474,6 +3553,8 @@
     else if (m === 'topics') chooseChatTopics();
     else if (setChatScope(null) !== false) { renderChat(); $('#chat-input').focus(); }
   });
+  const csAttach = $('#cs-attach');
+  if (csAttach) csAttach.addEventListener('click', () => chooseAttachments());
   const csWeb = $('#cs-web');
   if (csWeb) csWeb.addEventListener('change', (e) => { S.chatWeb = e.target.checked; renderChatScope(); });
   $('#cs-related').addEventListener('change', (e) => { S.chatRelated = e.target.checked; });

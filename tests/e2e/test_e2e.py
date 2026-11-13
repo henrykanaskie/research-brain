@@ -588,3 +588,43 @@ def test_general_chat_and_the_web_switch(ctx, server):
     expect(page.locator("#chat .msg.assistant").last).to_contain_text("fake Claude", timeout=20_000)
     api(server, "PUT", "/api/privacy/settings", {"web_search": False})
     assert not page.errors
+
+
+def test_general_chat_attachments_and_the_one_time_warning(ctx, server):
+    clear_vault(server)
+    api(server, "PUT", "/api/privacy/settings", {"web_search": True, "web_with_attachments": False})
+    api(server, "PUT", "/api/chats/general", {"messages": []})
+    a = api(server, "POST", "/api/notes", {"type": "paper", "title": "Sheath formation at a floating wall", "abstract": "Bohm criterion"})["id"]
+    n = api(server, "POST", "/api/notes", {"type": "note", "title": "My presheath idea", "body": "an idea"})["id"]
+    api(server, "PUT", f"/api/notes/{n}", {"private": False})
+    page = open_app(ctx, server)
+    page.evaluate("localStorage.removeItem('rb.generalAttach')")
+    page.evaluate("RB.commands.run('chat.general')")
+    page.click("#cs-attach")
+    page.fill(".ca-sheet .ca-q", "sheath")
+    page.locator(".ca-sheet .ca-row", has_text="Sheath formation").click()
+    page.click(".ca-sheet button:has-text('Done')")
+    expect(page.locator("#cs-chips .cs-chip")).to_have_count(1)
+    expect(page.locator("#chat-general .cs-note")).to_contain_text("item you attached")
+    # web + a published paper: no warning
+    page.check("#cs-web")
+    page.fill("#chat-input", "Newer work on this?")
+    page.click("#btn-chat-send")
+    expect(page.locator("#chat .msg.assistant").last).to_contain_text("fake Claude", timeout=20_000)
+    page.wait_for_function("!window.__rb.S.chatBusy")
+    expect(page.locator("#modal")).to_be_hidden()
+    # web + your own note: asks once, then answers
+    page.click("#cs-attach")
+    page.fill(".ca-sheet .ca-q", "presheath")
+    page.locator(".ca-sheet .ca-row", has_text="My presheath idea").click()
+    page.click(".ca-sheet button:has-text('Done')")
+    page.fill("#chat-input", "Is my idea new?")
+    page.click("#btn-chat-send")
+    expect(page.locator("#modal")).to_be_visible()
+    expect(page.locator("#modal-title")).to_contain_text("own notes")
+    page.click("#modal-ok")
+    expect(page.locator("#chat .msg.user").last).to_contain_text("Is my idea new?")
+    expect(page.locator("#chat .msg.assistant").last).to_contain_text("fake Claude", timeout=20_000)
+    assert api(server, "GET", "/api/privacy")["settings"]["web_with_attachments"] is True
+    api(server, "PUT", "/api/privacy/settings", {"web_search": False, "web_with_attachments": False})
+    assert not page.errors
