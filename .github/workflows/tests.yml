@@ -5,6 +5,11 @@ on:
     branches: ["**"]   # tags run through release.yml, which calls this workflow first
   pull_request:
   workflow_call:
+  workflow_dispatch:   # "Run workflow" in the Actions tab: everything, on every platform
+
+# Minutes: GitHub counts Windows minutes double and macOS minutes ten times on a private repository, so a
+# push runs the full suite on Linux only; Windows, macOS and the oldest Python run for releases (a v* tag,
+# through release.yml) and when started by hand.
 
 jobs:
   # Everything, browser tests included, on Linux.
@@ -32,8 +37,9 @@ jobs:
           RB_EMBEDDER: tfidf
         run: python -m pytest -q tests -rs
 
-  # The app's own code on Windows and macOS, and on the oldest Python it supports.
+  # The app's own code on Windows and macOS, and on the oldest Python it supports: releases and manual runs.
   platforms:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
