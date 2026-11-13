@@ -111,7 +111,9 @@ async def event_stream(bus: EventBus, request, keepalive: float = KEEPALIVE):
 
 
 class VaultWatcher:
-    """watchdog observer on notes/ with a debounce; resyncs meta for the changed files and publishes."""
+    """watchdog observer on the documents folder (Papers/, Notes/, ...; app/layout.py), with a debounce;
+    resyncs meta and publishes the notes that changed outside the app. File names aren't ids any more, so
+    a change triggers a resync, and the index says which notes changed."""
 
     def __init__(self, store, bus: EventBus, on_change=None, debounce: float = DEBOUNCE):
         self.store, self.bus, self.on_change, self.debounce = store, bus, on_change, debounce
@@ -142,11 +144,11 @@ class VaultWatcher:
         try:
             self.observer = Observer()
             self.observer.daemon = True
-            self.observer.schedule(Handler(), str(self.store.notes_dir), recursive=False)
+            self.observer.schedule(Handler(), str(self.store.docs), recursive=True)
             self.observer.start()
             return True
         except Exception as e:  # e.g. inotify watch limit reached
-            self.error = f"couldn't watch {self.store.notes_dir}: {e}"
+            self.error = f"couldn't watch {self.store.docs}: {e}"
             print(f"[research_brain] {self.error}")
             self.observer = None
             return False
@@ -163,9 +165,9 @@ class VaultWatcher:
     def _touch(self, path: str) -> None:
         name = Path(path if isinstance(path, str) else path.decode()).name
         if not name.endswith(".md") or name.startswith("."):
-            return  # ignores our own <id>.md.tmp writes and editor swap files
+            return  # ignores our own .<name>.md.tmp writes and editor swap files
         with self._lock:
-            self._pending.add(name[:-3])
+            self._pending.add(name)
             if self._timer:
                 self._timer.cancel()
             self._timer = threading.Timer(self.debounce, self._flush)
@@ -174,17 +176,17 @@ class VaultWatcher:
 
     def _flush(self) -> None:
         with self._lock:
-            ids, self._pending = self._pending, set()
+            names, self._pending = self._pending, set()
             self._timer = None
-        if not ids:
+        if not names:
             return
         try:
             meta = self.store.meta
             if meta is not None and meta.ok:
-                meta.sync(only=ids)  # may find nothing new if a request already synced these files
-                outside = meta.pop_external(ids)
+                meta.sync()  # may find nothing new if a request already synced these files
+                outside = meta.pop_external()
             else:
-                outside = sorted(ids)
+                outside = self.store.layout.ids()
             if not outside:
                 return
             if self.on_change:

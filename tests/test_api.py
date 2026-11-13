@@ -247,7 +247,7 @@ def test_hand_edited_frontmatter_does_not_break_library(client):
     down /api/graph, search, or note creation (regression: `tags: foo` / `authors: 5` raised TypeError)."""
     from app.server import store
     ok = client.post("/api/notes", json={"type": "note", "title": "Plasma notes", "body": "plasma"}).json()
-    nd = store.notes_dir
+    nd = store.notes_dir  # the Notes folder, where notes made outside the app go
     (nd / "broken-yaml.md").write_text("---\ntitle: [unclosed\ntags: {a: \n---\nbody text\n")
     (nd / "list-front.md").write_text("---\n- just\n- a list\n---\nhello\n")
     (nd / "weird-types.md").write_text("---\ntitle: 123\ntags: notalist, two\nauthors: 5\nlinks: [missing, null]\n"

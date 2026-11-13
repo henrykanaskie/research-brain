@@ -90,14 +90,14 @@ def test_search_ranking_and_shape(small):
 
 def test_external_edit_is_reflected(small):
     client, server = small
-    p = server.store.notes_dir / "syn-00003.md"
+    p = server.store.note_path("syn-00003")
     p.write_text(p.read_text(encoding="utf-8").replace("study 3", "study 3 zanzibarian"), encoding="utf-8")
     assert [r["id"] for r in client.get("/api/search", params={"q": "zanzibar"}).json()] == ["syn-00003"]
     assert "zanzibarian" in client.get("/api/notes/syn-00003").json()["title"]
     assert any("zanzibarian" in n["title"] for n in client.get("/api/graph").json()["nodes"])
-    # a brand-new file dropped into notes/ and one removed outside the app
+    # a brand-new file dropped into Notes/ and one removed outside the app
     (server.store.notes_dir / "hand-made.md").write_text("---\ntitle: Quixotic hand note\n---\nbody\n", encoding="utf-8")
-    (server.store.notes_dir / "syn-00004.md").unlink()
+    server.store.note_path("syn-00004").unlink()
     ids = {n["id"] for n in server.store.all()}
     assert "hand-made" in ids and "syn-00004" not in ids
     assert client.get("/api/search", params={"q": "quixotic"}).json()[0]["id"] == "hand-made"

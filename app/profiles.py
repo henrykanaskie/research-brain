@@ -10,6 +10,7 @@ The running server serves one vault. Switching writes "active_profile" and resta
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from . import paths
@@ -22,10 +23,20 @@ class ProfileError(ValueError):
 
 
 def _count_notes(vault: Path) -> int:
+    """Note files of the library at `vault`: in its documents folder (app/layout.py), or the older notes/."""
+    from .layout import TYPE_DIRS
+    n = 0
     try:
-        return sum(1 for _ in (vault / "notes").glob("*.md"))
+        docs = paths.documents_dir(vault)
+        for name in TYPE_DIRS.values():
+            if (docs / name).is_dir():
+                n += sum(1 for p in (docs / name).rglob("*.md") if not p.name.startswith("."))
+        # an older library's notes/ (its real name: on a case-insensitive disk "notes" also finds Notes/)
+        if "notes" in os.listdir(vault):
+            n += sum(1 for _ in (vault / "notes").glob("*.md"))
     except OSError:
-        return 0
+        pass
+    return n
 
 
 def names(settings: dict | None = None) -> list[str]:
@@ -67,15 +78,19 @@ def create(name: str, path: str | None = None) -> dict:
         raise ProfileError(f"A profile named {name!r} already exists", 409)
     if path:
         p = Path(path).expanduser().resolve()
-        if p.exists() and any(p.iterdir()) and not (p / "notes").is_dir():
+        if p.exists() and any(p.iterdir()) and not ((p / "notes").is_dir() or (p / "state" / "meta.json").exists()):
             raise ProfileError(f"{p} isn't empty and doesn't look like a research_brain library", 409)
         custom = dict(settings.get("profile_paths") or {})
         custom[name] = str(p)
         paths.save_settings({"profile_paths": custom})
     else:
         p = paths.user_data_dir() / "profiles" / name
-    for sub in ("notes", "pdfs", "text", "state"):
+    for sub in ("text", "state"):
         (p / sub).mkdir(parents=True, exist_ok=True)
+    from .layout import Layout
+    docs = paths.documents_dir(p)  # Papers/, Notes/, Questions/, ... where you can see them at once
+    paths.remember_documents_dir(p, docs)
+    Layout(docs).ensure()
     from . import migrate
     migrate.run(p, log=lambda m: None)  # stamps state/meta.json
     paths.log(f"created profile {name} at {p}")

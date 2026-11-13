@@ -1,9 +1,13 @@
 """Note storage: one Markdown file per note with YAML frontmatter.
 
-Layout of the vault directory:
-    notes/<id>.md      frontmatter (metadata, summary) + body (free notes)
-    pdfs/<id>.pdf      original PDF, if any
-    text/<id>.txt      extracted full text (fed to Claude for critiques)
+Your documents (app/layout.py; the documents folder is ~/Documents/research brain for a normal install,
+see app/paths.py documents_dir):
+    Papers/, Notes/, Questions/   one <title>.md per note: frontmatter (id, metadata, summary) + body
+    Highlights/<paper>/           a paper's highlights (fragments), one file each
+    Topics/                       app/topics.py
+    PDFs/<id>.pdf                 original PDFs (the papers folder; app/papers.py)
+The library folder (the app's own data):
+    text/<id>.txt      extracted full text (fed to the AI for critiques)
     state/             your own app state that isn't a note: review schedule and history, open counts
                        (backed up with the vault snapshot)
     .index/            derived data only (embeddings, cached explanations, meta.sqlite); safe to delete
@@ -14,6 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
 import shutil
 import threading
@@ -180,15 +185,21 @@ def _plain(v):
 
 class Store:
     def __init__(self, root: Path):
+        from . import paths
+        from .layout import Layout
         self.root = Path(root)
-        self.notes_dir = self.root / "notes"
-        from .papers import folder_for  # <library>/pdfs, or the papers folder chosen in settings (app/papers.py)
+        self.docs = paths.documents_dir(self.root)  # Papers/, Notes/, Questions/, ... (app/layout.py)
+        paths.remember_documents_dir(self.root, self.docs)
+        self.layout = Layout(self.docs)
+        self.layout.ensure()
+        from .papers import folder_for  # <documents>/PDFs, or the papers folder chosen in settings (app/papers.py)
         self.pdf_dir = folder_for(self.root)
         self.text_dir = self.root / "text"
         self.index_dir = self.root / ".index"
         self.trash_dir = self.root / ".trash"
-        for d in (self.notes_dir, self.pdf_dir, self.text_dir, self.index_dir, self.trash_dir):
+        for d in (self.pdf_dir, self.text_dir, self.index_dir, self.trash_dir):
             d.mkdir(parents=True, exist_ok=True)
+        self.layout.scan()
         self.lock = threading.RLock()
         self.rev = 0  # bumped on every write; part of the index signature
         self.listeners: list = []  # fn(kind, note_id) after save/delete (see listen())
@@ -201,6 +212,11 @@ class Store:
         except Exception as e:
             print(f"[research_brain] metadata index disabled: {e!r}")
 
+    @property
+    def notes_dir(self) -> Path:
+        """The Notes folder: where a note you write outside the app (in Obsidian, a text editor) goes."""
+        return self.layout.type_dir("note")
+
     def _meta_ok(self) -> bool:
         return self.meta is not None and self.meta.ok
 
@@ -208,19 +224,16 @@ class Store:
         """Changes whenever any note file changes (here or edited externally, e.g. in Obsidian)."""
         if self._meta_ok():
             return self.meta.signature()
-        parts = [str(self.rev)]
-        for p in sorted(self.notes_dir.glob("*.md")):
-            try:
-                parts.append(f"{p.name}:{p.stat().st_mtime_ns}")
-            except OSError:
-                pass
+        parts = [str(self.rev)] + [f"{nid}:{st[0]}:{st[1]}" for nid, st in sorted(self.layout.scan().items())]
         return "|".join(parts)
 
     # ---------- paths ----------
     def note_path(self, nid: str) -> Path:
+        """The note's file in the documents folder (app/layout.py); for an id with no file, a path that
+        doesn't exist."""
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", nid or ""):
             raise KeyError(nid)
-        return self.notes_dir / f"{nid}.md"
+        return self.layout.path(nid) or self.docs / ".no-such-note" / f"{nid}.md"
 
     def pdf_path(self, nid: str) -> Path:
         self.note_path(nid)  # validates id
@@ -313,24 +326,28 @@ class Store:
             note["_yaml_error"] = yaml_error  # save() refuses to overwrite the file (see FrontmatterError)
         return note
 
+    # always written, even empty; every other property is left out while empty, so a file shows only
+    # what the note has (reading fills the rest in from FIELDS_DEFAULTS)
+    ALWAYS = ("type", "title", "created", "updated")
+
     def _dump(self, note: dict) -> str:
-        meta = {k: note.get(k, FIELDS_DEFAULTS[k]) for k in FIELDS_DEFAULTS}
-        if meta.get("critique") is None:
-            meta.pop("critique")
-        if not meta.get("selector"):
-            meta.pop("selector", None)
-        if not meta.get("source"):
-            meta.pop("source", None)
-        for k in ("csl", "meta_source", "meta_checked", "question_status", "answer", "last_seen"):
-            if not meta.get(k):
-                meta.pop(k, None)
-        if not meta.get("critiques"):
-            meta.pop("critiques")
+        meta = {"id": note["id"]}
+        for k in ("type", "title", *FIELDS_DEFAULTS):
+            if k in meta:
+                continue
+            v = note.get(k, FIELDS_DEFAULTS[k])
+            if k in self.ALWAYS or not (v is None or v == "" or v == [] or v == {}):
+                meta[k] = v
         for k, v in (note.get("_extra") or {}).items():
             if k not in meta:
                 meta[k] = v
-        front = yaml.dump(meta, Dumper=NoAliasDumper, sort_keys=False, allow_unicode=True, width=1000,
-                           default_flow_style=None)
+        # one property per line (a mapping of plain values would otherwise collapse to one {...} line);
+        # lists stay compact, as before ([a, b])
+        def one(k, v) -> str:
+            compact = isinstance(v, list) and all(not isinstance(x, (dict, list)) for x in v)
+            return yaml.dump({k: v}, Dumper=NoAliasDumper, sort_keys=False, allow_unicode=True, width=1000,
+                             default_flow_style=None if compact else False)
+        front = "".join(one(k, v) for k, v in meta.items())
         body = note.get("body", "") or ""
         return f"---\n{front}---\n{body}\n"
 
@@ -350,14 +367,30 @@ class Store:
         """Write the note. touch=False keeps its `updated` time (bookkeeping such as a citation key)."""
         with self.lock:
             if note.get("_yaml_error"):
-                raise FrontmatterError(f"{note['id']}.md has invalid frontmatter ({note['_yaml_error']}). "
+                raise FrontmatterError(f"{self.note_path(note['id']).name} has invalid frontmatter ({note['_yaml_error']}). "
                                        "Fix the file in a text editor; saving now would erase its properties.")
             if touch or not note.get("updated"):
                 note["updated"] = now_iso()
-            path = self.note_path(note["id"])
-            tmp = path.with_suffix(".md.tmp")
+            self.note_path(note["id"])  # validates the id
+            current = self.layout.current(note["id"])  # no disk walk for a brand-new note
+            path = self.layout.target(note, current)  # its type's folder, named after its title
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f".{path.name}.tmp")  # hidden, so watchers and Obsidian ignore it
             tmp.write_text(self._dump(note), encoding="utf-8", newline="\n")
             fsio.replace(tmp, path)
+            if current is not None and current != path:  # renamed (title changed) or moved to its folder
+                try:
+                    if not os.path.samefile(current, path):
+                        current.unlink()
+                    elif current.name != path.name:  # only the case changed: one file on macOS and Windows,
+                        mid = path.with_name(f".{path.name}.case")  # so rename it through another name
+                        os.replace(current, mid)
+                        os.replace(mid, path)
+                except OSError:
+                    pass
+            self.layout.remember(note["id"], path)
+            if note.get("type") == "paper" and current is not None and current.stem != path.stem:
+                self.layout.move_highlights(current.stem, path.stem)  # its highlights folder follows
             self.rev += 1
             saved = self.get(note["id"])
             if self.meta is not None:
@@ -385,13 +418,14 @@ class Store:
     def all_files(self) -> list[dict]:
         """Every note parsed straight from its file (the fallback when the SQLite index is unavailable)."""
         out = []
-        for p in sorted(self.notes_dir.glob("*.md")):
+        for nid in sorted(self.layout.scan()):
+            p = self.layout.path(nid)
             try:
-                out.append(self._parse(p.stem, p.read_text(encoding="utf-8")))
-            except (KeyError, OSError, UnicodeDecodeError):
+                out.append(self._parse(nid, p.read_text(encoding="utf-8")))
+            except (KeyError, OSError, UnicodeDecodeError, AttributeError):
                 continue
             except Exception as e:  # one unreadable hand-edited file must not take down the whole library
-                print(f"[research_brain] skipping {p.name}: {e!r}")
+                print(f"[research_brain] skipping {p}: {e!r}")
                 continue
         return out
 
@@ -401,7 +435,8 @@ class Store:
             base = f"{base}-{year}"
         nid, i = base, 2
         with self.lock:
-            while self.exists(nid):
+            self.layout.scan()  # once; then the map answers (no disk walk per candidate)
+            while self.layout.known(nid):
                 nid = f"{base}-{i}"
                 i += 1
             return nid
@@ -493,7 +528,15 @@ class Store:
             stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
             dest = self.trash_dir / f"{nid}-{stamp}"
             dest.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(self.note_path(nid)), dest / f"{nid}.md")
+            src = self.note_path(nid)
+            shutil.move(str(src), dest / f"{nid}.md")
+            self.layout.forget(nid)
+            try:  # a highlights folder left empty goes too
+                if note["type"] == "fragment" and src.parent != self.layout.type_dir("fragment") \
+                        and not any(src.parent.iterdir()):
+                    src.parent.rmdir()
+            except OSError:
+                pass
             self.rev += 1
             if self.meta is not None:
                 self.meta.remove(nid)

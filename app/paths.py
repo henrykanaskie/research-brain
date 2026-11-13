@@ -190,6 +190,75 @@ def resolve(vault: str | os.PathLike | None = None, profile: str | None = None) 
     return Resolved(path, name, source, legacy=legacy, notices=notices)
 
 
+# ---------------------------------------------------------------- the documents folder
+LIBRARY_CONFIG = "library.json"   # <library>/state/library.json: {"documents": "<folder>"}
+DOCS_MARKER = ".research-brain.json"  # in the documents folder: which library it belongs to
+
+
+def default_documents_dir(vault: Path) -> Path:
+    """Where a library's documents (papers, notes, questions, highlights, topics, PDFs; app/layout.py) go
+    when nothing was chosen: ~/Documents/research brain for a profile in the normal data folder ("research
+    brain (<profile>)" for other profiles), so they are easy to find; the library folder itself otherwise
+    (RB_DATA_DIR, RB_VAULT, a profile in a folder you chose, tests). RB_DOCUMENTS_DIR picks one outright."""
+    env = os.environ.get("RB_DOCUMENTS_DIR", "").strip()
+    if env:
+        return Path(env).expanduser()
+    vault = Path(vault)
+    docs = Path.home() / "Documents"
+    managed = not os.environ.get("RB_DATA_DIR", "").strip() and not os.environ.get("RB_VAULT", "").strip()
+    try:
+        managed = managed and vault.resolve().parent == (user_data_dir() / "profiles").resolve()
+    except OSError:
+        managed = False
+    if not managed or not docs.is_dir():
+        return vault
+    base = docs / ("research brain" if vault.name == DEFAULT_PROFILE else f"research brain ({vault.name})")
+    cand, i = base, 2
+    while _taken(cand, vault):  # a folder of that name that isn't this library's: pick another name
+        cand, i = base.with_name(f"{base.name} {i}"), i + 1
+    return cand
+
+
+def _taken(folder: Path, vault: Path) -> bool:
+    if not folder.exists():
+        return False
+    try:
+        mark = json.loads((folder / DOCS_MARKER).read_text(encoding="utf-8"))
+        return Path(mark.get("library", "")).resolve() != Path(vault).resolve()
+    except (OSError, ValueError, AttributeError):
+        return any(folder.iterdir())  # an existing folder with things in it, not made by research brain
+
+
+def documents_dir(vault: Path) -> Path:
+    """The documents folder of the library at `vault`: as recorded in state/library.json, else the default."""
+    try:
+        d = json.loads((Path(vault) / "state" / LIBRARY_CONFIG).read_text(encoding="utf-8")).get("documents")
+        if d:
+            return Path(d).expanduser()
+    except (OSError, ValueError, AttributeError):
+        pass
+    return default_documents_dir(vault)
+
+
+def remember_documents_dir(vault: Path, docs: Path) -> None:
+    """Record the documents folder (so it never changes behind the user's back) and mark it as this
+    library's."""
+    vault, docs = Path(vault), Path(docs)
+    cfg = vault / "state" / LIBRARY_CONFIG
+    try:
+        cur = json.loads(cfg.read_text(encoding="utf-8")).get("documents")
+    except (OSError, ValueError, AttributeError):
+        cur = None
+    if cur != str(docs):
+        write_json_atomic(cfg, {"documents": str(docs)})
+    if docs.resolve() != vault.resolve():
+        docs.mkdir(parents=True, exist_ok=True)
+        mark = docs / DOCS_MARKER
+        if not mark.exists():
+            write_json_atomic(mark, {"library": str(vault), "what": "research brain's papers, notes, questions "
+                                     "and highlights. The app's own data is in the library folder named here."})
+
+
 # ---------------------------------------------------------------- storage log
 def log(message: str) -> None:
     """Append one line to <data dir>/storage.log (vault moves, migrations, imports). Never raises."""

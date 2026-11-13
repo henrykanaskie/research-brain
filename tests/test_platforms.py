@@ -88,8 +88,7 @@ def test_library_files_use_lf_line_endings(tmp_path):
     from app.store import Store
     s = Store(tmp_path / "vault")
     n = s.create({"type": "note", "title": "Line endings", "body": "one\ntwo"})
-    raw = (tmp_path / "vault" / "notes" / f"{n['id']}.md").read_bytes() if (tmp_path / "vault" / "notes").exists() \
-        else next((tmp_path / "vault").rglob(f"{n['id']}.md")).read_bytes()
+    raw = s.note_path(n["id"]).read_bytes()
     assert b"\r\n" not in raw and b"one\ntwo" in raw
 
 

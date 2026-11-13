@@ -1014,7 +1014,7 @@ def api_papers_folder():
     f = Path(store.pdf_dir)
     n = len(list(f.glob("*.pdf"))) if f.is_dir() else 0
     removed = f / papers_mod.REMOVED
-    return {"folder": str(f), "default": f.resolve() == (Path(store.root) / "pdfs").resolve(), "pdfs": n,
+    return {"folder": str(f), "default": f.resolve() == papers_mod.default_folder(store.root).resolve(), "pdfs": n,
             "removed": len(list(removed.glob("*.pdf"))) if removed.is_dir() else 0,
             "suggested": str(papers_mod.suggested_folder()), "downloads": str(Path.home() / "Downloads")}
 
@@ -1026,6 +1026,25 @@ def api_papers_folder_move(body: FolderIn):
     except (ValueError, OSError) as e:
         raise HTTPException(400, str(e))
     return {**api_papers_folder(), "moved": out["moved"]}
+
+
+@app.get("/api/documents-folder")
+def api_documents_folder():
+    """Where your papers, notes, questions and highlights are, as files (app/layout.py), and how many."""
+    counts = {"paper": 0, "note": 0, "question": 0, "fragment": 0}
+    for n in store.all():
+        counts[n["type"]] = counts.get(n["type"], 0) + 1
+    return {"folder": str(store.docs), "papers": counts["paper"], "notes": counts["note"],
+            "questions": counts["question"], "highlights": counts["fragment"]}
+
+
+@app.post("/api/documents-folder/reveal")
+def api_documents_folder_reveal():
+    try:
+        papers_mod.reveal(store.docs)
+    except OSError as e:
+        raise HTTPException(500, f"Couldn't open the folder: {e}")
+    return {"ok": True, "folder": str(store.docs)}
 
 
 @app.post("/api/papers-folder/reveal")

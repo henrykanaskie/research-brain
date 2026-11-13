@@ -47,8 +47,15 @@ def _state(root: Path) -> Path:
     return d
 
 
+def default_folder(root: Path) -> Path:
+    """Where a library keeps its PDFs unless you chose a folder: <documents>/PDFs (app/layout.py)."""
+    from . import paths
+    from .layout import PDFS_DIR
+    return paths.documents_dir(root) / PDFS_DIR
+
+
 def folder_for(root: Path) -> Path:
-    """The papers folder of the library at `root` (default <root>/pdfs)."""
+    """The papers folder of the library at `root` (default <documents>/PDFs)."""
     try:
         cfg = json.loads((Path(root) / "state" / CONFIG).read_text(encoding="utf-8"))
         f = cfg.get("folder") if isinstance(cfg, dict) else None
@@ -56,7 +63,7 @@ def folder_for(root: Path) -> Path:
             return Path(f).expanduser()
     except (OSError, ValueError):
         pass
-    return Path(root) / "pdfs"
+    return default_folder(root)
 
 
 def _write_json(path: Path, data) -> None:
@@ -78,8 +85,9 @@ def move_folder(store, new: str) -> dict:
         raise ValueError("Give a full path, like ~/Documents/Research papers")
     dest = dest.resolve()
     root = Path(store.root).resolve()
-    if dest != root / "pdfs" and (root in dest.parents or dest == root):
-        raise ValueError("Pick a folder outside the library's own folder (or its pdfs/ folder).")
+    default = default_folder(store.root).resolve()
+    if dest != default and (root in dest.parents or dest == root):
+        raise ValueError("Pick a folder outside the library's own folder (or its PDFs folder).")
     with _lock, store.lock:
         old = Path(store.pdf_dir)
         if dest == old.resolve():
@@ -103,10 +111,10 @@ def move_folder(store, new: str) -> dict:
             for p in removed.glob("*.pdf"):
                 if not (dest / REMOVED / p.name).exists():
                     shutil.move(str(p), dest / REMOVED / p.name)
-        _write_json(_state(store.root) / CONFIG, {"folder": "" if dest == root / "pdfs" else str(dest)})
+        _write_json(_state(store.root) / CONFIG, {"folder": "" if dest == default else str(dest)})
         store.pdf_dir = dest
         try:  # an emptied default folder can go; a chosen one stays
-            if old == root / "pdfs":
+            if old.resolve() == default:
                 (old / REMOVED).rmdir() if (old / REMOVED).is_dir() and not any((old / REMOVED).iterdir()) else None
         except OSError:
             pass

@@ -115,7 +115,7 @@ def test_zip_export_takes_pdfs_from_the_papers_folder(client, home, tmp_path):
     out = tmp_path / "lib.zip"
     m = vaultzip.export_zip(server.store.root, out)
     names = zipfile.ZipFile(out).namelist()
-    assert f"pdfs/{b['id']}.pdf" in names and m["pdfs"] == 1
+    assert f"PDFs/{b['id']}.pdf" in names and m["pdfs"] == 1
     assert "state/papers.json" not in names and not any("Removed from library" in n for n in names)
 
 

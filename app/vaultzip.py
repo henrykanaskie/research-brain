@@ -1,7 +1,8 @@
 """Whole-library zip export and import (moving to a new laptop, sharing a copy, a manual backup).
 
-Export: every file that belongs to the library (notes/, pdfs/ unless left out, text/, state/, memory/,
-topics/, cards/) plus research_brain-export.json (app version, schema, counts). Derived or disposable folders
+Export: every file that belongs to the library: the documents (Papers/, Notes/, Questions/, Highlights/,
+Topics/, and PDFs/ unless left out; app/layout.py) and the app's own data (text/, state/, memory/, cards/),
+plus research_brain-export.json (app version, schema, counts). Derived or disposable folders
 (.index/, .trash/, exports/, backups/, .git/) are left out; the app rebuilds .index/ on start.
 This is a full backup: private notes (app/privacy.py) are included, and so are state/privacy.json and the AI
 audit log (state/ai_log.jsonl). Only reading-list exports (app/export.py) leave private notes out.
@@ -12,7 +13,9 @@ be overwritten. Every entry is checked before anything is written:
 - the resolved destination must stay inside the target folder;
 - only known top-level folders are extracted (others are skipped and reported);
 - caps on entry count, per-file and total uncompressed size, and compression ratio (zip bombs).
-A zip whose files all sit under one top folder (e.g. "vault/notes/...") is accepted too.
+A zip whose files all sit under one top folder (e.g. "vault/notes/...") is accepted too, and so is a zip
+from before the readable layout (notes/, pdfs/, topics/): the library is upgraded when it is first opened
+(app/migrate.py). The documents of an imported library go to its documents folder (app/paths.py).
 """
 from __future__ import annotations
 
@@ -25,9 +28,16 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from . import __version__
+from .layout import DOC_DIRS, PDFS_DIR, TYPE_DIRS
 
 MANIFEST = "research_brain-export.json"
-TOP_DIRS = ("notes", "pdfs", "text", "state", "memory", "topics", "cards", "attachments")
+APP_DIRS = ("text", "state", "memory", "cards", "attachments")  # the library folder's own data
+LEGACY_DIRS = ("notes", "pdfs", "topics")  # zips from before the readable layout
+EXPORT_DIRS = (*DOC_DIRS, *APP_DIRS)
+TOP_DIRS = (*EXPORT_DIRS, *LEGACY_DIRS)
+NOTE_DIRS = (*TYPE_DIRS.values(), "notes")
+# where this computer keeps things: meaningless on another one
+LOCAL_STATE = ("papers.json", "library.json")
 SKIP_DIRS = {".index", ".trash", "exports", "backups", ".git"}
 MAX_ENTRIES = int(os.environ.get("RB_IMPORT_MAX_ENTRIES", "200000"))
 MAX_TOTAL = int(os.environ.get("RB_IMPORT_MAX_GB", "50")) << 30
@@ -47,25 +57,27 @@ def _now() -> str:
 
 # ---------------------------------------------------------------- export
 def iter_files(vault: Path, include_pdfs: bool = True):
+    from . import paths
+    from .papers import REMOVED, folder_for
     vault = Path(vault)
-    for top in TOP_DIRS:
-        if top == "pdfs" and not include_pdfs:
+    docs = paths.documents_dir(vault)
+    for top in EXPORT_DIRS:
+        if top == PDFS_DIR and not include_pdfs:
             continue
-        base = vault / top
-        if top == "pdfs":  # the papers folder may live elsewhere (app/papers.py); in the zip it is pdfs/
-            from .papers import REMOVED, folder_for
-            base = folder_for(vault)
+        # the papers folder may live elsewhere (app/papers.py); in the zip it is PDFs/
+        base = folder_for(vault) if top == PDFS_DIR else (docs / top if top in DOC_DIRS else vault / top)
         if not base.is_dir():
             continue
         for root, dirs, files in os.walk(base):
-            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not (top == "pdfs" and d == REMOVED))
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")
+                             and not (top == PDFS_DIR and d == REMOVED))
             for f in sorted(files):
                 p = Path(root) / f
-                if p.is_symlink() or f.endswith(".tmp") or f.startswith(".") and f.endswith(".lock"):
+                if p.is_symlink() or f.endswith(".tmp") or f.startswith("."):
                     continue
-                if top == "state" and f == "papers.json":
-                    continue  # where this computer keeps the PDFs: meaningless on another one
-                yield p, (f"pdfs/{p.relative_to(base).as_posix()}" if top == "pdfs" else p.relative_to(vault).as_posix())
+                if top == "state" and f in LOCAL_STATE:
+                    continue
+                yield p, f"{top}/{p.relative_to(base).as_posix()}"
 
 
 def export_zip(vault: Path, dest: Path, include_pdfs: bool = True) -> dict:
@@ -82,12 +94,13 @@ def export_zip(vault: Path, dest: Path, include_pdfs: bool = True) -> dict:
     with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as z:
         for p, rel in iter_files(vault, include_pdfs):
             # PDFs are already compressed; storing them is much faster and barely bigger
-            z.write(p, rel, compress_type=zipfile.ZIP_STORED if rel.startswith("pdfs/") else zipfile.ZIP_DEFLATED)
+            pdf = rel.startswith(f"{PDFS_DIR}/")
+            z.write(p, rel, compress_type=zipfile.ZIP_STORED if pdf else zipfile.ZIP_DEFLATED)
             counts["files"] += 1
             counts["bytes"] += p.stat().st_size
-            counts["notes"] += rel.startswith("notes/") and rel.endswith(".md")
-            counts["pdfs"] += rel.startswith("pdfs/")
-        manifest = {"format": "research_brain-vault", "format_version": 1, "app_version": __version__,
+            counts["notes"] += rel.split("/", 1)[0] in NOTE_DIRS and rel.endswith(".md")
+            counts["pdfs"] += pdf
+        manifest = {"format": "research_brain-vault", "format_version": 2, "app_version": __version__,
                     "schema": schema, "created": _now(), "include_pdfs": include_pdfs, **counts}
         z.writestr(MANIFEST, json.dumps(manifest, indent=1))
     os.replace(tmp, dest)
@@ -148,8 +161,8 @@ def plan(zf: zipfile.ZipFile) -> tuple[list[tuple[zipfile.ZipInfo, PurePosixPath
         if total > MAX_TOTAL:
             raise ZipImportError(f"The zip unpacks to more than {MAX_TOTAL >> 30} GB", 413)
         keep.append((info, rel))
-    if not any(r.parts[0] == "notes" and r.suffix == ".md" for _, r in keep):
-        raise ZipImportError("That zip doesn't contain a research_brain library (no notes/*.md)")
+    if not any(r.parts[0] in NOTE_DIRS and r.suffix == ".md" for _, r in keep):
+        raise ZipImportError("That zip doesn't contain a research_brain library (no papers, notes or questions)")
     return keep, skipped, manifest
 
 
@@ -190,6 +203,34 @@ def import_zip(src: Path, target: Path) -> dict:
         except BaseException:
             shutil.rmtree(tmp, ignore_errors=True)
             raise
-    notes = sum(1 for _ in (target / "notes").glob("*.md"))
+    _documents_out(target)
+    from .profiles import _count_notes
+    notes = _count_notes(target)
     return {"files": written, "notes": notes, "skipped": skipped[:50], "skipped_count": len(skipped),
             "manifest": manifest, "path": str(target)}
+
+
+def _documents_out(target: Path) -> None:
+    """Move an imported library's documents (Papers/, Notes/, ...) to its documents folder, when that is
+    somewhere else (~/Documents/research brain (<profile>); app/paths.py)."""
+    from . import paths
+    docs = paths.documents_dir(target)
+    if docs.resolve() == target.resolve() or not any((target / d).is_dir() for d in DOC_DIRS):
+        return
+    paths.remember_documents_dir(target, docs)
+    for d in DOC_DIRS:
+        src = target / d
+        if not src.is_dir():
+            continue
+        dst = docs / d
+        if not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), dst)
+            continue
+        for p in sorted(src.rglob("*")):  # merge, never overwriting
+            if p.is_file():
+                t = dst / p.relative_to(src)
+                t.parent.mkdir(parents=True, exist_ok=True)
+                if not t.exists():
+                    shutil.move(str(p), t)
+        shutil.rmtree(src, ignore_errors=True)

@@ -182,13 +182,16 @@ def test_old_vault_is_backed_up_then_migrated(tmp_path):
     (v / "pdfs" / "a.pdf").write_bytes(b"%PDF big")
     (v / ".index" / "review.json").write_text('{"a": 1}')
     res = migrate.run(v, log=lambda m: None)
-    assert res["from"] == 0 and res["to"] == migrate.SCHEMA_VERSION and res["applied"] == [1]
+    assert res["from"] == 0 and res["to"] == migrate.SCHEMA_VERSION and res["applied"] == [1, 2]
     assert json.loads((v / "state" / "review.json").read_text(encoding="utf-8")) == {"a": 1}
     assert not (v / ".index" / "review.json").exists()
     names = zipfile.ZipFile(res["backup"]).namelist()
     assert "notes/a.md" in names and not any(n.startswith(("pdfs/", ".index/")) for n in names)
     meta = migrate.read_meta(v)
-    assert meta["migrations"][0]["backup"].startswith("backups/pre-migration-v0-to-v1-")
+    assert meta["migrations"][0]["backup"].startswith(f"backups/pre-migration-v0-to-v{migrate.SCHEMA_VERSION}-")
+    # v2: readable folders, the file's text kept apart from its id
+    assert (v / "Notes" / "A.md").read_text(encoding="utf-8") == "---\nid: a\ntitle: A\n---\n"
+    assert (v / "PDFs" / "a.pdf").read_bytes() == b"%PDF big" and "notes" not in os.listdir(v)
     again = migrate.run(v, log=lambda m: None)  # idempotent, no second backup
     assert again["applied"] == [] and len(list((v / "backups").glob("*.zip"))) == 1
 
@@ -214,9 +217,10 @@ def test_migration_steps_are_registered():
 
 # ================================================================ profiles + API
 def test_profiles_api_and_switch(dirs, monkeypatch):
+    from app import migrate
     c, server = load_server(monkeypatch)
     lib = c.get("/api/library").json()
-    assert lib["profile"] == "default" and not lib["pinned"] and lib["schema"] == 1
+    assert lib["profile"] == "default" and not lib["pinned"] and lib["schema"] == migrate.SCHEMA_VERSION
     assert c.post("/api/profiles", json={"name": "Bad Name!"}).status_code == 400
     assert c.post("/api/profiles", json={"name": "thesis"}).status_code == 201
     assert c.post("/api/profiles", json={"name": "thesis"}).status_code == 409
@@ -409,10 +413,10 @@ def test_pdf_bytes_limits_and_origin(dirs, monkeypatch):
 
 # ================================================================ vault zip
 def _vault(v: Path):
-    for d in ("notes", "pdfs", "text", "state", "memory", ".index", ".trash", "exports/x", "backups"):
+    for d in ("Notes", "PDFs", "text", "state", "memory", ".index", ".trash", "exports/x", "backups"):
         (v / d).mkdir(parents=True, exist_ok=True)
-    (v / "notes" / "a.md").write_text("---\ntitle: A\n---\nbody\n")
-    (v / "pdfs" / "a.pdf").write_bytes(b"%PDF-1.4 a")
+    (v / "Notes" / "a.md").write_text("---\nid: a\ntitle: A\n---\nbody\n")
+    (v / "PDFs" / "a.pdf").write_bytes(b"%PDF-1.4 a")
     (v / "text" / "a.txt").write_text("text")
     (v / "state" / "review.json").write_text("{}")
     (v / "memory" / "findings.md").write_text("f")
@@ -427,13 +431,13 @@ def test_zip_round_trip(tmp_path):
     _vault(v)
     m = vaultzip.export_zip(v, tmp_path / "lib.zip")
     names = set(zipfile.ZipFile(tmp_path / "lib.zip").namelist())
-    assert names == {"notes/a.md", "pdfs/a.pdf", "text/a.txt", "state/review.json", "memory/findings.md",
+    assert names == {"Notes/a.md", "PDFs/a.pdf", "text/a.txt", "state/review.json", "memory/findings.md",
                      vaultzip.MANIFEST}
     assert m["notes"] == 1 and m["pdfs"] == 1
     vaultzip.export_zip(v, tmp_path / "np.zip", include_pdfs=False)
-    assert "pdfs/a.pdf" not in zipfile.ZipFile(tmp_path / "np.zip").namelist()
+    assert "PDFs/a.pdf" not in zipfile.ZipFile(tmp_path / "np.zip").namelist()
     res = vaultzip.import_zip(tmp_path / "lib.zip", tmp_path / "new")
-    assert res["notes"] == 1 and (tmp_path / "new" / "pdfs" / "a.pdf").read_bytes() == b"%PDF-1.4 a"
+    assert res["notes"] == 1 and (tmp_path / "new" / "PDFs" / "a.pdf").read_bytes() == b"%PDF-1.4 a"
     assert res["manifest"]["format"] == "research_brain-vault"
     with pytest.raises(vaultzip.ZipImportError, match="isn't empty"):
         vaultzip.import_zip(tmp_path / "lib.zip", tmp_path / "new")
@@ -465,7 +469,7 @@ def test_zip_symlink_unknown_dirs_wrapper_and_bomb(tmp_path, monkeypatch):
     from app import vaultzip
     with pytest.raises(vaultzip.ZipImportError, match="symbolic link"):
         vaultzip.import_zip(_zip(tmp_path / "s.zip", [("notes/a.md", "x")], symlink="notes/link.md"), tmp_path / "t1")
-    with pytest.raises(vaultzip.ZipImportError, match="no notes"):
+    with pytest.raises(vaultzip.ZipImportError, match="no papers, notes or questions"):
         vaultzip.import_zip(_zip(tmp_path / "e.zip", [("random/a.md", "x")]), tmp_path / "t2")
     res = vaultzip.import_zip(_zip(tmp_path / "w.zip", [("vault/notes/a.md", "x"), ("vault/.index/e", "y"),
                                                           ("vault/app/server.py", "z")]), tmp_path / "t3")
@@ -484,7 +488,7 @@ def test_zip_api_export_and_import_into_new_profile(dirs, monkeypatch):
     r = c.get("/api/vault/export?pdfs=false")
     assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
     z = zipfile.ZipFile(io.BytesIO(r.content))
-    assert any(n.startswith("notes/my-idea") for n in z.namelist()) and "state/meta.json" in z.namelist()
+    assert "Notes/My idea.md" in z.namelist() and "state/meta.json" in z.namelist()
     h = {"Content-Type": "application/zip"}
     assert c.post("/api/vault/import?profile=Bad!", content=r.content, headers=h).status_code == 400
     assert c.post("/api/vault/import?profile=copy", content=b"not a zip", headers=h).status_code == 415
@@ -513,11 +517,11 @@ def test_cli_version_where_profiles_export_import(dirs):
     assert "thesis" in _cli("profiles").stdout
     assert _cli("profiles", "use", "thesis").returncode == 0
     assert json.loads(_cli("where").stdout)["profile"] == "thesis"
-    (dirs / "data" / "profiles" / "thesis" / "notes" / "a.md").write_text("---\ntitle: A\n---\n")
+    (dirs / "data" / "profiles" / "thesis" / "Notes" / "a.md").write_text("---\ntitle: A\n---\n")
     assert _cli("export", str(dirs / "t.zip")).returncode == 0
     r = _cli("import", str(dirs / "t.zip"), "--profile", "laptop2")
     assert r.returncode == 0, r.stderr
-    assert (dirs / "data" / "profiles" / "laptop2" / "notes" / "a.md").exists()
+    assert (dirs / "data" / "profiles" / "laptop2" / "Notes" / "a.md").exists()
     assert _cli("import", str(dirs / "t.zip"), "--profile", "laptop2").returncode == 1
 
 

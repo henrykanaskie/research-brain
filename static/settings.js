@@ -221,6 +221,8 @@
     renderKeys(keySec, say);
 
     // Papers folder (app/papers.py)
+    const docSec = el('section', { class: 'ls-sec', id: 'ls-documents' }, el('div', { class: 'ls-h', text: 'Your documents' }));
+    renderDocuments(docSec, say);
     const papSec = el('section', { class: 'ls-sec', id: 'ls-papers' }, el('div', { class: 'ls-h', text: 'Papers folder' }));
     renderPapers(papSec, say);
 
@@ -278,7 +280,7 @@
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
     const card = el('div', { class: 'modal-card ls-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-title' },
       el('div', { class: 'modal-title', id: 'ls-title', text: 'Library settings' }),
-      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, papSec, keySec, updSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
+      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, docSec, papSec, keySec, updSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
     const wrap = el('div', { class: 'modal', id: 'library-settings' }, card);
     wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
     document.body.appendChild(wrap);
@@ -293,6 +295,18 @@
       if (focus === 'papers') papSec.scrollIntoView({ block: 'start' });
       (focus === 'profiles' && !prof.pinned ? newName : done).focus({ preventScroll: true });
     }, 0);
+  }
+
+  // ---------------------------------------------------------------- your documents (app/layout.py)
+  async function renderDocuments(sec, say) {
+    let d;
+    try { d = await api('/api/documents-folder'); } catch { return; }
+    const n = (k, one, many) => `${d[k]} ${d[k] === 1 ? one : many}`;
+    sec.append(
+      el('div', { class: 'ls-path', id: 'ls-documents-path', text: d.folder }),
+      el('p', { class: 'ls-p', text: `Everything you keep, as files you can open in any app: ${n('papers', 'paper', 'papers')} in Papers, ${n('notes', 'note', 'notes')} in Notes, ${n('questions', 'question', 'questions')} in Questions, ${n('highlights', 'highlight', 'highlights')} in Highlights (a folder per paper), and your topics and PDFs. Each file is named after its title and follows it when you rename. You can file notes into your own subfolders of Notes.` }),
+      el('div', { class: 'ls-row' }, el('button', { class: 'btn', type: 'button', id: 'ls-documents-open', text: 'Open folder',
+        onclick: () => api('/api/documents-folder/reveal', json('POST', {})).catch((e) => say(e.message, true)) })));
   }
 
   // ---------------------------------------------------------------- papers folder (app/papers.py)

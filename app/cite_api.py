@@ -421,7 +421,8 @@ def validate_path(raw: str, vault: Path | None = None) -> Path:
             raise PathError("Choose a folder outside research brain's own program folder.")
     if vault is not None:
         vr = Path(vault).resolve()
-        for sub in ("notes", "pdfs", "text", ".index", ".trash", "state", "topics", "styles", "memory"):
+        for sub in ("notes", "pdfs", "text", ".index", ".trash", "state", "topics", "styles", "memory",
+                    "Papers", "Notes", "Questions", "Highlights", "Topics", "PDFs"):
             if _inside(target, vr / sub):
                 raise PathError("Choose a folder outside the library's internal folders (the library folder itself is fine).")
     if os.path.islink(p) or os.path.islink(target):
@@ -504,7 +505,9 @@ class AutoExporter:
         self._event.set()
 
     def _topics_sig(self) -> tuple:
-        d = self.vault / "topics"
+        from . import paths
+        from .layout import TOPICS_DIR
+        d = paths.documents_dir(self.vault) / TOPICS_DIR
         try:
             return tuple(sorted((p.name, p.stat().st_mtime_ns) for p in d.glob("*.md")))
         except OSError:

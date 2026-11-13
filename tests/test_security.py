@@ -237,10 +237,10 @@ def test_yaml_bomb_note_is_refused_quickly(app_env):
     c, server = app_env
     bomb = "---\ntitle: bomb\na: &a [x, x, x, x, x, x, x, x, x]\n" + "".join(
         f"{chr(98 + i)}: &{chr(98 + i)} [{', '.join(['*' + chr(97 + i)] * 9)}]\n" for i in range(9)) + "---\nbody\n"
-    (Path(server.VAULT) / "notes" / "bomb.md").write_text(bomb)
-    (Path(server.VAULT) / "notes" / "loop.md").write_text("---\ntitle: loop\nx: &a [*a]\n---\n")
+    (Path(server.VAULT) / "Notes" / "bomb.md").write_text(bomb)
+    (Path(server.VAULT) / "Notes" / "loop.md").write_text("---\ntitle: loop\nx: &a [*a]\n---\n")
     huge = "---\ntitle: huge\nabstract: " + "a" * (1 << 21) + "\n---\n"
-    (Path(server.VAULT) / "notes" / "huge.md").write_text(huge)
+    (Path(server.VAULT) / "Notes" / "huge.md").write_text(huge)
     t = time.monotonic()
     for nid in ("bomb", "loop", "huge"):
         r = c.get(f"/api/notes/{nid}")
@@ -252,12 +252,12 @@ def test_yaml_bomb_note_is_refused_quickly(app_env):
 
 def test_plain_aliases_from_older_versions_still_load(app_env):
     c, server = app_env
-    (Path(server.VAULT) / "notes" / "old.md").write_text(
+    (Path(server.VAULT) / "Notes" / "old.md").write_text(
         "---\ntitle: Old\ncritique: &id001\n  text: fine\n  at: '2025-01-01'\ncritiques:\n- *id001\n---\n")
     n = c.get("/api/notes/old").json()
     assert not n.get("_yaml_error") and n["critiques"][0]["text"] == "fine"
     c.put("/api/notes/old", json={"summary": "edited"})
-    assert "*id" not in (Path(server.VAULT) / "notes" / "old.md").read_text(encoding="utf-8")  # written without aliases
+    assert "*id" not in (Path(server.VAULT) / "Notes" / "old.md").read_text(encoding="utf-8")  # written without aliases
 
 
 # ---------------------------------------------------------------- untrusted PDFs
@@ -572,4 +572,4 @@ def test_vault_files_are_private(app_env):
     n = c.post("/api/notes", json={"title": "Private"}).json()
     vault = Path(server.VAULT)
     assert stat.S_IMODE(vault.stat().st_mode) == 0o700
-    assert stat.S_IMODE((vault / "notes" / f"{n['id']}.md").stat().st_mode) & 0o077 == 0
+    assert stat.S_IMODE(server.store.note_path(n["id"]).stat().st_mode) & 0o077 == 0

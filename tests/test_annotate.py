@@ -106,7 +106,7 @@ def test_clip_selector_round_trip_and_page_fragments(env):
     assert parent["type"] == "note" and parent["title"] == "Sheaths, explained"
 
     # stored in the file (frontmatter), and read back after a cold start
-    md = (Path(server.VAULT) / "notes" / f"{frag['id']}.md").read_text(encoding="utf-8")
+    md = server.store.note_path(frag["id"]).read_text(encoding="utf-8")
     assert "selector:" in md and "the sheath edge" in md
     assert c.get(f"/api/notes/{frag['id']}").json()["selector"] == sel
 
@@ -120,7 +120,7 @@ def test_clip_selector_round_trip_and_page_fragments(env):
     r3 = c.post("/api/clip", json={"quote": "x y z", "url": "https://other.example/a", "selector": {"exact": "  "}})
     assert r3.json()["fragment"]["selector"] is None
     assert c.get(f"/api/notes/{parent['id']}").json()["selector"] is None
-    plain = (Path(server.VAULT) / "notes" / f"{parent['id']}.md").read_text(encoding="utf-8")
+    plain = server.store.note_path(parent["id"]).read_text(encoding="utf-8")
     assert "selector" not in plain  # not written for notes without one
 
     # GET /api/fragments?url — same page (hash and trailing slash ignored), oldest first, with selectors

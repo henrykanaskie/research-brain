@@ -224,16 +224,8 @@ class MetaIndex:
 
     # ------------------------------------------------------------ sync
     def _scan(self) -> dict[str, tuple[int, int]]:
-        out = {}
-        with os.scandir(self.store.notes_dir) as it:
-            for e in it:
-                if e.name.endswith(".md") and not e.name.startswith("."):
-                    try:
-                        s = e.stat()
-                    except OSError:
-                        continue
-                    out[e.name[:-3]] = (s.st_mtime_ns, s.st_size)
-        return out
+        """{id: (mtime_ns, size)} of every note file (app/layout.py: readable folders, ids from the files)."""
+        return self.store.layout.scan()
 
     def _asset_names(self) -> tuple[frozenset, frozenset]:
         def names(d: Path, ext: str) -> frozenset:
@@ -299,12 +291,12 @@ class MetaIndex:
 
     def _parse_file(self, nid: str) -> dict | None:
         try:
-            raw = (self.store.notes_dir / f"{nid}.md").read_text(encoding="utf-8")
+            raw = self.store.note_path(nid).read_text(encoding="utf-8")
             return self.store._parse(nid, raw)
         except (KeyError, OSError, UnicodeDecodeError):
             return None
         except Exception as e:  # one unreadable hand-edited file must not take down the whole library
-            print(f"[research_brain] skipping {nid}.md: {e!r}")
+            print(f"[research_brain] skipping note {nid}: {e!r}")
             return None
 
     # ------------------------------------------------------------ hooks from Store
@@ -314,9 +306,9 @@ class MetaIndex:
             return
         with self.lock:
             try:
-                s = (self.store.notes_dir / f"{note['id']}.md").stat()
+                s = self.store.note_path(note["id"]).stat()
                 st = (s.st_mtime_ns, s.st_size)
-            except OSError:
+            except (OSError, KeyError):
                 return
             self._self_writes[note["id"]] = (time.monotonic(), st)
             self._external.discard(note["id"])
@@ -346,11 +338,11 @@ class MetaIndex:
             self.stat.pop(nid, None)
             self.gen += 1
 
-    def pop_external(self, ids: set[str]) -> list[str]:
-        """Of `ids`, those whose files changed outside the app since last asked (whichever request
-        noticed it first), minus files that are exactly what the app itself just wrote."""
+    def pop_external(self, ids: set[str] | None = None) -> list[str]:
+        """Of `ids` (None: all), those whose files changed outside the app since last asked (whichever
+        request noticed it first), minus files that are exactly what the app itself just wrote."""
         with self.lock:
-            hit = sorted(i for i in ids if i in self._external)
+            hit = sorted(i for i in (self._external if ids is None else ids) if i in self._external)
             self._external.difference_update(hit)
         return [i for i in hit if not self.is_self_write(i)]
 
@@ -364,9 +356,9 @@ class MetaIndex:
             if not hit:
                 return False
             try:
-                s = (self.store.notes_dir / f"{nid}.md").stat()
+                s = self.store.note_path(nid).stat()
                 cur = (s.st_mtime_ns, s.st_size)
-            except OSError:
+            except (OSError, KeyError):
                 cur = None
             return cur == hit[1]
 

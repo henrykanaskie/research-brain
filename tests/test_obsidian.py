@@ -116,6 +116,7 @@ def test_obsidian_empty_and_null_properties(store):
     meta = yaml.safe_load(front)
     meta["year"] = None
     meta["page"] = None
+    meta["authors"], meta["tags"] = [], []  # Obsidian keeps empty properties the app leaves out
     path.write_text("---\n" + obsidian_dump(meta) + "---\n" + body, encoding="utf-8")
     assert "authors: []" in path.read_text(encoding="utf-8") and re.search(r"^year:$", path.read_text(encoding="utf-8"), re.M)
     assert store.get(n["id"]) == store._parse(n["id"], store._dump(store.get(n["id"])))

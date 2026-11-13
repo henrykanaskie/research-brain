@@ -83,7 +83,9 @@ def norm_title(t: str) -> str:
 
 # ---------------------------------------------------------------- files
 def topics_dir(store) -> Path:
-    d = Path(store.root) / "topics"
+    """<documents>/Topics (app/layout.py), beside Papers/ and Notes/."""
+    from .layout import TOPICS_DIR
+    d = Path(getattr(store, "docs", store.root)) / TOPICS_DIR
     d.mkdir(parents=True, exist_ok=True)
     return d
 

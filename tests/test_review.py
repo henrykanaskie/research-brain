@@ -204,7 +204,7 @@ def test_critique_history(env):
 def test_critique_migration(env, tmp_path):
     c, server, day = env
     p = note(c, type="paper", title="Old", summary="s")
-    path = tmp_path / "vault/notes" / f"{p['id']}.md"
+    path = server.store.note_path(p["id"])
     raw = path.read_text(encoding="utf-8")
     raw = raw.replace("---\n", "---\ncritique:\n  text: old critique\n  at: '2025-01-01T10:00:00+00:00'\n"
                                 "  summary_snapshot: older summary\n", 1)

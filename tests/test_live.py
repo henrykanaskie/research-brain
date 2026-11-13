@@ -59,7 +59,7 @@ def test_external_edit_pushes_event_but_own_save_does_not(srv):
         time.sleep(0.8)
         # an outside edit (as Obsidian would make)
         t0 = time.monotonic()
-        p = vault / "notes" / f"{note['id']}.md"
+        p = next(f for f in vault.rglob("*.md") if f"id: {note['id']}\n" in f.read_text(encoding="utf-8"))
         p.write_text(p.read_text(encoding="utf-8").replace("saved from the app", "edited in Obsidian"), encoding="utf-8")
         got = None
         for ev, data in it:
@@ -77,7 +77,7 @@ def test_new_and_deleted_files_are_reported(srv):
     with requests.get(base + "/api/events", stream=True, timeout=10) as r:
         it = _events(r, time.monotonic() + 8)
         next(it)
-        (vault / "notes" / "dropped-in.md").write_text("---\ntitle: Dropped in\n---\nhi\n", encoding="utf-8")
+        (vault / "Notes" / "dropped-in.md").write_text("---\ntitle: Dropped in\n---\nhi\n", encoding="utf-8")
         ids = set()
         for ev, data in it:
             if ev == "notes-changed":
@@ -85,7 +85,7 @@ def test_new_and_deleted_files_are_reported(srv):
                 if "dropped-in" in ids:
                     break
         assert "dropped-in" in ids
-        (vault / "notes" / "dropped-in.md").unlink()
+        (vault / "Notes" / "dropped-in.md").unlink()
         for ev, data in it:
             if ev == "notes-changed" and "dropped-in" in json.loads(data)["ids"]:
                 break
