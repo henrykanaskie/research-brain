@@ -3337,9 +3337,26 @@
     });
     const go = h('button', { type: 'button', class: 'btn btn-primary', text: 'Ask about these' });
     const cancel = h('button', { type: 'button', class: 'btn btn-text', text: 'Cancel' });
+    // Select all: ticks or clears every topic; shows a partial tick when only some are chosen
+    const all = h('input', { type: 'checkbox', id: 'ct-all' });
+    const allRow = h('label', { class: 'ct-row ct-all' }, all, h('span', { class: 'ct-name', text: 'Select all' }),
+      h('span', { class: 'ct-n', text: `${list.length} topic${list.length === 1 ? '' : 's'}` }));
+    const inputs = () => boxes.map((b) => b.querySelector('input'));
+    const sync = () => {
+      const on = inputs().filter((i) => i.checked);
+      all.checked = on.length === boxes.length;
+      all.indeterminate = on.length > 0 && on.length < boxes.length;
+      // papers can be in several topics; the count is of topics' papers, not de-duplicated
+      const papers = on.reduce((n, i) => n + ((list.find((t) => t.slug === i.value) || {}).count || 0), 0);
+      go.textContent = on.length ? `Ask about ${on.length === boxes.length && boxes.length > 1 ? 'all ' : ''}${on.length} topic${on.length === 1 ? '' : 's'} (${papers} paper${papers === 1 ? '' : 's'})` : 'Ask about these';
+      go.disabled = !on.length;
+    };
+    all.addEventListener('change', () => { for (const i of inputs()) i.checked = all.checked; sync(); });
+    for (const i of inputs()) i.addEventListener('change', sync);
     const sheet = h('div', { class: 'menu ct-sheet', role: 'dialog', 'aria-label': 'Ask about topics' },
-      h('div', { class: 'menu-label', text: 'Ask about the papers in…' }), h('div', { class: 'ct-list' }, boxes),
-      h('div', { class: 'ct-acts' }, cancel, go));
+      h('div', { class: 'menu-label', text: 'Ask about the papers in…' }), boxes.length > 1 ? allRow : null,
+      h('div', { class: 'ct-list' }, boxes), h('div', { class: 'ct-acts' }, cancel, go));
+    sync();
     const close = () => { sheet.remove(); document.removeEventListener('pointerdown', off, true); };
     const off = (e) => { if (!sheet.contains(e.target)) close(); };
     cancel.onclick = close;
@@ -3992,19 +4009,50 @@
     importPdfs(e.dataTransfer.files);
   });
 
-  // panel resize
+  // ---------- resizing the note panel and the chat: drag the grip on their left edge ----------
+  // Either can be as wide as the window less ~240 px of map (with both open, together). Widths are kept.
   (() => {
-    const rz = $('#panel-resizer');
-    const setW = (w) => { w = Math.max(340, Math.min(Math.round(window.innerWidth * 0.75), w)); document.documentElement.style.setProperty('--panel-w', w + 'px'); return w; };
-    const saved = LS.get('panelW', null);
-    if (saved && window.innerWidth > 860) setW(saved);
-    rz.addEventListener('pointerdown', (e) => {
-      e.preventDefault(); rz.setPointerCapture(e.pointerId); rz.classList.add('drag');
-      const move = (ev) => setW(window.innerWidth - ev.clientX);
-      const up = (ev) => { rz.classList.remove('drag'); rz.removeEventListener('pointermove', move); rz.removeEventListener('pointerup', up); LS.set('panelW', setW(window.innerWidth - ev.clientX)); };
-      rz.addEventListener('pointermove', move); rz.addEventListener('pointerup', up);
+    const MAP_MIN = 240, MIN = 320;
+    const root = document.documentElement;
+    const cur = (v) => parseFloat(getComputedStyle(root).getPropertyValue(v)) || 0;
+    const other = (v) => (v === '--panel-w' ? (!$('#chat').hidden ? cur('--chat-w') : 0) : (!$('#panel').hidden ? cur('--panel-w') : 0));
+    function setW(v, w) {
+      const max = Math.max(MIN, window.innerWidth - MAP_MIN - other(v));
+      w = Math.max(MIN, Math.min(max, Math.round(w)));
+      root.style.setProperty(v, w + 'px');
+      kick(100);
+      return w;
+    }
+    function wire(rz, v, key) {
+      if (!rz) return;
+      const saved = LS.get(key, null);
+      if (saved && window.innerWidth > 860) setW(v, saved);
+      rz.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); rz.setPointerCapture(e.pointerId); rz.classList.add('drag');
+        document.body.classList.add('resizing');
+        const edge = rz.parentElement.getBoundingClientRect().right;  // the panel's right edge stays put
+        const move = (ev) => setW(v, edge - ev.clientX);
+        const up = (ev) => {
+          rz.classList.remove('drag'); document.body.classList.remove('resizing');
+          rz.removeEventListener('pointermove', move); rz.removeEventListener('pointerup', up);
+          LS.set(key, setW(v, edge - ev.clientX));
+        };
+        rz.addEventListener('pointermove', move); rz.addEventListener('pointerup', up);
+      });
+      rz.addEventListener('keydown', (e) => {  // ← wider, → narrower (Shift: in bigger steps)
+        const step = e.shiftKey ? 80 : 20;
+        if (e.key === 'ArrowLeft') { e.preventDefault(); LS.set(key, setW(v, cur(v) + step)); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); LS.set(key, setW(v, cur(v) - step)); }
+      });
+      rz.addEventListener('dblclick', () => { root.style.removeProperty(v); LS.set(key, null); kick(100); });
+    }
+    wire($('#panel-resizer'), '--panel-w', 'panelW');
+    wire($('#chat-resizer'), '--chat-w', 'chatW');
+    // a smaller window: keep the panels inside it
+    window.addEventListener('resize', () => {
+      if (window.innerWidth <= 860) return;
+      for (const v of ['--panel-w', '--chat-w']) if (root.style.getPropertyValue(v)) setW(v, cur(v));
     });
-    rz.addEventListener('dblclick', () => { document.documentElement.style.removeProperty('--panel-w'); LS.set('panelW', null); });
   })();
 
   // ======================================================================

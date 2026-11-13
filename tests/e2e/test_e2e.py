@@ -545,7 +545,7 @@ def test_ask_about_topics_and_the_conversation_is_remembered(ctx, server):
     page = open_app(ctx, server)
     page.evaluate("RB.commands.run('chat.aboutTopics')")
     page.locator(".ct-sheet .ct-row", has_text="Sheath physics").click()
-    page.locator(".ct-sheet button", has_text="Ask about these").click()
+    page.locator(".ct-sheet .ct-acts .btn-primary").click()
     expect(page.locator("#chat .chat-title")).to_have_text("This topic")
     expect(page.locator("#chat-scope .cs-title")).to_have_text("Sheath physics")
     page.fill("#chat-input", "What do they say about the sheath?")
@@ -700,4 +700,68 @@ def test_zooming_in_stops_only_when_nothing_would_be_left_on_screen(ctx, server)
     page.mouse.wheel(0, 800)  # zooming out is never stopped
     page.wait_for_timeout(300)
     assert page.evaluate("window.__rb.fg.zoom()") < k
+    assert not page.errors
+
+
+def test_ask_about_topics_select_all(ctx, server):
+    clear_vault(server)
+    a = api(server, "POST", "/api/notes", {"type": "paper", "title": "First topic paper"})["id"]
+    b = api(server, "POST", "/api/notes", {"type": "paper", "title": "Second topic paper"})["id"]
+    c = api(server, "POST", "/api/notes", {"type": "paper", "title": "Third topic paper"})["id"]
+    for name, members in (("Alpha topic", [a]), ("Beta topic", [b, c])):
+        api(server, "POST", "/api/topics", {"name": name, "members": members})
+    page = open_app(ctx, server)
+    page.evaluate("RB.commands.run('chat.aboutTopics')")
+    sheet = page.locator(".ct-sheet")
+    go = sheet.locator(".ct-acts .btn-primary")
+    expect(go).to_be_disabled()
+    sheet.locator("#ct-all").check()
+    expect(sheet.locator(".ct-list input:checked")).to_have_count(2)
+    expect(go).to_have_text("Ask about all 2 topics (3 papers)")
+    sheet.locator(".ct-row", has_text="Alpha topic").locator("input").uncheck()
+    assert page.evaluate("document.getElementById('ct-all').indeterminate")
+    expect(go).to_have_text("Ask about 1 topic (2 papers)")
+    sheet.locator("#ct-all").check()
+    go.click()
+    expect(page.locator("#chat-scope .cs-title")).to_contain_text("Alpha topic")
+    expect(page.locator("#chat-scope .cs-title")).to_contain_text("Beta topic")
+    expect(page.locator("#chat .chat-title")).to_have_text("These topics")
+    assert not page.errors
+
+
+def test_panels_can_be_made_wider(ctx, server):
+    clear_vault(server)
+    nid = api(server, "POST", "/api/notes", {"type": "paper", "title": "Wide panel paper"})["id"]
+    page = open_app(ctx, server)
+    page.evaluate("localStorage.removeItem('rb.panelW'); localStorage.removeItem('rb.chatW')")
+    page.evaluate(f"window.__rb.openNote('{nid}')")
+    panel = page.locator("#panel")
+    expect(panel).to_be_visible()
+    vw = page.evaluate("window.innerWidth")
+    w0 = panel.bounding_box()["width"]
+    grip = page.locator("#panel-resizer").bounding_box()
+    gx, gy = grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2
+    page.mouse.move(gx, gy)
+    page.mouse.down()
+    page.mouse.move(40, gy, steps=10)  # far to the left: as wide as it may go
+    page.mouse.up()
+    w1 = panel.bounding_box()["width"]
+    assert w1 > w0 and w1 > vw * 0.75, (w0, w1, vw)  # wider than the old 75% limit
+    assert w1 <= vw - 240 + 1  # but the map keeps some room
+    page.reload()
+    page.wait_for_function("window.__rb && window.__rb.fg !== undefined")
+    page.evaluate(f"window.__rb.openNote('{nid}')")
+    expect(panel).to_be_visible()
+    assert abs(panel.bounding_box()["width"] - w1) < 2  # remembered
+    page.evaluate("window.__rb.closePanel()")
+    # the chat, with the keyboard
+    page.evaluate("window.__rb.openChat()")
+    chat = page.locator("#chat")
+    c0 = chat.bounding_box()["width"]
+    page.locator("#chat-resizer").focus()
+    page.keyboard.press("Shift+ArrowLeft")
+    page.keyboard.press("Shift+ArrowLeft")
+    assert chat.bounding_box()["width"] >= c0 + 150
+    page.locator("#chat-resizer").dblclick()  # back to the default
+    assert abs(chat.bounding_box()["width"] - c0) < 2
     assert not page.errors

@@ -168,7 +168,7 @@
   </main>
 
   <aside id="panel" class="panel" hidden aria-label="Note">
-    <div id="panel-resizer" class="resizer" title="Drag to resize, double-click to reset"></div>
+    <div id="panel-resizer" class="resizer" role="separator" aria-orientation="vertical" aria-label="Resize the note panel" tabindex="0" title="Drag to make the panel wider or narrower (arrow keys work too). Double-click to reset."></div>
     <div class="panel-head">
       <span id="panel-type" class="kind"></span>
       <div class="spacer"></div>
@@ -181,6 +181,7 @@
   </aside>
 
   <aside id="chat" class="chat" hidden aria-label="Ask your library">
+    <div id="chat-resizer" class="resizer" role="separator" aria-orientation="vertical" aria-label="Resize the chat" tabindex="0" title="Drag to make the chat wider or narrower (arrow keys work too). Double-click to reset."></div>
     <div class="chat-head">
       <span class="chat-title">Ask your library</span>
       <div class="spacer"></div>
