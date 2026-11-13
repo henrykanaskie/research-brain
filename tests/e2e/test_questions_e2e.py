@@ -180,6 +180,7 @@ def test_question_evidence_triage_badge_list(server, browser):
     page.wait_for_function(f"fetch('/api/notes/{qid}').then(r => r.json()).then(n => n.question_status === 'parked')")
     # Library settings › Open questions: the threshold and the daily cap
     page.evaluate("window.__rbSettings.open()")
+    page.locator("#library-settings .ls-tab", has_text="AI and privacy").click()
     sec = page.locator("#ls-questions")
     expect(sec.locator("input[type=range]")).to_be_visible()
     sec.locator("input[type=number]").fill("4")

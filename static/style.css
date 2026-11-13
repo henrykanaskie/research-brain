@@ -135,6 +135,14 @@ kbd { font: 11px var(--sans); color: var(--ink-2); border: 1px solid var(--rule)
 .brand-mark { width: 9px; height: 9px; border-radius: 50%; background: var(--red); flex: none; }
 .tb-group { display: flex; align-items: center; gap: 8px; }
 .tb-group.grow { flex: 1; justify-content: center; min-width: 160px; }
+/* the right side of the top bar, in groups: add | go to (topics, questions, review, ask) | AI status, settings */
+.tb-sep { width: 1px; height: 18px; background: var(--rule); margin: 0 6px; flex: none; }
+.tb-settings { width: 34px; height: 34px; border-radius: 50%; color: var(--ink-2); }
+.tb-settings .gear { transition: transform .35s ease; }
+.tb-settings:hover { color: var(--ink); background: var(--ground); }
+.tb-settings:hover .gear, .tb-settings[aria-expanded="true"] .gear { transform: rotate(30deg); }
+.tb-settings[aria-expanded="true"] { color: var(--ink); background: var(--ground); }
+@media (prefers-reduced-motion: reduce) { .tb-settings .gear { transition: none; } }
 .search { position: relative; width: 100%; max-width: 440px; display: flex; align-items: center; }
 .search-icon { position: absolute; left: 11px; color: var(--ink-2); pointer-events: none; }
 .search input { width: 100%; height: 34px; padding: 0 56px 0 32px; background: var(--ground); border-color: transparent; border-radius: 6px; }
@@ -735,7 +743,7 @@ html .ls-card .modal-actions { position: sticky; bottom: -16px; background: var(
   /* no backdrop-filter here: it would make the top bar the containing block of its fixed-position menus */
   #topbar { height: var(--topbar-h); padding: var(--safe-t) max(12px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left)); gap: 10px; overflow: visible;
     background: var(--ground); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .brand-name, #topbar .tb-group.grow, #topbar .menu-wrap:has(#btn-add-menu), #btn-topics, #btn-review, #btn-chat, #btn-questions,
+  .brand-name, #topbar .tb-group.grow, #topbar .menu-wrap:has(#btn-add-menu), #btn-topics, #btn-review, #btn-chat, #btn-questions, #topbar .tb-sep,
   #rb-profile-tag, #rb-update-chip, .legend, .reopen-tab, #panel-resizer { display: none !important; }
   .m-title { display: block; flex: 1; min-width: 0; font: italic 500 23px/1 var(--display); letter-spacing: -.01em; font-variation-settings: "opsz" 28;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -405,3 +405,28 @@ def test_delete(ctx, server):
     expect(page.locator("#empty-state")).to_be_visible()
     assert note_file(server["vault"], n["id"]) is None
     assert (server["vault"] / ".trash" / f"{n['id']}.md").exists() or list((server["vault"] / ".trash").rglob(f"{n['id']}*"))
+
+
+def test_settings_tabs_and_search(ctx, server):
+    """Library settings: tabs keep kinds of settings apart; the search box finds a setting in any tab."""
+    page = open_app(ctx, server)
+    page.click("#btn-view-menu")
+    expect(page.locator("#btn-view-menu")).to_have_attribute("aria-label", "Settings")
+    expect(page.locator("#view-menu .menu-item").first).to_contain_text("Library settings")
+    page.locator("#btn-library-settings").click()
+    dlg = page.locator("#library-settings")
+    page.locator("#library-settings .ls-tab", has_text="Library").first.click()
+    expect(dlg.locator("#ls-documents")).to_be_visible()
+    expect(dlg.locator("#ls-lookup")).to_be_hidden()
+    dlg.locator(".ls-tab", has_text="Adding papers").click()
+    expect(dlg.locator("#ls-lookup")).to_be_visible()
+    expect(dlg.locator("#ls-documents")).to_be_hidden()
+    # search across tabs
+    dlg.locator(".ls-search").fill("semantic scholar")
+    expect(dlg.locator("#ls-lookup")).to_be_visible()
+    expect(dlg.locator("#ls-documents")).to_be_hidden()
+    dlg.locator(".ls-search").fill("zzzz-nothing")
+    expect(dlg.locator(".ls-empty")).to_be_visible()
+    dlg.locator(".ls-search").fill("")
+    expect(dlg.locator("#ls-lookup")).to_be_visible()  # back on the tab you were on
+    assert not page.errors

@@ -974,13 +974,22 @@
       if (r.x < vtl.x || r.x > vbr.x || r.y > vbr.y || (r.cy !== undefined && r.cy < vtl.y)) continue;
       const margin = 8 * px, x0 = Math.max(vtl.x + margin, Math.min(r.x - w / 2, vbr.x - margin - w));
       if (r.y - h / 2 < vtl.y + margin) r.y = vtl.y + margin + h / 2;
-      let y = r.y, ok = false;
-      for (let tries = 0; tries < 6 && !ok; tries++) {
-        ok = !placed.some((p) => Math.abs(p.x - r.x) < (p.w + w) / 2 + 8 * px && Math.abs(p.y - y) < lh);
-        if (!ok) y -= lh;
+      // candidate spots: just above the region, just below it, then further out; the first that covers no
+      // dot and no other tag wins, else the one covering the fewest dots (a tag never hides a paper if it can help it)
+      const below = (r.cy !== undefined ? r.cy : r.y) + 22 * px;
+      const cands = [r.y, below, r.y - lh, below + lh, r.y - 2 * lh, below + 2 * lh, r.y - 3 * lh];
+      let best = null;
+      for (const cy of cands) {
+        if (cy - h / 2 < vtl.y + margin || cy + h / 2 > vbr.y - margin) continue;
+        const box = [x0, cy - h / 2, x0 + w, cy + h / 2];
+        if (placed.some((p) => boxesMeet(box, p))) continue;
+        const under = dotsUnder(S.dotG, [box[0] - 2 * px, box[1] - 2 * px, box[2] + 2 * px, box[3] + 2 * px]);
+        if (!best || under < best.under) best = { y: cy, under, box };
+        if (!under) break;
       }
-      if (!ok) continue;
-      placed.push({ x: r.x, y, w });
+      if (!best) continue;
+      const y = best.y;
+      placed.push(best.box);
       r.y = y;
       const isHot = hot != null && r.cid === hot, isFocus = focused != null && r.cid === focused;
       const dimmed = !isHot && !isFocus && (S.selected || S.search);
@@ -1231,7 +1240,7 @@
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
       .onRenderFramePre((ctx, k) => {
         S.k = k; S.partLayout = new Map();
-        S.labelBoxes = [];
+        S.labelBoxes = []; S.labelJobs = []; S.dots = [];
         const moving = stepAlphas();
         if (moving) kick(60);
         updateCentroids();
@@ -1239,7 +1248,9 @@
         drawRegions(ctx, k);
       })
       .onRenderFramePost((ctx, k) => {
+        S.dotG = dotGrid(k);
         drawRegionLabels(ctx, k);
+        drawLabels(ctx, k);
         drawPulses(ctx, k);
         if (performance.now() > animUntil && !pulses.length) fg.autoPauseRedraw(true);
       })
@@ -1437,26 +1448,79 @@
       ctx.strokeStyle = C.ink2; ctx.lineWidth = 0.6 * px; ctx.stroke();
     }
 
+    // where this dot is, so titles and region tags can stay off it (drawLabels, drawRegionLabels)
+    if (alpha > 0.05 && S.dots) S.dots.push(n);
+    n.__outer = outer;
     const match = S.search && S.matches.has(n.id);
     const regionsShowing = S.regionLabels && S.regionLabels.length && k <= 3.0;  // node labels defer to tags when zoomed out
     const must = hov || sel || match;
     let show;
     if (n.type === 'fragment') show = hov || sel;
     else show = must || k >= 4.2 || (!regionsShowing && highDegree(n) && k >= 0.75);
-    if (show && alpha > 0.3) {
+    // titles are drawn after every dot (drawLabels), so no dot is painted over one and none sits on a dot
+    if (show && alpha > 0.3 && S.labelJobs) S.labelJobs.push({ n, alpha, outer, sel, hov, must });
+    ctx.restore();
+  }
+
+  /** Dots on screen this frame, in a grid, for "does this box cover a dot?" */
+  function dotGrid(k) {
+    const cell = 40 / k, grid = new Map();
+    for (const n of S.dots || []) {
+      const key = Math.floor(n.x / cell) + ',' + Math.floor(n.y / cell);
+      let b = grid.get(key); if (!b) grid.set(key, b = []);
+      b.push(n);
+    }
+    return { cell, grid };
+  }
+  /** How many dots (other than `except`) a box [x0, y0, x1, y1] covers. */
+  function dotsUnder(G, box, except) {
+    if (!G) return 0;
+    let c = 0;
+    const gx0 = Math.floor(box[0] / G.cell) - 1, gx1 = Math.floor(box[2] / G.cell) + 1;
+    const gy0 = Math.floor(box[1] / G.cell) - 1, gy1 = Math.floor(box[3] / G.cell) + 1;
+    for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+      const b = G.grid.get(gx + ',' + gy); if (!b) continue;
+      for (const n of b) {
+        if (n === except) continue;
+        const r = n.__outer || 2;
+        const cx = Math.max(box[0], Math.min(n.x, box[2])), cy = Math.max(box[1], Math.min(n.y, box[3]));
+        if ((cx - n.x) ** 2 + (cy - n.y) ** 2 < r * r) c++;
+      }
+    }
+    return c;
+  }
+  const boxesMeet = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+
+  /** Titles under dots: after every dot is drawn. Ordinary titles only where they cover no other dot, no
+   *  region tag and no other title (the better-connected first); the hovered, selected and search-matched
+   *  ones always, on top. */
+  function drawLabels(ctx, k) {
+    const jobs = S.labelJobs || [];
+    if (!jobs.length) return;
+    const px = 1 / k, G = S.dotG;
+    const taken = (S.labelBoxes = S.labelBoxes || []);
+    for (const r of S.regionLabels || []) if (r.box) taken.push(r.box);
+    jobs.sort((a, b) => (a.must - b.must) || ((Number(b.n.degree) || 0) - (Number(a.n.degree) || 0)));
+    const plain = jobs.filter((j) => !j.must), top = jobs.filter((j) => j.must);
+    for (const j of [...plain, ...top]) {
+      const { n, alpha, outer, sel, hov, must } = j;
       const big = sel || hov;
       const fs = (big ? 14 : 10.5) * px;
+      ctx.save();
       ctx.font = big ? `italic 500 ${fs}px "Bodoni Moda", Didot, Georgia, serif`
         : `500 ${fs}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
       if ('fontStretch' in ctx) ctx.fontStretch = big ? 'normal' : 'semi-condensed';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       const label = truncate(n.title || n.id, big ? 72 : 34);
       const y = n.y + outer + (sel ? 15 : big ? 8 : 4) * px;
-      const w = ctx.measureText(label).width, box = [n.x - w / 2 - 8 * px, y - 3 * px, n.x + w / 2 + 8 * px, y + fs + 4 * px];
-      const hit = (S.labelBoxes || []).some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1]);
-      if (hit && !must) { ctx.restore(); return; }
-      (S.labelBoxes || (S.labelBoxes = [])).push(box);
+      const w = ctx.measureText(label).width, box = [n.x - w / 2 - 4 * px, y - 2 * px, n.x + w / 2 + 4 * px, y + fs + 2 * px];
+      if (!must && (taken.some((b) => boxesMeet(box, b)) || dotsUnder(G, box, n))) { ctx.restore(); continue; }
+      taken.push(box);
       ctx.globalAlpha = alpha;
+      if (must) {  // a quiet plate under the title you're looking at, so dots and lines don't show through it
+        ctx.fillStyle = rgba(C.ground, 0.92);
+        ctx.fillRect(box[0], box[1], box[2] - box[0], box[3] - box[1]);
+      }
       ctx.lineWidth = 3.5 * px; ctx.lineJoin = 'round'; ctx.strokeStyle = C.ground;
       ctx.strokeText(label, n.x, y);
       ctx.fillStyle = big ? C.ink : C.ink2;
@@ -1467,13 +1531,16 @@
         const ms = 10.5 * px, my = y + fs + 4 * px;
         ctx.font = `500 ${ms}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
         if ('fontStretch' in ctx) ctx.fontStretch = 'semi-condensed';
+        const mw = ctx.measureText(meta).width;
+        ctx.fillStyle = rgba(C.ground, 0.92);
+        ctx.fillRect(n.x - mw / 2 - 4 * px, my - 2 * px, mw + 8 * px, ms + 4 * px);
         ctx.strokeText(meta, n.x, my);
         ctx.fillStyle = C.ink2;
         ctx.fillText(meta, n.x, my);
-        S.labelBoxes.push([n.x - ctx.measureText(meta).width / 2 - 8 * px, my - 3 * px, n.x + ctx.measureText(meta).width / 2 + 8 * px, my + ms + 4 * px]);
+        taken.push([n.x - mw / 2 - 4 * px, my - 2 * px, n.x + mw / 2 + 4 * px, my + ms + 2 * px]);
       }
+      ctx.restore();
     }
-    ctx.restore();
   }
 
   function onLinkClick(l) {

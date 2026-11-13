@@ -337,6 +337,7 @@ def test_pairing_a_phone(browser, pw, server):
     laptop = context(browser, pw, server, viewport={"width": 1280, "height": 800})
     lp = open_app(laptop, server)
     lp.evaluate("RB.commands.run('library.settings')")
+    lp.locator("#library-settings .ls-tab", has_text="Devices and updates").click()
     sec = lp.locator("#ls-devices")
     expect(sec).to_contain_text("No paired devices")
     sec.locator("button", has_text="Pair a phone").click()

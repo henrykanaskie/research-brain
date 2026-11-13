@@ -81,10 +81,18 @@
         </div>
       </div>
 
+      <span class="tb-sep" aria-hidden="true"></span>
+
+      <button id="btn-review" class="btn" title="Recall your own summaries and fragment notes from memory" hidden>Review <span class="review-n tnum"></span></button>
+      <button id="btn-chat" class="btn btn-primary needs-claude" title="Ask a question across all your papers and notes">Ask your library</button>
+      <span class="tb-sep" aria-hidden="true"></span>
+      <div id="status" class="status" tabindex="0"><span class="dot"></span><span class="status-text">Checking</span></div>
       <div class="menu-wrap">
-        <button id="btn-view-menu" class="btn btn-text" aria-haspopup="true" aria-expanded="false" aria-controls="view-menu">View
-          <svg class="chev" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true"><path d="M1.5 3.2 4.5 6 7.5 3.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+        <button id="btn-view-menu" class="btn btn-icon tb-settings" aria-haspopup="true" aria-expanded="false" aria-controls="view-menu" aria-label="Settings" title="Settings: library, AI, what the graph shows, appearance"><svg class="gear" width="19" height="19" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8.1" stroke-width="2.6" stroke-dasharray="3.18 3.18" transform="rotate(-11 12 12)"/><circle cx="12" cy="12" r="6.4" stroke-width="1.5"/><circle cx="12" cy="12" r="2.1" fill="var(--red)" stroke="none"/></svg></button>
         <div id="view-menu" class="menu menu-right" hidden>
+          <div id="settings-slot"></div>
+          <div class="menu-sep"></div>
+          <span class="menu-label">View</span>
           <label class="menu-check" title="Show links that were found by text similarity"><input id="sim-toggle" type="checkbox" checked> Show similarity links</label>
           <label class="menu-check" title="Show which papers cite which (from Semantic Scholar references)"><input id="cites-toggle" type="checkbox" checked> Show citation links</label>
           <label class="menu-check" title="Quiet signals travel along random connections"><input id="ambient-toggle" type="checkbox" checked> Ambient activity</label>
@@ -108,9 +116,6 @@
         </div>
       </div>
 
-      <div id="status" class="status" tabindex="0"><span class="dot"></span><span class="status-text">Checking</span></div>
-      <button id="btn-review" class="btn" title="Recall your own summaries and fragment notes from memory" hidden>Review <span class="review-n tnum"></span></button>
-      <button id="btn-chat" class="btn btn-primary needs-claude" title="Ask a question across all your papers and notes">Ask your library</button>
     </div>
   </header>
 

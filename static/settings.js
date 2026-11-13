@@ -11,7 +11,23 @@
   const rb = () => window.__rb || null;
 
   const CSS = `
-  .ls-card { width: min(560px, 100%); max-height: calc(100vh - 48px); overflow: auto; }
+  .ls-card { width: min(640px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding-top: 0; }
+  .ls-top { position: sticky; top: 0; z-index: 2; background: var(--sheet); padding-top: 18px; margin: 0 -2px; padding-left: 2px; padding-right: 2px; }
+  .ls-titlebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .ls-titlebar .modal-title { flex: 1; margin: 0; }
+  .ls-search { width: min(220px, 100%); height: 30px; padding: 0 10px; font: 13px var(--sans); }
+  .ls-tabs { display: flex; gap: 18px; flex-wrap: wrap; border-bottom: 1px solid var(--rule); margin-top: 12px; }
+  .ls-tab { all: unset; cursor: pointer; font: 13px var(--sans); color: var(--ink-2); padding: 7px 0 6px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .ls-tab:hover { color: var(--ink); }
+  .ls-tab:focus-visible { outline: 2px solid color-mix(in srgb, var(--ink) 35%, transparent); outline-offset: 2px; }
+  .ls-tab.on { color: var(--ink); border-bottom-color: var(--red); }
+  .ls-tabs.searching .ls-tab { color: var(--ink-3); }
+  .ls-tabs.searching .ls-tab.has-hits { color: var(--ink); }
+  .ls-panel { padding-top: 4px; }
+  .ls-panel > .ls-sec:not([hidden]) ~ .ls-sec:not([hidden]) { border-top: 1px solid var(--rule); margin-top: 16px; padding-top: 14px; }
+  .ls-panel > .ls-sec { border-top: 0; margin-top: 14px; padding-top: 0; }
+  .ls-empty { color: var(--ink-2); font-size: 13px; margin: 18px 0; }
+  @media (max-width: 560px) { .ls-search { width: 100%; } .ls-tabs { gap: 12px; } }
   .ls-card .modal-title { font-family: var(--display, var(--serif)); }
   .ls-sec { border-top: 1px solid var(--rule); margin-top: 16px; padding-top: 14px; }
   .ls-sec:first-of-type { border-top: 0; margin-top: 8px; padding-top: 0; }
@@ -278,22 +294,72 @@
     const pairSec = window.__rbPair ? window.__rbPair.settingsSection(say) : null;
 
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
+    // Tabs keep each kind of setting together; the search box looks through all of them at once.
+    const TABS = [
+      { id: 'library', name: 'Library', secs: [libSec, docSec, papSec, profSec, ioSec] },
+      { id: 'papers', name: 'Adding papers', secs: [keySec, modeSec, oaSec] },
+      { id: 'ai', name: 'AI and privacy', secs: [agentSec, privSec, qSec] },
+      { id: 'citations', name: 'Citations', secs: [citeSec] },
+      { id: 'devices', name: 'Devices and updates', secs: [pairSec, updSec] },
+    ].map((t) => ({ ...t, secs: t.secs.filter(Boolean) })).filter((t) => t.secs.length);
+    const FOCUS_TAB = { profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', citations: 'citations', updates: 'devices' };
+    const FOCUS_SEC = { profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, citations: citeSec, updates: updSec };
+    let cur = FOCUS_TAB[focus] || (() => { try { return localStorage.getItem('rb.settings-tab'); } catch { return null; } })();
+    if (!TABS.some((t) => t.id === cur)) cur = TABS[0].id;
+    const tabBtns = TABS.map((t) => el('button', { type: 'button', class: 'ls-tab', role: 'tab', 'data-tab': t.id,
+      id: 'ls-tab-' + t.id, 'aria-controls': 'ls-panel', text: t.name, onclick: () => { search.value = ''; show(t.id); } }));
+    const search = el('input', { type: 'search', class: 'ls-search', placeholder: 'Search settings', 'aria-label': 'Search settings', spellcheck: false });
+    const empty = el('p', { class: 'ls-empty', hidden: true });
+    const panel = el('div', { class: 'ls-panel', id: 'ls-panel', role: 'tabpanel' }, ...TABS.flatMap((t) => t.secs), empty);
+    const tabsRow = el('div', { class: 'ls-tabs', role: 'tablist', 'aria-label': 'Settings sections' }, ...tabBtns);
+    function show(id) {
+      cur = id;
+      try { localStorage.setItem('rb.settings-tab', id); } catch { /* fine */ }
+      for (const b of tabBtns) { const on = b.dataset.tab === id; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
+      panel.setAttribute('aria-labelledby', 'ls-tab-' + id);
+      for (const t of TABS) for (const sec of t.secs) { sec.hidden = t.id !== id; sec.classList.remove('ls-hit'); }
+      empty.hidden = true;
+      tabsRow.classList.remove('searching');
+    }
+    function filter() {
+      const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      if (!words.length) { show(cur); return; }
+      tabsRow.classList.add('searching');
+      let n = 0;
+      for (const t of TABS) {
+        let hits = 0;
+        for (const sec of t.secs) {
+          // what a section says, plus its controls' labels, placeholders and current choices
+          const extra = [...sec.querySelectorAll('input, select, button, option')].map((x) => [x.placeholder, x.title, x.getAttribute('aria-label'), x.textContent].filter(Boolean).join(' ')).join(' ');
+          const text = (sec.textContent + ' ' + extra + ' ' + t.name).toLowerCase();
+          const hit = words.every((w) => text.includes(w));
+          sec.hidden = !hit; sec.classList.toggle('ls-hit', hit);
+          if (hit) hits++;
+        }
+        n += hits;
+        const b = tabBtns.find((x) => x.dataset.tab === t.id);
+        b.classList.toggle('on', false);
+        b.classList.toggle('has-hits', hits > 0);
+      }
+      empty.textContent = `Nothing in settings mentions “${search.value.trim()}”.`;
+      empty.hidden = n > 0;
+    }
+    search.addEventListener('input', filter);
+    search.addEventListener('keydown', (e) => { if (e.key === 'Escape' && search.value) { e.preventDefault(); e.stopPropagation(); search.value = ''; filter(); } });
     const card = el('div', { class: 'modal-card ls-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-title' },
-      el('div', { class: 'modal-title', id: 'ls-title', text: 'Library settings' }),
-      libSec, agentSec, privSec, qSec, pairSec, profSec, citeSec, modeSec, oaSec, docSec, papSec, keySec, updSec, ioSec, msg, el('div', { class: 'modal-actions' }, done));
+      el('div', { class: 'ls-top' },
+        el('div', { class: 'ls-titlebar' }, el('div', { class: 'modal-title', id: 'ls-title', text: 'Library settings' }), search),
+        tabsRow),
+      panel, msg, el('div', { class: 'modal-actions' }, done));
     const wrap = el('div', { class: 'modal', id: 'library-settings' }, card);
     wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
     document.body.appendChild(wrap);
     open = wrap;
+    show(cur);
     setTimeout(() => {
-      if (focus === 'profiles') profSec.scrollIntoView({ block: 'nearest' });
-      if (focus === 'agent') agentSec.scrollIntoView({ block: 'start' });
-      if (focus === 'citations' && citeSec) citeSec.scrollIntoView({ block: 'start' });
-      if (focus === 'privacy' && privSec) privSec.scrollIntoView({ block: 'start' });
-      if (focus === 'lookup') keySec.scrollIntoView({ block: 'start' });
-      if (focus === 'updates') updSec.scrollIntoView({ block: 'start' });
-      if (focus === 'papers') papSec.scrollIntoView({ block: 'start' });
-      (focus === 'profiles' && !prof.pinned ? newName : done).focus({ preventScroll: true });
+      const target = FOCUS_SEC[focus];
+      if (target) target.scrollIntoView({ block: 'start' });
+      (focus === 'profiles' && !prof.pinned ? newName : focus ? done : search).focus({ preventScroll: true });
     }, 0);
   }
 
@@ -441,7 +507,7 @@
 
   // ---------------------------------------------------------------- paper lookup keys (app/apikeys.py)
   const KEY_HELP = {
-    s2: 'Request one on Semantic Scholar’s API page (a short form; the key arrives by email).',
+    s2: 'Request one on Semantic Scholar’s API page. The form asks how you’ll use it (50+ words) and which endpoints: the README (Install, step 5) has text to paste into each field. They review requests by hand; the key arrives by email, usually after a few days.',
     openalex: 'Recommended: without a key, OpenAlex shares one small daily allowance with everyone on your network, and runs out. A free key (sign up at openalex.org, then Settings → API) gives this app its own.',
   };
   async function renderKeys(sec, say) {
@@ -675,12 +741,13 @@
       const m = document.getElementById('view-menu'); if (m) { m.hidden = true; const b = document.getElementById('btn-view-menu'); if (b) b.setAttribute('aria-expanded', 'false'); }
       openSettings();
     });
-    exportBtn.before(item);
+    const slot = document.getElementById('settings-slot');
+    if (slot) slot.replaceWith(item); else exportBtn.before(item);  // first in the Settings menu
   }
   api('/api/library').then((lib) => {
     LIB = lib; renderTag();
     let seen = false; try { seen = sessionStorage.getItem('rb.legacy-notice') === '1'; sessionStorage.setItem('rb.legacy-notice', '1'); } catch { /* ignore */ }
-    if (lib.legacy && !seen) toast('Your library is in the app folder. Open View › Library settings to move it somewhere safe from updates.');
+    if (lib.legacy && !seen) toast('Your library is in the app folder. Open Settings › Library settings to move it somewhere safe from updates.');
   }).catch(() => { /* offline; status shows it */ });
 
   // ---------------------------------------------------------------- commands
