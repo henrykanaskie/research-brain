@@ -525,7 +525,10 @@ def test_module_api_for_other_features(server):
 def test_vault_zip_includes_cards(server, tmp_path):
     srv, c, use = server
     pid = paper(srv, c, "Zip paper", PAPER_A)
-    c.post(f"/api/papers/{pid}/cards", json={"kind": "claim", "text": "Kept in the zip."})
+    r = c.post(f"/api/papers/{pid}/cards", json={"kind": "claim", "text": "Kept in the zip."})
+    assert r.status_code == 201, r.text
+    from app import cards as cards_mod
+    assert cards_mod.card_store().path(pid).exists(), (str(cards_mod.card_store().dir), str(srv.store.root))
     from app import vaultzip
     assert "cards" in vaultzip.TOP_DIRS
     r = c.get("/api/vault/export", params={"pdfs": "false"})

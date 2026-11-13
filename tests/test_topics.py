@@ -134,7 +134,7 @@ def test_topic_crud_and_membership(client, server):
 def test_topic_file_persistence(client, server):
     a = paper(client, "Plasma sheath")
     slug = client.post("/api/topics", json={"name": "Sheaths", "members": [a]}).json()["slug"]
-    path = server.store.root / "topics" / f"{slug}.md"
+    path = server.topics_mod.topics_dir(server.store) / f"{slug}.md"
     text = path.read_text(encoding="utf-8")
     assert text.startswith("---\nname: Sheaths\n") and f"- [[{a}]]" in text
     # hand-edit (e.g. in Obsidian): add a member line and a description
@@ -278,7 +278,7 @@ def test_dismiss_feeds_negatives_and_is_never_shown(client, server, monkeypatch)
     client.post(f"/api/topics/{slug}/queue/refresh?wait=1")
     assert calls["recs"][-1]["neg"] == ["R1"]
     assert "R1" not in [i["s2_id"] for i in client.get(f"/api/topics/{slug}/queue").json()["items"]]
-    text = (server.store.root / "topics" / f"{slug}.md").read_text(encoding="utf-8")
+    text = (server.topics_mod.topics_dir(server.store) / f"{slug}.md").read_text(encoding="utf-8")
     assert "dismissed:" in text and "R1" in text and "Wall erosion modelling" in text
 
 

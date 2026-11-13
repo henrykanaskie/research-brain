@@ -185,8 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     vault = Path(args.vault).expanduser()
-    if not (vault / "notes").is_dir():
-        print(f"No vault at {vault} (expected a notes/ folder). Pass --vault.", file=sys.stderr)
+    if not (vault / "state").is_dir() and not (vault / "notes").is_dir():  # a library, new layout or old
+        print(f"No library at {vault} (expected its state/ folder). Pass --vault.", file=sys.stderr)
         return 2
     notes, docs = load_docs(vault)
     ids = sorted(docs)

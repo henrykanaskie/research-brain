@@ -257,7 +257,7 @@ def test_plain_aliases_from_older_versions_still_load(app_env):
     n = c.get("/api/notes/old").json()
     assert not n.get("_yaml_error") and n["critiques"][0]["text"] == "fine"
     c.put("/api/notes/old", json={"summary": "edited"})
-    assert "*id" not in (Path(server.VAULT) / "Notes" / "old.md").read_text(encoding="utf-8")  # written without aliases
+    assert "*id" not in server.store.note_path("old").read_text(encoding="utf-8")  # written without aliases
 
 
 # ---------------------------------------------------------------- untrusted PDFs

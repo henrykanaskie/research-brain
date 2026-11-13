@@ -451,7 +451,7 @@ def test_auto_export_path_validation(server, tmp_path):
         str(tmp_path / "missing" / "refs.bib"): "doesn't exist",
         str(tmp_path / "thesis" / ".." / "x.bib"): "..",
         str(ROOT / "static" / "refs.bib"): "program folder",
-        str(srv.VAULT / "notes" / "refs.bib"): "internal",
+        str(srv.VAULT / "Notes" / "refs.bib"): "internal",
     }
     for p, why in bad.items():
         with pytest.raises(cite_api.PathError, match=re.escape(why) if why != "absolute" else "absolute"):

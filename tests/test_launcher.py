@@ -238,6 +238,7 @@ def test_windows_icon_is_a_real_ico_with_the_sizes_windows_uses():
     assert {16, 32, 48, 256} <= sizes
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="pretends to be Linux (os.name), which pathlib can't do on Windows")
 def test_a_failed_start_says_so_without_a_terminal(monkeypatch, tmp_path):
     """From the Start menu or app menu there's no terminal: a failed start shows a dialog instead of nothing."""
     from app import launcher

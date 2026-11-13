@@ -385,7 +385,7 @@ def test_pdf_bytes_upload(dirs, monkeypatch):
     assert n["viewer"] == f"/viewer/{n['id']}"
     again = c.post(url, content=pdf, headers={"Content-Type": "application/pdf"}).json()  # same sha256
     assert again["id"] == n["id"] and again["duplicate"] and again["existing"]
-    assert len(list((dirs / "v" / "pdfs").glob("*.pdf"))) == 1
+    assert len(list(server.store.pdf_dir.glob("*.pdf"))) == 1
 
 
 def test_pdf_bytes_attach_to_metadata_only_paper_by_doi(dirs, monkeypatch):
