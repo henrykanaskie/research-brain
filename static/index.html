@@ -189,6 +189,15 @@
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>
       </button>
     </div>
+    <div class="chat-modes" role="group" aria-label="What to ask about">
+      <button type="button" data-mode="library" title="Answers from your papers and notes">Library</button>
+      <button type="button" data-mode="topics" title="Answers from the papers in one or more of your topics">Topics…</button>
+      <button type="button" data-mode="general" title="Ask the agent anything; it can search the web if you allow it">General</button>
+    </div>
+    <div id="chat-general" class="chat-scope" hidden>
+      <div class="cs-row"><span class="cs-label">General</span><span class="cs-note">Ask anything. Your library isn’t sent.</span></div>
+      <label class="cs-related" id="cs-web-wrap"><input type="checkbox" id="cs-web"> Search the web</label>
+    </div>
     <div id="chat-scope" class="chat-scope" hidden>
       <div class="cs-row">
         <span class="cs-label">About</span>

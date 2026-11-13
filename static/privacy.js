@@ -104,10 +104,12 @@
       el('p', { class: 'ls-p', text: 'Private items never go to an AI agent (chat, critique, Research, review checks) and are left out of exports. Search, similarity and the graph keep working: they run on this computer. Use the lock in a note’s header to change one item.' }));
     const kindsBox = el('div', { class: 'pv-kinds' });
     const local = el('input', { type: 'checkbox' });
+    const web = el('input', { type: 'checkbox', id: 'pv-web' });
     const counts = el('p', { class: 'ls-p' });
     const logBox = el('div', { class: 'pv-log-wrap' });
     sec.append(el('div', { class: 'ls-p', text: 'Private by default (an item can still be marked either way):' }), kindsBox,
       el('label', { class: 'ls-check' }, local, el('span', { text: 'Let a local model server (Ollama, LM Studio, … on this computer) read private items. Cloud agents never do.' })),
+      el('label', { class: 'ls-check' }, web, el('span', { text: 'Let the agent search the web in General chats. Only there, and only your question and that conversation go along: never your library. Off by default; works with Claude Code.' })),
       counts, el('div', { class: 'ls-h', text: 'What was sent to AI' }),
       el('p', { class: 'ls-p', text: 'Every request to an AI agent, newest first: when, which agent and model, what for, which items, and how big. The log holds ids only, never content (state/ai_log.jsonl in your library).' }),
       logBox);
@@ -128,10 +130,13 @@
         kindsBox.append(el('label', { class: 'ls-check' }, c, el('span', { text: KIND_LABEL[k] || k })));
       }
       local.checked = !!cur.settings.private_ok_for_local_ai;
+      web.checked = !!cur.settings.web_search;
       counts.textContent = `${cur.counts.private} of ${cur.counts.total} items are private.`;
     }
     local.addEventListener('change', () => save({ private_ok_for_local_ai: local.checked },
       local.checked ? 'Local model servers may read private items.' : 'No AI agent reads private items.'));
+    web.addEventListener('change', () => save({ web_search: web.checked },
+      web.checked ? 'The agent may search the web in General chats.' : 'The agent doesn’t search the web.'));
     async function loadLog() {
       let data;
       try { data = await call('GET', '/api/privacy/log?limit=100'); } catch (e) { logBox.textContent = e.message; return; }

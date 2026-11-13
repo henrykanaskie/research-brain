@@ -1285,7 +1285,7 @@
       .cooldownTime(9000)
       .d3AlphaDecay(0.028)
       .d3VelocityDecay(0.38)
-      .minZoom(0.12).maxZoom(10);
+      .minZoom(0.12).maxZoom(1e4);  // zoom in as far as you like
 
     fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -3 : -20)).distanceMax(120); // compact: linked notes sit close
     fg.d3Force('center', null);
@@ -3103,6 +3103,7 @@
   function openChat() {
     $('#chat').hidden = false;
     document.body.classList.add('chat-open');
+    restoreChat(chatKey());
     renderChat();
     setTimeout(() => $('#chat-input').focus(), 0);
   }
@@ -3127,16 +3128,105 @@
   window.addEventListener('storage', (e) => {
     if (S.chatPaper && !S.chatBusy && e.key === `rb.paperChat.${S.chatPaper.id}`) { S.chat = loadPaperThread(S.chatPaper.id); renderChat(); }
   });
-  function setChatScope(id) {
+  // ---------- remembered conversations (app/chats.py): one per scope, kept with the library ----------
+  /** What the current conversation is about, as a key: library, paper-<id>, topics-<slug>+<slug>. */
+  function chatKey() {
+    if (S.chatGeneral) return 'general';
+    if (S.chatPaper) return `paper-${S.chatPaper.id}`;
+    if (S.chatTopics && S.chatTopics.length) return 'topics-' + S.chatTopics.map((t) => t.slug).sort().join('+');
+    return 'library';
+  }
+  function chatTitle() {
+    if (S.chatGeneral) return 'General';
+    if (S.chatPaper) return S.chatPaper.title;
+    if (S.chatTopics && S.chatTopics.length) return S.chatTopics.map((t) => t.name).join(', ');
+    return 'Whole library';
+  }
+  const keepable = (thread) => thread.filter((m, i, a) => !m.pending && !m.error && !m.failed && !(a[i + 1] && a[i + 1].error) && m.mode !== 'research')
+    .map((m) => ({ role: m.role, content: m.content, ...(m.sel ? { sel: m.sel } : {}), ...(m.sources ? { sources: m.sources } : {}) }));
+  /** Save the conversation with the library (older turns are condensed there, see app/chats.py). */
+  function persistChat(key = chatKey(), thread = S.chat, title = chatTitle()) {
+    S.chatThreads[key] = thread;
+    api('PUT', `/api/chats/${encodeURIComponent(key)}`, { messages: keepable(thread), title })
+      .then((d) => { if (d && key === chatKey()) S.chatSummarised = !!d.summary; })
+      .catch((e) => console.warn('could not save the conversation', e));
+  }
+  /** The remembered conversation for a key: this session's copy, else the one kept with the library. */
+  async function restoreChat(key) {
+    if (S.chatThreads[key] && S.chatThreads[key].length) return;
+    try {
+      const d = await api('GET', `/api/chats/${encodeURIComponent(key)}`);
+      if (key !== chatKey() || S.chatBusy) return;
+      S.chatSummarised = !!d.summary;
+      if (d.messages && d.messages.length && !S.chat.length) { S.chat = d.messages.map((m) => ({ ...m, passages: [] })); S.chatThreads[key] = S.chat; renderChat(); }
+    } catch (e) { console.warn('could not load the conversation', e); }
+  }
+  function setChatScope(id, topics = null, general = false) {
     if (S.chatBusy) { toast(`Wait for ${ai()} to finish the current answer first.`, 'info'); return false; }
-    if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat); else S.chatThreads[''] = S.chat;
-    if (id) {
+    if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat);
+    S.chatThreads[chatKey()] = S.chat;
+    S.chatGeneral = !!general;
+    if (general) { S.chatPaper = null; S.chatTopics = null; }
+    else if (id) {
       const t = (S.cur && S.cur.id === id && S.cur.title) || nodeTitle(id) || 'this paper';
-      S.chatPaper = { id, title: t };
-    } else S.chatPaper = null;
-    S.chat = id ? loadPaperThread(id) : (S.chatThreads[''] || []);
+      S.chatPaper = { id, title: t }; S.chatTopics = null;
+    } else { S.chatPaper = null; S.chatTopics = topics && topics.length ? topics : null; }
+    const key = chatKey();
+    S.chatSummarised = false;
+    S.chat = id && !general ? loadPaperThread(id) : (S.chatThreads[key] || []);
     renderChatScope();
+    restoreChat(key);
     return true;
+  }
+  /** General: ask the agent anything, no library; it may search the web if Settings allow it. */
+  async function chatGeneral() {
+    if (setChatScope(null, null, true) === false) return;
+    openChat();
+    renderChat();
+    try {
+      const d = await api('GET', '/api/privacy');
+      S.webAllowed = !!(d && d.settings && d.settings.web_search);
+    } catch { S.webAllowed = false; }
+    renderChatScope();
+    renderChat();
+  }
+  /** Talk about the papers in one or more topics ([{slug, name}]). */
+  function chatAboutTopics(topics) {
+    if (!topics || !topics.length) return;
+    if (setChatScope(null, topics) === false) return;
+    if (window.__rbResearch && window.__rbResearch.setMode) window.__rbResearch.setMode('quick');
+    openChat();
+    renderChat();
+  }
+  /** Pick topics to ask about (checkboxes), from the chat header or the command palette. */
+  async function chooseChatTopics() {
+    let list = [];
+    try { list = await api('GET', '/api/topics'); } catch (e) { toastErr(e, 'Could not load your topics'); return; }
+    list = list.filter((t) => t.count > 0);
+    if (!list.length) { toast('Make a topic and add papers to it first (Topics, at the top).', 'info'); return; }
+    const chosen = new Set((S.chatTopics || []).map((t) => t.slug));
+    const boxes = list.map((t) => {
+      const cb = h('input', { type: 'checkbox', value: t.slug });
+      cb.checked = chosen.has(t.slug);
+      return h('label', { class: 'ct-row' }, cb, h('span', { class: 'ct-name', text: t.name }), h('span', { class: 'ct-n', text: `${t.count} paper${t.count === 1 ? '' : 's'}` }));
+    });
+    const go = h('button', { type: 'button', class: 'btn btn-primary', text: 'Ask about these' });
+    const cancel = h('button', { type: 'button', class: 'btn btn-text', text: 'Cancel' });
+    const sheet = h('div', { class: 'menu ct-sheet', role: 'dialog', 'aria-label': 'Ask about topics' },
+      h('div', { class: 'menu-label', text: 'Ask about the papers in…' }), h('div', { class: 'ct-list' }, boxes),
+      h('div', { class: 'ct-acts' }, cancel, go));
+    const close = () => { sheet.remove(); document.removeEventListener('pointerdown', off, true); };
+    const off = (e) => { if (!sheet.contains(e.target)) close(); };
+    cancel.onclick = close;
+    go.onclick = () => {
+      const picked = boxes.map((b) => b.querySelector('input')).filter((i) => i.checked).map((i) => list.find((t) => t.slug === i.value));
+      if (!picked.length) { toast('Tick at least one topic.', 'info'); return; }
+      close();
+      chatAboutTopics(picked.map((t) => ({ slug: t.slug, name: t.name })));
+    };
+    document.body.append(sheet);
+    setTimeout(() => document.addEventListener('pointerdown', off, true), 0);
+    const first = sheet.querySelector('input'); if (first) first.focus();
   }
   function chatAboutPaper(id) {
     if (!id) return;
@@ -3148,7 +3238,22 @@
     const bar = $('#chat-scope'), title = $('.chat-title');
     const ta = $('#chat-input');
     if (!bar) return;
-    if (!S.chatPaper) {
+    const mode = S.chatGeneral ? 'general' : (S.chatTopics && S.chatTopics.length && !S.chatPaper) ? 'topics' : S.chatPaper ? 'paper' : 'library';
+    for (const b of document.querySelectorAll('.chat-modes button')) { const on = b.dataset.mode === mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+    const gen = $('#chat-general');
+    if (gen) gen.hidden = mode !== 'general';
+    if (mode === 'general') {
+      bar.hidden = true;
+      document.body.classList.add('chat-scoped');
+      if (title) title.textContent = 'Ask anything';
+      const web = $('#cs-web'), wrap = $('#cs-web-wrap');
+      if (web) { web.disabled = !S.webAllowed; web.checked = !!(S.webAllowed && S.chatWeb); }
+      if (wrap) wrap.title = S.webAllowed ? 'The agent may search the web for this answer (only your question and this conversation go along)' : 'Turn it on in Settings › Library settings › AI and privacy';
+      if (ta) ta.placeholder = S.chatWeb && S.webAllowed ? 'Ask anything; the agent can search the web' : 'Ask anything';
+      return;
+    }
+    const rel = $('.cs-related', bar);
+    if (!S.chatPaper && !(S.chatTopics && S.chatTopics.length)) {
       bar.hidden = true;
       if (title) title.textContent = 'Ask your library';
       if (ta) ta.placeholder = 'Ask about your papers and notes';
@@ -3157,6 +3262,16 @@
     }
     bar.hidden = false;
     document.body.classList.add('chat-scoped');
+    if (S.chatTopics && S.chatTopics.length && !S.chatPaper) {
+      const names = S.chatTopics.map((t) => t.name).join(', ');
+      if (title) title.textContent = S.chatTopics.length > 1 ? 'These topics' : 'This topic';
+      $('.cs-title', bar).textContent = names;
+      $('.cs-title', bar).title = 'Choose other topics';
+      if (rel) rel.hidden = true;
+      if (ta) ta.placeholder = 'Ask about the papers in ' + (S.chatTopics.length > 1 ? 'these topics' : 'this topic');
+      return;
+    }
+    if (rel) rel.hidden = false;
     if (title) title.textContent = 'This paper';
     $('.cs-title', bar).textContent = S.chatPaper.title;
     $('.cs-title', bar).title = S.chatPaper.title;
@@ -3166,7 +3281,27 @@
 
   function renderChat() {
     const kids = [];
-    if (!S.chat.length && S.chatPaper) {
+    if (S.chatSummarised && S.chat.length) kids.push(h('div', { class: 'chat-earlier', text: 'Earlier messages in this conversation are kept as a short summary, which goes along with your questions.' }));
+    if (!S.chat.length && S.chatGeneral) {
+      const examples = [
+        'Explain the Bohm criterion intuitively, then with the math.',
+        'What are good recent review papers on Hall thruster erosion?',
+        'Help me plan an outline for a literature review chapter.',
+      ];
+      kids.push(h('div', { class: 'chat-empty' },
+        S.webAllowed ? `Ask ${ai()} anything. Tick “Search the web” and it looks things up and links its sources. Your library isn’t sent.`
+          : `Ask ${ai()} anything. Your library isn’t sent. To let it search the web, turn that on in Settings › Library settings › AI and privacy.`,
+        examples.map((x) => h('button', { type: 'button', class: 'ex', text: x, onclick: () => { const ta = $('#chat-input'); ta.value = x; ta.dispatchEvent(new Event('input')); ta.focus(); } }))));
+    } else if (!S.chat.length && !S.chatPaper && S.chatTopics && S.chatTopics.length) {
+      const examples = [
+        'What do these papers agree on, and where do they disagree?',
+        'Summarise the main methods used across these papers.',
+        'What gaps or open questions do these papers leave?',
+      ];
+      kids.push(h('div', { class: 'chat-empty' },
+        `${ai()} reads every paper in ${S.chatTopics.map((t) => '“' + t.name + '”').join(' and ')} (title, your summary or the abstract) and the passages that best match your question, and cites them. Your private notes are never included.`,
+        examples.map((x) => h('button', { type: 'button', class: 'ex', text: x, onclick: () => { const ta = $('#chat-input'); ta.value = x; ta.dispatchEvent(new Event('input')); ta.focus(); } }))));
+    } else if (!S.chat.length && S.chatPaper) {
       const examples = [
         'What is the main result, and what evidence supports it?',
         'Walk me through the key derivation step by step.',
@@ -3199,7 +3334,7 @@
           h('div', { class: 'machine-head' }, h('span', { text: `${ai()}, writing…` })),
           h('div', { class: 'msg-body md chat-live', html: partialMD(m.live) }))));
       } else if (m.pending) {
-        kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatPaper ? `${ai()} is reading the paper` : `${ai()} is reading your library`, m.start))));
+        kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatGeneral ? (m.web ? `${ai()} is searching the web` : `${ai()} is thinking`) : S.chatPaper ? `${ai()} is reading the paper` : S.chatTopics ? `${ai()} is reading the papers in your topics` : `${ai()} is reading your library`, m.start))));
       } else if (m.error) {
         kids.push(h('div', { class: 'msg error' }, h('div', { class: 'msg-role', text: `${ai()} couldn't answer` }), h('div', { class: 'msg-body', text: m.content }),
           h('div', { class: 'actions' }, h('button', { class: 'btn btn-sm needs-claude', type: 'button', text: 'Retry', onclick: () => retryChat(i) }))));
@@ -3251,13 +3386,15 @@
     question = question.trim();
     if (!question) return;
     // Research mode searches the whole library; a chat about one paper always answers from that paper
-    if (!S.chatPaper && window.__rbResearch && window.__rbResearch.wants(opts)) return window.__rbResearch.send(question);
-    const scope = S.chatPaper ? { paper: S.chatPaper.id, include_related: !!S.chatRelated } : {};
+    if (!S.chatGeneral && !S.chatPaper && !S.chatTopics && window.__rbResearch && window.__rbResearch.wants(opts)) return window.__rbResearch.send(question);
+    const scope = S.chatPaper ? { paper: S.chatPaper.id, include_related: !!S.chatRelated }
+      : S.chatTopics ? { topics: S.chatTopics.map((t) => t.slug) } : {};
+    scope.thread = chatKey();
     if (S.chatPaper) S.chat = loadPaperThread(S.chatPaper.id); // pick up what was asked in the viewer meanwhile
     const history = S.chat.filter((m) => !m.pending && !m.error && !m.failed)
       .map((m) => ({ role: m.role, content: m.sel ? `[about the passage on p. ${m.sel.page}: "${String(m.sel.text).slice(0, 300)}"]\n${m.content}` : m.content }));
     const userMsg = { role: 'user', content: question };
-    const pending = { role: 'assistant', pending: true, start: Date.now() };
+    const pending = { role: 'assistant', pending: true, start: Date.now(), web: !!(S.chatGeneral && S.chatWeb && S.webAllowed) };
     S.chat.push(userMsg, pending);
     S.chatBusy = true;
     renderChat();
@@ -3273,14 +3410,16 @@
     try {
       let r;
       try {
-        r = await apiStream('/api/chat/stream', { question, history, ...scope }, (t) => {
+        const url = S.chatGeneral ? '/api/general/stream' : '/api/chat/stream';
+        const body = S.chatGeneral ? { question, history, web: pending.web } : { question, history, ...scope };
+        r = await apiStream(url, body, (t) => {
           if (!pending.live) { pending.live = t; renderChat(); }
           live.push(t);
         });
         live.flush();
       } catch (e) {
         live.cancel();
-        if (e.claude) throw e;
+        if (e.claude || S.chatGeneral) throw e;
         console.warn('chat streaming failed, retrying without streaming:', e);
         pending.live = '';
         renderChat();
@@ -3296,6 +3435,7 @@
     } finally {
       S.chatBusy = false;
       if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat);
+      persistChat();
       renderChat();
     }
   }
@@ -3325,9 +3465,17 @@
   });
   void chatLE;
   $('#chat-input').addEventListener('input', (e) => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight + 2) + 'px'; });
-  $('#btn-chat-clear').addEventListener('click', () => { if (S.chatBusy) { toast('Wait for the current answer to finish first.', 'info'); return; } S.chat = []; if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat); renderChat(); });
+  $('#btn-chat-clear').addEventListener('click', () => { if (S.chatBusy) { toast('Wait for the current answer to finish first.', 'info'); return; } S.chat = []; S.chatSummarised = false; if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat); persistChat(); renderChat(); });
   $('#cs-clear').addEventListener('click', () => { if (setChatScope(null) !== false) { renderChat(); $('#chat-input').focus(); } });
-  $('#cs-open').addEventListener('click', () => S.chatPaper && openNote(S.chatPaper.id, { center: true }));
+  $('#cs-open').addEventListener('click', () => { if (S.chatPaper) openNote(S.chatPaper.id, { center: true }); else if (S.chatTopics) chooseChatTopics(); });
+  for (const b of document.querySelectorAll('.chat-modes button')) b.addEventListener('click', () => {
+    const m = b.dataset.mode;
+    if (m === 'general') chatGeneral();
+    else if (m === 'topics') chooseChatTopics();
+    else if (setChatScope(null) !== false) { renderChat(); $('#chat-input').focus(); }
+  });
+  const csWeb = $('#cs-web');
+  if (csWeb) csWeb.addEventListener('change', (e) => { S.chatWeb = e.target.checked; renderChatScope(); });
   $('#cs-related').addEventListener('change', (e) => { S.chatRelated = e.target.checked; });
   $('#btn-chat-close').addEventListener('click', closeChat);
   $('#btn-chat').addEventListener('click', () => {
@@ -3655,6 +3803,14 @@
       aliases: ['region name', 'name region', 'rename cluster', 'label region'],
       description: 'Names the focused region. A region with the same papers as a topic shows the topic\'s name; renaming it renames the topic too, unless you choose to keep them different.',
       run: () => renameRegion() });
+    CMD.register({ id: 'chat.general', title: 'Ask anything (General)', group: 'Research',
+      aliases: ['general chat', 'ask ai', 'web search', 'search the web', 'ask agent', 'assistant'],
+      description: 'Ask the agent anything, without your library. With web search allowed in Settings, it can look things up and link sources.',
+      run: () => chatGeneral() });
+    CMD.register({ id: 'chat.aboutTopics', title: 'Ask about topics…', group: 'Research',
+      aliases: ['chat about topic', 'ask topic', 'topic chat', 'group of papers', 'ask about these papers'],
+      description: 'Pick one or more topics: the agent reads every paper in them and the passages that best match your question.',
+      run: () => chooseChatTopics() });
     CMD.register({ id: 'chat.aboutPaper', title: 'Ask about this paper', group: 'Note',
       when: () => !!(S.cur && S.cur.type === 'paper'),
       aliases: ['talk about paper', 'chat with paper', 'discuss', 'explain this paper', 'question this paper'],
@@ -3752,7 +3908,7 @@
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
     setNodeFilter(fn) { S.nodeFilter = typeof fn === 'function' ? fn : null; kick(400); },
     setHidden(set) { S.hidden = set && set.size ? set : null; S.focusCache = null; configureLinkForce(); kick(400); },
-    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, setChatScope, nodeType, working, claudeBlocked, confirmDialog,
+    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog,
     rerenderCritique() { const s = S.cur && $('#summary-sec', pbody); if (s && s.__refresh) s.__refresh(); },
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },

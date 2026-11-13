@@ -534,3 +534,57 @@ def test_resizing_the_window_refits_the_map(ctx, server):
         page.wait_for_timeout(1200)  # the refit runs once resizing stops
         assert page.evaluate(inside), size
     assert not page.errors
+
+
+def test_ask_about_topics_and_the_conversation_is_remembered(ctx, server):
+    clear_vault(server)
+    a = api(server, "POST", "/api/notes", {"type": "paper", "title": "Sheath paper", "abstract": "sheath ions wall"})["id"]
+    b = api(server, "POST", "/api/notes", {"type": "paper", "title": "Wall paper", "abstract": "wall emission sheath"})["id"]
+    t = api(server, "POST", "/api/topics", {"name": "Sheath physics", "members": [a, b]})["slug"]
+    api(server, "PUT", "/api/chats/library", {"messages": []})
+    page = open_app(ctx, server)
+    page.evaluate("RB.commands.run('chat.aboutTopics')")
+    page.locator(".ct-sheet .ct-row", has_text="Sheath physics").click()
+    page.locator(".ct-sheet button", has_text="Ask about these").click()
+    expect(page.locator("#chat .chat-title")).to_have_text("This topic")
+    expect(page.locator("#chat-scope .cs-title")).to_have_text("Sheath physics")
+    page.fill("#chat-input", "What do they say about the sheath?")
+    page.click("#btn-chat-send")
+    expect(page.locator("#chat .msg.assistant").last).not_to_contain_text("reading", timeout=20_000)
+    for _ in range(50):  # saved in the background once the answer is in
+        saved = api(server, "GET", f"/api/chats/topics-{t}")
+        if len(saved["messages"]) == 2:
+            break
+        page.wait_for_timeout(100)
+    assert [m["role"] for m in saved["messages"]] == ["user", "assistant"]
+    # a new session: the conversation is still there
+    page2 = open_app(ctx, server)
+    page2.evaluate(f"window.__rb.chatAboutTopics([{{slug: '{t}', name: 'Sheath physics'}}])")
+    expect(page2.locator("#chat .msg.user")).to_contain_text("What do they say about the sheath?")
+    assert not page.errors and not page2.errors
+
+
+def test_general_chat_and_the_web_switch(ctx, server):
+    api(server, "PUT", "/api/privacy/settings", {"web_search": False})
+    api(server, "PUT", "/api/chats/general", {"messages": []})
+    page = open_app(ctx, server)
+    page.evaluate("RB.commands.run('chat.general')")
+    expect(page.locator("#chat .chat-title")).to_have_text("Ask anything")
+    expect(page.locator(".chat-modes button[data-mode=general]")).to_have_class(re.compile(r"\bon\b"))
+    expect(page.locator("#cs-web")).to_be_disabled()  # web search is off in Settings
+    page.fill("#chat-input", "What is a Debye length?")
+    page.click("#btn-chat-send")
+    expect(page.locator("#chat .msg.assistant").last).to_contain_text("fake Claude", timeout=20_000)
+    page.wait_for_function("!window.__rb.S.chatBusy")  # modes don't switch mid-answer
+    # allowed in Settings: the switch works
+    api(server, "PUT", "/api/privacy/settings", {"web_search": True})
+    page.locator(".chat-modes button[data-mode=library]").click()
+    page.locator(".chat-modes button[data-mode=general]").click()
+    expect(page.locator("#cs-web")).to_be_enabled()
+    expect(page.locator("#chat .msg.user")).to_contain_text("Debye length")  # the General conversation is kept
+    page.check("#cs-web")
+    page.fill("#chat-input", "Recent reviews on sheaths?")
+    page.click("#btn-chat-send")
+    expect(page.locator("#chat .msg.assistant").last).to_contain_text("fake Claude", timeout=20_000)
+    api(server, "PUT", "/api/privacy/settings", {"web_search": False})
+    assert not page.errors

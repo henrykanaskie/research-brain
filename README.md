@@ -393,6 +393,20 @@ research_brain checks the list of tools the session reports and kills the run if
 Private notes are never sent at all (see [Private notes](#private-notes-your-own-ideas-stay-on-your-computer)).
 Details: [SECURITY.md](SECURITY.md).
 
+**One exception you can turn on: web search in General chats.** The chat has three modes: **Library** (your
+papers and notes), **Topics…** (every paper in the topics you pick, plus the passages that best match your
+question) and **General** (ask anything). In General, if you allow it under *Settings › Library settings ›
+AI and privacy › Let the agent search the web*, tick **Search the web** and Claude Code can look things up
+and link its sources. Only your question and that General conversation go along, never your library, and the
+session gets exactly two tools (web search and fetching a page). It's off by default, and works with Claude
+Code.
+
+**Conversations are remembered.** Each one (the library, each paper, each set of topics, General) is kept in
+your library (`state/chats/`) and comes back next time. To save space, the last 40 messages are kept in full
+and older ones are folded into a short summary, which still goes along with your questions; the least
+recently used conversations are dropped first when they all add up to more than about 3 MB. **New
+conversation** forgets the current one.
+
 ## Chrome extension (web clipping)
 
 The extension isn't in the Chrome Web Store: load it from this folder.

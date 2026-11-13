@@ -1067,3 +1067,22 @@ body.chat-scoped .rs-mode { display: none; }
 .rb-stopped code { font-size: 13px; }
 /* research brain's own Mac window (app/macwindow.py): no title bar, the window buttons sit here */
 html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-select: none; }
+
+/* Ask about topics (app.js chooseChatTopics): a small sheet of checkboxes */
+.ct-sheet { position: fixed; z-index: 80; top: 96px; right: 24px; width: min(340px, calc(100vw - 32px)); padding: 6px 6px 10px; }
+.ct-list { max-height: 50vh; overflow: auto; }
+.ct-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; cursor: pointer; border-radius: 3px; }
+.ct-row:hover { background: var(--ground); }
+.ct-name { flex: 1; font: 14px var(--serif); }
+.ct-n { font: 12px var(--sans); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ct-acts { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 8px 0; }
+.chat-earlier { font: 12px var(--sans); color: var(--ink-3); margin: 4px 0 12px; }
+
+/* the chat's three kinds of question: your library, some topics, anything (General) */
+.chat-modes { display: flex; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--rule); }
+.chat-modes button { all: unset; cursor: pointer; font: 13px var(--sans); color: var(--ink-2); padding: 7px 0 6px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.chat-modes button:hover { color: var(--ink); }
+.chat-modes button.on { color: var(--ink); border-bottom-color: var(--red); }
+.chat-modes button:focus-visible { outline: 2px solid color-mix(in srgb, var(--ink) 35%, transparent); outline-offset: 2px; }
+.cs-note { font: 12.5px var(--sans); color: var(--ink-2); }
+#cs-web-wrap:has(#cs-web:disabled) { color: var(--ink-3); }

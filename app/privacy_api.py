@@ -21,6 +21,7 @@ ctx = SimpleNamespace(store=None, with_extras=None, publish=None)
 class PrivacySettingsIn(BaseModel):
     private_by_default: list[str] | None = None
     private_ok_for_local_ai: bool | None = None
+    web_search: bool | None = None  # let the agent search the web in General chats (never with library content)
 
 
 class NotePrivacyIn(BaseModel):
@@ -55,7 +56,7 @@ def api_privacy():
 @router.put("/api/privacy/settings")
 def api_privacy_settings(body: PrivacySettingsIn):
     try:
-        privacy.save_settings(body.private_by_default, body.private_ok_for_local_ai)
+        privacy.save_settings(body.private_by_default, body.private_ok_for_local_ai, body.web_search)
     except ValueError as e:
         raise HTTPException(400, str(e))
     privacy.refresh()

@@ -189,6 +189,7 @@ def check_init(ev: dict, allowed: set[str] | frozenset[str] = frozenset(), serve
 
 # ---------------------------------------------------------------- streaming
 _stream_strict_ok: bool | None = None  # like _strict_flags_ok, for the stream-json command line
+WEB_TOOLS = ("WebSearch", "WebFetch")  # the only built-in tools a call may ever be given (General chats, opt-in)
 _UNKNOWN_FLAG = ("unknown option", "unknown argument", "unexpected argument")
 
 
@@ -262,7 +263,7 @@ def parse_stream_line(line: str, state: dict) -> str:
 
 
 def ask_stream(instruction: str, context: str = "", system: str = "", heartbeat: float | None = None,
-               model: str | None = None):
+               model: str | None = None, tools: list[str] | None = None):
     """Like ask(), but yields the answer's text as it arrives. Same safety flags (no tools, no MCP,
     no saved session, empty working directory), same timeout and error messages (raises ClaudeError).
     With `heartbeat`, yields "" whenever no text has arrived for that many seconds (lets an HTTP stream
@@ -279,6 +280,25 @@ def ask_stream(instruction: str, context: str = "", system: str = "", heartbeat:
     base = [path, "-p", instruction, "--output-format", "stream-json", "--verbose"]
     if model or MODEL:
         base += ["--model", model or MODEL]
+    if tools:  # a narrow exception (web search in General chats): exactly these built-in tools, pre-approved,
+        # and the init guard checks the session has nothing else; there is no fallback to a looser command
+        allowed = [t for t in tools if t in WEB_TOOLS]
+        cmd = base + ["--include-partial-messages", "--tools", ",".join(allowed), "--allowedTools", *allowed,
+                      "--disallowedTools", "mcp__*", *DYNAMIC_DENY, "--strict-mcp-config", *NO_DYNAMIC,
+                      "--permission-mode", "dontAsk", "--no-session-persistence", "--disable-slash-commands",
+                      "--setting-sources", ""] + (["--system-prompt", system] if system else [])
+        state: dict = {"allowed": frozenset(allowed)}
+        got_text = False
+        with _sema:
+            for piece in _run_stream(cmd, context, _env(), state, heartbeat):
+                if piece:
+                    got_text = True
+                yield piece
+        if state.get("ok") and not state.get("error"):
+            if not got_text and not state.get("emitted"):
+                raise ClaudeError("Claude CLI error: the answer was empty")
+            return
+        raise _error(state.get("error") or state.get("stderr") or f"exit code {state.get('code')}")
     strict = ["--include-partial-messages", "--tools", "", "--disallowedTools", "mcp__*", *DYNAMIC_DENY,
               "--strict-mcp-config", *NO_DYNAMIC, "--permission-mode", "dontAsk", "--no-session-persistence",
               "--disable-slash-commands", "--setting-sources", ""]  # no skills, settings, hooks or CLAUDE.md
@@ -376,7 +396,7 @@ def _run_stream(cmd: list[str], stdin: str, env: dict, state: dict, heartbeat: f
             if "init" in state and not state.get("guarded"):
                 state["guarded"] = True
                 try:
-                    check_init(state["init"], frozenset())
+                    check_init(state["init"], state.get("allowed", frozenset()))
                 except ToolGuardError:
                     _kill(proc)
                     raise
