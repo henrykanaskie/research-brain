@@ -661,3 +661,43 @@ def test_right_click_empty_map_adds_things_there(ctx, server):
     expect(page.locator("#add-menu")).to_be_visible()
     expect(page.locator("#lookup-input")).to_be_focused()
     assert not page.errors
+
+
+def test_zooming_in_stops_only_when_nothing_would_be_left_on_screen(ctx, server):
+    clear_vault(server)
+    for t in ("Zoom paper one", "Zoom paper two", "Zoom paper three"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": t})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 3")
+    page.wait_for_timeout(2500)
+    box = page.locator("#graph").bounding_box()
+    in_view = """() => { const fg = window.__rb.fg, el = document.getElementById('graph');
+      return [...window.__rb.S.nodes.values()].some(n => { const p = fg.graph2ScreenCoords(n.x, n.y);
+        return p.x >= 0 && p.y >= 0 && p.x <= el.clientWidth && p.y <= el.clientHeight; }); }"""
+    # over a dot: far past the old limit of 10
+    sx, sy = page.evaluate("() => { const fg = window.__rb.fg, n = [...window.__rb.S.nodes.values()][0]; const p = fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }")
+    page.mouse.move(box["x"] + sx, box["y"] + sy)
+    for _ in range(40):
+        page.mouse.wheel(0, -400)
+        page.wait_for_timeout(20)
+    page.wait_for_timeout(400)
+    assert page.evaluate("window.__rb.fg.zoom()") > 10
+    assert page.evaluate(in_view)
+    # back out, then into an empty corner: it stops while something is still in view
+    for _ in range(40):
+        page.mouse.wheel(0, 400)
+        page.wait_for_timeout(20)
+    page.wait_for_timeout(400)
+    page.evaluate("() => { window.__rb.fg.zoomToFit(0, 80); }")
+    page.wait_for_timeout(300)
+    page.mouse.move(box["x"] + 8, box["y"] + 8)
+    for _ in range(60):
+        page.mouse.wheel(0, -400)
+        page.wait_for_timeout(20)
+    page.wait_for_timeout(400)
+    assert page.evaluate(in_view)
+    k = page.evaluate("window.__rb.fg.zoom()")
+    page.mouse.wheel(0, 800)  # zooming out is never stopped
+    page.wait_for_timeout(300)
+    assert page.evaluate("window.__rb.fg.zoom()") < k
+    assert not page.errors

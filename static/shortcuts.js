@@ -281,7 +281,7 @@
     ['The graph', [
       ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. Bigger means more connected and more written about.', []],
       ['Lines', 'Red lines are links you made. Dashed blue-grey lines are text similarity. Click a line to ask Claude why two notes connect.', ['graph.similar', 'graph.citations']],
-      ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region. Zoom in as far as you like; resizing the window refits the map.', ['graph.focus', 'graph.filter', 'graph.fit']],
+      ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region. Zoom in as far as you like while there’s something on screen (it stops before you’d zoom into empty space); resizing the window refits the map.', ['graph.focus', 'graph.filter', 'graph.fit']],
       ['Move dots', 'Drag a dot where you want it: it settles there (and stays next time) while still swaying with its neighbours, and the dots linked to it come along. Right-click › Let it move freely gives it back to the layout.', ['graph.unpinAll']],
       ['Regions', 'Groups of related papers get a name above them. A region with the same papers as a topic shows the topic’s name. Click a name to focus the region, then Rename to change it (the topic follows, unless you keep them different).', ['graph.focusRegion', 'graph.renameRegion']],
     ]],

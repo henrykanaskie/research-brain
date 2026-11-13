@@ -1290,7 +1290,8 @@
       .cooldownTime(9000)
       .d3AlphaDecay(0.028)
       .d3VelocityDecay(0.38)
-      .minZoom(0.12).maxZoom(1e4);  // zoom in as far as you like
+      .minZoom(0.12).maxZoom(1e4)  // zoom in as far as you like, as long as there's something on screen:
+      .onZoom(zoomGuard);          // zoomGuard stops a zoom-in that would leave no dot in view
 
     fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -3 : -20)).distanceMax(120); // compact: linked notes sit close
     fg.d3Force('center', null);
@@ -1877,6 +1878,39 @@
     const p = pins[n.id];
     if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
     n.x = p[0]; n.y = p[1]; n.vx = 0; n.vy = 0; n.__home = [p[0], p[1]]; n.__userPin = true;
+  }
+
+  // ---------- zoom limit: you can zoom in until there would be nothing left on screen ----------
+  let zoomGood = null, zoomFixing = false, userZoomAt = 0;
+  // only your own zooming is limited (wheel, trackpad or touch pinch), never Fit or focusing, which animate
+  // through empty views on their way to the dots
+  graphEl.addEventListener('wheel', () => { userZoomAt = performance.now(); }, { passive: true, capture: true });
+  graphEl.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) userZoomAt = performance.now(); }, { passive: true, capture: true });
+  /** Any dot (shown, not filtered away) inside the view? */
+  function dotInView() {
+    const w = graphEl.clientWidth, h = graphEl.clientHeight;
+    for (const n of S.nodes.values()) {
+      if (!Number.isFinite(n.x) || nodeHidden(n.id) || n.type === 'fragment') continue;
+      const p = fg.graph2ScreenCoords(n.x, n.y);
+      if (p.x >= 0 && p.y >= 0 && p.x <= w && p.y <= h) return true;
+    }
+    return false;
+  }
+  function zoomGuard(t) {
+    if (zoomFixing || !fg || !t || !Number.isFinite(t.k)) return;
+    if (!S.nodes.size) {  // an empty map: an ordinary limit
+      if (t.k > 10) { zoomFixing = true; fg.zoom(10); zoomFixing = false; }
+      return;
+    }
+    if (dotInView()) { const c = fg.centerAt(); zoomGood = { k: t.k, x: c.x, y: c.y }; return; }
+    if (performance.now() - userZoomAt > 300) return;  // the app's own animation, not you
+    // nothing on screen: a zoom-in goes back to the last view that had something in it; zooming out and
+    // panning are never stopped
+    if (zoomGood && t.k > zoomGood.k * 1.0001) {
+      zoomFixing = true;
+      fg.centerAt(zoomGood.x, zoomGood.y); fg.zoom(zoomGood.k);
+      zoomFixing = false;
+    }
   }
 
   /** Fit the map to the window again: the focused region, or everything. */
