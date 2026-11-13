@@ -1122,6 +1122,14 @@
     let anchors = new Map(), subAnchors = new Map();
     function force(alpha) {
       for (const n of nodes) {
+        // safety net: a position that went bad (NaN, Infinity) is put back near its region instead of
+        // spreading through every force and blanking the graph
+        if (!Number.isFinite(n.x) || !Number.isFinite(n.y) || !Number.isFinite(n.vx) || !Number.isFinite(n.vy)) {
+          const a0 = anchors.get(n.cluster);
+          n.x = (a0 ? a0.x : 0) + (Math.random() - 0.5) * 20; n.y = (a0 ? a0.y : 0) + (Math.random() - 0.5) * 20;
+          n.vx = 0; n.vy = 0;
+          if (n.fx !== undefined && !Number.isFinite(n.fx)) { n.fx = undefined; n.fy = undefined; }
+        }
         if (n.type === 'fragment' || n.fx !== undefined) continue;
         const sa = n.sub >= 0 ? subAnchors.get(n.sub) : null;
         const a = sa || anchors.get(n.cluster);
@@ -1332,13 +1340,18 @@
     S.focusCache = null;
     const lf = fg.d3Force('link');
     if (!lf) return;
-    lf.distance((l) => (l.kind === 'part' ? 8 : l.kind === 'manual' ? 28 : l.kind === 'mention' ? 32 : l.kind === 'cites' ? 36 : 26 + 30 * (1 - l.score)))
+    // every kind gets a finite length and pull: one NaN here (a link kind without a score, like an open
+    // question's evidence) makes every dot's position NaN and the whole graph disappears
+    const score = (l) => (Number.isFinite(l.score) ? l.score : 0.3);
+    lf.distance((l) => (l.kind === 'part' ? 8 : l.kind === 'manual' ? 28 : l.kind === 'mention' ? 32 : l.kind === 'cites' ? 36
+      : l.kind === 'question' ? 34 : 26 + 30 * (1 - score(l))))
       .strength((l) => {
         if (l.kind === 'part') return 1;
         if (l.kind === 'manual') return 0.3;
         if (l.kind === 'mention') return 0.2;
+        if (l.kind === 'question') return 0.15;
         if (l.kind === 'cites') return S.showCites ? 0.12 : 0;
-        return linkShown(l) ? 0.03 + 0.2 * l.score : 0;
+        return linkShown(l) ? 0.03 + 0.2 * score(l) : 0;
       });
     kick(200);
   }

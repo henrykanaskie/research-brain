@@ -430,3 +430,29 @@ def test_settings_tabs_and_search(ctx, server):
     dlg.locator(".ls-search").fill("")
     expect(dlg.locator("#ls-lookup")).to_be_visible()  # back on the tab you were on
     assert not page.errors
+
+
+def test_question_evidence_links_dont_blank_the_graph(ctx, server):
+    """An open question's kept evidence is a link with no similarity score; it once made every position NaN."""
+    clear_vault(server)
+    a = api(server, "POST", "/api/notes", {"type": "paper", "title": "Evidence paper"})["id"]
+    b = api(server, "POST", "/api/notes", {"type": "paper", "title": "Another paper"})["id"]
+    q = api(server, "POST", "/api/notes", {"type": "question", "title": "Why does it happen?"})["id"]
+    api(server, "PUT", f"/api/notes/{a}", {"links": [b]})
+    page = ctx.new_page()
+    page.errors = []
+    page.on("pageerror", lambda e: page.errors.append(str(e)))
+
+    def add_question_link(route):
+        resp = route.fetch()
+        g = resp.json()
+        g["question_links"] = [{"q": q, "paper": a, "verdict": "supports"}]
+        route.fulfill(response=resp, json=g)
+    page.route("**/api/graph", add_question_link)
+    page.goto(server["base"] + "/")
+    page.wait_for_function("window.__rb && window.__rb.fg && window.__rb.S.nodes.size >= 3")
+    page.wait_for_timeout(1500)
+    assert page.evaluate("window.__rb.fg.graphData().links.some(l => l.kind === 'question')")
+    assert page.evaluate("window.__rb.fg.graphData().nodes.every(n => Number.isFinite(n.x) && Number.isFinite(n.y))")
+    assert page.evaluate("Number.isFinite(window.__rb.fg.zoom())")
+    assert not page.errors
