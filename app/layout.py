@@ -31,6 +31,7 @@ from pathlib import Path
 
 TYPE_DIRS = {"paper": "Papers", "note": "Notes", "question": "Questions", "fragment": "Highlights"}
 TOPICS_DIR = "Topics"
+_SETTLE_NS = 2_000_000_000  # a folder changed within this long may change again without its mtime moving
 PDFS_DIR = "PDFs"
 DOC_DIRS = (*TYPE_DIRS.values(), TOPICS_DIR, PDFS_DIR)
 
@@ -124,7 +125,10 @@ class Layout:
                 continue
             dirs[d] = m
             cached = listing.get(d)
-            if cached is not None and cached[0] == m:
+            # a folder's mtime only proves "nothing changed" once it is older than the clock's granularity
+            # (about 15 ms on Windows, 1-2 s on some network and FAT drives): two changes in one tick share
+            # a time, and the second would be hidden behind the cached listing
+            if cached is not None and cached[0] == m and time.time_ns() - m > _SETTLE_NS:
                 files, subs = cached[1], cached[2]
             else:
                 try:
@@ -159,9 +163,10 @@ class Layout:
             dirs = dict(self._dirs)
         if not dirs:
             return True
+        now = time.time_ns()
         for d, m in dirs.items():
             try:
-                if os.stat(d).st_mtime_ns != m:
+                if os.stat(d).st_mtime_ns != m or now - m <= _SETTLE_NS:  # changed, or too recent to tell
                     return True
             except OSError:
                 return True
