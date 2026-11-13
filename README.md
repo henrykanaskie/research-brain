@@ -104,14 +104,52 @@ looking papers up, not for the AI, and they cost nothing.
 1. Go to [openalex.org](https://openalex.org) and sign up (free; an email is enough).
 2. Open [openalex.org/settings/api](https://openalex.org/settings/api) and copy your API key.
 
-**Semantic Scholar:**
+**Semantic Scholar:** open [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key-form)
+and scroll to *Request a Semantic Scholar API Key*. Each person asks for their own key. Semantic Scholar
+favours academic, nonprofit and government requests and reviews each one by hand, so the key comes by email,
+usually after a few days. Here is what to put in each field:
 
-1. Fill in the short form at
-   [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key-form) (name, email,
-   and a line on what it's for, such as "my own research library").
-2. The key arrives by email, usually within a few days.
+| Field | What to put |
+| --- | --- |
+| First name, Last name | Your name. |
+| Email | Your university or work email (they ask for an academic or corporate address, not Gmail). |
+| Affiliation | Your university and lab, e.g. *Example University, Department of Physics*. |
+| Affiliation website URL | Your lab's or department's web page (or the university's home page). |
+| Country/Region | Where you are. |
+| Application use | **Private**: the key is only for your own copy of research brain on your own computer. |
+| How do you plan to use Semantic Scholar API in your project? (50 words or more) | Paste the paragraph below, changing the parts in [brackets]. |
+| Which endpoints do you plan to use? | Paste the endpoint list below. |
+| How many requests per day do you anticipate using? | `Usually under 500; up to about 3,000 on a day I import a large library.` |
+| The five checkboxes | Tick them all once you've read the license agreement they link to. research brain already makes unauthenticated requests for you, keeps background jobs to about one request a second and backs off when it's rate-limited (the third box), and you use the key every time you add or look up papers (the 60-day box). |
 
-**Then, in research brain:** **View › Library settings › Paper lookup**, paste each key into its box and save.
+**The paragraph for "How do you plan to use…"** (about 140 words; edit the bracketed parts):
+
+> I am a [PhD student in physics at Example University]. I use research brain, a free, non-commercial
+> personal research library that runs only on my own computer, to organise the papers I read. When I add a
+> paper by DOI, arXiv id or title, it looks up the paper's metadata (title, authors, year, venue, abstract,
+> external ids, citation count, open-access PDF link) with paper lookup and title match. For papers in my
+> library it fetches references and citations to link papers that cite each other, and recommendations to
+> suggest related papers to read next. The key is for my own use only: one user, no web service and no
+> redistribution of data. Requests are made one paper at a time as I work, with background jobs paced at
+> about one request per second and exponential backoff on HTTP 429.
+
+**The endpoint list for "Which endpoints do you plan to use?"** (exactly what research brain calls):
+
+```
+Academic Graph API:
+GET /graph/v1/paper/{paper_id}
+GET /graph/v1/paper/search/match
+GET /graph/v1/paper/search
+GET /graph/v1/paper/{paper_id}/references
+GET /graph/v1/paper/{paper_id}/citations
+Recommendations API:
+GET /recommendations/v1/papers/forpaper/{paper_id}
+POST /recommendations/v1/papers
+Fields: paperId, title, year, authors, abstract, externalIds, venue, publicationVenue, journal,
+publicationDate, url, citationCount, isOpenAccess, openAccessPdf
+```
+
+**Then, in research brain:** **Settings › Library settings › Paper lookup**, paste each key into its box and save.
 The keys stay on your computer and are sent only to their own service. You can add one now and the other
 later.
 
@@ -136,7 +174,7 @@ research brain/
 ```
 
 The documents are Markdown, so they open in any text editor (and the folder opens in Obsidian). Each is
-named after its title and follows it when you rename it. To see the folder from the app: **View › Library
+named after its title and follows it when you rename it. To see the folder from the app: **Settings › Library
 settings › Your documents › Open folder**. (A second profile gets its own *research brain (name)* folder.)
 
 ## Add an AI (optional, can be free)
@@ -173,7 +211,7 @@ Free plans and their limits change; check the provider's current terms.
    password (nothing shows while you type it).
 3. **Sign in once:** in the same window type `gemini`, press Return, choose **Sign in with Google**, and
    follow the browser page. When Gemini says it's ready, type `/quit` and close the window.
-4. **Choose it in research brain:** click the AI name in research brain's top bar (or **View › Library
+4. **Choose it in research brain:** click the AI name in research brain's top bar (or **Settings › Library
    settings › AI agent**) and pick **Gemini CLI**. A green dot means it's ready.
 
 To keep usage low, research brain sends an AI only the passages a question needs (the *Balanced* setting
@@ -211,7 +249,7 @@ double-click the installer again (step 2), or, if you're comfortable with Termin
 | *Copilot … is too old* | In Terminal, run `copilot update`. |
 | Not much disk space | research brain needs about 300 MB. After installing, `uv cache clean` in Terminal frees the download cache. Prefer Gemini over Ollama, whose models take several GB. |
 | Adding or searching for papers says *rate limited*, *allowance used up* or *couldn't reach* | The free lookup services are busy (your internet is usually fine). Add your own free keys: see [Step 5](#step-5-recommended-free-keys-for-looking-papers-up). |
-| Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **View › Library settings › Your documents › Open folder**. |
+| Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **Settings › Library settings › Your documents › Open folder**. |
 
 ## For developers and lab admins: more ways to install
 
@@ -264,7 +302,7 @@ folder, separate from the app: `~/Library/Application Support/research_brain/`
 on macOS (`~/.local/share/research_brain/` on Linux, `%APPDATA%\research_brain\` on Windows). Each
 library ("profile") is a folder under `profiles/`. There are no accounts or passwords: your computer
 login is your identity and everything autosaves. An older `./vault` with notes keeps working where it
-is; **View → Library settings** offers to move it. Details, and how PDFs are obtained:
+is; **Settings → Library settings** offers to move it. Details, and how PDFs are obtained:
 [docs/storage-and-distribution.md](docs/storage-and-distribution.md).
 
 **Finding the AI tool.** For Claude Code, the app finds `claude` on your PATH, `~/.local/bin`
@@ -284,7 +322,7 @@ estimate of the last 7 days. Nothing calls the AI in the background.
 
 ## Choosing an AI agent
 
-**View → Library settings → AI agent** (or the command palette: "Choose AI agent") lists every AI tool
+**Settings → Library settings → AI agent** (or the command palette: "Choose AI agent") lists every AI tool
 research_brain knows, whether it is installed and signed in, and how to install the ones that aren't.
 Pick one; the top bar then says "<agent> ready". Without a choice, the first one found is used, in this
 order: Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, OpenCode, Cursor agent, Ollama, LM Studio.
@@ -324,7 +362,7 @@ looks it up and sends back what it found, and the model never gets tools.
 | Ask your library | **Ask your library**: Claude reads the most relevant passages of your papers (page by page) and your own notes, and cites them as chips like *Paper title p. 9*. Clicking a page citation opens the PDF at that page in a new tab. The passages it read are listed under each answer. |
 | Research mode | In **Ask your library**, switch **Quick** to **Research** (or **Ask with research** in the command palette). Claude then searches your library itself: several searches at once, opening the pages around a hit, following citations, and consulting memory. You see each step as it happens ("Searching: …", "Reading pp. 4–5 of …"), then the answer with `[[note-id]] p. N` citations. The steps fold away when it's done. Most questions take 3–12 s. **Faster model** uses `haiku` for that question. |
 | Memory | **Memory** (chat header, or G then M) shows the library map Research reads first (regions, key notes, recent notes, reading queue, where the PDFs are; generated by the app) and the short findings Claude saved while researching. Findings are labelled *Added via AI*, list their sources, and can be edited or deleted. Files: `vault/memory/`. |
-| Citation links | Papers that cite each other are joined by thin ink lines with an arrowhead at the cited paper (from Semantic Scholar references; only papers already in your library). New imports are linked automatically in the background; for papers you already have, run the backfill below once. Toggle them under **View → Show citation links**. |
+| Citation links | Papers that cite each other are joined by thin ink lines with an arrowhead at the cited paper (from Semantic Scholar references; only papers already in your library). New imports are linked automatically in the background; for papers you already have, run the backfill below once. Toggle them under **Settings → Show citation links**. |
 
 | Idea cards | **Ideas** on a paper: its key claims, equations, measured quantities (value ± uncertainty, unit, conditions) and methods as small cards. **Suggest ideas** has the AI propose them, each with a quote that must be found word for word in the paper; you **Confirm**, **Edit** or **Reject** each (J/K, Y, E, X). The same idea in other papers is linked, and a value that disagrees is flagged. **G then I** opens every card as a table you can sort, filter and export as CSV. See *Idea cards* below. |
 | Cite and export | **Alt+C** (or **Cite** on a paper): copy `\cite{key}`, a formatted citation or a bibliography in APS, IEEE, APA and any CSL style; export BibTeX/BibLaTeX/RIS/CSL-JSON with stable keys; keep a `.bib` file updated automatically. See *Citing and bibliographies* below. |
@@ -470,7 +508,7 @@ vault/.index/      embeddings, chat passage index, search index (meta.sqlite), c
 vault/memory/      Research memory: core.md (library map, generated), findings.md (Added via AI, editable)
 vault/cards/       idea cards, one JSON file per paper (claims, equations, quantities, methods; your review)
 vault/.trash/      deleted notes (nothing is permanently deleted by the app)
-vault/exports/     read-only HTML sites made with View → Export
+vault/exports/     read-only HTML sites made with Settings → Export
 vault/backups/     automatic zips made before a library format upgrade (format 2 moved notes/ into the
                    folders above)
 ```
@@ -584,7 +622,7 @@ question collects it, and shows **3 new since you last looked**.
 
 ## Profiles, backups as a zip, and moving to a new laptop
 
-- **View → Library settings** (or the command palette: *Library settings*, *Switch profile*): the open
+- **Settings → Library settings** (or the command palette: *Library settings*, *Switch profile*): the open
   library and its folder, profiles (create, switch; the app restarts into the new one), the open-access
   settings, and **Export library (.zip)** / **Import a library zip**. An import always becomes a new
   profile, so nothing is overwritten.
@@ -692,7 +730,7 @@ Not relevant).
 
 ## Sharing a reading list (export)
 
-**View → Export** writes a self-contained, read-only website to `vault/exports/<date_time>/`. With a
+**Settings → Export** writes a self-contained, read-only website to `vault/exports/<date_time>/`. With a
 search active it exports the matching notes; otherwise it asks "Export all N notes?". Each note gets a
 page with its metadata, abstract, your summary, notes and fragments, with math rendered by the bundled
 KaTeX. Links between exported notes work; links to notes you didn't export show as plain text, so
@@ -740,7 +778,7 @@ Zotero, Mendeley and pandoc use (formatted by [citeproc-py](https://github.com/c
   for that (you can import your research brain papers into Zotero through a .bib or RIS export).
 - **Styles.** Shipped (offline, in `app/csl/styles/`, CC BY-SA 3.0, see `app/csl/LICENSE.md`): American Physical
   Society (the default), AIP, IEEE, AIAA, Nature, APA 7th and Chicago author-date. Add any other of the 10,000+
-  styles from [zotero.org/styles](https://www.zotero.org/styles): download its `.csl` file and add it in **View ›
+  styles from [zotero.org/styles](https://www.zotero.org/styles): download its `.csl` file and add it in **Settings ›
   Library settings › Citations** (it is checked and saved to `<library>/styles/`). Dependent styles (ones that only
   point to a parent style) aren't supported; add the parent. citeproc-py doesn't implement every corner of CSL, so
   a few styles format some items imperfectly (e.g. AIP and AIAA leave the arXiv number out of a preprint); if a

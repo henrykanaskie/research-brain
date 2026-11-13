@@ -136,7 +136,7 @@ a legal free copy. It never blocks the add, and at most two run at once. Candida
 2. **Semantic Scholar** `openAccessPdf`, which comes with the same lookup at no extra cost.
 3. **Unpaywall** by DOI: `best_oa_location`, then the other `oa_locations`. Unpaywall asks callers to
    identify themselves, so this step runs only after you enter a **contact email** in
-   *View › Library settings* (or set `RB_UNPAYWALL_EMAIL`). The email goes only to Unpaywall.
+   *Settings › Library settings* (or set `RB_UNPAYWALL_EMAIL`). The email goes only to Unpaywall.
 
 Every download goes through `app/urlfetch.download_pdf`, the same SSRF-guarded fetcher the URL import
 uses:
@@ -210,7 +210,7 @@ works because the request is then same-origin.
   from Chrome to Safari gets them back. On the first load in a fresh browser it copies them in, reloads
   once, and reopens the last note. Purely cosmetic, per-device things stay in localStorage.
 - **Profiles** cover shared machines and separate projects. A profile is just another vault folder.
-  Switch or create one in *View › Library settings* (or run `research-brain profiles ...`). Under
+  Switch or create one in *Settings › Library settings* (or run `research-brain profiles ...`). Under
   `research-brain serve` (which `run.sh` uses), the server restarts into the chosen profile in about a
   second. Under a bare `uvicorn` command, the switch applies on the next start. The open profile's
   name shows next to the logo when it isn't `default`, and in the tab title.
@@ -246,7 +246,7 @@ New migrations are added to `MIGRATIONS` and must be idempotent.
 
 ## 6. Backups and moving to a new laptop
 
-- **Whole-library zip.** Use *View › Library settings › Export library (.zip)*,
+- **Whole-library zip.** Use *Settings › Library settings › Export library (.zip)*,
   `GET /api/vault/export`, or `research-brain export lib.zip`. The zip holds notes, PDFs (optional),
   text, state, memory, topics and a manifest (app version, format version, counts), and leaves out
   derived folders. On the new laptop, run **Import a library zip** (or `research-brain import lib.zip

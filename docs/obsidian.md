@@ -8,7 +8,7 @@ the app is running. The app notices changed files and picks them up on the next 
 ## Open it
 
 1. In Obsidian: **Open folder as vault** and choose **Documents › research brain** (in the app:
-   **View › Library settings › Your documents** shows where it is).
+   **Settings › Library settings › Your documents** shows where it is).
 2. Optional, in **Settings → Files and links**:
    - **Default location for new notes**: `Notes`. A new file in `Notes/` (or any subfolder of it) becomes a
      note in the app; `Papers/`, `Questions/` and `Highlights/` hold those kinds.
