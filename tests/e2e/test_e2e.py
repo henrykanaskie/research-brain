@@ -628,3 +628,36 @@ def test_general_chat_attachments_and_the_one_time_warning(ctx, server):
     assert api(server, "GET", "/api/privacy")["settings"]["web_with_attachments"] is True
     api(server, "PUT", "/api/privacy/settings", {"web_search": False, "web_with_attachments": False})
     assert not page.errors
+
+
+def test_right_click_empty_map_adds_things_there(ctx, server):
+    clear_vault(server)
+    for t in ("Map paper one", "Map paper two"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": t})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 2")
+    page.wait_for_timeout(1500)
+    box = page.locator("#graph").bounding_box()
+    x, y = box["x"] + box["width"] * 0.25, box["y"] + box["height"] * 0.3   # an empty corner of the map
+    page.mouse.click(x, y, button="right")
+    menu = page.locator(".node-menu")
+    expect(menu).to_contain_text("Add here")
+    expect(menu).to_contain_text("Add a paper by DOI")
+    expect(menu).to_contain_text("Import a PDF")
+    want = page.evaluate("([sx, sy]) => window.__rb.fg.screen2GraphCoords(sx, sy)", [x - box["x"], y - box["y"]])
+    menu.locator(".menu-item", has_text="Write a note here").click()
+    page.wait_for_function("window.__rb.S.cur && window.__rb.S.cur.type === 'note'")
+    nid = page.evaluate("window.__rb.S.cur.id")
+    page.wait_for_timeout(1500)
+    n = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, !!n.__userPin]; }", nid)
+    assert n[2] and abs(n[0] - want["x"]) < 15 and abs(n[1] - want["y"]) < 15, (n, want)
+    # "Add a paper…" opens the Add box with the cursor in it
+    page.evaluate("window.__rb.closePanel()")
+    ex, ey = box["x"] + box["width"] * 0.15, box["y"] + box["height"] * 0.8
+    page.mouse.move(ex, ey, steps=8)  # like a real pointer: hover moves off the note first
+    page.wait_for_timeout(300)
+    page.mouse.click(ex, ey, button="right")
+    page.locator(".node-menu .menu-item", has_text="Add a paper by DOI").click()
+    expect(page.locator("#add-menu")).to_be_visible()
+    expect(page.locator("#lookup-input")).to_be_focused()
+    assert not page.errors

@@ -1228,9 +1228,12 @@
       // no tooltip that follows the mouse: hovering a dot shows its title and details at the dot (drawNode)
       .nodeLabel(() => '')
       .nodeCanvasObject(drawNode)
-      .nodePointerAreaPaint((n, color, ctx) => {
-        const r = Math.max(nodeRadius(n), 4) + 2;
-        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(n.x, n.y, r + 1, 0, 2 * Math.PI); ctx.fill();
+      .nodePointerAreaPaint((n, color, ctx, k) => {
+        // what you can click: the dot as drawn (with its ring of notes) plus about 6 screen pixels, at any zoom.
+        // A fixed size in map units grew with the zoom and, zoomed far in, covered empty map around the dot.
+        k = k || 1;
+        const r = Math.max(n.__outer || drawnRadius(n, k), 3 / k) + 6 / k;
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI); ctx.fill();
       })
       .nodeVisibility((n) => !nodeHidden(n.id))
       .linkVisibility(linkShown)
@@ -1264,6 +1267,7 @@
         if (regionTagClick(e)) return;
         if (S.backgroundClickHook) S.backgroundClickHook(e);
       })
+      .onBackgroundRightClick((e) => backgroundMenu(e))
       // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
       .onRenderFramePre((ctx, k) => {
@@ -1763,6 +1767,11 @@
         n.x = nb.x + (Math.random() - 0.5) * 30; n.y = nb.y + (Math.random() - 0.5) * 30;
       }
       restoreNodePin(n);  // a dot you placed goes back where you left it
+      // added from a right-click on empty map (backgroundMenu): it appears where you clicked
+      if (S.placeNext && n.type !== 'fragment' && !n.parent && !n.__userPin) {
+        if (Date.now() < S.placeNext.until) { const { x, y } = S.placeNext; n.x = x; n.y = y; n.vx = 0; n.vy = 0; pinNode(n, x, y); }
+        S.placeNext = null;
+      }
     }
     S.nodes = next;
     S.clusters = Array.isArray(g.clusters) ? g.clusters : [];
@@ -2791,6 +2800,30 @@
       toastErr(e, 'Could not unlink');
     }
   }
+  /** Right-click on empty map: add things from right there. What you add next (within a minute and a half)
+   *  appears at that spot, placed as if you had dragged it there. */
+  function backgroundMenu(e) {
+    closeNodeMenu();
+    if (!fg || !e) return;
+    const rect = graphEl.getBoundingClientRect();
+    const p = fg.screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top);
+    const here = () => { if (Number.isFinite(p.x) && Number.isFinite(p.y)) S.placeNext = { x: p.x, y: p.y, until: Date.now() + 90000 }; };
+    const items = [
+      menuItem('Add a paper by DOI, arXiv id or title…', null, () => { here(); openMenu('#btn-add-menu', '#add-menu'); }),
+      menuItem('Import a PDF…', null, () => { here(); $('#pdf-input').click(); }),
+      menuItem('Write a note here', null, () => { here(); newNote(); }),
+    ];
+    const q = $('#btn-new-question');
+    if (q) items.push(menuItem('New question here', null, () => { here(); q.click(); }));
+    items.push(h('div', { class: 'menu-sep' }),
+      menuItem('Import a folder of PDFs…', null, () => { if (window.__rbBulk) window.__rbBulk.pickFolder(); }),
+      menuItem('Import browser bookmarks…', null, () => { if (window.__rbBulk) window.__rbBulk.pickBookmarks(); }));
+    const z = $('#btn-zotero');
+    if (z) items.push(menuItem('Import from Zotero…', null, () => z.click()));
+    items.push(h('div', { class: 'menu-sep' }), menuItem('Fit the map to the window', null, () => refitView()));
+    showMenu('Add here', items, e);
+  }
+
   function nodeMenu(n, e) {
     closeNodeMenu();
     if (!n) return;
@@ -2800,7 +2833,7 @@
     if (cur && !curLinked) items.push(menuItem(`Link to ${truncate(cur.title || cur.id, 40)}`, null, () => linkNotes(cur.id, n.id)));
     if (n.type !== 'fragment') items.push(menuItem('Link to…', null, () => startLinkMode(n)));
     items.push(menuItem('Open', null, () => openNote(n.id, { center: true })));
-    if (n.__userPin) items.push(menuItem('Let it move freely', 'You placed this dot; it stays put until you drag it again or choose this', () => unpinNode(n)));
+    if (n.__userPin) items.push(menuItem('Let it move freely', 'You placed this dot: it settles where you put it. This gives it back to the layout', () => unpinNode(n)));
     // unlink: just the notes it's linked to, the open note's first
     const own = manualLinksOf(n.id).sort((x, y) => (cur && y.other === cur.id) - (cur && x.other === cur.id));
     if (own.length) {
@@ -3722,7 +3755,7 @@
     try {
       const note = await api('POST', '/api/import/lookup', { query });
       if (input) input.value = '';
-      if (note.duplicate) toast(`Already in your library: “${truncate(note.title, 60)}”`, 'info');
+      if (note.duplicate) { S.placeNext = null; toast(`Already in your library: “${truncate(note.title, 60)}”`, 'info'); }
       else toast(`Added “${truncate(note.title, 70)}”`, 'ok');
       await refreshGraph();
       openOrOffer(note, seq0);
@@ -3805,6 +3838,9 @@
   $('#btn-zoom-fit').addEventListener('click', () => { if (S.focusCluster != null) unfocusRegion(); else if (fg) fg.zoomToFit(T(600), 70); });
   graphEl.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'touch') return;
+    // the graph works out what's under the pointer only while it draws; it pauses when nothing moves, so
+    // wake it briefly or it keeps the last dot you hovered (and a right-click on empty map opens that dot's menu)
+    kick(120);
     const r = S.hover ? null : labelHit(e);
     const id = r ? r.cid : null;
     if (r && S.hoverLink) { S.hoverLink = null; }

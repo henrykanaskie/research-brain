@@ -352,6 +352,7 @@ looks it up and sends back what it found, and the model never gets tools.
 | Thing | How |
 | --- | --- |
 | Add a paper | Drag a PDF anywhere onto the window, or **Add PDF**. The app finds the DOI or arXiv id in the PDF (its XMP metadata first, then the first pages) and fills in the citation details from Crossref, arXiv & co. (see "How metadata is found" below). |
+| Add from the map | Right-click an empty spot on the map: add a paper by DOI, arXiv id or title, import a PDF, write a note or start a question. What you add appears at that spot. |
 | Add without a PDF | **Add by DOI / arXiv / title** (⌘⇧A, or ⌘K and type "add paper"). Accepts `10.xxxx/...`, `2301.01234`, arXiv or doi.org URLs, a PMID, an ISBN (books), an OSTI or NTRS link, or a title. |
 | Summaries | Write the summary yourself, then **Critique my summary**. Claude reads the full PDF text and reports errors, what's missing, what's vague, and questions to check yourself. It does not rewrite the summary for you. |
 | Review | **Review** in the top bar (it shows how many are due, and hides when nothing is) brings back your own summaries and fragment notes for recall: write what you remember, **Reveal** your original side by side, then grade yourself. Claude can optionally **Check my recall** in at most three lines. Details below. |

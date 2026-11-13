@@ -268,7 +268,7 @@
   // ====================================================================== in-app guide
   const GUIDE = [
     ['Adding things', [
-      ['Add a paper', 'Drop a PDF on the window, or add one by DOI, arXiv id or title. Metadata comes from Semantic Scholar.', ['library.addById', 'library.importPdf']],
+      ['Add a paper', 'Drop a PDF on the window, add one by DOI, arXiv id or title, or right-click an empty spot on the map (what you add appears right there). Metadata comes from Semantic Scholar.', ['library.addById', 'library.importPdf']],
       ['Write a note', 'Your own idea or synthesis, not tied to one paper.', ['library.newNote']],
       ['Zotero', 'Add, then Import from Zotero brings in papers, notes and highlights.', []],
     ]],
