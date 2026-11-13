@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -119,3 +120,25 @@ def run_server(vault, *, env: dict | None = None, app: str = "app.server:app", c
     finally:
         srv.stop()
         log.close()
+
+
+def note_file(vault, nid: str):
+    """The file of note `nid` in the test library's documents folder (app/layout.py: Papers/, Notes/, ...,
+    named by title), or None. Read from the folder the server recorded in state/library.json."""
+    import json
+    vault = Path(vault)
+    try:
+        docs = Path(json.loads((vault / "state" / "library.json").read_text(encoding="utf-8"))["documents"])
+    except (OSError, ValueError, KeyError):
+        docs = vault
+    for f in docs.rglob("*.md"):
+        if any(part.startswith(".") for part in f.relative_to(docs).parts):
+            continue  # .trash and other hidden folders
+        try:
+            head = f.read_text(encoding="utf-8")[:4000]
+        except OSError:
+            continue
+        if re.search(rf"(?m)^id: {re.escape(nid)}\s*$", head):
+            return f
+    return None
+

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from rb_testserver import run_server
+from rb_testserver import note_file, run_server
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -86,8 +86,11 @@ def test_park_topic_queue_accept_filter(server, browser):
         n = _call(base, "POST", "/api/notes", {"type": "paper", "title": title, "abstract": abstract})
         _call(base, "PUT", f"/api/notes/{n['id']}", {"status": status})
         if s2:
-            p = server["vault"] / "notes" / f"{n['id']}.md"
-            p.write_text(p.read_text(encoding="utf-8").replace("s2_id: ''", f"s2_id: {s2}"))
+            p = note_file(server["vault"], n["id"])
+            text = p.read_text(encoding="utf-8")  # empty fields are left out of the file: add the line
+            text = text.replace("s2_id: ''", f"s2_id: {s2}") if "s2_id:" in text else text.replace(
+                f"id: {n['id']}\n", f"id: {n['id']}\ns2_id: {s2}\n", 1)
+            p.write_text(text, encoding="utf-8")
         ids.append(n["id"])
     shots = os.environ.get("RB_E2E_SHOTS")
     page = browser.new_page(viewport={"width": 1400, "height": 900}, bypass_csp=True)  # see test_e2e.ctx

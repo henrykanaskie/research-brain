@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from rb_testserver import run_server
+from rb_testserver import note_file, run_server
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -187,7 +187,7 @@ def test_new_note_autosave(ctx, server):
     expect(page.locator("#save-indicator")).to_have_text("Saved")
     wait_saved(page, server, nid, "body", "Ions reach the Bohm speed.")
     assert api(server, "GET", f"/api/notes/{nid}")["title"] == "Sheath notes"
-    assert (server["vault"] / "notes" / f"{nid}.md").read_text(encoding="utf-8").count("Bohm speed") == 1
+    assert note_file(server["vault"], nid).read_text(encoding="utf-8").count("Bohm speed") == 1
     # the empty state is gone and the node is on the graph
     expect(page.locator("#empty-state")).to_be_hidden()
     page.wait_for_function("(id) => window.__rb.S.nodes.has(id)", arg=nid)
@@ -403,5 +403,5 @@ def test_delete(ctx, server):
     page.click("#modal-ok")
     expect(page.locator("#panel")).to_be_hidden()
     expect(page.locator("#empty-state")).to_be_visible()
-    assert not (server["vault"] / "notes" / f"{n['id']}.md").exists()
+    assert note_file(server["vault"], n["id"]) is None
     assert (server["vault"] / ".trash" / f"{n['id']}.md").exists() or list((server["vault"] / ".trash").rglob(f"{n['id']}*"))

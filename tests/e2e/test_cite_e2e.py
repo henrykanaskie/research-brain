@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from rb_testserver import run_server
+from rb_testserver import note_file, run_server
 
 try:
     from playwright.sync_api import Error as PWError
@@ -133,7 +133,7 @@ def test_picker_copies_cite_citation_and_bibliography(server, page):
     expect(page.locator("#cite-picker")).to_have_count(0)
     # keys are now saved with the papers
     assert _call(server["base"], "GET", f"/api/notes/{server['ids'][0]}")["_extra"]["citekey"] == "boeuf2018kinetic"
-    assert "citekey: boeuf2018kinetic" in (server["tmp"] / "vault" / "notes" / f"{server['ids'][0]}.md").read_text(encoding="utf-8")
+    assert "citekey: boeuf2018kinetic" in note_file(server["tmp"] / "vault", server["ids"][0]).read_text(encoding="utf-8")
 
     # bibliography: formatted html + plain text together (Word / Google Docs take the html)
     page.keyboard.press("Alt+c")
