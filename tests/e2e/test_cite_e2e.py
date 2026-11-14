@@ -258,3 +258,23 @@ def test_settings_citations_auto_export(server, page):
     sec.locator("#ls-auto-exports").get_by_role("button", name="Remove").click()
     expect(page.locator("#library-settings .ls-msg")).to_contain_text("left where it is")
     assert target.exists()
+
+
+def test_copy_bibtex(server, page):
+    """Copy BibTeX puts the entries themselves on the clipboard, ready for a .bib file."""
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Alt+c")
+    expect(page.locator("#cite-picker")).to_be_visible()
+    page.locator("#cite-picker .ct-search").fill("hall")
+    expect(page.locator("#cite-picker .ct-list li[data-id]")).to_have_count(1)
+    page.locator("#cite-picker .ct-list li[data-id]").first.click()
+    page.locator("#cite-picker .ct-search").fill("neural")
+    page.locator("#cite-picker .ct-list li", has_text="Neural operators").click()
+    expect(page.locator("#cite-picker .ct-n").first).to_have_text("2 selected")
+    page.get_by_role("button", name="Copy BibTeX").click()
+    clip = wait_clip(page, "@")
+    text = clip["text/plain"]
+    assert text.count("\n@") + text.startswith("@") == 2, text
+    assert "{boeuf2018kinetic," in text and "{doe2024neural," in text
+    assert "title = {Kinetic simulations of {Hall} thruster plasma}" in text  # braces keep the capital H
+    expect(page.locator("#cite-picker")).to_have_count(0)

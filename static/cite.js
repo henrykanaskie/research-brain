@@ -111,7 +111,24 @@
   }
 
   // what: 'latex' | 'citation' | 'bibliography'.  scope: {ids} | {topic} | {note}
+  function exportQuery(scope, flavor = 'bibtex') {
+    const q = new URLSearchParams();
+    if (scope.ids) q.set('ids', scope.ids.join(','));
+    if (scope.topic) q.set('topic', scope.topic);
+    if (scope.note) q.set('note', scope.note);
+    if (scope.all) q.set('all', '1');
+    q.set('flavor', flavor);
+    return q;
+  }
   async function render(what, scope, styleId) {
+    if (what === 'bibtex') {  // the BibTeX entries themselves, ready to paste into a .bib file
+      const res = await fetch(`/api/export/bibtex?${exportQuery(scope)}`);
+      if (!res.ok) throw new Error((await res.text().catch(() => '')).slice(0, 200) || `HTTP ${res.status}`);
+      const text = (await res.text()).trim();
+      const n = (text.match(/^@\w+\s*\{/gm) || []).length;
+      if (!n) throw new Error('Nothing to cite here.');
+      return { text: text + '\n', html: `<pre>${esc(text)}</pre>`, label: `${n} BibTeX entr${n === 1 ? 'y' : 'ies'}` };
+    }
     if (what === 'latex') {
       const r = await post('/api/cite/keys', scope);
       if (!r.latex) throw new Error('Nothing to cite here.');
@@ -124,7 +141,7 @@
   }
   function copy(what, scope, styleId) {
     return copyRich(() => render(what, scope, styleId)).then((r) => {
-      toast(what === 'latex' ? `Copied ${r.label}` : what === 'citation' ? `Copied the citation ${r.label}` : `Copied the bibliography: ${r.label}. Paste it into Word, Google Docs or your editor.`);
+      toast(what === 'latex' ? `Copied ${r.label}` : what === 'bibtex' ? `Copied ${r.label}. Paste them into your .bib file.` : what === 'citation' ? `Copied the citation ${r.label}` : `Copied the bibliography: ${r.label}. Paste it into Word, Google Docs or your editor.`);
       return r;
     }).catch((e) => { toast(`Couldn’t copy. ${e.message}`, 'error'); throw e; });
   }
@@ -158,6 +175,7 @@
     const bLatex = el('button', { class: 'btn btn-sm', type: 'button', text: 'Copy \\cite{…}', title: 'LaTeX: \\cite{key1,key2}. The keys are saved with the papers, so they never change.' });
     const bCit = el('button', { class: 'btn btn-sm', type: 'button', text: 'Copy citation', title: 'The in-text citation in the chosen style, e.g. (Doe, 2024) or [1]' });
     const bBib = el('button', { class: 'btn btn-sm', type: 'button', text: 'Copy bibliography', title: 'The reference list in the chosen style, formatted for Word and Google Docs' });
+    const bTex = el('button', { class: 'btn btn-sm', type: 'button', text: 'Copy BibTeX', title: 'The BibTeX entries (@article{…}), to paste into your .bib file' });
     const primary = st.copy === 'citekey' ? bLatex : bBib;
     primary.classList.add('btn-primary');
     const scope = () => ({ ids: Array.from(sel.keys()) });
@@ -165,6 +183,7 @@
     bLatex.addEventListener('click', () => { if (need()) copy('latex', scope()).then(closePicker, () => {}); });
     bCit.addEventListener('click', () => { if (need()) copy('citation', scope(), styleSel.value).then(closePicker, () => {}); });
     bBib.addEventListener('click', () => { if (need()) copy('bibliography', scope(), styleSel.value).then(closePicker, () => {}); });
+    bTex.addEventListener('click', () => { if (need()) copy('bibtex', scope()).then(closePicker, () => {}); });
     styleSel.addEventListener('change', () => { preview(); put('/api/cite/settings', { style: styleSel.value }).then(() => { if (STY) STY.default = styleSel.value; }).catch(() => {}); });
 
     function sub(h) {
@@ -230,7 +249,7 @@
       input, list,
       el('div', { class: 'ct-bar' }, count, styleSel),
       prev,
-      el('div', { class: 'ct-bar' }, el('span', { class: 'ct-n', text: 'Enter selects · ⌘/Ctrl+Enter copies' }), bLatex, bCit, bBib,
+      el('div', { class: 'ct-bar' }, el('span', { class: 'ct-n', text: 'Enter selects · ⌘/Ctrl+Enter copies' }), bLatex, bTex, bCit, bBib,
         el('button', { class: 'btn btn-text btn-sm', type: 'button', text: '.bib', title: 'Download the selected papers as a BibTeX file', onclick: () => { if (need()) download(scope()); } })));
     const wrap = el('div', { class: 'modal', id: 'cite-picker' }, card);
     wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) closePicker(); });
@@ -258,6 +277,7 @@
     if (isPaper) {
       kids.push(item('Copy \\cite{…}', 'LaTeX key, saved with the paper', () => copy('latex', scope).catch(() => {})),
         item('Copy citation', sname, () => copy('citation', scope).catch(() => {})),
+        item('Copy BibTeX', 'The @article{…} entry, for your .bib file', () => copy('bibtex', scope).catch(() => {})),
         item('Copy reference', `${sname}, for Word and Google Docs`, () => copy('bibliography', scope).catch(() => {})),
         item('Download .bib', 'BibTeX entry', () => download(scope)),
         item('Cite with other papers…', 'Opens the picker with this one selected', () => openPicker([{ id: n.id, title: n.title, year: n.year, authors: (n.authors || []).slice(0, 3) }])));
@@ -282,6 +302,7 @@
       kids.push(el('div', { class: 'menu-label', text: 'Papers this note links to with [[ ]]' }),
         item('Copy bibliography', `${sname}, for Word and Google Docs`, () => copy('bibliography', scope).catch(() => {})),
         item('Copy \\cite{…}', 'All their LaTeX keys', () => copy('latex', scope).catch(() => {})),
+        item('Copy BibTeX', 'Their entries, for your .bib file', () => copy('bibtex', scope).catch(() => {})),
         item('Export .bib', 'BibTeX file of those papers', () => download(scope)));
     }
     const m = el('div', { class: 'menu ct-menu', role: 'menu' }, ...kids);
@@ -315,6 +336,7 @@
   function topicTools(slug) {
     return [
       el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Copy bibliography', title: 'The papers in this topic as a reference list in your default style', onclick: () => copy('bibliography', { topic: slug }).catch(() => {}) }),
+      el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Copy BibTeX', title: 'The BibTeX entries of this topic’s papers, to paste into your .bib file', onclick: () => copy('bibtex', { topic: slug }).catch(() => {}) }),
       el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Export .bib', title: 'Download this topic’s papers as BibTeX. For a file that updates itself, add an auto-export in Library settings › Citations.', onclick: () => download({ topic: slug }) }),
     ];
   }
