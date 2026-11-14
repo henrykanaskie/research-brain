@@ -1076,13 +1076,13 @@ body.chat-scoped .rs-mode { display: none; }
 html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-select: none; }
 
 /* Ask about topics (app.js chooseChatTopics): a small sheet of checkboxes */
-.ct-sheet { position: fixed; z-index: 80; top: 96px; right: 24px; width: min(340px, calc(100vw - 32px)); padding: 6px 6px 10px; }
-.ct-list { max-height: 50vh; overflow: auto; }
-.ct-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; cursor: pointer; border-radius: 3px; }
-.ct-row:hover { background: var(--ground); }
-.ct-name { flex: 1; font: 14px var(--serif); }
-.ct-n { font: 12px var(--sans); color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.ct-acts { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 8px 0; }
+.tp-sheet { position: fixed; z-index: 80; top: 96px; right: 24px; width: min(340px, calc(100vw - 32px)); padding: 6px 6px 10px; }
+.tp-list { max-height: 50vh; overflow: auto; }
+.tp-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; cursor: pointer; border-radius: 3px; }
+.tp-row:hover { background: var(--ground); }
+.tp-name { flex: 1; font: 14px var(--serif); }
+.tp-n { font: 12px var(--sans); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.tp-acts { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 8px 0; }
 .chat-earlier { font: 12px var(--sans); color: var(--ink-3); margin: 4px 0 12px; }
 
 /* the chat's three kinds of question: your library, some topics, anything (General) */
@@ -1110,5 +1110,5 @@ html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-se
 .ca-t { flex: 1; font: 14px var(--serif); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ca-n { font: 12px var(--sans); color: var(--ink-3); }
 .ca-empty, .ca-hint { font: 12px var(--sans); color: var(--ink-3); padding: 6px 8px; margin: 0; }
-.ct-all { border-bottom: 1px solid var(--rule); margin-bottom: 4px; padding-bottom: 8px; }
-.ct-all .ct-name { font: 500 13px var(--sans); }
+.tp-all { border-bottom: 1px solid var(--rule); margin-bottom: 4px; padding-bottom: 8px; }
+.tp-all .tp-name { font: 500 13px var(--sans); }

@@ -145,7 +145,11 @@ def test_picker_copies_cite_citation_and_bibliography(server, page):
     clip = wait_clip(page, "Boeuf, J.-P., & Garrigues, L. (2018)")
     assert clip["text/plain"].startswith("Boeuf, J.-P., & Garrigues, L. (2018). Kinetic simulations of Hall thruster plasma.")
     assert '<div class="csl-entry">' in clip["text/html"] and "<i>Physics of Plasmas</i>" in clip["text/html"]
-    # the chosen style became the default
+    # the chosen style became the default (saved in the background: wait for it, a slow machine is slower)
+    for _ in range(50):
+        if _call(server["base"], "GET", "/api/cite/settings")["style"] == "apa":
+            break
+        page.wait_for_timeout(100)
     assert _call(server["base"], "GET", "/api/cite/settings")["style"] == "apa"
 
     # in-text citation; Mod+Enter copies the primary format

@@ -3382,7 +3382,7 @@
     const sheet = h('div', { class: 'menu ca-sheet', role: 'dialog', 'aria-label': 'Attach to this conversation' },
       h('div', { class: 'menu-label', text: 'The agent may read these in this conversation' }), input, list,
       h('p', { class: 'ca-hint', text: 'Private items stay on this computer and can’t be attached. With web search on, only the published parts of papers go along unless you allow your own notes too.' }),
-      h('div', { class: 'ct-acts' }, done));
+      h('div', { class: 'tp-acts' }, done));
     const has = (kind, key) => S.chatAttach.some((a) => a.kind === kind && a.key === key);
     const add = (item) => { if (!has(item.kind, item.key)) { S.chatAttach.push(item); saveAttach(); renderAttachChips(); renderChatScope(); } draw(lastRows); };
     let lastRows = [], seq = 0;
@@ -3435,14 +3435,14 @@
     const boxes = list.map((t) => {
       const cb = h('input', { type: 'checkbox', value: t.slug });
       cb.checked = chosen.has(t.slug);
-      return h('label', { class: 'ct-row' }, cb, h('span', { class: 'ct-name', text: t.name }), h('span', { class: 'ct-n', text: `${t.count} paper${t.count === 1 ? '' : 's'}` }));
+      return h('label', { class: 'tp-row' }, cb, h('span', { class: 'tp-name', text: t.name }), h('span', { class: 'tp-n', text: `${t.count} paper${t.count === 1 ? '' : 's'}` }));
     });
     const go = h('button', { type: 'button', class: 'btn btn-primary', text: 'Ask about these' });
     const cancel = h('button', { type: 'button', class: 'btn btn-text', text: 'Cancel' });
     // Select all: ticks or clears every topic; shows a partial tick when only some are chosen
-    const all = h('input', { type: 'checkbox', id: 'ct-all' });
-    const allRow = h('label', { class: 'ct-row ct-all' }, all, h('span', { class: 'ct-name', text: 'Select all' }),
-      h('span', { class: 'ct-n', text: `${list.length} topic${list.length === 1 ? '' : 's'}` }));
+    const all = h('input', { type: 'checkbox', id: 'tp-all' });
+    const allRow = h('label', { class: 'tp-row tp-all' }, all, h('span', { class: 'tp-name', text: 'Select all' }),
+      h('span', { class: 'tp-n', text: `${list.length} topic${list.length === 1 ? '' : 's'}` }));
     const inputs = () => boxes.map((b) => b.querySelector('input'));
     const sync = () => {
       const on = inputs().filter((i) => i.checked);
@@ -3455,9 +3455,9 @@
     };
     all.addEventListener('change', () => { for (const i of inputs()) i.checked = all.checked; sync(); });
     for (const i of inputs()) i.addEventListener('change', sync);
-    const sheet = h('div', { class: 'menu ct-sheet', role: 'dialog', 'aria-label': 'Ask about topics' },
+    const sheet = h('div', { class: 'menu tp-sheet', role: 'dialog', 'aria-label': 'Ask about topics' },
       h('div', { class: 'menu-label', text: 'Ask about the papers in…' }), boxes.length > 1 ? allRow : null,
-      h('div', { class: 'ct-list' }, boxes), h('div', { class: 'ct-acts' }, cancel, go));
+      h('div', { class: 'tp-list' }, boxes), h('div', { class: 'tp-acts' }, cancel, go));
     sync();
     const close = () => { sheet.remove(); document.removeEventListener('pointerdown', off, true); };
     const off = (e) => { if (!sheet.contains(e.target)) close(); };
