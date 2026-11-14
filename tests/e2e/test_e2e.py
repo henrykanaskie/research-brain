@@ -796,3 +796,26 @@ def test_moving_to_a_screen_with_another_pixel_density(ctx, server):
     page.wait_for_function("!!window.__rb.S.hover", timeout=4000)
     cdp.send("Emulation.clearDeviceMetricsOverride")
     assert not page.errors
+
+
+def test_resizing_never_flashes_a_blank_map(ctx, server):
+    """Each step of a window resize used to wipe the map until the next frame (a flicker). Right after the
+    app handles a resize, the canvas must still show the map."""
+    clear_vault(server)
+    for i in range(8):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Flash paper {i} topic {i % 3}"})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 8")
+    page.wait_for_timeout(2500)
+    page.evaluate("""() => { window.__fl = {blank: 0, steps: 0};
+      new ResizeObserver(() => { const c = document.querySelector('#graph canvas'); if (!c) return;
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let ink = 0;
+        for (let i = 3; i < d.length; i += 4 * 97) if (d[i] > 0) { ink++; if (ink > 3) break; }
+        window.__fl.steps++; if (ink <= 3) window.__fl.blank++; }).observe(document.getElementById('graph')); }""")
+    for i in range(25):
+        page.set_viewport_size({"width": 1100 + i * 12, "height": 760 + i * 6})
+        page.wait_for_timeout(16)
+    page.wait_for_timeout(800)
+    fl = page.evaluate("window.__fl")
+    assert fl["steps"] >= 10 and fl["blank"] == 0, fl
+    assert not page.errors

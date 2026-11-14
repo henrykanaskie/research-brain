@@ -1300,17 +1300,36 @@
     configureLinkForce();
     // Resizing the window (maximise, full screen, dragging an edge): keep the same spot of the map in the
     // middle while it changes, then refit once it stops, to the whole map or the region you're focused on.
+    // Smoothly: resizing a canvas wipes it, and the graph only redraws on its next frame, so each step of a
+    // resize flashed a blank map. The picture is copied before and painted straight back (scaled with the
+    // window, which also scales the map so the same part stays in view); the next frame redraws it for real.
     let lastW = graphEl.clientWidth, lastH = graphEl.clientHeight, refitT = null;
+    const snap = document.createElement('canvas');
     const ro = new ResizeObserver(() => {
       const w = graphEl.clientWidth, h = graphEl.clientHeight;
       if (!w || !h || (w === lastW && h === lastH)) return;
-      const mid = lastW && lastH ? fg.screen2GraphCoords(lastW / 2, lastH / 2) : null;
+      const c = graphEl.querySelector('canvas');
+      const ratio = lastW && lastH ? Math.min(w / lastW, h / lastH) : 1;
+      let had = false;
+      if (c && c.width && c.height) {
+        snap.width = c.width; snap.height = c.height;
+        snap.getContext('2d').drawImage(c, 0, 0);
+        had = true;
+      }
+      const k0 = fg.zoom();
       lastW = w; lastH = h;
-      fg.width(w).height(h);
-      if (mid && Number.isFinite(mid.x) && Number.isFinite(mid.y)) fg.centerAt(mid.x, mid.y);
+      fg.width(w).height(h);  // keeps the view centred
+      if (Number.isFinite(ratio) && ratio > 0 && Math.abs(ratio - 1) > 0.001 && Number.isFinite(k0)) fg.zoom(k0 * ratio);
+      if (had && c) {
+        const ctx = c.getContext('2d');
+        ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+        const sw = snap.width * ratio, sh = snap.height * ratio;
+        ctx.drawImage(snap, (c.width - sw) / 2, (c.height - sh) / 2, sw, sh);
+        ctx.restore();
+      }
       kick(300);
       clearTimeout(refitT);
-      refitT = setTimeout(refitView, 250);
+      refitT = setTimeout(() => { if (!allInView()) refitView(); }, 300);  // only if something ended up off screen
     });
     ro.observe(graphEl);
     // Moving the window to a screen with a different pixel density (Retina and not) doesn't change its size,
@@ -1935,6 +1954,19 @@
       fg.centerAt(zoomGood.x, zoomGood.y); fg.zoom(zoomGood.k);
       zoomFixing = false;
     }
+  }
+
+  /** Every dot (shown, of the focused region if one is) inside the view? */
+  function allInView() {
+    if (!fg) return true;
+    const w = graphEl.clientWidth, h = graphEl.clientHeight;
+    for (const n of S.nodes.values()) {
+      if (!Number.isFinite(n.x) || nodeHidden(n.id) || n.type === 'fragment') continue;
+      if (S.focusCluster != null && n.cluster !== S.focusCluster) continue;
+      const p = fg.graph2ScreenCoords(n.x, n.y);
+      if (p.x < 0 || p.y < 0 || p.x > w || p.y > h) return false;
+    }
+    return true;
   }
 
   /** Fit the map to the window again: the focused region, or everything. */
