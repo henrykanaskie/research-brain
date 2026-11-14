@@ -212,3 +212,40 @@ def test_private_items_cant_be_attached(client, server):
     client.put(f"/api/notes/{note}", json={"private": True})
     r = client.post("/api/general/stream", json={"question": "Thoughts?", "attach": [note]})
     assert r.status_code == 403
+
+
+def test_choose_folder_uses_the_computers_own_dialog(client, server, monkeypatch, tmp_path):
+    import subprocess
+    picked = tmp_path / "Lab Drive" / "research-brain"
+    picked.mkdir(parents=True)
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=str(picked) + "/\n", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(server, "pick_folder_command", lambda prompt: ["chooser", prompt])
+    r = client.post("/api/pick-folder", json={"prompt": "Choose your lab folder"})
+    assert r.status_code == 200 and r.json() == {"path": str(picked)}
+    assert calls and calls[0] == ["chooser", "Choose your lab folder"]
+    # cancelled
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="User canceled"))
+    assert client.post("/api/pick-folder", json={}).json() == {"path": None}
+    # no chooser on this computer
+    monkeypatch.setattr(server, "pick_folder_command", lambda prompt: None)
+    assert client.post("/api/pick-folder", json={}).status_code == 501
+
+
+def test_mac_folder_chooser_command():
+    import sys
+    from app import server as srv
+    if sys.platform != "darwin":
+        pytest.skip("macOS only")
+    cmd = srv.pick_folder_command('Pick "this"')
+    assert cmd[0] == "/usr/bin/osascript" and "choose folder" in cmd[-1] and '"Pick \'this\'"' in cmd[-1]
+
+
+def test_a_paired_phone_cant_open_a_dialog_on_the_computer():
+    from app import pairing
+    assert any(rx.match("/api/pick-folder") for rx, _ in pairing.COMPUTER_ONLY)
+    assert any(rx.match("/api/update/source") for rx, _ in pairing.COMPUTER_ONLY)

@@ -28,9 +28,31 @@ the ideas you mark private never leave it.
 ### Step 1: get the research brain folder
 
 - **From your lab** (the usual way): open the shared folder your lab keeps research brain in (a synced
-  drive such as OneDrive, Box or Google Drive, or a network folder). You'll install from there.
+  drive such as OneDrive, Box or Google Drive, or a network folder). You'll install from there. You'll know it's
+  the right folder because it has **Install-research-brain.command**, **Install-research-brain.cmd** and
+  **latest.json** in it. Can't find it on your computer? See [Finding your lab's shared folder](#finding-your-labs-shared-folder).
 - **From GitHub** (if you have access): open the research brain page, click the green **Code** button,
   choose **Download ZIP**, then double-click the downloaded ZIP to unpack it.
+
+#### Finding your lab's shared folder
+
+The installer has to run from the folder **on your computer** (synced), not from a web page. If your lab sent you
+a link:
+
+- **Google Drive:** open the link in your browser, click the folder's name at the top › **Organize** › **Add
+  shortcut** › *My Drive*. With **Google Drive for desktop** installed, it then appears in Finder under **Google
+  Drive › My Drive** (Windows: the **G:** drive in File Explorer).
+- **OneDrive / SharePoint:** open the link, then **Add shortcut to My files** (or **Sync**). It appears in Finder
+  in the sidebar under **OneDrive** (Windows: File Explorer › **OneDrive**).
+- **Box:** with **Box Drive** installed, the folder appears in Finder › **Box** (Windows: File Explorer › **Box**).
+- **Dropbox:** **Add to Dropbox** on the link page; it appears in Finder › **Dropbox**.
+- **A network share** (`smb://…` or `\\server\share`): Mac: Finder › **Go › Connect to Server…**, paste the address;
+  Windows: paste it into File Explorer's address bar.
+
+Synced drives usually show up in Finder's sidebar under **Locations** (on a Mac they live in
+`~/Library/CloudStorage`). If a file shows a cloud icon, double-click it anyway: it downloads first. To copy a
+folder's full path (handy for support or for settings): Mac: select it in Finder, hold **Option**, right-click ›
+**Copy "…" as Pathname**; Windows: select it, **Shift**+right-click › **Copy as path**.
 
 ### Step 2: run the installer
 
@@ -260,6 +282,11 @@ When a newer version is in your lab's folder, a small **Update** chip appears ne
 double-click the installer again (step 2), or, if you're comfortable with Terminal, run
 `research-brain update`. Updating never touches your library.
 
+research brain knows where your lab's folder is because you installed from it. If it ever loses track (you
+installed some other way, or the folder moved), open **Settings › Library settings › Devices and updates**, click
+**Choose folder…** and pick the lab's research brain folder in Finder or File Explorer (the one with
+`latest.json`); or paste its path there. **Check now** looks for a newer version straight away.
+
 ## Uninstalling
 
 1. Mac: quit research brain. In Terminal, run `research-brain install-app --remove` (removes the app from
@@ -298,8 +325,11 @@ labmates don't need GitHub, Python or anything else.
    `constraints.txt`, the `research_brain-….whl` file, and `research-brain-extension-….zip`) into one folder, e.g.
    *Lab Drive › research-brain*. Or, with the GitHub command line: `gh release download v1.0.0 --dir "/path/to/Lab
    Drive/research-brain" --clobber`.
-2. **Tell your labmates:** open that folder and double-click **Install-research-brain.command** (Mac) or
-   **Install-research-brain.cmd** (Windows), then follow [Install it](#install-it-no-coding-needed) from Step 2. For
+2. **Tell your labmates:** share the folder with them (they need read access), and send them a message like:
+   *"Open our research-brain folder on your computer (see [Finding your lab's shared folder](#finding-your-labs-shared-folder)),
+   double-click Install-research-brain.command (Mac) or Install-research-brain.cmd (Windows), and follow the README's
+   Install steps."* Installing from the folder also sets it as their update folder, so they never need to set it
+   by hand. For
    the Chrome extension, they unzip `research-brain-extension-….zip` somewhere permanent and load that folder (Step 4).
 3. **Updating everyone:** copy the files of a newer release into the same folder (overwrite `latest.json`,
    `install.*` and `constraints.txt`; keep the old `.whl` files so anyone can go back). Within a day everyone sees an

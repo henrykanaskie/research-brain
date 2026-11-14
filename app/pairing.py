@@ -69,6 +69,7 @@ COMPUTER_ONLY = [
     (re.compile(r"^/api/zotero/.*$"), None),
     (re.compile(r"^/api/export$"), None),
     (re.compile(r"^/api/backfill/.*$"), None),
+    (re.compile(r"^/api/(pick-folder|update/source)$"), None),  # a dialog on this computer; where updates come from
 ]
 
 _lock = threading.Lock()

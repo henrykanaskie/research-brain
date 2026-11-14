@@ -870,3 +870,17 @@ def test_fit_is_as_smooth_from_far_out_as_from_close_in(ctx, server):
         shares[label] = max(steps) / (abs(ls[-1] - ls[0]) or 1)
     assert shares["far"] < 0.15 and shares["close"] < 0.15, shares
     assert not page.errors
+
+
+def test_choose_the_lab_update_folder(ctx, server, tmp_path):
+    folder = tmp_path / "Lab Drive" / "research-brain"
+    folder.mkdir(parents=True)
+    page = open_app(ctx, server)
+    page.route("**/api/pick-folder", lambda r: r.fulfill(json={"path": str(folder)}))  # the Finder dialog, answered
+    page.evaluate("window.__rbSettings.open('updates')")
+    sec = page.locator("#ls-updates")
+    sec.get_by_role("button", name="Choose folder…").click()
+    expect(page.locator("#ls-upd-src")).to_have_value(str(folder))
+    page.wait_for_function(f"fetch('/api/update').then(r => r.json()).then(u => u.source === {json.dumps(str(folder))})")
+    api(server, "PUT", "/api/update/source", {"source": ""})
+    assert not page.errors

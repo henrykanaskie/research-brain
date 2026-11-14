@@ -487,6 +487,51 @@ def api_update_source(body: UpdateSourceIn):
     return updates_mod.check(force=True)
 
 
+class PickFolderIn(BaseModel):
+    prompt: str = "Choose a folder"
+
+
+def pick_folder_command(prompt: str) -> list[str] | None:
+    """The command that shows this computer's own folder chooser and prints the chosen path (None: none here)."""
+    import sys
+    prompt = " ".join(str(prompt or "Choose a folder").split())[:120].replace('"', "'")
+    if sys.platform == "darwin":
+        # "activate" brings the dialog to the front, over research brain's window
+        return ["/usr/bin/osascript", "-e", "activate", "-e", f'POSIX path of (choose folder with prompt "{prompt}")']
+    if os.name == "nt":
+        ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+              "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
+              f'$f.Description = "{prompt}"; $f.ShowNewFolderButton = $false;'
+              "if ($f.ShowDialog() -eq 'OK') { [Console]::Out.Write($f.SelectedPath) }")
+        return ["powershell", "-NoProfile", "-STA", "-Command", ps]
+    for cmd in (["zenity", "--file-selection", "--directory", f"--title={prompt}"],
+                ["kdialog", "--getexistingdirectory", os.path.expanduser("~"), "--title", prompt]):
+        if shutil.which(cmd[0]):
+            return cmd
+    return None
+
+
+@app.post("/api/pick-folder")
+def api_pick_folder(body: PickFolderIn):
+    """This computer's folder chooser (Finder, File Explorer, ...), for settings that take a folder: a web page
+    can't learn a folder's real path itself. {"path": "/the/folder"} or {"path": null} if cancelled."""
+    import subprocess
+    cmd = pick_folder_command(body.prompt)
+    if not cmd:
+        raise HTTPException(501, "No folder chooser on this computer. Paste the folder's path instead.")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise HTTPException(500, f"The folder chooser didn't open ({e.__class__.__name__}). Paste the folder's path instead.")
+    path = (r.stdout or "").strip()
+    if r.returncode != 0 or not path:
+        return {"path": None}  # cancelled
+    path = path.rstrip("/\\") or path
+    if not os.path.isdir(path):
+        raise HTTPException(400, "That isn't a folder this computer can open.")
+    return {"path": path}
+
+
 class LookupKeyIn(BaseModel):
     service: str
     key: str | None = None

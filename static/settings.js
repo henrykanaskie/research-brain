@@ -386,6 +386,7 @@
     setCount(f);
     const open = el('button', { class: 'btn', type: 'button', text: 'Open folder', onclick: () => api('/api/papers-folder/reveal', json('POST', {})).catch((e) => say(e.message, true)) });
     const dest = el('input', { type: 'text', id: 'ls-papers-dest', spellcheck: 'false', value: f.default ? f.suggested : f.folder, 'aria-label': 'Papers folder' });
+    const destPick = chooseFolderButton(dest, 'Choose where your papers’ PDFs should live', say);
     const move = el('button', { class: 'btn', type: 'button', text: 'Move here' });
     move.addEventListener('click', async () => {
       const to = dest.value.trim();
@@ -399,10 +400,11 @@
     });
     sec.append(where, count, el('div', { class: 'ls-row' }, open),
       el('label', { class: 'ls-p', for: 'ls-papers-dest', text: f.default ? 'Keep them somewhere you can find them, like your Documents folder or a synced folder:' : 'Move them somewhere else:' }),
-      el('div', { class: 'ls-row' }, dest, move));
+      el('div', { class: 'ls-row' }, dest, destPick, move));
 
     // check a folder you pick for papers you already have, or haven't added
     const scanIn = el('input', { type: 'text', id: 'ls-scan-folder', spellcheck: 'false', value: f.downloads, 'aria-label': 'Folder to check' });
+    const scanPick = chooseFolderButton(scanIn, 'Choose a folder to check for papers', say);
     const deep = el('input', { type: 'checkbox', id: 'ls-scan-deep' });
     const scanBtn = el('button', { class: 'btn', type: 'button', text: 'Check' });
     const out = el('div', { class: 'ls-scan-out', id: 'ls-scan-out' });
@@ -413,7 +415,7 @@
     });
     sec.append(el('div', { class: 'ls-h2', text: 'Papers already on this computer' }),
       el('p', { class: 'ls-p', text: 'Only when you ask, and only the folder you pick: finds PDFs that are already in your library (the same file) and ones that aren’t yet.' }),
-      el('div', { class: 'ls-row' }, scanIn, scanBtn),
+      el('div', { class: 'ls-row' }, scanIn, scanPick, scanBtn),
       el('label', { class: 'ls-p ls-check', for: 'ls-scan-deep' }, deep, ' Include folders inside it'), out);
   }
   function drawScan(out, r, say) {
@@ -456,6 +458,22 @@
     out.replaceChildren(...kids);
   }
 
+  // ---------------------------------------------------------------- choosing a folder
+  /** "Choose folder…": this computer's own folder chooser (Finder, File Explorer; app/server.py
+   *  /api/pick-folder), since a web page can't learn a folder's real path. Fills `input`, then onPicked(path). */
+  function chooseFolderButton(input, prompt, say, onPicked) {
+    const b = el('button', { class: 'btn', type: 'button', text: 'Choose folder…', title: 'Pick the folder in Finder or File Explorer' });
+    b.addEventListener('click', async () => {
+      b.disabled = true; const label = b.textContent; b.textContent = 'Choosing…';
+      try {
+        const r = await api('/api/pick-folder', json('POST', { prompt }));
+        if (r && r.path) { input.value = r.path; if (onPicked) await onPicked(r.path); }
+      } catch (e) { say(e.message, true); }
+      finally { b.disabled = false; b.textContent = label; }
+    });
+    return b;
+  }
+
   // ---------------------------------------------------------------- updates (app/updates.py)
   function updateLine(u) {
     if (!u.enabled) return 'Update checks are off (RB_UPDATE_CHECK=0).';
@@ -478,6 +496,7 @@
       placeholder: 'Lab update folder (e.g. a shared drive) or an https URL of latest.json', 'aria-label': 'Update source' });
     const save = el('button', { class: 'btn', type: 'button', text: 'Save' });
     const check = el('button', { class: 'btn btn-text', type: 'button', text: 'Check now' });
+    const choose = chooseFolderButton(inp, 'Choose your lab’s research brain folder (the one with latest.json)', say, async () => { save.click(); });
     const refresh = (nu) => { u = nu; line.textContent = updateLine(u); how.hidden = !u.newer; how.querySelector('code').textContent = u.command; renderUpdateChip(u); };
     save.addEventListener('click', async () => {
       try { refresh(await api('/api/update/source', json('PUT', { source: inp.value.trim() }))); say(inp.value.trim() ? 'Update source saved.' : 'Using GitHub for updates.'); }
@@ -488,8 +507,8 @@
       try { refresh(await api('/api/update?refresh=true')); say(updateLine(u)); } catch (e) { say(e.message, true); } finally { check.disabled = false; }
     });
     sec.append(line, how, notes || '',
-      el('label', { class: 'ls-p', for: 'ls-upd-src', text: 'Where your lab publishes releases. The folder only needs to be synced to this computer; no GitHub account required.' }),
-      el('div', { class: 'ls-row' }, inp, save, check));
+      el('label', { class: 'ls-p', for: 'ls-upd-src', text: 'Where your lab publishes releases: the shared folder you installed from (installing from it sets this for you). It only needs to be synced to this computer; no GitHub account required. Choose folder… opens Finder or File Explorer, or paste the folder’s path.' }),
+      el('div', { class: 'ls-row' }, inp, choose, save, check));
   }
   /** A small "Update" chip beside the logo when a newer release exists; it opens Settings → Updates. */
   function renderUpdateChip(u) {

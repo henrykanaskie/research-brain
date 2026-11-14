@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 from scale_data import write_library  # noqa: E402
 
-SLACK = float(os.environ.get("RB_SCALE_SLACK", "2" if os.name == "nt" else "1"))  # Windows CI runners are slower
+# shared CI runners (GitHub sets CI=true) are slower and vary from run to run; a computer of your own is held to the plain limits
+SLACK = float(os.environ.get("RB_SCALE_SLACK", "2.5" if os.environ.get("CI") else "2" if os.name == "nt" else "1"))
 
 
 def _load(vault: Path, monkeypatch):
