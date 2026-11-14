@@ -39,8 +39,14 @@ Google Drive for desktop) or a network share. Overwrite `latest.json`, `install.
 keep older wheels so anyone can go back (`research-brain update --to 0.7.0`).
 
 ```bash
-gh release download v0.8.0 --dir "/path/to/Lab Drive/research-brain" --clobber
+gh release download v1.0.1 --dir "/path/to/Lab Drive/research-brain" --clobber
+cd "/path/to/Lab Drive/research-brain" && chmod +x Install-research-brain.command install.sh && xattr -c *
 ```
+
+Downloads lose the executable bit the double-click installer needs and carry macOS's quarantine mark; the second
+line restores one and clears the other (some cloud drives drop the bit again, so README's Terminal fallback
+stays). The installers copy the wheel to a temporary folder before installing, because shared-drive paths have
+spaces ("My Drive", "OneDrive - University") that uv would otherwise split.
 
 Within a day, everyone sees an **Update 0.8.0** chip; they quit the app and run `research-brain update`.
 To roll back, put the previous `latest.json` back (or tell people to run `update --to`).

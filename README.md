@@ -64,7 +64,8 @@ folder's full path (handy for support or for settings): Mac: select it in Finder
 
 If the Mac says it *can't be opened* or *Apple could not verify* it: open **System Settings › Privacy &
 Security**, scroll down, and click **Open Anyway** next to the file's name; then double-click it again.
-If that doesn't appear, or it says *permission denied*, use Terminal instead:
+If that doesn't appear, or it says *permission denied* or *you do not have appropriate access privileges* (common
+when the installer comes from a shared drive), use Terminal instead:
 
 1. Open **Terminal**: in Finder, **Applications › Utilities › Terminal**.
 2. Type `bash ` (the word bash and a space; don't press Return yet).
@@ -323,8 +324,12 @@ labmates don't need GitHub, Python or anything else.
 1. **Put a release in the folder.** From the release page on GitHub, download every file of the newest release
    (`Install-research-brain.command`, `Install-research-brain.cmd`, `install.sh`, `install.ps1`, `latest.json`,
    `constraints.txt`, the `research_brain-….whl` file, and `research-brain-extension-….zip`) into one folder, e.g.
-   *Lab Drive › research-brain*. Or, with the GitHub command line: `gh release download v1.0.0 --dir "/path/to/Lab
-   Drive/research-brain" --clobber`.
+   *Lab Drive › research-brain*. Or, with the GitHub command line: `gh release download v1.0.1 --dir "/path/to/Lab
+   Drive/research-brain" --clobber`. Then make the Mac installer double-clickable (downloads lose that) and clear
+   the "downloaded from the internet" mark, in Terminal:
+   `cd "/path/to/Lab Drive/research-brain" && chmod +x Install-research-brain.command install.sh && xattr -c *`.
+   Some cloud drives don't keep that setting; if a labmate's double-click says it *can't be opened* or *you don't
+   have permission*, the Terminal way in Step 2 always works.
 2. **Tell your labmates:** share the folder with them (they need read access), and send them a message like:
    *"Open our research-brain folder on your computer (see [Finding your lab's shared folder](#finding-your-labs-shared-folder)),
    double-click Install-research-brain.command (Mac) or Install-research-brain.cmd (Windows), and follow the README's
@@ -369,7 +374,7 @@ cd research-brain
 ```
 
 With uv, one line installs a release on every OS:
-`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v1.0.0"`.
+`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v1.0.1"`.
 Without installing, from a checkout: `./run.sh` (the first run builds `.venv`, a few minutes), or
 double-click `research_brain.command` (Mac) or `research_brain.cmd` (Windows).
 

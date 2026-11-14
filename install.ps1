@@ -26,6 +26,15 @@ if ((Test-Path $Src -PathType Container) -and (Test-Path (Join-Path $Src "latest
   $Src = $Wheel
   if (Test-Path (Join-Path $UpdateSource "constraints.txt")) { $Here = $UpdateSource }
 }
+# Shared drives have spaces in their paths ("OneDrive - University", "My Drive"), and uv reads a wheel path with a
+# space as two arguments. Install from a copy in a temporary folder without spaces.
+if (($Src -match ' ') -and (Test-Path $Src -PathType Leaf)) {
+  $RbTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("rb-install-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8))
+  New-Item -ItemType Directory -Path $RbTmp -Force | Out-Null
+  Copy-Item $Src $RbTmp
+  $Src = Join-Path $RbTmp (Split-Path $Src -Leaf)
+  if (Test-Path (Join-Path $Here "constraints.txt")) { Copy-Item (Join-Path $Here "constraints.txt") $RbTmp; $Here = $RbTmp }
+}
 $Spec = $Src
 if ($env:RB_EMBEDDINGS -eq "1") {
   $Url = if (Test-Path $Src) { "file:///" + ((Resolve-Path $Src).Path -replace '\\', '/') } else { $Src }

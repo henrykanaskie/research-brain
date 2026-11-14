@@ -31,6 +31,17 @@ if [ -d "$SRC" ] && [ -f "$SRC/latest.json" ]; then
   SRC="$UPDATE_SOURCE/$WHEEL"
   [ -f "$UPDATE_SOURCE/constraints.txt" ] && HERE_CONSTRAINTS="$UPDATE_SOURCE/constraints.txt"
 fi
+# Shared drives have spaces in their paths ("My Drive", "OneDrive - University"), and uv reads a wheel path with a
+# space as two arguments. Install from a copy in a temporary folder without spaces.
+case "$SRC" in
+  *" "*)
+    if [ -f "$SRC" ]; then
+      RB_TMP="$(mktemp -d "${TMPDIR:-/tmp}/rb-install.XXXXXX")"
+      trap 'rm -rf "$RB_TMP"' EXIT
+      cp "$SRC" "$RB_TMP/" && SRC="$RB_TMP/$(basename "$SRC")"
+      if [ -n "${HERE_CONSTRAINTS:-}" ]; then cp "$HERE_CONSTRAINTS" "$RB_TMP/constraints.txt" && HERE_CONSTRAINTS="$RB_TMP/constraints.txt"; fi
+    fi ;;
+esac
 SPEC="$SRC"
 if [ "${RB_EMBEDDINGS:-}" = 1 ]; then
   case "$SRC" in /*) URL="file://$SRC" ;; *) URL="$SRC" ;; esac
@@ -123,4 +134,4 @@ fi
 if ! command -v claude >/dev/null 2>&1; then
   echo "  The 'claude' CLI isn't installed. Everything except summaries, critiques and Ask/Research works without it."
 fi
-echo "  Open it from the app icon, or with: research-brain open    (browser extension: see extension/README.md)"
+echo "  Open it from the app icon, or with: research-brain open    (Chrome extension: README, Install step 4)"

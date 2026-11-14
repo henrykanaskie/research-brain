@@ -159,3 +159,39 @@ def test_install_launchd_dry_run(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "launchctl bootout" in r.stdout or "Removed" in r.stdout
     assert not list(agents.glob("*.plist"))
+
+
+def test_install_sh_from_a_shared_folder_with_spaces(tmp_path):
+    """Shared drives have spaces in their paths ("My Drive", "OneDrive - University"); uv split the wheel's path
+    at the space and the install failed. The installer now hands uv a copy in a folder without spaces."""
+    import os
+    import shutil
+    import stat
+    import subprocess
+    if os.name == "nt" or not shutil.which("bash"):
+        pytest.skip("bash installer")
+    root = Path(__file__).resolve().parent.parent
+    lab = tmp_path / "Lab Drive" / "research brain"
+    lab.mkdir(parents=True)
+    shutil.copy(root / "install.sh", lab / "install.sh")
+    (lab / "constraints.txt").write_text("numpy==2.0.0\n")
+    (lab / "research_brain-9.9.9-py3-none-any.whl").write_bytes(b"PK fake wheel")
+    (lab / "latest.json").write_text('{"version": "9.9.9", "wheel": "research_brain-9.9.9-py3-none-any.whl"}')
+    home, binx = tmp_path / "home", tmp_path / "bin"
+    home.mkdir(); binx.mkdir()
+    log = tmp_path / "uv-args.txt"
+    uv = binx / "uv"  # a stand-in uv that records what it is given
+    uv.write_text(f'#!/bin/bash\nfor a in "$@"; do echo "$a" >> "{log}"; done\n'
+                  f'[ "$1" = tool ] && for a in "$@"; do case "$a" in *.whl) [ -f "$a" ] || exit 7 ;; esac; done\nexit 0\n')
+    uv.chmod(uv.stat().st_mode | stat.S_IEXEC)
+    env = {"HOME": str(home), "PATH": f"{binx}:/usr/bin:/bin", "RB_NO_DESKTOP": "1", "TMPDIR": str(tmp_path / "t")}
+    (tmp_path / "t").mkdir()
+    r = subprocess.run(["bash", str(lab / "install.sh")], cwd=lab, env=env, capture_output=True, text=True, timeout=60)
+    args = log.read_text().splitlines()
+    wheel = next(a for a in args if a.endswith(".whl"))
+    assert " " not in wheel and wheel.endswith("research_brain-9.9.9-py3-none-any.whl"), args
+    cons = args[args.index("-c") + 1]
+    assert " " not in cons, args
+    assert "Lab Drive" not in wheel
+    # the fake uv installs nothing, so the installer stops after it; the point is what uv was given
+    assert r.returncode != 7, r.stderr
