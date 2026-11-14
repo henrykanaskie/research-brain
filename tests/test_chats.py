@@ -249,3 +249,44 @@ def test_a_paired_phone_cant_open_a_dialog_on_the_computer():
     from app import pairing
     assert any(rx.match("/api/pick-folder") for rx, _ in pairing.COMPUTER_ONLY)
     assert any(rx.match("/api/update/source") for rx, _ in pairing.COMPUTER_ONLY)
+
+
+def test_ai_sorts_imported_papers_into_topics(client, server, monkeypatch):
+    import json as _j
+    ids = [paper(client, t, a) for t, a in [
+        ("Sheath formation at a floating wall", "ion sheath presheath Bohm"),
+        ("Secondary electron emission from walls", "sheath wall emission"),
+        ("Transformers for language", "attention tokens language model"),
+        ("Scaling laws for language models", "language model scaling compute")]]
+    existing = client.post("/api/topics", json={"name": "Plasma sheaths"}).json()["slug"]
+    seen = {}
+
+    def fake_ask(instruction, context, purpose="ask", sources=None):
+        seen.update(context=context, purpose=purpose)
+        return "Here you go:\n" + _j.dumps({"topics": [
+            {"name": "Plasma sheaths", "ids": ids[:2]},
+            {"name": "Language models", "ids": ids[2:] + ["not-a-paper"]}]})
+    monkeypatch.setattr(server, "_ask", fake_ask)
+    r = client.post("/api/topics/auto-sort", json={"ids": ids}).json()
+    assert r["by"] == "ai" and r["sorted"] == 4
+    assert {(t["name"], t["count"], t["new"]) for t in r["topics"]} == {("Plasma sheaths", 2, False), ("Language models", 2, True)}
+    assert set(server.topics_mod.get_topic(server.store, existing)["members"]) == set(ids[:2])  # reused, not duplicated
+    assert "EXISTING TOPICS: Plasma sheaths" in seen["context"] and f"[[{ids[0]}]]" in seen["context"]
+    # nothing left without a topic
+    assert client.post("/api/topics/auto-sort", json={"unsorted": True}).json()["sorted"] == 0
+
+
+def test_sorting_falls_back_to_regions_without_a_usable_answer(client, server, monkeypatch):
+    ids = [paper(client, f"Sheath paper {i}", "ion sheath presheath Bohm wall") for i in range(3)]
+    monkeypatch.setattr(server, "_ask", lambda *a, **k: "I can't do JSON today")
+    r = client.post("/api/topics/auto-sort", json={"ids": ids}).json()
+    assert r["by"] == "regions" and r["sorted"] == 3 and r["topics"]
+
+
+def test_private_papers_are_not_sent_for_sorting(client, server, monkeypatch):
+    ids = [paper(client, f"Paper {i}", "words") for i in range(3)]
+    client.put(f"/api/notes/{ids[0]}", json={"private": True})
+    seen = {}
+    monkeypatch.setattr(server, "_ask", lambda i, c, *a, **k: seen.setdefault("c", c) and '{"topics": []}')
+    client.post("/api/topics/auto-sort", json={"ids": ids})
+    assert f"[[{ids[0]}]]" not in seen["c"] and f"[[{ids[1]}]]" in seen["c"]

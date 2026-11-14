@@ -94,10 +94,14 @@ class PdfHashes:
     """sha256 of every pdfs/<id>.pdf, cached in .index/pdf_hashes.json (derived: rebuilt from the files,
     re-hashing only files whose size or mtime changed)."""
 
+    _locks: dict = {}           # one lock per index file, shared by every instance (each import makes its own)
+    _locks_guard = threading.Lock()
+
     def __init__(self, store):
         self.store = store
         self.path = Path(store.index_dir) / "pdf_hashes.json"
-        self.lock = threading.Lock()
+        with PdfHashes._locks_guard:
+            self.lock = PdfHashes._locks.setdefault(str(self.path), threading.Lock())
 
     def _load(self) -> dict:
         try:
@@ -107,7 +111,9 @@ class PdfHashes:
             return {}
 
     def _save(self, d: dict) -> None:
-        tmp = self.path.with_suffix(".json.tmp")
+        # a temporary name of its own: two imports at once (a folder imports two at a time) used one name, and the
+        # second rename failed with FileNotFoundError, so that PDF's import answered 500
+        tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(d), encoding="utf-8", newline="\n")
         tmp.replace(self.path)
 

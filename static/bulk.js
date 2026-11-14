@@ -78,9 +78,10 @@
     if (!pdfs.length) { d.card.append(h('div', { class: 'bk-acts' }, h('button', { class: 'btn', type: 'button', text: 'Close', onclick: d.close }))); return; }
     const mode = (v) => h('input', { type: 'radio', name: 'bk-topic', value: v });
     const opts = [['folders', subs.size ? `A topic for each subfolder (${[...subs].slice(0, 3).join(', ')}${subs.size > 3 ? '…' : ''}), like bookmark folders` : `One topic, “${root}”`],
+      ['ai', 'Let the AI sort them into topics by what they’re about (it reads each paper’s title and opening, and reuses your topics where they fit)'],
       ['one', `Everything in one topic, “${root}”`], ['none', 'No topics']];
     const radios = opts.map(([v]) => mode(v));
-    radios[0].checked = true;
+    (subs.size ? radios[0] : radios[1]).checked = true;  // subfolders: keep them; one flat folder: let the AI sort it
     const status = h('span', { class: 'bk-status' });
     const bar = h('i');
     const go = h('button', { class: 'btn btn-primary', type: 'button', text: `Import ${pdfs.length}` });
@@ -92,13 +93,14 @@
       const m = (radios.find((r) => r.checked) || radios[0]).value;
       go.disabled = true; radios.forEach((r) => { r.disabled = true; }); d.setBusy(true);
       cancel.textContent = 'Stop'; cancel.onclick = () => { stop = true; status.textContent = 'Stopping…'; };
-      const res = { added: 0, dup: 0, failed: [] };
+      const res = { added: 0, dup: 0, failed: [], ids: [] };
       await pool(pdfs, 2, async (f) => {
         if (stop) return;
-        const t = topicFor(f, m, root);
+        const t = m === 'ai' ? '' : topicFor(f, m, root);
         try {
           const n = await rb.upload(`/api/import/pdf?quick=1${t ? `&topic=${enc(t)}` : ''}`, f);
           if (n.duplicate) res.dup++; else res.added++;
+          if (n.id) res.ids.push(n.id);
         } catch (e) { res.failed.push(`${f.name}: ${e.message}`); }
       }, (done) => { bar.style.width = `${Math.round((done / pdfs.length) * 100)}%`; status.textContent = `${done} of ${pdfs.length}`; });
       d.setBusy(false);
@@ -106,6 +108,19 @@
       if (res.failed.length) status.title = res.failed.slice(0, 20).join('\n');
       go.hidden = true; cancel.textContent = 'Done'; cancel.onclick = d.close;
       rb.refreshGraph();
+      if (m === 'ai' && res.ids.length > 1 && !stop) {
+        const done = status.textContent;
+        status.textContent = `${done} Sorting into topics…`;
+        cancel.disabled = true;
+        try {
+          const r = await api('POST', '/api/topics/auto-sort', { ids: res.ids });
+          const list = (r.topics || []).map((t) => `${t.name} (${t.count}${t.new ? ', new' : ''})`).join(', ');
+          status.textContent = r.sorted ? `${done} Sorted into ${r.topics.length} topic${r.topics.length === 1 ? '' : 's'}${r.by === 'regions' ? ' by similarity (no AI answer)' : ''}: ${list}.` : `${done} ${r.note || ''}`;
+          rb.refreshGraph();
+          window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+        } catch (e) { status.textContent = `${done} Couldn’t sort them into topics: ${e.message}`; }
+        finally { cancel.disabled = false; }
+      }
     });
   }
 

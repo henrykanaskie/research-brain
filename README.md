@@ -420,6 +420,7 @@ looks it up and sends back what it found, and the model never gets tools.
 | Review | **Review** in the top bar (it shows how many are due, and hides when nothing is) brings back your own summaries and fragment notes for recall: write what you remember, **Reveal** your original side by side, then grade yourself. Claude can optionally **Check my recall** in at most three lines. Details below. |
 | Graph views | **Filter** at the top left of the graph fades everything except a type, year range, tag or region. Save a filter plus the current search as a named view. Double-click a node (or select it and press **F**) to show only its 2-hop neighbourhood; **Esc** or **Show all** brings everything back. |
 | Notes on a specific part | **Fragments**: a quote, equation or passage plus your note about it. Each fragment is its own small node orbiting its paper, and it links by meaning to other papers. Add one from the note panel, or highlight text in the built-in PDF viewer (**Open in viewer**), or clip from any web page with the Chrome extension. |
+| Map labels | Papers are labelled with their first author and year ("Boeuf 2018"); notes and questions with their title. Settings (the gear) › **Labels** switches to author, year and title, or the title alone. Hover a dot for its full title. |
 | Move dots | Drag a dot where you want it: it settles there and stays there next time, while still swaying a little with its neighbours, and the dots linked to it come along. Right-click › **Let it move freely**, or the command *Let every dot move freely*, gives it back to the layout. Zoom in as far as you like while something is on screen (it stops before you would zoom into empty space); resizing the window refits the map. |
 | Regions | Related papers form regions, each named above it. A region with the same papers as one of your topics shows the topic's name. Click a region's name to focus it, then **Rename**: the topic is renamed too, unless you tick *Keep the topic's name*. |
 | Panel width | Drag the grip on the left edge of the note panel or the chat to make it wider (up to all but a strip of the map) or narrower; ← and → work when it has focus, and a double-click resets it. Each panel keeps its width. |
@@ -609,7 +610,10 @@ migrations, imports, exports).
 
 **Bringing in what you already have.** *Add › Import a folder of PDFs* opens your computer's folder picker:
 every PDF in the folder (and its subfolders) is added, and each subfolder can become a topic, the way bookmark
-folders work (or everything in one topic, or none). The same file twice is stored once, and titles, authors and
+folders work. Or **let the AI sort them into topics** (the default for a folder without subfolders): it reads each
+paper's title and opening, groups them by what they're about, and reuses your topics where they fit (private papers
+are never sent; without an AI, the map's similarity regions do the sorting). Or everything in one topic, or none.
+For papers you already have, the command *Sort papers that have no topic into topics* does the same. The same file twice is stored once, and titles, authors and
 DOIs fill in over the next minutes. *Add › Import browser bookmarks* takes the bookmarks file any browser exports
 (Chrome or Edge: Bookmarks › Export bookmarks; Firefox: Bookmarks › Manage › Import and Backup › Export; Safari:
 File › Export Bookmarks): each bookmark folder becomes a topic; links that look like papers are ticked; a DOI

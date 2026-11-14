@@ -607,3 +607,28 @@ def test_zip_includes_photo_attachments(tmp_path):
     assert "attachments/x1.jpg" in zipfile.ZipFile(tmp_path / "lib.zip").namelist()
     vaultzip.import_zip(tmp_path / "lib.zip", tmp_path / "new")
     assert (tmp_path / "new" / "attachments" / "x1.jpg").read_bytes().startswith(b"\xff\xd8")
+
+
+def test_pdf_hash_index_survives_imports_at_the_same_time(tmp_path, monkeypatch):
+    """A folder import adds two PDFs at a time, each through its own PdfHashes: they shared one temporary file name
+    and one of them failed with FileNotFoundError (an Internal Server Error for that PDF)."""
+    import threading
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
+    from app.store import Store
+    from app import acquire
+    store = Store(tmp_path / "lib")
+    Path(store.pdf_dir).mkdir(parents=True, exist_ok=True)
+    errors = []
+
+    def one(i):
+        try:
+            for k in range(5):
+                (Path(store.pdf_dir) / f"p{i}-{k}.pdf").write_bytes(b"%PDF-1.4 " + bytes(str((i, k)), "ascii"))
+                acquire.PdfHashes(store).refresh()
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+    threads = [threading.Thread(target=one, args=(i,)) for i in range(6)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert not errors, errors
+    assert len(acquire.PdfHashes(store).refresh()) == 30

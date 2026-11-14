@@ -887,3 +887,26 @@ def test_choose_folder_and_no_update_ui(ctx, server, tmp_path):
     page.wait_for_timeout(4500)  # the old update check ran after 4 s
     assert page.locator("#rb-update-chip").count() == 0
     assert not page.errors
+
+def test_map_labels_first_author_and_year_by_default(ctx, server):
+    clear_vault(server)
+    a = api(server, "POST", "/api/notes", {"type": "paper", "title": "Kinetic simulations of Hall thruster plasma",
+                                           "authors": ["Boeuf, J.-P.", "Garrigues, L."], "year": 2018})["id"]
+    b = api(server, "POST", "/api/notes", {"type": "paper", "title": "Molecular forces", "authors": ["Johannes van der Waals"], "year": 1873})["id"]
+    n = api(server, "POST", "/api/notes", {"type": "note", "title": "My own idea"})["id"]
+    page = open_app(ctx, server)
+    page.evaluate("localStorage.removeItem('rb.labelMode')")
+    page.reload()
+    page.wait_for_function("window.__rb && window.__rb.S.nodes.size >= 3")
+    lab = lambda i: page.evaluate("(id) => window.__rb.mapLabel(window.__rb.S.nodes.get(id))", i)
+    assert lab(a) == "Boeuf 2018" and lab(b) == "van der Waals 1873" and lab(n) == "My own idea"
+    page.click("#btn-view-menu")
+    page.select_option("#label-mode", "authorTitle")
+    assert lab(a).startswith("Boeuf 2018, Kinetic simulations")
+    page.select_option("#label-mode", "title")
+    assert lab(a).startswith("Kinetic simulations of Hall")
+    page.reload()
+    page.wait_for_function("window.__rb && window.__rb.S.nodes.size >= 3")
+    assert lab(a).startswith("Kinetic simulations")  # the preference is kept
+    page.evaluate("localStorage.removeItem('rb.labelMode')")
+    assert not page.errors

@@ -585,3 +585,25 @@ def test_focus_tab_directions_and_writing_help(ctx, server, tmp_path):
     sec = page.locator("#wr-sec")
     expect(sec.locator(".wr-src label").first).to_contain_text("Sheath")
     expect(sec).to_contain_text("Your draft is private")
+
+
+def test_bulk_import_a_flat_folder_lets_the_ai_sort_it(ctx, server, tmp_path):
+    """A folder without subfolders: the AI option is the default, and the new papers end up in topics."""
+    from test_e2e import _pdf_bytes
+    clear_vault(server)
+    root = tmp_path / "Downloads pile"
+    root.mkdir()
+    (root / "a.pdf").write_bytes(_pdf_bytes())
+    (root / "b.pdf").write_bytes(_pdf_bytes().replace(b"Sheath physics", b"Plasma physics"))  # same length: still a valid PDF
+    page = open_app(ctx, server)
+    page.set_input_files("#bulk-folder-input", str(root))
+    dlg = page.locator(".bk-card")
+    expect(dlg).to_contain_text("2 PDFs")
+    expect(dlg.locator("input[value=ai]")).to_be_checked()
+    dlg.locator("button.btn-primary").click()
+    expect(dlg.locator(".bk-status")).to_contain_text("added", timeout=60_000)
+    expect(dlg.locator(".bk-status")).to_contain_text("Sorted into", timeout=60_000)  # fake AI: by similarity
+    # every paper is now in a topic: nothing is left to sort
+    left = page.evaluate("fetch('/api/topics/auto-sort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({unsorted: true})}).then(r => r.json())")
+    assert left["sorted"] == 0, left
+    assert not page.errors

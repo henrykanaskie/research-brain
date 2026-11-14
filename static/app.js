@@ -1603,6 +1603,27 @@
     ctx.restore();
   }
 
+  // ---------- what a dot is labelled with (Settings menu › View › Labels) ----------
+  // Papers: first author and year by default ("Boeuf 2018"), or with the title, or the title alone. Notes and
+  // questions have no authors: their title. A hovered or selected dot always shows its full title.
+  const PARTICLES = new Set(['van', 'von', 'der', 'den', 'de', 'del', 'della', 'di', 'da', 'du', 'dos', 'das', 'le', 'la', 'ter', 'ten', 'st.']);
+  function surname(a) {
+    a = String(a || '').trim();
+    if (!a) return '';
+    if (a.includes(',')) return a.split(',')[0].trim();            // "Boeuf, J.-P."
+    const parts = a.split(/\s+/);
+    let i = parts.length - 1;
+    while (i > 0 && PARTICLES.has(parts[i - 1].toLowerCase())) i--;  // "Johannes van der Waals" -> "van der Waals"
+    return parts.slice(i).join(' ').replace(/[.,;]+$/, '');
+  }
+  function mapLabel(n) {
+    const mode = S.labelMode || 'author';
+    const first = n.type === 'paper' && Array.isArray(n.authors) && n.authors.length ? surname(n.authors[0]) : '';
+    if (mode === 'title' || !first) return truncate(n.title || n.id, 34);
+    const ay = `${first}${n.year ? ' ' + n.year : ''}`;
+    return mode === 'authorTitle' ? truncate(`${ay}, ${n.title || ''}`, 44) : ay;
+  }
+
   /** Titles under dots: after every dot is drawn. Ordinary titles only where they cover no other dot, no
    *  region tag and no other title (the better-connected first); the hovered, selected and search-matched
    *  ones always, on top. */
@@ -1623,7 +1644,7 @@
         : `500 ${fs}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
       if ('fontStretch' in ctx) ctx.fontStretch = big ? 'normal' : 'semi-condensed';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      const label = truncate(n.title || n.id, big ? 72 : 34);
+      const label = big ? truncate(n.title || n.id, 72) : mapLabel(n);
       const y = n.y + outer + (sel ? 15 : big ? 8 : 4) * px;
       const w = ctx.measureText(label).width, box = [n.x - w / 2 - 4 * px, y - 2 * px, n.x + w / 2 + 4 * px, y + fs + 2 * px];
       if (!must && (taken.some((b) => boxesMeet(box, b)) || dotsUnder(G, box, n))) { ctx.restore(); continue; }
@@ -4032,6 +4053,9 @@
       configureLinkForce(); simNudge();
     });
   }
+  S.labelMode = LS.get('labelMode', 'author');
+  $('#label-mode').value = S.labelMode;
+  $('#label-mode').addEventListener('change', (e) => { S.labelMode = e.target.value; LS.set('labelMode', S.labelMode); kick(300); });
   $('#ambient-toggle').checked = S.ambient;
   $('#ambient-toggle').addEventListener('change', (e) => { S.ambient = e.target.checked; LS.set('ambient', S.ambient); });
 
@@ -4073,6 +4097,20 @@
       aliases: ['region name', 'name region', 'rename cluster', 'label region'],
       description: 'Names the focused region. A region with the same papers as a topic shows the topic\'s name; renaming it renames the topic too, unless you choose to keep them different.',
       run: () => renameRegion() });
+    CMD.register({ id: 'topics.autoSort', title: 'Sort papers that have no topic into topics', group: 'Library',
+      aliases: ['auto sort', 'organize', 'organise', 'sort into topics', 'group papers', 'categorize', 'cluster papers'],
+      description: 'The AI agent groups your papers that aren’t in a topic yet by what they’re about, reusing your topics where they fit (without an AI, the map’s regions do).',
+      run: async () => {
+        const t = task('Sorting papers into topics');
+        try {
+          const r = await api('POST', '/api/topics/auto-sort', { unsorted: true });
+          if (!r.sorted) toast(r.note || 'Every paper is already in a topic.', 'info');
+          else toast(`Sorted ${r.sorted} paper${r.sorted === 1 ? '' : 's'} into ${r.topics.length} topic${r.topics.length === 1 ? '' : 's'}${r.by === 'regions' ? ' by similarity' : ''}: ${r.topics.map((x) => x.name).join(', ')}`, 'ok');
+          refreshGraph();
+          window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+        } catch (e) { toastErr(e, 'Could not sort the papers'); }
+        finally { t.done(); }
+      } });
     CMD.register({ id: 'chat.general', title: 'Ask anything (General)', group: 'Research',
       aliases: ['general chat', 'ask ai', 'web search', 'search the web', 'ask agent', 'assistant'],
       description: 'Ask the agent anything, without your library. With web search allowed in Settings, it can look things up and link sources.',
@@ -4221,7 +4259,7 @@
     openMenu, addById, openChat, closeChat, closeExplain, newNote, runCritique, updateSearch, setShowSim, linkNotes, offerCreate,
     pickPdf: () => $('#pdf-input').click(),
     upload, task,
-    zoomFit: () => fg && smoothFit(T(700), 70),
+    zoomFit: () => fg && smoothFit(T(700), 70), mapLabel,
     smoothFit,
     focusRegion, unfocusRegion, chooseRegion,
   });

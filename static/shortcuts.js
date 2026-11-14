@@ -271,6 +271,7 @@
       ['Add a paper', 'Drop a PDF on the window, add one by DOI, arXiv id or title, or right-click an empty spot on the map (what you add appears right there). Metadata comes from Semantic Scholar.', ['library.addById', 'library.importPdf']],
       ['Write a note', 'Your own idea or synthesis, not tied to one paper.', ['library.newNote']],
       ['Zotero', 'Add, then Import from Zotero brings in papers, notes and highlights.', []],
+      ['A folder of PDFs', 'Add › Import a folder of PDFs. Let the AI sort them into topics by what they’re about, or make a topic per subfolder. For papers without a topic: the command Sort papers that have no topic into topics.', ['topics.autoSort']],
     ]],
     ['Reading and thinking', [
       ['Your summary', 'Two or three sentences in your own words. Then ask Claude to critique it against the paper.', ['note.summary', 'note.critique']],
@@ -282,6 +283,7 @@
       ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. Bigger means more connected and more written about.', []],
       ['Lines', 'Red lines are links you made. Dashed blue-grey lines are text similarity. Click a line to ask Claude why two notes connect.', ['graph.similar', 'graph.citations']],
       ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region. Zoom in as far as you like while there’s something on screen (it stops before you’d zoom into empty space); resizing the window refits the map.', ['graph.focus', 'graph.filter', 'graph.fit']],
+      ['Labels', 'Papers are labelled with first author and year; Settings › Labels shows the title too, or the title alone. Hover a dot for its full title.', []],
       ['Move dots', 'Drag a dot where you want it: it settles there (and stays next time) while still swaying with its neighbours, and the dots linked to it come along. Right-click › Let it move freely gives it back to the layout.', ['graph.unpinAll']],
       ['Regions', 'Groups of related papers get a name above them. A region with the same papers as a topic shows the topic’s name. Click a name to focus the region, then Rename to change it (the topic follows, unless you keep them different).', ['graph.focusRegion', 'graph.renameRegion']],
     ]],

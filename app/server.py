@@ -2887,6 +2887,107 @@ def api_topic_create(body: TopicIn):
     return _topic_call(topics_mod.topic_detail, store, t["slug"])
 
 
+# ---------------------------------------------------------------- sorting papers into topics
+SORT_INSTRUCTION = (
+    "Sort the student's PAPERS (below) into research topics. Each paper is listed with its id in [[...]], its title "
+    "and the start of its text. EXISTING TOPICS lists topics they already have: put a paper in one of those (use its "
+    "name exactly) when it clearly fits; otherwise make a new topic named in 2 to 5 plain words, the way a researcher "
+    "would label a folder. Every paper goes in exactly one topic. Aim for a handful of meaningful topics, not one per "
+    "paper and not one for everything. Reply with JSON only, no other text: "
+    '{"topics": [{"name": "Topic name", "ids": ["paper-id", "paper-id"]}]}')
+
+
+class SortTopicsIn(BaseModel):
+    ids: list[str] = []
+    unsorted: bool = False  # every paper that isn't in a topic yet, instead of `ids`
+
+
+def _parse_sort(text: str, allowed: set) -> list[tuple[str, list[str]]]:
+    m = re.search(r"\{.*\}", text or "", re.S)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(0))
+    except ValueError:
+        return []
+    out, seen = [], set()
+    for t in (data.get("topics") or []) if isinstance(data, dict) else []:
+        if not isinstance(t, dict):
+            continue
+        name = " ".join(str(t.get("name") or "").split())[:80]
+        ids = [i for i in (t.get("ids") or []) if isinstance(i, str) and i in allowed and i not in seen]
+        if name and ids:
+            seen.update(ids)
+            out.append((name, ids))
+    return out
+
+
+@app.post("/api/topics/auto-sort")
+def api_topics_auto_sort(body: SortTopicsIn):
+    """Put papers into topics: the AI agent groups them by what they're about (reusing your topics where they fit);
+    without an agent, the map's own regions do. Private papers are never sent."""
+    idx = index()
+    by_id = _ai_visible(idx["by_id"])
+    if body.unsorted:
+        in_topic = set()
+        for t in topics_mod.list_topics(store):
+            try:
+                in_topic.update(topics_mod.get_topic(store, t["slug"])["members"])
+            except (KeyError, topics_mod.TopicError):
+                continue
+        ids = [i for i, n in by_id.items() if n["type"] == "paper" and i not in in_topic]
+    else:
+        ids = [i for i in dict.fromkeys(body.ids) if i in by_id and by_id[i]["type"] == "paper"]
+    if len(ids) < 2:
+        return {"topics": [], "sorted": 0, "by": "", "note": "Nothing to sort (it takes at least two papers)."}
+    existing = {t["name"].casefold(): t for t in topics_mod.list_topics(store)}
+    groups, by = [], "ai"
+    try:
+        room = max(160, 90000 // len(ids))
+        rows = []
+        for i in ids:
+            n = by_id[i]
+            text = (n.get("abstract") or "").strip() or _fulltext(i)[:2000]
+            text = " ".join(text.split())[:room]
+            rows.append(f"[[{i}]] {n['title']}" + (f" ({n['year']})" if n.get("year") else "") + (f"\n{text}" if text else ""))
+        context = ("EXISTING TOPICS: " + ("; ".join(t["name"] for t in existing.values()) or "(none)")
+                   + "\n\nPAPERS:\n\n" + "\n\n".join(rows))
+        groups = _parse_sort(_ask(SORT_INSTRUCTION, context, "topic sorting", sources=ids), set(ids))
+        if not groups:
+            raise ValueError("no usable answer")
+    except (HTTPException, ValueError) as e:
+        # no agent, or an answer that couldn't be used: the map's regions (local text similarity) instead
+        print(f"[research_brain] AI topic sorting fell back to regions: {e!r}")
+        by = "regions"
+        g = _graph_data()
+        cl = {c["id"]: c for c in g["clusters"]}
+        buckets: dict[str, list[str]] = {}
+        for n in g["nodes"]:
+            if n["id"] in ids:
+                c = cl.get(n["cluster"])
+                name = (c.get("label") if c else "") or "Unsorted"
+                name = name[:1].upper() + name[1:]
+                buckets.setdefault(name, []).append(n["id"])
+        groups = list(buckets.items())
+    out, placed = [], 0
+    for name, members in groups:
+        t = existing.get(name.casefold())
+        try:
+            if t:
+                topics_mod.add_notes(store, t["slug"], members)
+                slug, new = t["slug"], False
+            else:
+                made = topics_mod.create_topic(store, name, members=members)
+                existing[name.casefold()] = made
+                slug, new = made["slug"], True
+        except topics_mod.TopicError as e:
+            print(f"[research_brain] couldn't file papers under {name!r}: {e}")
+            continue
+        placed += len(members)
+        out.append({"name": name, "slug": slug, "count": len(members), "new": new})
+    return {"topics": out, "sorted": placed, "by": by}
+
+
 @app.get("/api/topics/suggest")
 def api_topic_suggest():
     g = _graph_data()
