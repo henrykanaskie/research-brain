@@ -1046,7 +1046,7 @@
     S.focusCluster = cid;
     const bar = $('#region-focus');
     if (bar) { $('.rf-name', bar).textContent = regionName(info.label); bar.hidden = false; }
-    fg.zoomToFit(T(600), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid);
+    smoothFit(T(700), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid);
     kick(800);
   }
   /** Rename the focused region, in place in its bar. With a matching topic the topic is renamed too (one
@@ -1103,7 +1103,7 @@
     S.focusCluster = null;
     const bar = $('#region-focus');
     if (bar) { const ed = $('.rf-edit', bar); if (ed) ed.remove(); $('.rf-name', bar).hidden = false; bar.querySelectorAll(':scope > .btn').forEach((b) => { b.hidden = false; }); bar.hidden = true; }
-    if (refit && fg) fg.zoomToFit(T(600), 70);
+    if (refit && fg) smoothFit(T(700), 70);
     kick(800);
   }
   function chooseRegion() {
@@ -1857,7 +1857,7 @@
       }
       const rf = fg.d3Force('regions'); if (rf && rf.relayout) rf.relayout();
       kick(1000);
-      if (S.firstGraph && next.size) setTimeout(() => fg.zoomToFit(T(600), 90), 1400);
+      if (S.firstGraph && next.size) setTimeout(() => smoothFit(T(700), 90), 1400);
     }
     S.firstGraph = false;
   }
@@ -1974,12 +1974,53 @@
     return true;
   }
 
+  // ---------- a smooth "fit": the same feel zooming in from far out as zooming out ----------
+  // The library animated zoom and pan separately and changed the zoom at a constant rate, so from far out
+  // nearly all the visible change happened in the first frames. Here the zoom changes evenly by ratio
+  // (log scale), eases in and out, and the centre moves so the spot it ends on slides in a straight line on
+  // screen, in step with the zoom.
+  let fitAnim = null;
+  function stopFit() { if (fitAnim) { cancelAnimationFrame(fitAnim.raf); fitAnim = null; } }
+  function smoothFit(ms = 600, pad = 70, filter = null) {
+    if (!fg) return;
+    const W = graphEl.clientWidth, H = graphEl.clientHeight;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of S.nodes.values()) {
+      if (!Number.isFinite(n.x) || !Number.isFinite(n.y) || nodeHidden(n.id)) continue;
+      if (filter && !filter(n)) continue;
+      x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y);
+    }
+    if (!Number.isFinite(x0) || !W || !H) return;
+    const bw = Math.max(x1 - x0, 1e-6), bh = Math.max(y1 - y0, 1e-6);
+    const kEnd = Math.max(0.12, Math.min(8, (W - 2 * pad) / bw, (H - 2 * pad) / bh));  // one dot: a sensible zoom
+    const cEnd = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+    const kStart = fg.zoom(), cStart = fg.centerAt();
+    stopFit();
+    if (!ms || !Number.isFinite(kStart) || !cStart || !Number.isFinite(cStart.x)) { fg.zoom(kEnd); fg.centerAt(cEnd.x, cEnd.y); kick(300); return; }
+    const l0 = Math.log(kStart), l1 = Math.log(kEnd);
+    const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    const t0 = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms), e = ease(t);
+      const k = Math.exp(l0 + (l1 - l0) * e);
+      // centre: the end spot moves in a straight line on screen (constant in 1/k), plain blend if no zoom change
+      const u = Math.abs(1 / kStart - 1 / kEnd) > 1e-9 ? (1 / kStart - 1 / k) / (1 / kStart - 1 / kEnd) : e;
+      fg.zoom(k);
+      fg.centerAt(cStart.x + (cEnd.x - cStart.x) * u, cStart.y + (cEnd.y - cStart.y) * u);
+      kick(60);
+      if (t < 1) fitAnim.raf = requestAnimationFrame(step); else fitAnim = null;
+    };
+    fitAnim = { raf: requestAnimationFrame(step) };
+  }
+  // your own zooming or dragging takes over from an animation in progress
+  for (const ev of ['wheel', 'pointerdown']) graphEl.addEventListener(ev, stopFit, { passive: true, capture: true });
+
   /** Fit the map to the window again: the focused region, or everything. */
   function refitView() {
     if (!fg || !S.nodes.size) return;
     const pad = window.innerWidth < 700 ? 40 : 80;
-    if (S.focusCluster != null) fg.zoomToFit(T(400), pad, (n) => n.cluster === S.focusCluster);
-    else fg.zoomToFit(T(400), pad);
+    if (S.focusCluster != null) smoothFit(T(500), pad, (n) => n.cluster === S.focusCluster);
+    else smoothFit(T(500), pad);
     kick(600);
   }
 
@@ -3947,7 +3988,7 @@
     if (claudeBlocked(e.currentTarget) || !S.explain) return;
     openExplain(S.explain.a, S.explain.b, true);
   });
-  $('#btn-zoom-fit').addEventListener('click', () => { if (S.focusCluster != null) unfocusRegion(); else if (fg) fg.zoomToFit(T(600), 70); });
+  $('#btn-zoom-fit').addEventListener('click', () => { if (S.focusCluster != null) unfocusRegion(); else if (fg) smoothFit(T(700), 70); });
   graphEl.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'touch') return;
     // the graph works out what's under the pointer only while it draws; it pauses when nothing moves, so
@@ -4180,7 +4221,8 @@
     openMenu, addById, openChat, closeChat, closeExplain, newNote, runCritique, updateSearch, setShowSim, linkNotes, offerCreate,
     pickPdf: () => $('#pdf-input').click(),
     upload, task,
-    zoomFit: () => fg && fg.zoomToFit(T(600), 70),
+    zoomFit: () => fg && smoothFit(T(700), 70),
+    smoothFit,
     focusRegion, unfocusRegion, chooseRegion,
   });
   boot();

@@ -847,3 +847,26 @@ def test_resizing_back_and_forth_doesnt_shrink_the_map(ctx, server):
       return [...window.__rb.S.nodes.values()].every(n => { const p = fg.graph2ScreenCoords(n.x, n.y);
         return p.x >= 0 && p.y >= 0 && p.x <= el.clientWidth && p.y <= el.clientHeight; }); }""")
     assert not page.errors
+
+
+def test_fit_is_as_smooth_from_far_out_as_from_close_in(ctx, server):
+    """Fit used to do a third of a zoom-in from far out in one frame; it should feel the same both ways."""
+    import math
+    clear_vault(server)
+    for i in range(10):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Smooth fit paper {i} topic {i % 3}"})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 10")
+    page.wait_for_timeout(2500)
+    shares = {}
+    for label, start in (("far", 0.13), ("close", 60)):
+        page.evaluate(f"() => {{ window.__rb.fg.zoom({start}); }}")
+        page.wait_for_timeout(400)
+        page.evaluate("""() => { window.__ks = []; const rec = () => { window.__ks.push(window.__rb.fg.zoom()); if (window.__ks.length < 70) requestAnimationFrame(rec); }; requestAnimationFrame(rec); }""")
+        page.click("#btn-zoom-fit")
+        page.wait_for_timeout(1600)
+        ls = [math.log(k) for k in page.evaluate("window.__ks") if k > 0]
+        steps = [abs(b - a) for a, b in zip(ls, ls[1:])]
+        shares[label] = max(steps) / (abs(ls[-1] - ls[0]) or 1)
+    assert shares["far"] < 0.15 and shares["close"] < 0.15, shares
+    assert not page.errors

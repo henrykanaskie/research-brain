@@ -327,7 +327,7 @@
     rb.setHidden(null);
     pill.hidden = true;
     const fg = rb.fg;
-    if (fg) fg.zoomToFit(reduced() ? 0 : 600, 70);
+    if (fg) { if (rb.smoothFit) rb.smoothFit(reduced() ? 0 : 700, 70); else fg.zoomToFit(reduced() ? 0 : 600, 70); }
     return true;
   }
   // graph refreshed (note added, link made): recompute the neighbourhood around the same node
