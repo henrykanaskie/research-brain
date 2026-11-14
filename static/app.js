@@ -1604,7 +1604,7 @@
   }
 
   // ---------- what a dot is labelled with (Settings menu › View › Labels) ----------
-  // Papers: first author and year by default ("Boeuf 2018"), or with the title, or the title alone. Notes and
+  // Papers: first author and year by default ("Boeuf, 2018"), or with the title, or the title alone. Notes and
   // questions have no authors: their title. A hovered or selected dot always shows its full title.
   const PARTICLES = new Set(['van', 'von', 'der', 'den', 'de', 'del', 'della', 'di', 'da', 'du', 'dos', 'das', 'le', 'la', 'ter', 'ten', 'st.']);
   function surname(a) {
@@ -1620,8 +1620,8 @@
     const mode = S.labelMode || 'author';
     const first = n.type === 'paper' && Array.isArray(n.authors) && n.authors.length ? surname(n.authors[0]) : '';
     if (mode === 'title' || !first) return truncate(n.title || n.id, 34);
-    const ay = `${first}${n.year ? ' ' + n.year : ''}`;
-    return mode === 'authorTitle' ? truncate(`${ay}, ${n.title || ''}`, 44) : ay;
+    const ay = `${first}${n.year ? ', ' + n.year : ''}`;  // "Boeuf, 2018"
+    return mode === 'authorTitle' ? truncate(`${ay} · ${n.title || ''}`, 46) : ay;
   }
 
   /** Titles under dots: after every dot is drawn. Ordinary titles only where they cover no other dot, no

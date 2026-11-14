@@ -899,10 +899,10 @@ def test_map_labels_first_author_and_year_by_default(ctx, server):
     page.reload()
     page.wait_for_function("window.__rb && window.__rb.S.nodes.size >= 3")
     lab = lambda i: page.evaluate("(id) => window.__rb.mapLabel(window.__rb.S.nodes.get(id))", i)
-    assert lab(a) == "Boeuf 2018" and lab(b) == "van der Waals 1873" and lab(n) == "My own idea"
+    assert lab(a) == "Boeuf, 2018" and lab(b) == "van der Waals, 1873" and lab(n) == "My own idea"
     page.click("#btn-view-menu")
     page.select_option("#label-mode", "authorTitle")
-    assert lab(a).startswith("Boeuf 2018, Kinetic simulations")
+    assert lab(a).startswith("Boeuf, 2018 · Kinetic simulations")
     page.select_option("#label-mode", "title")
     assert lab(a).startswith("Kinetic simulations of Hall")
     page.reload()
