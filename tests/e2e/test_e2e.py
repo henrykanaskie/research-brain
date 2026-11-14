@@ -819,3 +819,31 @@ def test_resizing_never_flashes_a_blank_map(ctx, server):
     fl = page.evaluate("window.__fl")
     assert fl["steps"] >= 10 and fl["blank"] == 0, fl
     assert not page.errors
+
+
+def test_resizing_back_and_forth_doesnt_shrink_the_map(ctx, server):
+    """Shrinking the window and growing it back must leave the map as it was: step-by-step zoom factors used to
+    ratchet it smaller with every resize until it almost disappeared."""
+    clear_vault(server)
+    for i in range(8):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Ratchet paper {i} topic {i % 3}"})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 8")
+    page.wait_for_timeout(2500)
+    k0 = page.evaluate("window.__rb.fg.zoom()")
+    W, H = 1400, 900
+    for _ in range(4):  # drag the right edge in and out, then the bottom edge, then a corner
+        for w in list(range(W, 900, -50)) + list(range(900, W + 1, 50)):
+            page.set_viewport_size({"width": w, "height": H}); page.wait_for_timeout(10)
+        for h in list(range(H, 560, -40)) + list(range(560, H + 1, 40)):
+            page.set_viewport_size({"width": W, "height": h}); page.wait_for_timeout(10)
+    for step in list(range(0, 10)) + list(range(10, -1, -1)):
+        page.set_viewport_size({"width": W - step * 40, "height": H - step * 25}); page.wait_for_timeout(10)
+    page.set_viewport_size({"width": W, "height": H})
+    page.wait_for_timeout(1500)
+    k1 = page.evaluate("window.__rb.fg.zoom()")
+    assert abs(k1 - k0) / k0 < 0.05, (k0, k1)
+    assert page.evaluate("""() => { const fg = window.__rb.fg, el = document.getElementById('graph');
+      return [...window.__rb.S.nodes.values()].every(n => { const p = fg.graph2ScreenCoords(n.x, n.y);
+        return p.x >= 0 && p.y >= 0 && p.x <= el.clientWidth && p.y <= el.clientHeight; }); }""")
+    assert not page.errors

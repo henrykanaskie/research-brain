@@ -1179,7 +1179,7 @@
         const subs = [...subSizes.keys()].filter((s) => subOf.get(s) === cid).sort((a, b) => subSizes.get(b) - subSizes.get(a));
         if (subs.length < 2) continue;
         const c = anchors.get(cid);
-        const inner = golden(subs, 4.2 * Math.sqrt(sizes.get(cid)) + 6, c.x, c.y, cid * 1.3);
+        const inner = golden(subs, 2.6 * Math.sqrt(sizes.get(cid)) + 3, c.x, c.y, cid * 1.3);
         for (const [k, v] of inner) subAnchors.set(k, v);
       }
     }
@@ -1193,10 +1193,10 @@
       const n = nodes.length;
       for (let i = 0; i < n; i++) {
         const a = nodes[i];
-        const ra = nodeRadius(a) + (a.type === 'fragment' ? 1 : 3.5);
+        const ra = nodeRadius(a) + (a.type === 'fragment' ? 0.6 : 1.4);  // dots may sit close; they just don't overlap
         for (let j = i + 1; j < n; j++) {
           const b = nodes[j];
-          const rb = nodeRadius(b) + (b.type === 'fragment' ? 1 : 3.5);
+          const rb = nodeRadius(b) + (b.type === 'fragment' ? 0.6 : 1.4);
           let dx = b.x - a.x, dy = b.y - a.y;
           const min = ra + rb;
           if (dx > min || dx < -min || dy > min || dy < -min) continue;
@@ -1293,7 +1293,7 @@
       .minZoom(0.12).maxZoom(1e4)  // zoom in as far as you like, as long as there's something on screen:
       .onZoom(zoomGuard);          // zoomGuard stops a zoom-in that would leave no dot in view
 
-    fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -3 : -20)).distanceMax(120); // compact: linked notes sit close
+    fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -1.5 : -6)).distanceMax(70); // compact: related papers sit close
     fg.d3Force('center', null);
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
@@ -1304,22 +1304,27 @@
     // resize flashed a blank map. The picture is copied before and painted straight back (scaled with the
     // window, which also scales the map so the same part stays in view); the next frame redraws it for real.
     let lastW = graphEl.clientWidth, lastH = graphEl.clientHeight, refitT = null;
+    // one resize (a window drag, a maximise) is measured from where it started, so shrinking and growing back
+    // returns to the same zoom: step-by-step factors ratcheted the map smaller until it almost vanished
+    let start = null;
     const snap = document.createElement('canvas');
     const ro = new ResizeObserver(() => {
       const w = graphEl.clientWidth, h = graphEl.clientHeight;
       if (!w || !h || (w === lastW && h === lastH)) return;
       const c = graphEl.querySelector('canvas');
-      const ratio = lastW && lastH ? Math.min(w / lastW, h / lastH) : 1;
+      if (!start) start = { w: lastW, h: lastH, k: fg.zoom() };
+      const scaleAt = (W, H) => Math.min(W / start.w, H / start.h);
+      const ratio = start.w && start.h ? scaleAt(w, h) / scaleAt(lastW, lastH) : 1;  // this step, for the picture
       let had = false;
       if (c && c.width && c.height) {
         snap.width = c.width; snap.height = c.height;
         snap.getContext('2d').drawImage(c, 0, 0);
         had = true;
       }
-      const k0 = fg.zoom();
       lastW = w; lastH = h;
       fg.width(w).height(h);  // keeps the view centred
-      if (Number.isFinite(ratio) && ratio > 0 && Math.abs(ratio - 1) > 0.001 && Number.isFinite(k0)) fg.zoom(k0 * ratio);
+      const k = start.k * scaleAt(w, h);  // the zoom for this size, from the start of the resize
+      if (Number.isFinite(k) && k > 0) fg.zoom(k);
       if (had && c) {
         const ctx = c.getContext('2d');
         ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1329,7 +1334,7 @@
       }
       kick(300);
       clearTimeout(refitT);
-      refitT = setTimeout(() => { if (!allInView()) refitView(); }, 300);  // only if something ended up off screen
+      refitT = setTimeout(() => { start = null; if (!allInView()) refitView(); }, 300);  // only if something ended up off screen
     });
     ro.observe(graphEl);
     // Moving the window to a screen with a different pixel density (Retina and not) doesn't change its size,
@@ -1424,8 +1429,8 @@
     // every kind gets a finite length and pull: one NaN here (a link kind without a score, like an open
     // question's evidence) makes every dot's position NaN and the whole graph disappears
     const score = (l) => (Number.isFinite(l.score) ? l.score : 0.3);
-    lf.distance((l) => (l.kind === 'part' ? 8 : l.kind === 'manual' ? 28 : l.kind === 'mention' ? 32 : l.kind === 'cites' ? 36
-      : l.kind === 'question' ? 34 : 26 + 30 * (1 - score(l))))
+    lf.distance((l) => (l.kind === 'part' ? 6 : l.kind === 'manual' ? 18 : l.kind === 'mention' ? 22 : l.kind === 'cites' ? 26
+      : l.kind === 'question' ? 24 : 16 + 22 * (1 - score(l))))
       .strength((l) => {
         if (l.kind === 'part') return 1;
         if (l.kind === 'manual') return 0.3;
