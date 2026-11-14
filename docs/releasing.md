@@ -34,33 +34,29 @@ access to the private GitHub repository.
 
 ## Roll it out to the lab
 
-Copy the release's files into the lab's update folder: anything synced to everyone's disk (OneDrive, Box,
-Google Drive for desktop) or a network share. Overwrite `latest.json`, `install.*` and `constraints.txt`;
-keep older wheels so anyone can go back (`research-brain update --to 0.7.0`).
+Upload `research-brain-installer-X.Y.Z.zip` to the lab's shared folder (OneDrive, SharePoint, Google Drive, Box:
+in the browser is fine) and tell people. It holds the installers (the Mac one with its executable bit kept: single
+files downloaded in a browser lose it), the wheel, `latest.json`, `constraints.txt`, the extension zip, README.md and
+`READ ME FIRST.txt`. People download it, unzip it and run the installer; running a newer one later updates them in
+place. To go back, they run an older installer.
 
 ```bash
-gh release download v1.0.1 --dir "/path/to/Lab Drive/research-brain" --clobber
-cd "/path/to/Lab Drive/research-brain" && chmod +x Install-research-brain.command install.sh && xattr -c *
+gh release download vX.Y.Z --pattern "research-brain-installer-*"
 ```
 
-Downloads lose the executable bit the double-click installer needs and carry macOS's quarantine mark; the second
-line restores one and clears the other (some cloud drives drop the bit again, so README's Terminal fallback
-stays). The installers copy the wheel to a temporary folder before installing, because shared-drive paths have
-spaces ("My Drive", "OneDrive - University") that uv would otherwise split.
-
-Within a day, everyone sees an **Update 0.8.0** chip; they quit the app and run `research-brain update`.
-To roll back, put the previous `latest.json` back (or tell people to run `update --to`).
+The installers copy the wheel to a temporary folder before installing, because shared-drive paths have spaces
+("My Drive", "OneDrive - University") that uv would otherwise split.
 
 **Library format changes.** A release that migrates the library is one-way: the old version refuses to
 open a migrated library rather than damage it (a zip backup is made before every migration, in the
 profile's `backups/`). Say so in the notes, and don't roll back past it.
 
-## Where the app looks for updates
+## Updates
 
-`RB_UPDATE_SOURCE`, else the folder saved in **Library settings › Updates** (`research-brain update --source
-<folder>`, set automatically when someone installs from the folder), else the repository's latest GitHub
-release, which needs a `GITHUB_TOKEN` or the `gh` command signed in. It checks at most once a day,
-reads only `latest.json`, and never installs anything by itself. `RB_UPDATE_CHECK=0` turns the check off.
+The app doesn't check for updates or show an update notice: labmates install new versions by running the newer
+installer. For admins, `research-brain update` installs the newest release from GitHub (it needs a `GITHUB_TOKEN`
+or the `gh` command signed in while the repository is private), or from a folder of release files with
+`research-brain update --source <folder>`; `--to X.Y.Z` installs a specific version.
 
 ## Installers
 

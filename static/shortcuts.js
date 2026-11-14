@@ -298,7 +298,7 @@
     ['Getting around', [
       ['Commands', 'Find any action by name. Every action has a title; frequent ones have a key.', ['general.palette', 'general.shortcuts']],
       ['Panel width', 'Drag the grip on the left edge of the note panel or the chat to make it wider or narrower (or focus it and use ← →). Double-click it to reset. Widths are kept.', []],
-      ['Updates', 'When your lab’s shared folder has a newer version, an Update chip appears by the logo. The folder is set when you install from it; to change it, Settings › Library settings › Devices and updates › Choose folder… (or paste its path).', []],
+      ['Updates', 'When your lab shares a newer version, download its installer zip and run the installer again, the same way as the first time. Your library stays exactly as it is.', []],
       ['Settings', 'The gear at the top right: Library settings (in tabs, with a search box), what the graph shows, and appearance.', []],
       ['History', 'Go back and forward through the notes you opened.', ['nav.back', 'nav.forward']],
       ['Paper lookup keys', 'If adding or searching for papers says rate limited, add free keys: get one at openalex.org/settings/api and one from semanticscholar.org/product/api, then paste them in Settings › Library settings › Paper lookup.', []],

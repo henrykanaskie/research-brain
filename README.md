@@ -27,32 +27,11 @@ the ideas you mark private never leave it.
 
 ### Step 1: get the research brain folder
 
-- **From your lab** (the usual way): open the shared folder your lab keeps research brain in (a synced
-  drive such as OneDrive, Box or Google Drive, or a network folder). You'll install from there. You'll know it's
-  the right folder because it has **Install-research-brain.command**, **Install-research-brain.cmd** and
-  **latest.json** in it. Can't find it on your computer? See [Finding your lab's shared folder](#finding-your-labs-shared-folder).
+- **From your lab** (the usual way): in your lab's shared folder (OneDrive, SharePoint, Google Drive, Box, … in the
+  browser is fine), click **research-brain-installer-….zip** and **Download** it. Double-click the downloaded zip and
+  open the folder it makes: you'll install from there (*READ ME FIRST.txt* inside says the same in short).
 - **From GitHub** (if you have access): open the research brain page, click the green **Code** button,
   choose **Download ZIP**, then double-click the downloaded ZIP to unpack it.
-
-#### Finding your lab's shared folder
-
-The installer has to run from the folder **on your computer** (synced), not from a web page. If your lab sent you
-a link:
-
-- **Google Drive:** open the link in your browser, click the folder's name at the top › **Organize** › **Add
-  shortcut** › *My Drive*. With **Google Drive for desktop** installed, it then appears in Finder under **Google
-  Drive › My Drive** (Windows: the **G:** drive in File Explorer).
-- **OneDrive / SharePoint:** open the link, then **Add shortcut to My files** (or **Sync**). It appears in Finder
-  in the sidebar under **OneDrive** (Windows: File Explorer › **OneDrive**).
-- **Box:** with **Box Drive** installed, the folder appears in Finder › **Box** (Windows: File Explorer › **Box**).
-- **Dropbox:** **Add to Dropbox** on the link page; it appears in Finder › **Dropbox**.
-- **A network share** (`smb://…` or `\\server\share`): Mac: Finder › **Go › Connect to Server…**, paste the address;
-  Windows: paste it into File Explorer's address bar.
-
-Synced drives usually show up in Finder's sidebar under **Locations** (on a Mac they live in
-`~/Library/CloudStorage`). If a file shows a cloud icon, double-click it anyway: it downloads first. To copy a
-folder's full path (handy for support or for settings): Mac: select it in Finder, hold **Option**, right-click ›
-**Copy "…" as Pathname**; Windows: select it, **Shift**+right-click › **Copy as path**.
 
 ### Step 2: run the installer
 
@@ -102,8 +81,8 @@ after you close it); nothing runs in the background and nothing starts when your
 The extension saves papers, highlights and quotes from web pages (arXiv, journal sites, PDFs open in Chrome)
 straight into research brain. It isn't in the Chrome Web Store; you add it once from a folder:
 
-1. **Get the extension folder.** From your lab's shared folder: copy **`research-brain-extension-….zip`** to your
-   computer, double-click it to unzip, and move the folder it makes somewhere permanent, such as **Documents**
+1. **Get the extension folder.** In the folder you installed from, double-click **`research-brain-extension-….zip`**
+   to unzip it, and move the folder it makes somewhere permanent, such as **Documents**
    (Chrome loads it from there every time, so don't delete it, and don't leave it in a synced folder that may offload
    it). From a GitHub download or checkout: the **`extension`** folder inside the research brain folder.
 2. In Chrome, go to `chrome://extensions` (type it in the address bar).
@@ -114,8 +93,8 @@ straight into research brain. It isn't in the Chrome Web Store; you add it once 
 research brain has to be open for the extension to work: it only talks to research brain on your computer.
 To use it, on a paper's page click the toolbar button and **Save to research_brain**; to clip a passage, select
 it, right-click and choose **Add to research_brain…**; to highlight a page, press **Alt+Shift+A**. After you
-update research brain, replace that folder with the new release's extension (unzip it over the old one) and press
-the reload arrow on the extension's card in `chrome://extensions`. More in
+update research brain, replace that folder with the new installer's extension (unzip it over the old one) and
+press the reload arrow on the extension's card in `chrome://extensions`. More in
 [Chrome extension](#chrome-extension-web-clipping).
 
 ### Step 5 (recommended): free keys for looking papers up
@@ -279,14 +258,9 @@ in **Library settings › AI usage**), and nothing ever calls the AI in the back
 
 ## Updating
 
-When a newer version is in your lab's folder, a small **Update** chip appears next to the logo. To update,
-double-click the installer again (step 2), or, if you're comfortable with Terminal, run
-`research-brain update`. Updating never touches your library.
-
-research brain knows where your lab's folder is because you installed from it. If it ever loses track (you
-installed some other way, or the folder moved), open **Settings › Library settings › Devices and updates**, click
-**Choose folder…** and pick the lab's research brain folder in Finder or File Explorer (the one with
-`latest.json`); or paste its path there. **Check now** looks for a newer version straight away.
+When your lab shares a newer version, download its **research-brain-installer-….zip** and run the installer
+again, the same way as the first time. It replaces the app and never touches your library. (research brain doesn't
+check for updates by itself.)
 
 ## Uninstalling
 
@@ -318,32 +292,26 @@ installed some other way, or the folder moved), open **Settings › Library sett
 
 ## Sharing research brain with your lab
 
-You need one shared folder everyone can read (OneDrive, Box, Google Drive for desktop, or a network share). Your
-labmates don't need GitHub, Python or anything else.
+Your labmates don't need GitHub, Python or anything else: one file does it.
 
-1. **Put a release in the folder.** From the release page on GitHub, download every file of the newest release
-   (`Install-research-brain.command`, `Install-research-brain.cmd`, `install.sh`, `install.ps1`, `latest.json`,
-   `constraints.txt`, the `research_brain-….whl` file, and `research-brain-extension-….zip`) into one folder, e.g.
-   *Lab Drive › research-brain*. Or, with the GitHub command line: `gh release download v1.0.1 --dir "/path/to/Lab
-   Drive/research-brain" --clobber`. Then make the Mac installer double-clickable (downloads lose that) and clear
-   the "downloaded from the internet" mark, in Terminal:
-   `cd "/path/to/Lab Drive/research-brain" && chmod +x Install-research-brain.command install.sh && xattr -c *`.
-   Some cloud drives don't keep that setting; if a labmate's double-click says it *can't be opened* or *you don't
-   have permission*, the Terminal way in Step 2 always works.
-2. **Tell your labmates:** share the folder with them (they need read access), and send them a message like:
-   *"Open our research-brain folder on your computer (see [Finding your lab's shared folder](#finding-your-labs-shared-folder)),
-   double-click Install-research-brain.command (Mac) or Install-research-brain.cmd (Windows), and follow the README's
-   Install steps."* Installing from the folder also sets it as their update folder, so they never need to set it
-   by hand. For
-   the Chrome extension, they unzip `research-brain-extension-….zip` somewhere permanent and load that folder (Step 4).
-3. **Updating everyone:** copy the files of a newer release into the same folder (overwrite `latest.json`,
-   `install.*` and `constraints.txt`; keep the old `.whl` files so anyone can go back). Within a day everyone sees an
-   **Update** chip next to the logo; they quit research brain and click it (or run `research-brain update`).
+1. **Upload the installer zip.** On the release page, download **`research-brain-installer-<version>.zip`** and upload
+   it to your lab's shared folder (OneDrive, SharePoint, Google Drive, Box…; or with the GitHub command line:
+   `gh release download v1.0.2 --pattern "research-brain-installer-*"`). Upload the zip itself, don't unzip it: it
+   keeps the Mac installer double-clickable, which single files downloaded in a browser don't. It holds the
+   installers, the app, the Chrome extension, this README and *READ ME FIRST.txt*.
+2. **Send your labmates something like:** *"In our shared folder, download research-brain-installer-….zip.
+   Double-click it, open the folder it makes, and double-click Install-research-brain.command (Mac) or
+   Install-research-brain.cmd (Windows). READ ME FIRST.txt in there covers anything that gets in the way."* The
+   README's [Install it](#install-it-no-coding-needed) steps cover the security prompts (*Open Anyway* on a Mac,
+   *More info › Run anyway* on Windows).
+3. **New versions:** upload the newer zip and tell people; they download it and run its installer the same way.
+   Their libraries stay as they are.
 
 Each person gets their own library on their own computer: nothing is shared between labmates unless someone
-exports something (a reading list, a `.bib`, a library zip). Each person also adds their own AI and their own free
-paper lookup keys (Steps 4 and 5 and [Add an AI](#add-an-ai-optional-can-be-free)). More detail, including how a
-library-format change is handled: [docs/releasing.md](docs/releasing.md).
+exports something (a reading list, a `.bib`, a library zip). Each person adds their own AI and their own free
+paper-lookup keys (Steps 4 and 5 and [Add an AI](#add-an-ai-optional-can-be-free)). The Chrome extension is in the zip
+as `research-brain-extension-….zip` ([Step 4](#step-4-optional-add-the-chrome-extension)). More detail, including how
+a library-format change is handled: [docs/releasing.md](docs/releasing.md).
 
 ## For developers and lab admins: more ways to install
 
@@ -351,7 +319,7 @@ Under the hood the installers use [uv](https://docs.astral.sh/uv/), which downlo
 (about 66 MB) and installs research brain in its own environment (about 175 MB), so nothing conflicts with
 Python, conda or Homebrew already on the computer.
 
-**From a terminal**, in the lab's update folder or a checkout:
+**From a terminal**, in an unzipped installer folder or a checkout:
 
 ```bash
 ./install.sh                                            # macOS and Linux
@@ -360,10 +328,10 @@ research-brain open                                     # opens it in its own wi
 research-brain                                          # or: the server in this terminal + a browser tab (Ctrl+C stops it)
 ```
 
-From a release folder, the installer installs the newest release there and remembers the folder, so
-**`research-brain update`** brings you up to date later; **Library settings › Updates** shows what's new.
-A library that a newer version has converted won't open in an older one (it stops with a clear message
-instead). Publishing a release and rolling it out to the lab: [docs/releasing.md](docs/releasing.md).
+From a release folder, the installer installs the release in it. The app doesn't check for updates itself; for
+admins, **`research-brain update`** installs the newest GitHub release (it needs the `gh` command, signed in, while
+the repository is private). A library that a newer version has converted won't open in an older one (it stops with a
+clear message instead). Publishing a release and rolling it out to the lab: [docs/releasing.md](docs/releasing.md).
 
 **From the repository** (you have access to it on GitHub):
 
@@ -374,7 +342,7 @@ cd research-brain
 ```
 
 With uv, one line installs a release on every OS:
-`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v1.0.1"`.
+`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v1.0.2"`.
 Without installing, from a checkout: `./run.sh` (the first run builds `.venv`, a few minutes), or
 double-click `research_brain.command` (Mac) or `research_brain.cmd` (Windows).
 
@@ -455,7 +423,7 @@ looks it up and sends back what it found, and the model never gets tools.
 | Move dots | Drag a dot where you want it: it settles there and stays there next time, while still swaying a little with its neighbours, and the dots linked to it come along. Right-click › **Let it move freely**, or the command *Let every dot move freely*, gives it back to the layout. Zoom in as far as you like while something is on screen (it stops before you would zoom into empty space); resizing the window refits the map. |
 | Regions | Related papers form regions, each named above it. A region with the same papers as one of your topics shows the topic's name. Click a region's name to focus it, then **Rename**: the topic is renamed too, unless you tick *Keep the topic's name*. |
 | Panel width | Drag the grip on the left edge of the note panel or the chat to make it wider (up to all but a strip of the map) or narrower; ← and → work when it has focus, and a double-click resets it. Each panel keeps its width. |
-| Settings | The gear at the top right: **Library settings** (tabs: Library, Adding papers, AI and privacy, Citations, Devices and updates, plus a search box), what the graph shows, and appearance. |
+| Settings | The gear at the top right: **Library settings** (tabs: Library, Adding papers, AI and privacy, Citations, Devices, plus a search box), what the graph shows, and appearance. |
 | Connections | Dashed lines are semantic similarity (local embeddings; tune with the slider). Solid lines are links you made. Click any line, or **Why?** in the related list, to have Claude explain the relationship. |
 | Find more papers | **Discover papers** on a paper shows its references, citing papers, and recommendations. **Add** imports one and links it. |
 | Ask your library | **Ask your library**, **Library** tab: Claude reads the most relevant passages of your papers (page by page) and your own notes, and cites them as chips like *Paper title p. 9*. Clicking a page citation opens the PDF at that page in a new tab. The passages it read are listed under each answer. |

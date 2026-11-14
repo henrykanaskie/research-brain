@@ -1,0 +1,29 @@
+research brain: installing it
+=============================
+
+This folder has everything you need. You don't need Python, GitHub or anything else.
+
+MAC
+1. Double-click "Install-research-brain.command".
+2. If the Mac says it "can't be opened" or "Apple could not verify" it: open System Settings >
+   Privacy & Security, scroll down, click "Open Anyway" next to Install-research-brain.command,
+   then double-click it again.
+   Still blocked? Open Terminal (Applications > Utilities), type  bash  and a space, drag
+   Install-research-brain.command into the Terminal window, and press Return.
+3. A window shows the install (a few minutes the first time). When it says Done, research brain
+   opens. From then on, open it from Launchpad or your Applications folder.
+
+WINDOWS
+1. Double-click "Install-research-brain.cmd".
+2. If Windows says "Windows protected your PC": click "More info", then "Run anyway".
+3. When it says Done, research brain opens. From then on, open it from the Start menu.
+
+AFTERWARDS
+- You can delete this folder (and the zip it came in). Your library lives in Documents > research brain.
+- Chrome extension (optional): unzip research-brain-extension-....zip into a folder you keep (for
+  example in Documents), then in Chrome go to chrome://extensions, turn on Developer mode, click
+  "Load unpacked" and choose that folder.
+- Updates: when your lab shares a newer version, download it and run its installer again, the same
+  way. Your library stays exactly as it is.
+- Everything else (adding papers, the AI, free paper-lookup keys, a first-ten-minutes tour, and how
+  to report a problem) is in README.md in this folder: open it with any text editor or a browser.

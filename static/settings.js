@@ -61,9 +61,6 @@
   .rb-profile-tag { margin-left: 8px; font: 500 11.5px/1 var(--sans); color: var(--ink-2); border: 1px solid var(--rule);
     border-radius: 3px; padding: 3px 6px; cursor: pointer; background: transparent; }
   .rb-profile-tag:hover { color: var(--ink); }
-  .rb-update-chip { margin-left: 8px; font: 500 11.5px/1 var(--sans); color: var(--red); border: 1px solid currentColor;
-    border-radius: 3px; padding: 3px 6px; cursor: pointer; background: transparent; opacity: .85; }
-  .rb-update-chip:hover { opacity: 1; }
   .ls-code { font: 12.5px/1.4 ui-monospace, Menlo, Consolas, monospace; background: var(--sheet, rgba(0,0,0,.04)); padding: 4px 8px; border-radius: 3px; }
   .ls-notes pre { white-space: pre-wrap; font: 12.5px/1.5 var(--sans); color: var(--ink-2); margin: 6px 0 0; max-height: 160px; overflow: auto; }
   .ls-h2 { font: 600 12.5px var(--sans); color: var(--ink); margin: 14px 0 2px; }
@@ -242,10 +239,7 @@
     const papSec = el('section', { class: 'ls-sec', id: 'ls-papers' }, el('div', { class: 'ls-h', text: 'Papers folder' }));
     renderPapers(papSec, say);
 
-    // Updates (app/updates.py)
-    const updSec = el('section', { class: 'ls-sec', id: 'ls-updates' },
-      el('div', { class: 'ls-h', text: 'Updates' }));
-    renderUpdates(updSec, say);
+    // (No updates section: to update, people run the lab's newer installer. `research-brain update` stays for admins.)
 
     // Saving from publisher pages (the browser extension's primary button)
     const modeSec = el('section', { class: 'ls-sec', id: 'ls-save-mode' },
@@ -300,10 +294,10 @@
       { id: 'papers', name: 'Adding papers', secs: [keySec, modeSec, oaSec] },
       { id: 'ai', name: 'AI and privacy', secs: [agentSec, privSec, qSec] },
       { id: 'citations', name: 'Citations', secs: [citeSec] },
-      { id: 'devices', name: 'Devices and updates', secs: [pairSec, updSec] },
+      { id: 'devices', name: 'Devices', secs: [pairSec] },
     ].map((t) => ({ ...t, secs: t.secs.filter(Boolean) })).filter((t) => t.secs.length);
-    const FOCUS_TAB = { profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', citations: 'citations', updates: 'devices' };
-    const FOCUS_SEC = { profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, citations: citeSec, updates: updSec };
+    const FOCUS_TAB = { profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', citations: 'citations' };
+    const FOCUS_SEC = { profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, citations: citeSec };
     let cur = FOCUS_TAB[focus] || (() => { try { return localStorage.getItem('rb.settings-tab'); } catch { return null; } })();
     if (!TABS.some((t) => t.id === cur)) cur = TABS[0].id;
     const tabBtns = TABS.map((t) => el('button', { type: 'button', class: 'ls-tab', role: 'tab', 'data-tab': t.id,
@@ -473,56 +467,6 @@
     });
     return b;
   }
-
-  // ---------------------------------------------------------------- updates (app/updates.py)
-  function updateLine(u) {
-    if (!u.enabled) return 'Update checks are off (RB_UPDATE_CHECK=0).';
-    if (u.newer) return `research_brain ${u.latest} is available (you have ${u.current}).`;
-    if (u.latest) return `You have the newest version, ${u.current}.`;
-    return u.source === 'github'
-      ? `You have ${u.current}. No release found: the repository is private, so set your lab’s update folder below (or sign in with the gh command).`
-      : `You have ${u.current}. Nothing readable at the update source yet.`;
-  }
-  async function renderUpdates(sec, say) {
-    let u;
-    try { u = await api('/api/update'); } catch { return; }
-    const line = el('p', { class: 'ls-p', text: updateLine(u) });
-    const how = el('div', { class: 'ls-upd-how', hidden: !u.newer },
-      el('p', { class: 'ls-p', text: 'Quit research brain, then run this in a terminal (it keeps your library as it is):' }),
-      el('div', { class: 'ls-row' }, el('code', { class: 'ls-code', text: u.command }),
-        el('button', { class: 'btn btn-text', type: 'button', text: 'Copy', onclick: () => navigator.clipboard.writeText(u.command).then(() => say('Copied.')) })));
-    const notes = u.notes ? el('details', { class: 'ls-notes' }, el('summary', { text: `What’s new in ${u.latest}` }), el('pre', { text: u.notes })) : null;
-    const inp = el('input', { type: 'text', id: 'ls-upd-src', spellcheck: 'false', value: u.source === 'github' ? '' : u.source,
-      placeholder: 'Lab update folder (e.g. a shared drive) or an https URL of latest.json', 'aria-label': 'Update source' });
-    const save = el('button', { class: 'btn', type: 'button', text: 'Save' });
-    const check = el('button', { class: 'btn btn-text', type: 'button', text: 'Check now' });
-    const choose = chooseFolderButton(inp, 'Choose your lab’s research brain folder (the one with latest.json)', say, async () => { save.click(); });
-    const refresh = (nu) => { u = nu; line.textContent = updateLine(u); how.hidden = !u.newer; how.querySelector('code').textContent = u.command; renderUpdateChip(u); };
-    save.addEventListener('click', async () => {
-      try { refresh(await api('/api/update/source', json('PUT', { source: inp.value.trim() }))); say(inp.value.trim() ? 'Update source saved.' : 'Using GitHub for updates.'); }
-      catch (e) { say(e.message, true); }
-    });
-    check.addEventListener('click', async () => {
-      check.disabled = true;
-      try { refresh(await api('/api/update?refresh=true')); say(updateLine(u)); } catch (e) { say(e.message, true); } finally { check.disabled = false; }
-    });
-    sec.append(line, how, notes || '',
-      el('label', { class: 'ls-p', for: 'ls-upd-src', text: 'Where your lab publishes releases: the shared folder you installed from (installing from it sets this for you). It only needs to be synced to this computer; no GitHub account required. Choose folder… opens Finder or File Explorer, or paste the folder’s path.' }),
-      el('div', { class: 'ls-row' }, inp, choose, save, check));
-  }
-  /** A small "Update" chip beside the logo when a newer release exists; it opens Settings → Updates. */
-  function renderUpdateChip(u) {
-    const brand = document.querySelector('#topbar .brand');
-    let chip = document.getElementById('rb-update-chip');
-    if (!brand || !u || !u.newer) { if (chip) chip.remove(); return; }
-    if (!chip) {
-      chip = el('button', { id: 'rb-update-chip', class: 'rb-update-chip', type: 'button', onclick: () => openSettings('updates') });
-      (document.getElementById('rb-profile-tag') || brand).after(chip);
-    }
-    chip.textContent = `Update ${u.latest}`;
-    chip.title = `research_brain ${u.latest} is available (you have ${u.current}). Click for how to update.`;
-  }
-  setTimeout(() => { api('/api/update').then(renderUpdateChip).catch(() => {}); }, 4000);
 
   // ---------------------------------------------------------------- paper lookup keys (app/apikeys.py)
   const KEY_HELP = {

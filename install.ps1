@@ -102,10 +102,7 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
 $Cmd = Get-Command research-brain -ErrorAction SilentlyContinue
 if (-not $Cmd) { Write-Error "research-brain was installed but isn't on PATH yet. Open a new terminal and run: research-brain"; exit 1 }
 Write-Host "-> Installed: $(& $Cmd.Source --version)"
-if ($UpdateSource) {
-  & $Cmd.Source update --source $UpdateSource | Out-Null
-  Write-Host "  Updates will come from $UpdateSource (research-brain update)."
-}
+Write-Host "  To update later: run a newer installer from your lab the same way. Your library stays as it is."
 
 # Start menu shortcut: opens research brain like an app only when you click it; it stops by itself a few
 # minutes after its window closes (research-brain open). Nothing runs at login.

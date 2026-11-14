@@ -121,9 +121,7 @@ for m in ('numpy', 'pypdfium2', 'pypdf', 'lxml.etree',
     except ImportError:
         pass" >/dev/null 2>&1 || true
 fi
-if [ -n "$UPDATE_SOURCE" ]; then
-  "$RB" update --source "$UPDATE_SOURCE" >/dev/null && echo "  Updates will come from $UPDATE_SOURCE (research-brain update)."
-fi
+echo "  To update later: run a newer installer from your lab the same way. Your library stays as it is."
 if [ "${RB_NO_DESKTOP:-}" != 1 ]; then
   # an app entry that opens research brain only when you click it (Launchpad/Dock on macOS, the app menu on
   # Linux); the app stops by itself a few minutes after its window closes. Nothing runs at login.

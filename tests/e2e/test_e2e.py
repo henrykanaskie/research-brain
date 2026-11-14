@@ -872,15 +872,18 @@ def test_fit_is_as_smooth_from_far_out_as_from_close_in(ctx, server):
     assert not page.errors
 
 
-def test_choose_the_lab_update_folder(ctx, server, tmp_path):
-    folder = tmp_path / "Lab Drive" / "research-brain"
-    folder.mkdir(parents=True)
+def test_choose_folder_and_no_update_ui(ctx, server, tmp_path):
+    """Folders are picked with the computer's own chooser; the app has no update section or update chip."""
+    folder = tmp_path / "My Papers"
+    folder.mkdir()
     page = open_app(ctx, server)
     page.route("**/api/pick-folder", lambda r: r.fulfill(json={"path": str(folder)}))  # the Finder dialog, answered
-    page.evaluate("window.__rbSettings.open('updates')")
-    sec = page.locator("#ls-updates")
-    sec.get_by_role("button", name="Choose folder…").click()
-    expect(page.locator("#ls-upd-src")).to_have_value(str(folder))
-    page.wait_for_function(f"fetch('/api/update').then(r => r.json()).then(u => u.source === {json.dumps(str(folder))})")
-    api(server, "PUT", "/api/update/source", {"source": ""})
+    page.evaluate("window.__rbSettings.open()")
+    page.locator("#library-settings .ls-tab", has_text="Library").first.click()
+    page.locator("#ls-papers").get_by_role("button", name="Choose folder…").first.click()  # the papers folder row
+    expect(page.locator("#ls-papers-dest")).to_have_value(str(folder))
+    expect(page.locator("#library-settings .ls-tab", has_text="Devices")).to_have_text("Devices")
+    assert page.locator("#ls-updates").count() == 0
+    page.wait_for_timeout(4500)  # the old update check ran after 4 s
+    assert page.locator("#rb-update-chip").count() == 0
     assert not page.errors

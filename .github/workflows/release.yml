@@ -59,6 +59,16 @@ jobs:
                     open("dist/latest.json", "w", encoding="utf-8"), indent=1)
           PY
           cp install.sh install.ps1 constraints.txt Install-research-brain.command Install-research-brain.cmd dist/
+          # One zip with everything, for labs that share through OneDrive/Google Drive in the browser: downloading
+          # files one by one (or a folder, which the web turns into its own zip) loses the Mac installer's
+          # executable bit; this zip keeps it.
+          PKG="pkg/research-brain-$VERSION"
+          mkdir -p "$PKG"
+          cp dist/install.sh dist/install.ps1 dist/constraints.txt dist/Install-research-brain.command \
+             dist/Install-research-brain.cmd dist/latest.json dist/*.whl "dist/research-brain-extension-$VERSION.zip" \
+             README.md "packaging/READ ME FIRST.txt" "$PKG/"
+          chmod 755 "$PKG/Install-research-brain.command" "$PKG/install.sh"
+          (cd pkg && zip -qrX "../dist/research-brain-installer-$VERSION.zip" "research-brain-$VERSION")
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

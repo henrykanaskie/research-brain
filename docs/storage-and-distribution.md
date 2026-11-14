@@ -299,9 +299,9 @@ its `.venv` and then runs `python -m app.cli serve`.
 
 **Releases.** Tag `vX.Y.Z`. `.github/workflows/release.yml` runs the tests on every OS, builds and
 smoke-tests the wheel, and publishes it with the installers, `constraints.txt`, the extension zip and
-`latest.json` as a GitHub release. The lab copies those files into a shared update folder; installs from
-there remember it, show an **Update** chip when a newer version lands, and update with `research-brain
-update`. See [releasing.md](releasing.md).
+`latest.json` as a GitHub release, plus `research-brain-installer-X.Y.Z.zip` with all of it for sharing. The lab
+puts that zip in its shared folder; people download it and run the installer, and run a newer one to update (the
+app doesn't check for updates itself). See [releasing.md](releasing.md).
 
 **Browser extension.**
 
