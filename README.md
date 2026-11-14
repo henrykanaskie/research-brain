@@ -77,18 +77,22 @@ after you close it); nothing runs in the background and nothing starts when your
 ### Step 4 (optional): add the Chrome extension
 
 The extension saves papers, highlights and quotes from web pages (arXiv, journal sites, PDFs open in Chrome)
-straight into research brain. It isn't in the Chrome Web Store; it comes in the research brain folder, and you
-add it once:
+straight into research brain. It isn't in the Chrome Web Store; you add it once from a folder:
 
-1. In Chrome, go to `chrome://extensions` (type it in the address bar).
-2. Turn on **Developer mode** (the switch in the top right).
-3. Click **Load unpacked** and choose the **`extension`** folder inside the research brain folder.
-4. Click the puzzle-piece icon in Chrome's toolbar and pin **research_brain**, so its button stays visible.
+1. **Get the extension folder.** From your lab's shared folder: copy **`research-brain-extension-….zip`** to your
+   computer, double-click it to unzip, and move the folder it makes somewhere permanent, such as **Documents**
+   (Chrome loads it from there every time, so don't delete it, and don't leave it in a synced folder that may offload
+   it). From a GitHub download or checkout: the **`extension`** folder inside the research brain folder.
+2. In Chrome, go to `chrome://extensions` (type it in the address bar).
+3. Turn on **Developer mode** (the switch in the top right).
+4. Click **Load unpacked** and choose that folder.
+5. Click the puzzle-piece icon in Chrome's toolbar and pin **research_brain**, so its button stays visible.
 
 research brain has to be open for the extension to work: it only talks to research brain on your computer.
 To use it, on a paper's page click the toolbar button and **Save to research_brain**; to clip a passage, select
 it, right-click and choose **Add to research_brain…**; to highlight a page, press **Alt+Shift+A**. After you
-update research brain, press the reload arrow on the extension's card in `chrome://extensions`. More in
+update research brain, replace that folder with the new release's extension (unzip it over the old one) and press
+the reload arrow on the extension's card in `chrome://extensions`. More in
 [Chrome extension](#chrome-extension-web-clipping).
 
 ### Step 5 (recommended): free keys for looking papers up
@@ -158,6 +162,39 @@ later.
 Drag PDFs onto the window, or click **Add** and paste a DOI, an arXiv link or a paper's title. research
 brain fills in the authors, year and journal, and looks for a free legal copy of the PDF. Then click a
 paper on the map to read it, highlight it and write about it.
+
+### Your first ten minutes
+
+A quick tour of what research brain is for. (The app's own tour, *Help: quick tour* in the command palette, ⌘K,
+points at the same things.)
+
+1. **Add three or four papers you know** (drag the PDFs onto the window, or **Add** › paste a DOI or arXiv link). Each
+   becomes a dot; papers about the same thing gather into a named region.
+2. **Click a dot.** The side panel opens: read the abstract, open the PDF (**Open in viewer**), and highlight a
+   passage there: it becomes a red *fragment* on the paper.
+3. **Write two or three sentences of summary** in your own words, then **Critique my summary** (needs an AI, see
+   below): it checks your summary against the paper.
+4. **Link two papers** that you think belong together (the **Links** box in the panel, or right-click a dot). Drag a
+   dot where you want it; linked dots come along.
+5. **Make a topic** (**Topics** at the top) and add papers to it; it keeps a *Next to read* list for you.
+6. **Ask** (top right): **Library** answers from all your papers, **Topics…** from the papers in the topics you pick,
+   **General** is the agent on its own (attach papers or notes if you like). Answers cite pages you can click.
+7. **Cite**: Alt+C, pick papers, *Copy \cite{…}* or *Copy BibTeX* for LaTeX, *Copy bibliography* for Word.
+
+Then explore: the gear (top right) has Library settings in tabs with a search box, and **?** lists every shortcut.
+
+### Trying it out for your lab? Report problems like this
+
+Thank you. What helps most:
+
+- **What you did and what happened** (and what you expected), with a screenshot if it's visual.
+- **Your version**: Settings (the gear) › Library settings › Library tab, or `research-brain --version` in Terminal.
+- **The log** if something failed or wouldn't start: `~/Library/Application Support/research_brain/app.log` on a
+  Mac (Finder › Go › Go to Folder…, paste it), `%APPDATA%\research_brain\app.log` on Windows. Send the last 50 lines
+  or so.
+- **Your computer**: Mac or Windows, and which AI you chose, if any.
+
+Don't send your library or your API keys: no one needs them to fix a bug.
 
 ## Where your things are
 
@@ -251,6 +288,28 @@ double-click the installer again (step 2), or, if you're comfortable with Termin
 | Adding or searching for papers says *rate limited*, *allowance used up* or *couldn't reach* | The free lookup services are busy (your internet is usually fine). Add your own free keys: see [Step 5](#step-5-recommended-free-keys-for-looking-papers-up). |
 | Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **Settings › Library settings › Your documents › Open folder**. |
 
+## Sharing research brain with your lab
+
+You need one shared folder everyone can read (OneDrive, Box, Google Drive for desktop, or a network share). Your
+labmates don't need GitHub, Python or anything else.
+
+1. **Put a release in the folder.** From the release page on GitHub, download every file of the newest release
+   (`Install-research-brain.command`, `Install-research-brain.cmd`, `install.sh`, `install.ps1`, `latest.json`,
+   `constraints.txt`, the `research_brain-….whl` file, and `research-brain-extension-….zip`) into one folder, e.g.
+   *Lab Drive › research-brain*. Or, with the GitHub command line: `gh release download v1.0.0 --dir "/path/to/Lab
+   Drive/research-brain" --clobber`.
+2. **Tell your labmates:** open that folder and double-click **Install-research-brain.command** (Mac) or
+   **Install-research-brain.cmd** (Windows), then follow [Install it](#install-it-no-coding-needed) from Step 2. For
+   the Chrome extension, they unzip `research-brain-extension-….zip` somewhere permanent and load that folder (Step 4).
+3. **Updating everyone:** copy the files of a newer release into the same folder (overwrite `latest.json`,
+   `install.*` and `constraints.txt`; keep the old `.whl` files so anyone can go back). Within a day everyone sees an
+   **Update** chip next to the logo; they quit research brain and click it (or run `research-brain update`).
+
+Each person gets their own library on their own computer: nothing is shared between labmates unless someone
+exports something (a reading list, a `.bib`, a library zip). Each person also adds their own AI and their own free
+paper lookup keys (Steps 4 and 5 and [Add an AI](#add-an-ai-optional-can-be-free)). More detail, including how a
+library-format change is handled: [docs/releasing.md](docs/releasing.md).
+
 ## For developers and lab admins: more ways to install
 
 Under the hood the installers use [uv](https://docs.astral.sh/uv/), which downloads its own Python 3.12
@@ -280,7 +339,7 @@ cd research-brain
 ```
 
 With uv, one line installs a release on every OS:
-`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v0.7.0"`.
+`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v1.0.0"`.
 Without installing, from a checkout: `./run.sh` (the first run builds `.venv`, a few minutes), or
 double-click `research_brain.command` (Mac) or `research_brain.cmd` (Windows).
 
@@ -374,7 +433,7 @@ looks it up and sends back what it found, and the model never gets tools.
 | Citation links | Papers that cite each other are joined by thin ink lines with an arrowhead at the cited paper (from Semantic Scholar references; only papers already in your library). New imports are linked automatically in the background; for papers you already have, run the backfill below once. Toggle them under **Settings → Show citation links**. |
 
 | Idea cards | **Ideas** on a paper: its key claims, equations, measured quantities (value ± uncertainty, unit, conditions) and methods as small cards. **Suggest ideas** has the AI propose them, each with a quote that must be found word for word in the paper; you **Confirm**, **Edit** or **Reject** each (J/K, Y, E, X). The same idea in other papers is linked, and a value that disagrees is flagged. **G then I** opens every card as a table you can sort, filter and export as CSV. See *Idea cards* below. |
-| Cite and export | **Alt+C** (or **Cite** on a paper): copy `\cite{key}`, a formatted citation or a bibliography in APS, IEEE, APA and any CSL style; export BibTeX/BibLaTeX/RIS/CSL-JSON with stable keys; keep a `.bib` file updated automatically. See *Citing and bibliographies* below. |
+| Cite and export | **Alt+C** (or **Cite** on a paper): copy `\cite{key}`, the BibTeX entries (*Copy BibTeX*), a formatted citation or a bibliography in APS, IEEE, APA and any CSL style; export BibTeX/BibLaTeX/RIS/CSL-JSON with stable keys; keep a `.bib` file updated automatically. See *Citing and bibliographies* below. |
 
 Math works everywhere: `$...$` inline and `$$...$$` display (KaTeX).
 
@@ -798,10 +857,11 @@ research brain formats citations itself, offline, with the Citation Style Langua
 Zotero, Mendeley and pandoc use (formatted by [citeproc-py](https://github.com/citeproc-py/citeproc-py)).
 
 - **Cite while you write.** Press **Alt+C** (or *Cite papers…* in the command palette), search your library, pick
-  one or more papers (Enter selects, click works too) and copy **`\cite{key1,key2}`** for LaTeX, an **in-text
-  citation** like (Doe, 2024) or [1], or the **bibliography**. A paper's panel has a **Cite** button with the same
-  choices plus *Download .bib*; a note that links papers with `[[ ]]` gets *Copy bibliography* / *Export .bib* for
-  those papers, and so does each topic in the Topics drawer.
+  one or more papers (Enter selects, click works too) and copy **`\cite{key1,key2}`** for LaTeX, the **BibTeX
+  entries** themselves (*Copy BibTeX*: `@article{boeuf2018kinetic, …}`, ready to paste into your `.bib` file), an
+  **in-text citation** like (Doe, 2024) or [1], or the **bibliography**. A paper's panel has a **Cite** button with
+  the same choices plus *Download .bib*; a note that links papers with `[[ ]]` gets *Copy BibTeX* / *Copy
+  bibliography* / *Export .bib* for those papers, and so does each topic in the Topics drawer.
 - **Pasting into Word, Google Docs or Pages.** Copies put formatted HTML (italics, bold volume numbers) and plain
   text on the clipboard together, so a word processor keeps the formatting and a text editor gets clean text.
   There is **no live-updating Word or Google Docs plugin**: a pasted bibliography doesn't renumber or update when

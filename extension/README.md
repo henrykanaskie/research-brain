@@ -6,7 +6,7 @@ citation. PDFs open in research_brain's own viewer, where the same highlight and
 
 ## Install
 
-It isn't in the Chrome Web Store; load it from this folder:
+It isn't in the Chrome Web Store; load it from this folder (from a release: unzip `research-brain-extension-….zip` into a folder you keep, and use that):
 
 1. In Chrome, open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and choose this `extension` folder.

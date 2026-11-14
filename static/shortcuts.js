@@ -301,7 +301,7 @@
       ['Settings', 'The gear at the top right: Library settings (in tabs, with a search box), what the graph shows, and appearance.', []],
       ['History', 'Go back and forward through the notes you opened.', ['nav.back', 'nav.forward']],
       ['Paper lookup keys', 'If adding or searching for papers says rate limited, add free keys: get one at openalex.org/settings/api and one from semanticscholar.org/product/api, then paste them in Settings › Library settings › Paper lookup.', []],
-      ['Chrome extension', 'Save papers and clip passages from any web page. To add it: open chrome://extensions in Chrome, turn on Developer mode, click Load unpacked and choose the extension folder inside the research brain folder. research brain must be open for it to work.', ['extension.clip']],
+      ['Chrome extension', 'Save papers and clip passages from any web page. To add it: unzip research-brain-extension-….zip from your lab’s folder (or use the extension folder in the research brain folder) into a folder you keep, open chrome://extensions in Chrome, turn on Developer mode, click Load unpacked and choose that folder. research brain must be open for it to work.', ['extension.clip']],
     ]],
   ];
   function openGuide() {
