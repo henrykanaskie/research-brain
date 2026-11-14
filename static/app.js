@@ -1173,13 +1173,13 @@
         if (n.sub >= 0) { subSizes.set(n.sub, (subSizes.get(n.sub) || 0) + 1); subOf.set(n.sub, n.cluster); }
       }
       const ids = [...sizes.keys()].sort((a, b) => sizes.get(b) - sizes.get(a));
-      anchors = ids.length <= 1 ? new Map(ids.map((id) => [id, { x: 0, y: 0 }])) : golden(ids, 9 * Math.sqrt(top.length) + 22, 0, 0, -Math.PI / 2);
+      anchors = ids.length <= 1 ? new Map(ids.map((id) => [id, { x: 0, y: 0 }])) : golden(ids, 7 * Math.sqrt(top.length) + 16, 0, 0, -Math.PI / 2);
       subAnchors = new Map();
       for (const cid of ids) {
         const subs = [...subSizes.keys()].filter((s) => subOf.get(s) === cid).sort((a, b) => subSizes.get(b) - subSizes.get(a));
         if (subs.length < 2) continue;
         const c = anchors.get(cid);
-        const inner = golden(subs, 2.6 * Math.sqrt(sizes.get(cid)) + 3, c.x, c.y, cid * 1.3);
+        const inner = golden(subs, 1.8 * Math.sqrt(sizes.get(cid)) + 2, c.x, c.y, cid * 1.3);
         for (const [k, v] of inner) subAnchors.set(k, v);
       }
     }
@@ -1193,10 +1193,10 @@
       const n = nodes.length;
       for (let i = 0; i < n; i++) {
         const a = nodes[i];
-        const ra = nodeRadius(a) + (a.type === 'fragment' ? 0.6 : 1.4);  // dots may sit close; they just don't overlap
+        const ra = nodeRadius(a) + (a.type === 'fragment' ? 0.4 : 0.9);  // dots may sit close; they just don't overlap
         for (let j = i + 1; j < n; j++) {
           const b = nodes[j];
-          const rb = nodeRadius(b) + (b.type === 'fragment' ? 0.6 : 1.4);
+          const rb = nodeRadius(b) + (b.type === 'fragment' ? 0.4 : 0.9);
           let dx = b.x - a.x, dy = b.y - a.y;
           const min = ra + rb;
           if (dx > min || dx < -min || dy > min || dy < -min) continue;
@@ -1293,7 +1293,7 @@
       .minZoom(0.12).maxZoom(1e4)  // zoom in as far as you like, as long as there's something on screen:
       .onZoom(zoomGuard);          // zoomGuard stops a zoom-in that would leave no dot in view
 
-    fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -1.5 : -6)).distanceMax(70); // compact: related papers sit close
+    fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -1 : -2.5)).distanceMax(45); // compact: related papers sit close
     fg.d3Force('center', null);
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
@@ -1429,8 +1429,8 @@
     // every kind gets a finite length and pull: one NaN here (a link kind without a score, like an open
     // question's evidence) makes every dot's position NaN and the whole graph disappears
     const score = (l) => (Number.isFinite(l.score) ? l.score : 0.3);
-    lf.distance((l) => (l.kind === 'part' ? 6 : l.kind === 'manual' ? 18 : l.kind === 'mention' ? 22 : l.kind === 'cites' ? 26
-      : l.kind === 'question' ? 24 : 16 + 22 * (1 - score(l))))
+    lf.distance((l) => (l.kind === 'part' ? 5 : l.kind === 'manual' ? 12 : l.kind === 'mention' ? 14 : l.kind === 'cites' ? 16
+      : l.kind === 'question' ? 14 : 10 + 14 * (1 - score(l))))
       .strength((l) => {
         if (l.kind === 'part') return 1;
         if (l.kind === 'manual') return 0.3;
