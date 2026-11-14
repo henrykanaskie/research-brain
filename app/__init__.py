@@ -1,3 +1,3 @@
 """research_brain: a local knowledge graph for papers and notes."""
 
-__version__ = "0.9.11"
+__version__ = "1.0.0"
