@@ -949,6 +949,7 @@
   /** Region names are small tags (sheet ground, hairline frame) placed above each region, so they stay
    *  readable over the traces. Hovering a tag, or any dot in the region, frames it in ink; clicking
    *  a tag focuses that region. When zoomed in past the tags, the region shows in the dot's tooltip. */
+  const tagHeld = new Map();  // where each region's tag was last drawn, held still while a hover card is open
   function drawRegionLabels(ctx, k) {
     if (!S.regionLabels) return;
     const focused = S.focusCluster;
@@ -973,14 +974,18 @@
       const gap = 7 * px, w = padX + wName + gap + wNum + padX;
       // only regions that are on screen get a tag; a tag above the view slides down to its top edge
       if (r.x < vtl.x || r.x > vbr.x || r.y > vbr.y || (r.cy !== undefined && r.cy < vtl.y)) continue;
-      const margin = 8 * px, x0 = Math.max(vtl.x + margin, Math.min(r.x - w / 2, vbr.x - margin - w));
+      const margin = 8 * px, heldTag = cardsOpen() ? tagHeld.get(r.cid) : null;
+      const x0 = heldTag ? heldTag.x0 : Math.max(vtl.x + margin, Math.min(r.x - w / 2, vbr.x - margin - w));
       if (r.y - h / 2 < vtl.y + margin) r.y = vtl.y + margin + h / 2;
       // candidate spots: just above the region, just below it, then further out; the first that covers no
       // dot and no other tag wins, else the one covering the fewest dots (a tag never hides a paper if it can help it)
       const below = (r.cy !== undefined ? r.cy : r.y) + 22 * px;
       const cands = [r.y, below, r.y - lh, below + lh, r.y - 2 * lh, below + 2 * lh, r.y - 3 * lh];
       let best = null;
-      for (const cy of cands) {
+      // while a hover card is open, tags hold still (the dots it moved aside would otherwise send them elsewhere)
+      const held = heldTag ? heldTag.y : null;
+      if (held != null) best = { y: held, under: 0, box: [x0, held - h / 2, x0 + w, held + h / 2] };
+      for (const cy of held != null ? [] : cands) {
         if (cy - h / 2 < vtl.y + margin || cy + h / 2 > vbr.y - margin) continue;
         const box = [x0, cy - h / 2, x0 + w, cy + h / 2];
         if (placed.some((p) => boxesMeet(box, p))) continue;
@@ -988,10 +993,10 @@
         if (!best || under < best.under) best = { y: cy, under, box };
         if (!under) break;
       }
-      if (!best) continue;
+      if (!best) { tagHeld.delete(r.cid); continue; }
       const y = best.y;
       placed.push(best.box);
-      r.y = y;
+      r.y = y; tagHeld.set(r.cid, { x0, y });
       const isHot = hot != null && r.cid === hot, isFocus = focused != null && r.cid === focused;
       const dimmed = !isHot && !isFocus && (S.selected || S.search);
       const a = fade * (dimmed ? 0.5 : 1);
@@ -1233,7 +1238,10 @@
         // A fixed size in map units grew with the zoom and, zoomed far in, covered empty map around the dot.
         k = k || 1;
         const r = Math.max(n.__outer || drawnRadius(n, k), 3 / k) + 6 / k;
-        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI); ctx.fill();
+        const x = n.x + (shiftOn ? 0 : n.__dx || 0), y = n.y + (shiftOn ? 0 : n.__dy || 0);
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill();
+        const c = cards.find((q) => q.id === n.id && q.p > 0.5 && q.L);
+        if (c) { cardPath(ctx, c.L); ctx.fill(); }
       })
       .nodeVisibility((n) => !nodeHidden(n.id))
       .linkVisibility(linkShown)
@@ -1255,37 +1263,50 @@
         if (l.kind === 'cites') return `<div class="tt-title">${ta}</div><div class="tt-meta">${head}</div><div class="tt-title">${tb}</div><div class="tt-meta">Click to see how they are connected</div>`;
         return `<div class="tt-meta">${head}</div><div class="tt-title">${ta}</div><div class="tt-meta">and</div><div class="tt-title">${tb}</div><div class="tt-meta">Click to see why they are connected</div>`;
       })
-      .onNodeHover((n) => { S.hover = n ? n.id : null; graphEl.style.cursor = n ? 'pointer' : ''; kick(50); })
+      .onNodeHover((n) => {
+        const id = n ? n.id : null;
+        // a dot moved aside for a card can still be under the pointer where it really is: the card wins
+        if (id !== S.hover && S.ptr && cardNodeAtGraph(S.ptr.x, S.ptr.y)) { kick(50); return; }
+        S.hover = id; graphEl.style.cursor = n ? 'pointer' : ''; kick(50);
+      })
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
-      .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
-      .onNodeRightClick((n, e) => nodeMenu(n, e))
+      .onNodeClick((n, e) => { const cn = cardNodeAt(e); if (!cn && regionTagClick(e)) return; n = cn || n; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
+      .onNodeRightClick((n, e) => nodeMenu(cardNodeAt(e) || n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
-      .onNodeDrag((n) => dragNeighbours(n))
-      .onNodeDragEnd((n) => { dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
+      .onNodeDrag((n) => { S.dragging = true; dragNeighbours(n); })
+      .onNodeDragEnd((n) => { S.dragging = false; dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
       .onLinkRightClick((l, e) => linkMenu(l, e))
       .onBackgroundClick((e) => {
+        const cn = cardNodeAt(e);
+        if (cn) { openNote(cn.id, { center: true }); return; }
         if (regionTagClick(e)) return;
         if (S.backgroundClickHook) S.backgroundClickHook(e);
       })
-      .onBackgroundRightClick((e) => backgroundMenu(e))
+      .onBackgroundRightClick((e) => { const cn = cardNodeAt(e); if (cn) nodeMenu(cn, e); else backgroundMenu(e); })
       // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
       .onRenderFramePre((ctx, k) => {
         S.k = k; S.partLayout = new Map();
         S.labelBoxes = []; S.labelJobs = []; S.dots = [];
         const moving = stepAlphas();
-        if (moving) kick(60);
+        if (stepCards(ctx, k) || moving) kick(60);
         updateCentroids();
         drawDots(ctx, k);
         drawRegions(ctx, k);
       })
       .onRenderFramePost((ctx, k) => {
-        S.dotG = dotGrid(k);
-        drawRegionLabels(ctx, k);
-        drawLabels(ctx, k);
-        drawPulses(ctx, k);
+        try {
+          S.dotG = dotGrid(k);
+          drawRegionLabels(ctx, k);
+          drawLabels(ctx, k);
+          drawPulses(ctx, k);
+          drawCards(ctx, k);
+        } finally {
+          removeShift(); shiftLifted = false;  // dots moved aside for a card are back where they really are
+        }
         if (performance.now() > animUntil && !pulses.length) fg.autoPauseRedraw(true);
       })
+      .onEngineTick(restoreShiftAfterTick)
       .onEngineStop(releaseTmpPins)
       .cooldownTime(9000)
       .d3AlphaDecay(0.028)
@@ -1295,6 +1316,14 @@
 
     fg.d3Force('charge').strength((n) => (n.type === 'fragment' ? -1 : -2.5)).distanceMax(45); // compact: related papers sit close
     fg.d3Force('center', null);
+    // dots moved aside for a hover card are put back before the forces run (the first force), so the layout
+    // never feels the card; the link and charge forces are re-added after it to keep that order
+    {
+      const lf0 = fg.d3Force('link'), ch0 = fg.d3Force('charge');
+      fg.d3Force('link', null); fg.d3Force('charge', null);
+      fg.d3Force('hoverLift', liftShiftForce);
+      fg.d3Force('link', lf0); fg.d3Force('charge', ch0);
+    }
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
     configureLinkForce();
@@ -1605,7 +1634,7 @@
 
   // ---------- what a dot is labelled with (Settings menu › View › Labels) ----------
   // Papers: first author and year by default ("Boeuf, 2018"), or with the title, or the title alone. Notes and
-  // questions have no authors: their title. A hovered or selected dot always shows its full title.
+  // questions have no authors: their title. A selected dot shows its full title; a hovered one, its card.
   const PARTICLES = new Set(['van', 'von', 'der', 'den', 'de', 'del', 'della', 'di', 'da', 'du', 'dos', 'das', 'le', 'la', 'ter', 'ten', 'st.']);
   function surname(a) {
     a = String(a || '').trim();
@@ -1636,8 +1665,10 @@
     jobs.sort((a, b) => (a.must - b.must) || ((Number(b.n.degree) || 0) - (Number(a.n.degree) || 0)));
     const plain = jobs.filter((j) => !j.must), top = jobs.filter((j) => j.must);
     for (const j of [...plain, ...top]) {
-      const { n, alpha, outer, sel, hov, must } = j;
-      const big = sel || hov;
+      const { n, outer, sel, must } = j;
+      const alpha = j.alpha * (1 - cardP(n.id));
+      if (alpha < 0.02) continue;
+      const big = sel;
       const fs = (big ? 14 : 10.5) * px;
       ctx.save();
       ctx.font = big ? `italic 500 ${fs}px "Bodoni Moda", Didot, Georgia, serif`
@@ -1655,22 +1686,255 @@
       ctx.strokeText(label, n.x, y);
       ctx.fillStyle = big ? C.ink : C.ink2;
       ctx.fillText(label, n.x, y);
-      if (hov) {  // what the hover tooltip used to say, one small line under the title
-        const meta = [n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : n.type === 'question' ? 'Question' : 'Note',
-          n.year, n.authors && n.authors.length ? fmtAuthors(n.authors, 2) : ''].filter(Boolean).join('  ·  ');
-        const ms = 10.5 * px, my = y + fs + 4 * px;
-        ctx.font = `500 ${ms}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
-        if ('fontStretch' in ctx) ctx.fontStretch = 'semi-condensed';
-        const mw = ctx.measureText(meta).width;
-        glowText(ctx, meta, n.x, my, 10);
-        ctx.lineWidth = 4 * px;
-        ctx.strokeText(meta, n.x, my);
-        ctx.fillStyle = C.ink3;
-        ctx.fillText(meta, n.x, my);
-        taken.push([n.x - mw / 2 - 4 * px, my - 2 * px, n.x + mw / 2 + 4 * px, my + ms + 2 * px]);
+      ctx.restore();
+    }
+  }
+
+  // ---------- the hover card: a small sheet that pops out of a dot with its title and authors ----------
+  // Hovering a dot for a moment lifts a card out of it: the kind and year, the full title (up to three lines)
+  // and the authors, each on its own line. Dots under the card glide aside while it's open and drift back when
+  // it closes. They only move on screen: the layout and your placed dots aren't changed (see applyShift).
+  const CARD_DWELL = 90;  // ms of hover before a card opens, so sweeping the pointer across dots stays calm
+  const cards = [];        // { id, p (0..1 eased), since, L (layout, graph units) }
+  let cardFrame = 0;
+  const ease3 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+  const cardsOpen = () => cards.some((c) => c.p > 0) || !!(S.shifted && S.shifted.length);
+  function cardP(id) { const c = cards.find((x) => x.id === id); return c ? ease3(c.p) : 0; }
+  function viewBounds(k) {
+    const panel = $('#panel'), panelW = panel && !panel.hidden ? panel.offsetWidth : 0;
+    const a = fg.screen2GraphCoords(0, 0), b = fg.screen2GraphCoords(Math.max(40, graphEl.clientWidth - panelW), graphEl.clientHeight);
+    return { x0: a.x, y0: a.y, x1: b.x, y1: b.y, k };
+  }
+  function wrapLines(ctx, text, maxW, maxLines) {
+    const words = String(text || '').replace(/\s+/g, ' ').trim().split(' ');
+    const lines = [];
+    let cur = '';
+    for (let i = 0; i < words.length; i++) {
+      const t = cur ? cur + ' ' + words[i] : words[i];
+      if (ctx.measureText(t).width <= maxW || !cur) { cur = t; continue; }
+      lines.push(cur); cur = words[i];
+      if (lines.length === maxLines) { cur = ''; break; }
+    }
+    if (cur) lines.push(cur);
+    const cutShort = lines.length > maxLines || lines.join(' ').length < words.join(' ').length;
+    lines.length = Math.min(lines.length, maxLines);
+    if (cutShort && lines.length) {
+      let last = lines[lines.length - 1];
+      while (last && ctx.measureText(last + '…').width > maxW) last = last.slice(0, -1);
+      lines[lines.length - 1] = last.replace(/[\s,.;:]+$/, '') + '…';
+    }
+    return lines;
+  }
+  function fitLine(ctx, text, maxW) {
+    let t = String(text || '');
+    if (ctx.measureText(t).width <= maxW) return t;
+    while (t && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+    return t.replace(/[\s,]+$/, '') + '…';
+  }
+  const CARD_FONT = {
+    kick: '600 9.5px "Archivo", -apple-system, "Segoe UI", sans-serif',
+    title: 'italic 500 15px "Bodoni Moda", Didot, Georgia, serif',
+    by: '500 11.5px "Archivo", -apple-system, "Segoe UI", sans-serif',
+  };
+  /** The card's text, measured in screen pixels (cached: it only changes with the dot's details). */
+  function cardText(ctx, n) {
+    const key = [n.title, n.year, n.type, (n.authors || []).join('|'), markCount(n)].join('\u0001');
+    if (n.__card && n.__card.key === key) return n.__card;
+    ctx.save();
+    const kind = n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : n.type === 'question' ? 'Question' : 'Note';
+    const marks = markCount(n);
+    const kick = [kind, n.year, marks ? `${marks} note${marks === 1 ? '' : 's'}` : ''].filter(Boolean).join('  ·  ').toUpperCase();
+    ctx.font = CARD_FONT.title;
+    const lines = wrapLines(ctx, n.title || n.id, 264, 3);
+    const tw = Math.max(...lines.map((l) => ctx.measureText(l).width));
+    ctx.font = CARD_FONT.by;
+    const by = Array.isArray(n.authors) && n.authors.length ? fitLine(ctx, fmtAuthors(n.authors, 3), 264) : '';
+    const bw = by ? ctx.measureText(by).width : 0;
+    ctx.font = CARD_FONT.kick;
+    if ('letterSpacing' in ctx) ctx.letterSpacing = '0.8px';
+    const kw = ctx.measureText(kick).width;
+    ctx.restore();
+    const pad = 12, w = Math.max(150, Math.ceil(Math.max(tw, bw, kw + 4))) + 2 * pad;
+    const h = pad + 10 + 7 + lines.length * 18.5 + (by ? 7 + 13 : 0) + pad - 2;
+    return (n.__card = { key, kick, lines, by, w, h, pad });
+  }
+  /** Where the card sits (graph units): under the dot, or above it near the bottom edge, kept on screen. */
+  function cardLayout(ctx, n, k, V) {
+    const T = cardText(ctx, n), px = 1 / k;
+    const w = T.w * px, h = T.h * px, gap = 9 * px, edge = 10 * px;
+    const outer = (n.__outer || drawnRadius(n, k)) + (S.selected === n.id ? 12 * px : 0);
+    let below = n.y + outer + gap + h <= V.y1 - edge || n.y - outer - gap - h < V.y0 + edge;
+    const y0 = below ? n.y + outer + gap : n.y - outer - gap - h;
+    let x0 = n.x - w / 2;
+    x0 = Math.max(V.x0 + edge, Math.min(x0, V.x1 - edge - w));
+    // the notch points at the dot, as long as the dot is over the card
+    const nx = Math.max(x0 + 10 * px, Math.min(n.x, x0 + w - 10 * px));
+    return { T, x0, y0, w, h, below, nx, ay: below ? y0 : y0 + h, px };
+  }
+  /** How far (graph units) dot m has to move to clear card L: nothing if it's already clear. */
+  function cardPush(m, L, k) {
+    const c = (m.__outer || drawnRadius(m, k)) + 7 / k;
+    const x0 = L.x0, x1 = L.x0 + L.w, y0 = L.y0 - (L.below ? 6 / k : 0), y1 = L.y0 + L.h + (L.below ? 0 : 6 / k);
+    const qx = Math.max(x0, Math.min(m.x, x1)), qy = Math.max(y0, Math.min(m.y, y1));
+    const dx = m.x - qx, dy = m.y - qy, d = Math.hypot(dx, dy);
+    if (d > 0) { if (d >= c) return null; const a = (c - d) / d; return [dx * a, dy * a]; }
+    const l = m.x - x0, r = x1 - m.x, t = m.y - y0, b = y1 - m.y, mn = Math.min(l, r, t, b);
+    if (mn === l) return [-(l + c), 0];
+    if (mn === r) return [r + c, 0];
+    if (mn === t) return [0, -(t + c)];
+    return [0, b + c];
+  }
+  /** Once per frame (onRenderFramePre): open and close cards, and ease the dots under them aside. */
+  function stepCards(ctx, k) {
+    const now = performance.now();
+    const dt = cardFrame ? Math.min(100, now - cardFrame) : 16;
+    cardFrame = now;
+    const rm = reducedMotion();
+    const want = S.hover && !S.dragging && S.nodes.has(S.hover) && !nodeHidden(S.hover) ? S.hover : null;
+    if (want && !cards.some((c) => c.id === want)) cards.push({ id: want, p: 0, since: now });
+    let moving = false;
+    for (let i = cards.length - 1; i >= 0; i--) {
+      const c = cards[i], n = S.nodes.get(c.id);
+      const target = n && c.id === want && now - c.since >= CARD_DWELL ? 1 : 0;
+      if (c.id === want && target === 0 && c.p === 0) { moving = true; continue; }  // waiting out the dwell
+      if (c.id !== want) c.since = Infinity;  // leaving: a return later waits out the dwell again
+      const kf = rm ? 1 : 1 - Math.exp(-dt / (target ? 55 : 45));
+      c.p += (target - c.p) * kf;
+      if (Math.abs(target - c.p) < 0.003) c.p = target; else moving = true;
+      if (!n || (target === 0 && c.p === 0)) { cards.splice(i, 1); continue; }
+    }
+    const open = cards.filter((c) => c.p > 0);
+    if (open.length) {
+      const V = viewBounds(k);
+      for (const c of open) c.L = cardLayout(ctx, S.nodes.get(c.id), k, V);
+    }
+    const owners = new Set(open.map((c) => c.id));
+    const kn = rm ? 1 : 1 - Math.exp(-dt / 70);
+    const shifted = [];
+    for (const m of S.nodes.values()) {
+      if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
+      let tx = 0, ty = 0;
+      if (open.length && !owners.has(m.id) && !nodeHidden(m.id)) {
+        for (const c of open) {
+          const d = cardPush(m, c.L, k);
+          if (d) { const e = ease3(c.p); tx += d[0] * e; ty += d[1] * e; }
+        }
+      }
+      const ox = m.__dx || 0, oy = m.__dy || 0;
+      if (!tx && !ty && !ox && !oy) continue;
+      let nx = ox + (tx - ox) * kn, ny = oy + (ty - oy) * kn;
+      if (Math.abs(tx - nx) * k < 0.05 && Math.abs(ty - ny) * k < 0.05) { nx = tx; ny = ty; } else moving = true;
+      m.__dx = nx; m.__dy = ny;
+      if (nx || ny) shifted.push(m);
+    }
+    S.shifted = shifted;
+    // the card is a box other titles stay out of
+    for (const c of open) if (c.p > 0.3) S.labelBoxes.push([c.L.x0, c.L.y0, c.L.x0 + c.L.w, c.L.y0 + c.L.h]);
+    applyShift();
+    return moving;
+  }
+  // The moved-aside dots are shifted only while a frame draws: the shift goes on before drawing, comes off
+  // during a layout step (the first force, see initGraph) and goes back on after it (onEngineTick), and comes
+  // off when the frame is done. Forces, dragging, pins and Fit all see the dots where they really are.
+  let shiftOn = false, shiftLifted = false;
+  function applyShift() {
+    if (shiftOn) return;
+    for (const m of S.shifted || []) {
+      m.x += m.__dx; m.y += m.__dy;
+      if (Number.isFinite(m.fx)) m.fx += m.__dx;
+      if (Number.isFinite(m.fy)) m.fy += m.__dy;
+    }
+    shiftOn = true;
+  }
+  function removeShift() {
+    if (!shiftOn) return;
+    for (const m of S.shifted || []) {
+      m.x -= m.__dx; m.y -= m.__dy;
+      if (Number.isFinite(m.fx)) m.fx -= m.__dx;
+      if (Number.isFinite(m.fy)) m.fy -= m.__dy;
+    }
+    shiftOn = false;
+  }
+  function liftShiftForce() { if (shiftOn) { removeShift(); shiftLifted = true; } }
+  liftShiftForce.initialize = () => {};
+  function restoreShiftAfterTick() { if (shiftLifted) { shiftLifted = false; applyShift(); } }
+
+  function cardPath(ctx, L) {
+    const { x0, y0, w, h, px, below, nx } = L, x1 = x0 + w, y1 = y0 + h;
+    const r = 5 * px, fold = 11 * px, nw = 6 * px, nh = 6 * px;
+    ctx.beginPath();
+    ctx.moveTo(x0 + r, y0);
+    if (below) { ctx.lineTo(nx - nw, y0); ctx.lineTo(nx, y0 - nh); ctx.lineTo(nx + nw, y0); }
+    ctx.lineTo(x1 - fold, y0);
+    ctx.lineTo(x1, y0 + fold);                    // the folded corner
+    ctx.lineTo(x1, y1 - r); ctx.arcTo(x1, y1, x1 - r, y1, r);
+    if (!below) { ctx.lineTo(nx + nw, y1); ctx.lineTo(nx, y1 + nh); ctx.lineTo(nx - nw, y1); }
+    ctx.lineTo(x0 + r, y1); ctx.arcTo(x0, y1, x0, y1 - r, r);
+    ctx.lineTo(x0, y0 + r); ctx.arcTo(x0, y0, x0 + r, y0, r);
+    ctx.closePath();
+  }
+  /** Draw the open cards, on top of everything (onRenderFramePost). */
+  function drawCards(ctx, k) {
+    const dpr = window.devicePixelRatio || 1;
+    for (const c of cards) {
+      if (!(c.p > 0) || !c.L) continue;
+      const n = S.nodes.get(c.id); if (!n) continue;
+      const L = c.L, T = L.T, px = L.px, e = ease3(c.p);
+      ctx.save();
+      // it grows out of the dot: from the notch, slightly smaller and nearer the dot
+      const s = 0.9 + 0.1 * e, lift = (1 - e) * 6 * px * (L.below ? -1 : 1);
+      ctx.translate(L.nx, L.ay + lift); ctx.scale(s, s); ctx.translate(-L.nx, -L.ay);
+      ctx.globalAlpha = e;
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.20)'; ctx.shadowBlur = 18 * dpr * e; ctx.shadowOffsetY = 4 * dpr * e;
+      cardPath(ctx, L); ctx.fillStyle = C.sheet; ctx.fill();
+      ctx.restore();
+      cardPath(ctx, L); ctx.strokeStyle = rgba(C.ink, 0.16); ctx.lineWidth = 0.8 * px; ctx.stroke();
+      // the fold
+      const x1 = L.x0 + L.w, fold = 11 * px;
+      ctx.beginPath(); ctx.moveTo(x1 - fold, L.y0); ctx.lineTo(x1 - fold, L.y0 + fold); ctx.lineTo(x1, L.y0 + fold); ctx.closePath();
+      ctx.fillStyle = rgba(C.ink, 0.07); ctx.fill(); ctx.stroke();
+      // kind · year · notes, the title, the authors
+      const x = L.x0 + T.pad * px;
+      let y = L.y0 + T.pad * px;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      const scaled = (f) => f.replace(/([\d.]+)px/, (_, v) => `${v * px}px`);
+      ctx.font = scaled(CARD_FONT.kick);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = `${0.8 * px}px`;
+      ctx.fillStyle = C.ink3; ctx.fillText(T.kick, x, y);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      ctx.fillStyle = C.red; ctx.fillRect(x, y + 13 * px, 16 * px, 1.1 * px);
+      y += 17 * px;
+      ctx.font = scaled(CARD_FONT.title); ctx.fillStyle = C.ink;
+      for (const line of T.lines) { ctx.fillText(line, x, y); y += 18.5 * px; }
+      if (T.by) {
+        y += 5 * px;
+        ctx.font = scaled(CARD_FONT.by); ctx.fillStyle = C.ink2;
+        ctx.fillText(T.by, x, y);
       }
       ctx.restore();
     }
+  }
+  /** The dot whose open card is under a pointer event, if any (a click on the card opens it). */
+  function cardNodeAt(e) {
+    if (!fg || !e || !cards.length) return null;
+    const rect = graphEl.getBoundingClientRect();
+    const p = fg.screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top);
+    return cardNodeAtGraph(p.x, p.y);
+  }
+  function cardNodeAtGraph(gx, gy) {
+    for (let i = cards.length - 1; i >= 0; i--) {
+      const c = cards[i], L = c.L;
+      if (!L || c.p < 0.5) continue;
+      const n = S.nodes.get(c.id); if (!n) continue;
+      const pad = 4 * L.px;
+      const inCard = gx >= L.x0 - pad && gx <= L.x0 + L.w + pad && gy >= Math.min(L.y0, L.ay - 8 * L.px) - pad && gy <= Math.max(L.y0 + L.h, L.ay + 8 * L.px) + pad;
+      const inDot = Math.hypot(gx - n.x, gy - n.y) <= (n.__outer || 3) + 10 * L.px;
+      // between the dot and the card (the notch's column)
+      const between = Math.abs(gx - L.nx) <= 10 * L.px && gy >= Math.min(n.y, L.ay) && gy <= Math.max(n.y, L.ay);
+      if (inCard || inDot || between) return n;
+    }
+    return null;
   }
 
   function onLinkClick(l) {
@@ -4015,12 +4279,18 @@
     // the graph works out what's under the pointer only while it draws; it pauses when nothing moves, so
     // wake it briefly or it keeps the last dot you hovered (and a right-click on empty map opens that dot's menu)
     kick(120);
+    if (fg) { const rc = graphEl.getBoundingClientRect(); S.ptr = fg.screen2GraphCoords(e.clientX - rc.left, e.clientY - rc.top); }
+    // left the card (and its dot) while a moved-aside dot kept the graph from noticing: let the card go
+    if (S.hover && S.ptr && cards.some((c) => c.id === S.hover && c.p > 0.5) && cardNodeAtGraph(S.ptr.x, S.ptr.y) == null) {
+      const n = S.nodes.get(S.hover);
+      if (n && Math.hypot(S.ptr.x - n.x, S.ptr.y - n.y) > (n.__outer || 3) + 10 / (S.k || 1)) { S.hover = null; graphEl.style.cursor = ''; }
+    }
     const r = S.hover ? null : labelHit(e);
     const id = r ? r.cid : null;
     if (r && S.hoverLink) { S.hoverLink = null; }
     if (id !== (S.hoverRegion ?? null)) { S.hoverRegion = id; graphEl.style.cursor = r ? 'pointer' : (S.hover ? 'pointer' : ''); kick(50); }
   });
-  graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
+  graphEl.addEventListener('pointerleave', () => { S.ptr = null; if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
   $('#rf-show-all') && $('#rf-show-all').addEventListener('click', () => unfocusRegion());
   $('#rf-rename') && $('#rf-rename').addEventListener('click', () => renameRegion());
   $('#btn-regions') && $('#btn-regions').addEventListener('click', (e) => { e.stopPropagation(); chooseRegion(); });
@@ -4241,7 +4511,7 @@
     });
   }
   // expose for debugging/tests
-  window.__rb = { S, renderMD, refreshGraph, openNote, get fg() { return fg; } };
+  window.__rb = { S, renderMD, refreshGraph, openNote, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); } };
   // hooks for static/review.js and static/views.js (review mode, critique history, graph views)
   Object.assign(window.__rb, {
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
