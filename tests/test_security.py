@@ -582,3 +582,8 @@ def test_page_and_scripts_are_rechecked_after_an_update(live):
     for path in ("/", "/static/app.js", "/static/style.css"):
         status, headers, _ = raw_request(live.port, f"GET {path} HTTP/1.1\nHost: 127.0.0.1:{live.port}\nConnection: close\n")
         assert status == 200 and headers.get("cache-control") == "no-cache", (path, headers)
+    # and the page asks for this version's scripts by name, so a script saved from an older version is never run
+    from app import __version__
+    _, _, body = raw_request(live.port, f"GET / HTTP/1.1\nHost: 127.0.0.1:{live.port}\nConnection: close\n")
+    body = body.decode() if isinstance(body, bytes) else body
+    assert f'src="/static/app.js?v={__version__}"' in body and f'href="/static/style.css?v={__version__}"' in body

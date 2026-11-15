@@ -26,7 +26,7 @@ for _ext, _type in ((".mjs", "text/javascript"), (".js", "text/javascript"), (".
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -3767,7 +3767,12 @@ mobile_api.install(app, store=store, static=STATIC, port=PORT, publish=event_bus
 # ---------------------------------------------------------------- static frontend
 @app.get("/")
 def index_page():
-    return FileResponse(STATIC / "index.html")
+    # every page and script URL carries the version, so after an update no window (the Mac app's WebKit
+    # included) can run a script it saved from an older version
+    from . import __version__
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    html = re.sub(r'((?:src|href)="/static/[^"?#]+)"', lambda m: f'{m.group(1)}?v={__version__}"', html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/viewer/{nid}")

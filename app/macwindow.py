@@ -23,7 +23,7 @@ import threading
 import urllib.request
 import webbrowser
 
-from . import paths
+from . import __version__, paths
 
 APP_NAME = "research brain"
 HEADER_H = 52  # static/style.css --topbar-h: the band that drags the window like a title bar
@@ -254,7 +254,7 @@ def run(url: str, start) -> int:
             log = paths.user_data_dir() / "app.log"
             win.load_html(LOADING.replace("is starting{more}", f"didn't start.<br><br>What it said is at the end of {log}"))
             return
-        win.load_url(url + "/?app=mac")
+        win.load_url(url + f"/?app=mac&v={__version__}")
         state["loaded"] = True
         state["ours"] = bool((_status(url, "/api/heartbeat") or {}).get("idle_exit"))
         misses = 0
@@ -270,7 +270,7 @@ def run(url: str, start) -> int:
                 win.destroy()
                 return
             if not closed.is_set():
-                win.load_url(url + "/?app=mac")
+                win.load_url(url + f"/?app=mac&v={__version__}")
                 state["ours"] = bool((_status(url, "/api/heartbeat") or {}).get("idle_exit"))
 
     storage = paths.user_data_dir() / "window"
