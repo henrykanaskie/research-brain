@@ -1690,7 +1690,10 @@
   const CARD_DWELL = 90;  // ms of hover before a card opens, so sweeping the pointer across dots stays calm
   const cards = [];        // { id, p (0..1 eased), since, L (layout, graph units) }
   let cardFrame = 0;
-  const ease3 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+  // p runs linearly in time; what you see follows an ease-out curve: it settles gently into place when
+  // opening and, running the same curve backwards, leaves gently and then speeds away when closing
+  const ease3 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : 1 - (1 - t) ** 3);
+  const CARD_IN = 220, CARD_OUT = 180;  // ms
   const cardsOpen = () => cards.some((c) => c.p > 0) || !!(S.shifted && S.shifted.length);
   function cardP(id) { const c = cards.find((x) => x.id === id); return c ? ease3(c.p) : 0; }
   function viewBounds(k) {
@@ -1780,7 +1783,8 @@
   /** Once per frame (onRenderFramePre): open and close cards, and ease the dots under them aside. */
   function stepCards(ctx, k) {
     const now = performance.now();
-    const dt = cardFrame ? Math.min(100, now - cardFrame) : 16;
+    // a frame after the map sat idle can come late: never let one frame cover much of a transition
+    const gap = cardFrame ? now - cardFrame : 16, dt = gap > 120 ? 16 : Math.min(50, gap);
     cardFrame = now;
     const rm = reducedMotion();
     const want = S.hover && !S.dragging && S.nodes.has(S.hover) && !nodeHidden(S.hover) ? S.hover : null;
@@ -1791,9 +1795,10 @@
       const target = n && c.id === want && now - c.since >= CARD_DWELL ? 1 : 0;
       if (c.id === want && target === 0 && c.p === 0) { moving = true; continue; }  // waiting out the dwell
       if (c.id !== want) c.since = Infinity;  // leaving: a return later waits out the dwell again
-      const kf = rm ? 1 : 1 - Math.exp(-dt / (target ? 55 : 28));  // closes quicker than it opens
-      c.p += (target - c.p) * kf;
-      if (Math.abs(target - c.p) < 0.003) c.p = target; else moving = true;
+      if (rm) c.p = target;
+      else if (target > c.p) c.p = Math.min(1, c.p + dt / CARD_IN);
+      else if (target < c.p) c.p = Math.max(0, c.p - dt / CARD_OUT);
+      if (c.p !== target) moving = true;
       if (!n || (target === 0 && c.p === 0)) { cards.splice(i, 1); continue; }
     }
     const open = cards.filter((c) => c.p > 0);
@@ -1802,7 +1807,7 @@
       for (const c of open) c.L = cardLayout(ctx, S.nodes.get(c.id), k, V);
     }
     const owners = new Set(open.map((c) => c.id));
-    const kn = rm ? 1 : 1 - Math.exp(-dt / 70);
+    const kn = rm ? 1 : 1 - Math.exp(-dt / 45);  // the dots follow the card's own curve, a touch behind
     const shifted = [];
     for (const m of S.nodes.values()) {
       if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
