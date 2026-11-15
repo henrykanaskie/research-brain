@@ -1240,8 +1240,8 @@
         const r = Math.max(n.__outer || drawnRadius(n, k), 3 / k) + 6 / k;
         const x = n.x + (shiftOn ? 0 : n.__dx || 0), y = n.y + (shiftOn ? 0 : n.__dy || 0);
         ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill();
-        const c = cards.find((q) => q.id === n.id && q.p > 0.5 && q.L);
-        if (c) { cardPath(ctx, c.L); ctx.fill(); }
+        // (the open card isn't painted here: this map is redrawn only every 0.8 s, and a card left on it
+        // would keep a closed card's dot hovered and reopen it.)
       })
       .nodeVisibility((n) => !nodeHidden(n.id))
       .linkVisibility(linkShown)
@@ -1263,26 +1263,19 @@
         if (l.kind === 'cites') return `<div class="tt-title">${ta}</div><div class="tt-meta">${head}</div><div class="tt-title">${tb}</div><div class="tt-meta">Click to see how they are connected</div>`;
         return `<div class="tt-meta">${head}</div><div class="tt-title">${ta}</div><div class="tt-meta">and</div><div class="tt-title">${tb}</div><div class="tt-meta">Click to see why they are connected</div>`;
       })
-      .onNodeHover((n) => {
-        const id = n ? n.id : null;
-        // a dot moved aside for a card can still be under the pointer where it really is: the card wins
-        if (id !== S.hover && S.ptr && cardNodeAtGraph(S.ptr.x, S.ptr.y)) { kick(50); return; }
-        S.hover = id; graphEl.style.cursor = n ? 'pointer' : ''; kick(50);
-      })
+      .onNodeHover((n) => { S.hover = n ? n.id : null; graphEl.style.cursor = n ? 'pointer' : ''; kick(50); })
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
-      .onNodeClick((n, e) => { const cn = cardNodeAt(e); if (!cn && regionTagClick(e)) return; n = cn || n; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
-      .onNodeRightClick((n, e) => nodeMenu(cardNodeAt(e) || n, e))
+      .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
+      .onNodeRightClick((n, e) => nodeMenu(n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
       .onNodeDrag((n) => { S.dragging = true; dragNeighbours(n); })
       .onNodeDragEnd((n) => { S.dragging = false; dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
       .onLinkRightClick((l, e) => linkMenu(l, e))
       .onBackgroundClick((e) => {
-        const cn = cardNodeAt(e);
-        if (cn) { openNote(cn.id, { center: true }); return; }
         if (regionTagClick(e)) return;
         if (S.backgroundClickHook) S.backgroundClickHook(e);
       })
-      .onBackgroundRightClick((e) => { const cn = cardNodeAt(e); if (cn) nodeMenu(cn, e); else backgroundMenu(e); })
+      .onBackgroundRightClick((e) => backgroundMenu(e))
       // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
       .onRenderFramePre((ctx, k) => {
@@ -1691,7 +1684,7 @@
   }
 
   // ---------- the hover card: a small sheet that pops out of a dot with its title and authors ----------
-  // Hovering a dot for a moment lifts a card out of it: the kind and year, the full title (up to three lines)
+  // Resting the pointer on a dot lifts a card out of it (it closes as soon as the pointer leaves the dot): the kind and year, the full title (up to three lines)
   // and the authors, each on its own line. Dots under the card glide aside while it's open and drift back when
   // it closes. They only move on screen: the layout and your placed dots aren't changed (see applyShift).
   const CARD_DWELL = 90;  // ms of hover before a card opens, so sweeping the pointer across dots stays calm
@@ -1798,7 +1791,7 @@
       const target = n && c.id === want && now - c.since >= CARD_DWELL ? 1 : 0;
       if (c.id === want && target === 0 && c.p === 0) { moving = true; continue; }  // waiting out the dwell
       if (c.id !== want) c.since = Infinity;  // leaving: a return later waits out the dwell again
-      const kf = rm ? 1 : 1 - Math.exp(-dt / (target ? 55 : 45));
+      const kf = rm ? 1 : 1 - Math.exp(-dt / (target ? 55 : 28));  // closes quicker than it opens
       c.p += (target - c.p) * kf;
       if (Math.abs(target - c.p) < 0.003) c.p = target; else moving = true;
       if (!n || (target === 0 && c.p === 0)) { cards.splice(i, 1); continue; }
@@ -1915,28 +1908,6 @@
       ctx.restore();
     }
   }
-  /** The dot whose open card is under a pointer event, if any (a click on the card opens it). */
-  function cardNodeAt(e) {
-    if (!fg || !e || !cards.length) return null;
-    const rect = graphEl.getBoundingClientRect();
-    const p = fg.screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top);
-    return cardNodeAtGraph(p.x, p.y);
-  }
-  function cardNodeAtGraph(gx, gy) {
-    for (let i = cards.length - 1; i >= 0; i--) {
-      const c = cards[i], L = c.L;
-      if (!L || c.p < 0.5) continue;
-      const n = S.nodes.get(c.id); if (!n) continue;
-      const pad = 4 * L.px;
-      const inCard = gx >= L.x0 - pad && gx <= L.x0 + L.w + pad && gy >= Math.min(L.y0, L.ay - 8 * L.px) - pad && gy <= Math.max(L.y0 + L.h, L.ay + 8 * L.px) + pad;
-      const inDot = Math.hypot(gx - n.x, gy - n.y) <= (n.__outer || 3) + 10 * L.px;
-      // between the dot and the card (the notch's column)
-      const between = Math.abs(gx - L.nx) <= 10 * L.px && gy >= Math.min(n.y, L.ay) && gy <= Math.max(n.y, L.ay);
-      if (inCard || inDot || between) return n;
-    }
-    return null;
-  }
-
   function onLinkClick(l) {
     const a = lid(l.source), b = lid(l.target);
     if (l.kind === 'part') {
@@ -4279,18 +4250,12 @@
     // the graph works out what's under the pointer only while it draws; it pauses when nothing moves, so
     // wake it briefly or it keeps the last dot you hovered (and a right-click on empty map opens that dot's menu)
     kick(120);
-    if (fg) { const rc = graphEl.getBoundingClientRect(); S.ptr = fg.screen2GraphCoords(e.clientX - rc.left, e.clientY - rc.top); }
-    // left the card (and its dot) while a moved-aside dot kept the graph from noticing: let the card go
-    if (S.hover && S.ptr && cards.some((c) => c.id === S.hover && c.p > 0.5) && cardNodeAtGraph(S.ptr.x, S.ptr.y) == null) {
-      const n = S.nodes.get(S.hover);
-      if (n && Math.hypot(S.ptr.x - n.x, S.ptr.y - n.y) > (n.__outer || 3) + 10 / (S.k || 1)) { S.hover = null; graphEl.style.cursor = ''; }
-    }
     const r = S.hover ? null : labelHit(e);
     const id = r ? r.cid : null;
     if (r && S.hoverLink) { S.hoverLink = null; }
     if (id !== (S.hoverRegion ?? null)) { S.hoverRegion = id; graphEl.style.cursor = r ? 'pointer' : (S.hover ? 'pointer' : ''); kick(50); }
   });
-  graphEl.addEventListener('pointerleave', () => { S.ptr = null; if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
+  graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
   $('#rf-show-all') && $('#rf-show-all').addEventListener('click', () => unfocusRegion());
   $('#rf-rename') && $('#rf-rename').addEventListener('click', () => renameRegion());
   $('#btn-regions') && $('#btn-regions').addEventListener('click', (e) => { e.stopPropagation(); chooseRegion(); });

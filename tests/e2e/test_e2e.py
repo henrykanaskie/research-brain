@@ -914,7 +914,7 @@ def test_map_labels_first_author_and_year_by_default(ctx, server):
 
 def test_hover_card_pops_out_and_dots_make_room(ctx, server):
     """Hovering a dot opens a card with its title and authors; dots under the card move aside while it's open,
-    a click on the card opens the paper, and afterwards every dot is exactly where it was."""
+    it closes as soon as the pointer leaves the dot, and afterwards every dot is exactly where it was."""
     clear_vault(server)
     main = api(server, "POST", "/api/notes", {"type": "paper", "title": "A long title about electron transport in low-temperature plasmas with anomalous collisions",
                                                "year": 2018, "authors": ["Jean-Pierre Boeuf", "Laurent Garrigues"]})["id"]
@@ -937,15 +937,11 @@ def test_hover_card_pops_out_and_dots_make_room(ctx, server):
         .filter(n => {{ const x = n.x + (n.__dx || 0), y = n.y + (n.__dy || 0); return x > x0 && x < x0 + w && y > y0 && y < y0 + h; }}).length;
     }}""")
     assert under == 0
-    # the card is part of its dot: a click on its body opens the paper
+    # leaving the dot closes it quickly, even when the pointer passes over where the card is
     x0, y0, w, h = page.evaluate(f"() => window.__rb.cards.find(c => c.id === '{main}').box")
-    tl = page.evaluate(f"() => window.__rb.fg.graph2ScreenCoords({x0 + w * 0.7}, {y0 + h * 0.6})")
-    page.mouse.move(box["x"] + tl["x"], box["y"] + tl["y"], steps=4)
-    page.wait_for_timeout(200)
-    assert page.evaluate("() => window.__rb.S.hover") == main
-    page.mouse.click(box["x"] + tl["x"], box["y"] + tl["y"])
-    page.wait_for_function(f"() => window.__rb.S.selected === '{main}'", timeout=4000)
-    page.keyboard.press("Escape")
+    mid = page.evaluate(f"() => window.__rb.fg.graph2ScreenCoords({x0 + w * 0.5}, {y0 + h * 0.6})")
+    page.mouse.move(box["x"] + mid["x"], box["y"] + mid["y"], steps=3)
+    page.wait_for_function("() => window.__rb.cards.length === 0", timeout=1000)
     # moving away closes it, and nothing has moved for real
     page.mouse.move(box["x"] + 5, box["y"] + box["height"] - 5, steps=6)
     page.wait_for_function("() => window.__rb.cards.length === 0", timeout=4000)
