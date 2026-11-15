@@ -573,3 +573,12 @@ def test_vault_files_are_private(app_env):
     vault = Path(server.VAULT)
     assert stat.S_IMODE(vault.stat().st_mode) == 0o700
     assert stat.S_IMODE(server.store.note_path(n["id"]).stat().st_mode) & 0o077 == 0
+
+
+
+def test_page_and_scripts_are_rechecked_after_an_update(live):
+    """After an update the app's window must not keep the old scripts: the page and static files say
+    no-cache (revalidate each load), and an unchanged file still comes back as a cheap 304."""
+    for path in ("/", "/static/app.js", "/static/style.css"):
+        status, headers, _ = raw_request(live.port, f"GET {path} HTTP/1.1\nHost: 127.0.0.1:{live.port}\nConnection: close\n")
+        assert status == 200 and headers.get("cache-control") == "no-cache", (path, headers)

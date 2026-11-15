@@ -3506,6 +3506,17 @@ def _server_port() -> int:
 
 
 @app.middleware("http")
+async def _fresh_pages(request: Request, call_next):
+    # The page and its scripts are checked with the server on every load (a cheap "not modified" when they
+    # haven't changed). Without this the app's window can keep an old app.js after an update.
+    response = await call_next(request)
+    path = request.url.path
+    if (path == "/" or path.startswith("/static/")) and "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.middleware("http")
 async def _learn_port(request: Request, call_next):
     # the socket's own port (scope["server"]), never the Host header, which the client chooses
     server = request.scope.get("server") or (None, None)
