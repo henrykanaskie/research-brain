@@ -296,7 +296,7 @@ Your labmates don't need GitHub, Python or anything else: one file does it.
 
 1. **Upload the installer zip.** On the release page, download **`research-brain-installer-<version>.zip`** and upload
    it to your lab's shared folder (OneDrive, SharePoint, Google Drive, Box…; or with the GitHub command line:
-   `gh release download v1.0.6 --pattern "research-brain-installer-*"`). Upload the zip itself, don't unzip it: it
+   `gh release download v1.0.7 --pattern "research-brain-installer-*"`). Upload the zip itself, don't unzip it: it
    keeps the Mac installer double-clickable, which single files downloaded in a browser don't. It holds the
    installers, the app, the Chrome extension, this README and *READ ME FIRST.txt*.
 2. **Send your labmates something like:** *"In our shared folder, download research-brain-installer-….zip.
@@ -342,7 +342,7 @@ cd research-brain
 ```
 
 With uv, one line installs a release on every OS:
-`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v1.0.6"`.
+`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v1.0.7"`.
 Without installing, from a checkout: `./run.sh` (the first run builds `.venv`, a few minutes), or
 double-click `research_brain.command` (Mac) or `research_brain.cmd` (Windows).
 
