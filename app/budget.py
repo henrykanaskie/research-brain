@@ -47,7 +47,7 @@ TABLE: dict[str, tuple[int, int, int]] = {
 # Only for agents whose CLI takes a stable alias; others keep the model the user picked.
 LIGHT_MODELS = {"claude": "haiku", "gemini": "gemini-2.5-flash"}
 
-SMALL_JOBS = ("explain", "review check", "card-extraction", "question summary")
+SMALL_JOBS = ("explain", "review check", "card-extraction", "question summary", "region names")
 
 _small = contextvars.ContextVar("rb_small_job", default=False)
 

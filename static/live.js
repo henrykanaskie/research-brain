@@ -53,6 +53,12 @@
     try { es = new EventSource('/api/events'); } catch { return; }
     es.addEventListener('hello', () => { retryMs = 2000; });
     es.addEventListener('server-stopped', () => stopped());
+    // a Find papers search finished (app/finder_api.py): static/finder.js tells you to come back
+    es.addEventListener('finder-done', (e) => {
+      let data = null;
+      try { data = JSON.parse(e.data); } catch { return; }
+      window.dispatchEvent(new CustomEvent('rb:finder-done', { detail: data }));
+    });
     es.addEventListener('notes-changed', (e) => {
       let data = null;
       try { data = JSON.parse(e.data); } catch { return; }
@@ -82,17 +88,18 @@
     }
     appKind = sessionStorage.getItem('rb.appWindow') || '';
   } catch { /* storage unavailable */ }
+  // research brain's own channel to its Mac window (app/macwindow.py); false anywhere else
+  const post = (msg) => {
+    if (appKind !== 'mac') return false;
+    const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
+    if (!h) return false;
+    h.postMessage(JSON.stringify(msg));
+    return true;
+  };
   if (appKind === 'mac') {
     // the window buttons sit at the left of the header, and pressing an empty part of the header drags the
     // window (app/macwindow.py): tell it where the header's buttons and fields are, so those still click
     document.documentElement.classList.add('mac-window');
-    // research brain's own channel to the window (app/macwindow.py)
-    const post = (msg) => {
-      const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
-      if (!h) return false;
-      h.postMessage(JSON.stringify(msg));
-      return true;
-    };
     const nativeOpen = window.open.bind(window);
     // the window has no tabs: new windows (the PDF viewer, articles) open in your browser
     window.open = (u, ...rest) => {
@@ -137,5 +144,5 @@
 
   window.addEventListener('beforeunload', () => { if (es) es.close(); });
   connect();
-  window.__rbLive = { get source() { return es; }, flush };
+  window.__rbLive = { get source() { return es; }, flush, native: post, get app() { return appKind; } };
 })();

@@ -57,8 +57,9 @@ SYSTEM = (
 class Tools:
     """The agent's actions, against OpenAlex and arXiv. Papers get short handles (P1, P2, ...)."""
 
-    def __init__(self, since: dt.date, sources=None, cites=None):
+    def __init__(self, since: dt.date, sources=None, cites=None, max_proposals: int = MAX_PROPOSALS):
         self.since = since
+        self.max_proposals = max_proposals
         self.sources = sources or scout.SOURCES
         self.cites = cites or _citations
         self.papers: dict[str, dict] = {}
@@ -132,13 +133,13 @@ class Tools:
         h = self._get(h)
         if h not in self.read:
             raise ValueError(f"read {h}'s abstract before proposing it")
-        if len(self.proposals) >= MAX_PROPOSALS:
-            raise ValueError(f"you have proposed {MAX_PROPOSALS} already; finish with done")
+        if len(self.proposals) >= self.max_proposals:
+            raise ValueError(f"you have proposed {self.max_proposals} already; finish with done")
         if any(x["handle"] == h for x in self.proposals):
             return f"{h} is already proposed."
         stance = stance if stance in ("supports", "against", "related") else "related"
         self.proposals.append({"handle": h, "paper": self.papers[h], "stance": stance, "why": str(why or "").strip()[:400]})
-        return f"Proposed {h} ({stance}). {MAX_PROPOSALS - len(self.proposals)} proposals left."
+        return f"Proposed {h} ({stance}). {self.max_proposals - len(self.proposals)} proposals left."
 
 
 _SEL = "id,display_name,publication_year,authorships,doi,ids,cited_by_count,open_access,abstract_inverted_index,primary_location"
@@ -183,14 +184,27 @@ def _action(text: str) -> dict | None:
     return a
 
 
+def _each(fn, args: list[tuple]) -> list[str]:
+    """Run one action per item of a list; a bad item says why without stopping the rest."""
+    out = []
+    for a in args:
+        try:
+            out.append(fn(*a))
+        except ValueError as e:
+            out.append(f"Not done for {str(a[0])[:10]}: {e}")
+    return out
+
+
 def run(backend, question: dict, *, since: dt.date, avoid: list[str] = (), sources=None, cites=None,
-        max_turns: int | None = None, clock=time.monotonic) -> dict:
-    """One agent search for a question. Returns {proposals, turns, lookups, note, chars_sent, stopped}."""
+        max_turns: int | None = None, clock=time.monotonic, system: str = SYSTEM,
+        max_proposals: int = MAX_PROPOSALS, labels: tuple[str, str] = ("QUESTION", "WHAT THEY MEAN")) -> dict:
+    """One agent search for a question (or, from app/finder.py, a topic). Returns {proposals, turns, lookups,
+    note, chars_sent, stopped}. "read" and "propose" also take a list ("papers"), so one turn can cover several."""
     from .agents.research import _call
-    tools = Tools(since, sources, cites)
+    tools = Tools(since, sources, cites, max_proposals)
     max_turns = max_turns or (budget.get("research_steps") + 2)
-    context = (f"QUESTION: {question.get('title') or ''}\n"
-               f"WHAT THEY MEAN: {(question.get('body') or '').strip() or '(no description)'}\n"
+    context = (f"{labels[0]}: {question.get('title') or ''}\n"
+               f"{labels[1]}: {(question.get('body') or '').strip() or '(no description)'}\n"
                f"Papers published since {since.isoformat()} are searched.\n")
     if avoid:
         context += "ALREADY FOUND OR DISMISSED (don't propose again):\n" + "\n".join(f"- {t}" for t in avoid[:30]) + "\n"
@@ -209,11 +223,11 @@ def run(backend, question: dict, *, since: dt.date, avoid: list[str] = (), sourc
                   (" (this is the last: propose your best or finish with done)." if left == 1 else ".") +
                   "\nReply with exactly one JSON object.")
         raw = ""
-        for out in _call(backend, prompt, SYSTEM, max(15.0, min(120.0, TIME_BUDGET - (clock() - t0))), cancel):
+        for out in _call(backend, prompt, system, max(15.0, min(120.0, TIME_BUDGET - (clock() - t0))), cancel):
             if out is not None:
                 raw = out
         turns += 1
-        sent += len(prompt) + len(SYSTEM)
+        sent += len(prompt) + len(system)
         a = _action(raw)
         if a is None:
             transcript.append("### (your reply wasn't one JSON action)")
@@ -227,10 +241,16 @@ def run(backend, question: dict, *, since: dt.date, avoid: list[str] = (), sourc
             if kind == "search":
                 qs = a.get("queries") or ([a["query"]] if a.get("query") else [])
                 result = tools.search(qs)
+            elif kind == "read" and isinstance(a.get("papers"), list):
+                result = "\n\n".join(_each(tools.read_abstract, [(x,) for x in a["papers"][:5]]))
             elif kind == "read":
                 result = tools.read_abstract(a.get("paper"))
             elif kind == "citations":
                 result = tools.citations(a.get("paper"), a.get("direction") or "references")
+            elif kind == "propose" and isinstance(a.get("papers"), list):
+                result = "\n".join(_each(tools.propose, [
+                    (x.get("paper"), str(x.get("stance") or "related").lower(), x.get("why") or "") if isinstance(x, dict)
+                    else (x, "related", "") for x in a["papers"][:10]]))
             elif kind == "propose":
                 result = tools.propose(a.get("paper"), str(a.get("stance") or "related").lower(), a.get("why") or "")
             else:

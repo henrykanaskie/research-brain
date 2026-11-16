@@ -151,7 +151,7 @@
   function setStatus(v) {
     if (!S.cur) return;
     rb.queueSave({ status: v });
-    const node = S.nodes.get(S.cur.id); if (node) node.status = v;
+    const node = S.nodes.get(S.cur.id); if (node) { node.status = v; rb.kick(300); }  // the dot shows read / unread
     const row = $('#status-row'); if (row && row.__redraw) row.__redraw();
     if (T.open) scheduleDrawerRefresh();
   }
@@ -286,7 +286,11 @@
   let refreshT = null;
   function scheduleDrawerRefresh() { clearTimeout(refreshT); refreshT = setTimeout(() => { if (T.open) render({ keepScroll: true }); }, 900); }
   // a region renamed together with its topic (app.js renameRegion)
-  window.addEventListener('rb:topics-changed', () => { loadTopics().then(() => { if (T.open) render({ keepScroll: true }); }); });
+  window.addEventListener('rb:topics-changed', (e) => {
+    const slug = e && e.detail && e.detail.slug;
+    if (slug && T.sets.has(slug)) loadSet(slug).catch(() => {});  // keep "Show on graph" in step
+    loadTopics().then(() => { if (T.open) render({ keepScroll: true }); });
+  });
 
   const closeBtn = () => h('button', { class: 'btn btn-icon', title: 'Close (Esc)', 'aria-label': 'Close', onclick: closeDrawer,
     html: '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>' });
@@ -380,7 +384,7 @@
     } else if (!isRec) {
       const setSt = async (v) => {
         await api('PUT', `/api/notes/${enc(it.id)}`, { status: v });
-        const node = S.nodes.get(it.id); if (node) node.status = v;
+        const node = S.nodes.get(it.id); if (node) { node.status = v; rb.kick(300); }
         if (S.cur && S.cur.id === it.id) { S.cur.status = v; const r = $('#status-row'); if (r && r.__redraw) r.__redraw(); }
       };
       acts.append(

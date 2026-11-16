@@ -387,7 +387,7 @@ reason other than Claude itself.
 
 Notes have `status` and `saved_because` (see the data model). `PUT /api/notes/{id}` accepts both; an unknown
 status is a 400. `saved_because` is collapsed to one line (max 300 chars). `GET /api/graph` nodes carry
-`status` (for filtering; the graph never colours by it).
+`status` (for filtering; a read paper is drawn as a white dot and an unread one has a small yellow glow at its centre).
 
 - `POST /api/notes/{id}/park` body `{"saved_because"?: str}` → Note with status `"later"` ("Park for later").
 
@@ -808,6 +808,21 @@ evidence for each other. The background matcher (one thread) runs debounced (2 s
 any note save or delete (`Store.listen`), any live event (`notes-changed`, `cards-changed`, metadata), and a slow
 poll (30 s, `RB_QUESTIONS_POLL`); it skips a question when neither it, the library, the cards, the settings nor
 the date changed. Only open questions are scanned in the background. `RB_QUESTIONS_MATCH=0` turns it off.
+
+## ADDED: Find papers and On deck (app/finder.py, app/finder_api.py)
+
+A one-shot AI search for a topic. The agent runs the same locked-down loop as a question's agent search
+(app/agent_scout.py, with "read" and "propose" also taking a list); its proposals wait On deck for review.
+State: `vault/state/finder.json`.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/finder` | | `{searches, items, deck, running}`: searches newest first (`status`: running, done or error, with `error`, `added`, `lookups`, `tokens`); items with `paper` (authors, year, venue, access, doi, arxiv, url, abstract), the agent's `why`, `status` (deck or dismissed) and `library_id` once it's in the library; `deck` counts papers waiting |
+| POST | `/api/finder/search` | `{topic, detail?, since?: any\|10y\|5y\|3y\|1y}` | 202 `{search}`; runs in the background (400 for a topic under 3 characters, 503 when online lookups are off) |
+| PUT | `/api/finder/items/{id}` | `{status: deck\|dismissed}` | `{item, deck}` |
+| DELETE | `/api/finder/searches/{id}` | | forgets the search and its papers still on deck; dismissed ones stay so they aren't proposed again |
+
+Adding a paper uses `POST /api/import/lookup` with its DOI, `arXiv:<id>` or title.
 
 ## ADDED: Phones and tablets (app/pairing.py, app/mobile_api.py)
 

@@ -144,8 +144,13 @@ def test_question_evidence_triage_badge_list(server, browser):
     page.wait_for_function(f"document.querySelector('#oq-evidence .oq-grp[data-v=dismissed] .oq-ev[data-eid=\"{third}\"]')")
     # the S / A / D keys did not trigger the panel's other shortcuts (write summary, ask, ...)
     assert page.locator("#chat").is_hidden()
-    data = json.loads((vault / "state" / "questions" / f"{qid}.json").read_text(encoding="utf-8"))
-    verdicts = {i["id"]: i["verdict"] for i in data["items"]}
+    # the row moves at once and the save follows: wait for it to reach the file
+    for _ in range(40):
+        data = json.loads((vault / "state" / "questions" / f"{qid}.json").read_text(encoding="utf-8"))
+        verdicts = {i["id"]: i["verdict"] for i in data["items"]}
+        if verdicts[third] == "dismissed":
+            break
+        page.wait_for_timeout(100)
     assert verdicts[first] == "supports" and verdicts[second] == "against" and verdicts[third] == "dismissed"
 
     # a note on the kept evidence is saved

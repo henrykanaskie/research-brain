@@ -19,6 +19,13 @@
     C.ink2 = g('--ink-2', C.ink2); C.rule = g('--rule', C.rule); C.red = g('--red', C.red); C.machine = g('--machine', C.machine);
     C.ink3 = g('--ink-3', C.ink3); C.dot = g('--dot', C.dot);
     C.violet = g('--violet', '#6B5A93'); C.ochre = g('--ochre', '#A9761F');
+    // a paper you've read is a white dot (in the dark theme, the lightest surface there is)
+    const m = /^#(..)(..)(..)$/.exec(C.ground);
+    C.dark = !!m && (parseInt(m[1], 16) + parseInt(m[2], 16) + parseInt(m[3], 16)) < 3 * 110;
+    C.read = '#FFFFFF';
+    // unread: a warm yellow glow (deeper amber on the dark map, where every paper is light)
+    C.unread = C.dark ? 'rgba(214,150,24,1)' : 'rgba(255,214,102,1)';
+    C.unreadFade = C.dark ? 'rgba(214,150,24,0)' : 'rgba(255,214,102,0)';
   }
   function rgba(col, a) {
     const m = /^#([0-9a-f]{6})$/i.exec(col);
@@ -1153,11 +1160,68 @@
           n.vx = n.vx * 0.7 + hx * 0.08; n.vy = n.vy * 0.7 + hy * 0.08;
           continue;
         }
-        const sa = n.sub >= 0 ? subAnchors.get(n.sub) : null;
-        const a = sa || anchors.get(n.cluster);
-        const tx = a ? a.x : 0, ty = a ? a.y : 0;
-        const s = (sa ? 0.075 : a ? 0.06 : 0.03) * alpha;
-        n.vx += (tx - n.x) * s; n.vy += (ty - n.y) * s;
+        const sat = satellites.get(n.id);
+        const hub = sat && nodeById.get(sat.hub);
+        // a dot linked to a paper in another region moves over to that paper's region (and fans out around
+        // it); its old region's rim no longer holds it back on the near side
+        const ra = anchors.get(hub && hub.cluster >= 0 ? hub.cluster : n.cluster);
+        if (hub && Number.isFinite(hub.x)) {
+          // a dot linked to a busier one takes its own slot around it, evenly spaced, so the links fan out
+          // all the way round instead of piling up on one side
+          const tx = hub.x + Math.cos(sat.angle) * sat.dist, ty = hub.y + Math.sin(sat.angle) * sat.dist;
+          const s = 0.05 * Math.max(alpha, 0.15);
+          n.vx += (tx - n.x) * s; n.vy += (ty - n.y) * s;
+        } else {
+          const sa = n.sub >= 0 ? subAnchors.get(n.sub) : null;
+          const a = sa || ra || looseAnchor(n);
+          const s = (sa ? 0.075 : ra ? 0.06 : 0.04) * alpha;
+          n.vx += (a.x - n.x) * s; n.vy += (a.y - n.y) * s;
+        }
+        if (ra && !S.dragging) {
+          // (not while you drag a dot: its linked dots follow it, wherever you take it)
+          // each region keeps to its own disc, so neighbouring regions never run into each other: past the
+          // rim, a gentle, steady pull back (it doesn't fade as the layout cools, but it eases a dot in
+          // rather than snapping it)
+          const dx = n.x - ra.x, dy = n.y - ra.y, d = Math.hypot(dx, dy);
+          if (d > ra.r && d > 0) { const over = Math.min(1.2, (d - ra.r) * 0.03) / d; n.vx -= dx * over; n.vy -= dy * over; }
+        }
+      }
+    }
+    // papers in no region wait around the outside of the map, not in the middle of the regions
+    function looseAnchor(n) {
+      const ang = ((strHash(n.id) % 360) / 360) * Math.PI * 2;
+      return { x: Math.cos(ang) * outerR, y: Math.sin(ang) * outerR };
+    }
+    let outerR = 60;
+    let satellites = new Map(), nodeById = new Map();
+    /** Your links: each dot linked to one with more links than itself is that dot's satellite, with its own
+     *  angle around it (evenly spaced, starting from a direction fixed by the hub's id, so it's stable). */
+    function layoutSatellites() {
+      nodeById = new Map(nodes.map((n) => [n.id, n]));
+      const deg = new Map(), pairs = [];
+      for (const l of S.links || []) {
+        if (l.kind !== 'manual' && l.kind !== 'mention') continue;
+        const a = lid(l.source), b = lid(l.target);
+        if (a === b) continue;
+        pairs.push([a, b]);
+        deg.set(a, (deg.get(a) || 0) + 1); deg.set(b, (deg.get(b) || 0) + 1);
+      }
+      const around = new Map();
+      for (const [a, b] of pairs) {
+        const da = deg.get(a), db = deg.get(b);
+        const [hub, sat] = da > db || (da === db && a < b) ? [a, b] : [b, a];
+        if (deg.get(sat) > 2) continue;  // a dot with several links of its own finds its place by them
+        if (!around.has(hub)) around.set(hub, new Set());
+        around.get(hub).add(sat);
+      }
+      satellites = new Map();
+      for (const [hub, set] of around) {
+        const sats = [...set].sort();
+        const base = ((strHash(hub) % 360) / 360) * Math.PI * 2;
+        sats.forEach((id, i) => {
+          if (satellites.has(id)) return;
+          satellites.set(id, { hub, angle: base + (i * 2 * Math.PI) / sats.length, dist: 13 + Math.min(10, sats.length * 1.2) });
+        });
       }
     }
     force.initialize = (ns) => { nodes = ns; layoutAnchors(); };
@@ -1178,7 +1242,19 @@
         if (n.sub >= 0) { subSizes.set(n.sub, (subSizes.get(n.sub) || 0) + 1); subOf.set(n.sub, n.cluster); }
       }
       const ids = [...sizes.keys()].sort((a, b) => sizes.get(b) - sizes.get(a));
-      anchors = ids.length <= 1 ? new Map(ids.map((id) => [id, { x: 0, y: 0 }])) : golden(ids, 7 * Math.sqrt(top.length) + 16, 0, 0, -Math.PI / 2);
+      // where each region is now (the middle of its dots), so a change repacks regions around where they
+      // already are instead of reshuffling the whole map
+      const now = new Map();
+      for (const n of top) {
+        if (n.cluster < 0 || !Number.isFinite(n.x)) continue;
+        const c = now.get(n.cluster) || { x: 0, y: 0, k: 0 };
+        c.x += n.x; c.y += n.y; c.k++; now.set(n.cluster, c);
+      }
+      for (const c of now.values()) { c.x /= c.k; c.y /= c.k; }
+      anchors = packRegions(ids, sizes, now.size >= Math.max(1, ids.length * 0.6) && S.settledOnce ? now : affinityLayout(ids, sizes));
+      layoutSatellites();
+      outerR = 30;
+      for (const a of anchors.values()) outerR = Math.max(outerR, Math.hypot(a.x, a.y) + a.r + 18);
       subAnchors = new Map();
       for (const cid of ids) {
         const subs = [...subSizes.keys()].filter((s) => subOf.get(s) === cid).sort((a, b) => subSizes.get(b) - subSizes.get(a));
@@ -1189,6 +1265,84 @@
       }
     }
     force.relayout = layoutAnchors;
+    return force;
+  }
+  /** Regions as discs sized by how many papers they hold (area grows with the count), packed around the
+   *  centre without overlapping and with a clear gap between them, biggest first: each new disc takes the
+   *  free spot nearest the centre along an outward spiral. Returns id -> {x, y, r}. */
+  /** Where regions would sit if distance followed relatedness: closely related regions (similar papers,
+   *  your links, shared topics and questions; the server's `near`) side by side, unrelated ones further
+   *  out. A small spring layout on the regions alone; packRegions then spaces them so none overlap. */
+  function affinityLayout(ids, sizes) {
+    const GAP = 14;
+    const rad = (id) => 6.2 * Math.sqrt(sizes.get(id)) + 7;
+    const aff = new Map();
+    for (const c of S.clusters || []) for (const [o, w] of c.near || []) aff.set(c.id + ':' + o, Number(w) || 0);
+    const P = new Map();
+    ids.forEach((id, i) => {  // start on a golden spiral so the result doesn't depend on chance
+      const a = i * 2.39996, r = i ? 30 * Math.sqrt(i) : 0;
+      P.set(id, { x: Math.cos(a) * r, y: Math.sin(a) * r * 0.8 });
+    });
+    if (ids.length < 3) return P;
+    for (let it = 0; it < 300; it++) {
+      const step = 0.12 * (1 - it / 300) + 0.02;
+      for (let i = 0; i < ids.length; i++) {
+        const a = P.get(ids[i]);
+        let fx = 0, fy = 0;
+        for (let j = 0; j < ids.length; j++) {
+          if (i === j) continue;
+          const b = P.get(ids[j]);
+          const w = aff.get(ids[i] + ':' + ids[j]) || 0;
+          // related: rest just apart; unrelated: three times further
+          const want = (rad(ids[i]) + rad(ids[j]) + GAP) * (1 + 2 * (1 - Math.min(1, w * 1.6)));
+          let dx = a.x - b.x, dy = a.y - b.y; const d = Math.hypot(dx, dy) || 0.01;
+          const pull = (d - want) / d * (w > 0 ? 0.5 + w : 0.15);
+          fx -= dx * pull; fy -= dy * pull;
+        }
+        a.x += fx * step / ids.length; a.y += fy * step / ids.length;
+      }
+    }
+    // centre it, so the map stays around the middle
+    let cx = 0, cy = 0;
+    for (const p of P.values()) { cx += p.x; cy += p.y; }
+    cx /= P.size; cy /= P.size;
+    for (const p of P.values()) { p.x -= cx; p.y -= cy; }
+    return P;
+  }
+  function packRegions(ids, sizes, now = new Map()) {
+    const GAP = 14;
+    const out = new Map(), placed = [];
+    const settled = now.size >= Math.max(1, ids.length * 0.6);  // a layout to keep (or the related-regions one)
+    for (const id of ids) {
+      const r = 6.2 * Math.sqrt(sizes.get(id)) + 7;
+      const o = settled && now.get(id) ? now.get(id) : { x: 0, y: 0 };
+      let spot = null;
+      if (!placed.length) spot = settled && now.get(id) ? { x: o.x, y: o.y } : { x: 0, y: 0 };
+      for (let t = 0; !spot && t < 4000; t++) {
+        const ang = t * 0.35 + id * 0.7, rad = t ? 2 + t * 0.9 : 0;
+        const x = o.x + Math.cos(ang) * rad, y = o.y + Math.sin(ang) * rad * 0.8;  // a little wider than tall, like a screen
+        if (placed.every((p) => Math.hypot(p.x - x, p.y - y) >= p.r + r + GAP)) spot = { x, y };
+      }
+      spot = spot || { x: placed.length * 50, y: 0 };
+      const d = { x: spot.x, y: spot.y, r };
+      placed.push(d); out.set(id, d);
+    }
+    return out;
+  }
+  /** A speed limit, applied after every other force: once the map has settled the first time, a change
+   *  (a new link, a paper joining a region) moves dots in a slow glide instead of a jump. Not while you drag. */
+  function calmForce() {
+    let nodes = [];
+    const VMAX = 1.1;
+    function force() {
+      if (!S.settledOnce || S.dragging) return;
+      for (const n of nodes) {
+        if (n.fx !== undefined) continue;
+        const v = Math.hypot(n.vx, n.vy);
+        if (v > VMAX) { n.vx *= VMAX / v; n.vy *= VMAX / v; }
+      }
+    }
+    force.initialize = (ns) => { nodes = ns; };
     return force;
   }
   /** simple collision (avoids loading d3-force just for forceCollide) */
@@ -1255,14 +1409,8 @@
       .linkCanvasObject(drawLink)
       .linkWidth(() => 1)
       .linkHoverPrecision(6)
-      .linkLabel((l) => {
-        const a = lid(l.source), b = lid(l.target);
-        const ta = esc(truncate(nodeTitle(a), 60)), tb = esc(truncate(nodeTitle(b), 60));
-        if (l.kind === 'part') return `<div class="tt-meta">Fragment of</div><div class="tt-title">${tb}</div>`;
-        const head = l.kind === 'similar' ? `Similar, score <span class="tnum">${l.score.toFixed(2)}</span>` : l.kind === 'mention' ? 'Mentioned in your writing' : l.kind === 'cites' ? 'Cites' : 'Your link';
-        if (l.kind === 'cites') return `<div class="tt-title">${ta}</div><div class="tt-meta">${head}</div><div class="tt-title">${tb}</div><div class="tt-meta">Click to see how they are connected</div>`;
-        return `<div class="tt-meta">${head}</div><div class="tt-title">${ta}</div><div class="tt-meta">and</div><div class="tt-title">${tb}</div><div class="tt-meta">Click to see why they are connected</div>`;
-      })
+      // no tooltip on a trace: hovering highlights it and shows the pointer; a click explains the link
+      .linkLabel(() => '')
       .onNodeHover((n) => { S.hover = n ? n.id : null; graphEl.style.cursor = n ? 'pointer' : ''; kick(50); })
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
@@ -1273,7 +1421,11 @@
       .onLinkRightClick((l, e) => linkMenu(l, e))
       .onBackgroundClick((e) => {
         if (regionTagClick(e)) return;
-        if (S.backgroundClickHook) S.backgroundClickHook(e);
+        if (S.backgroundClickHook && S.backgroundClickHook(e)) return;  // static/mobile.js handled it
+        // a click in free space lets go of the focused dot (the open note stays open); with no dot
+        // focused, it lets go of a focused region
+        if (S.selected) { S.selected = null; S.focusCache = null; kick(300); }
+        else if (S.focusCluster != null) unfocusRegion();
       })
       .onBackgroundRightClick((e) => backgroundMenu(e))
       // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
@@ -1300,7 +1452,7 @@
         if (performance.now() > animUntil && !pulses.length) fg.autoPauseRedraw(true);
       })
       .onEngineTick(restoreShiftAfterTick)
-      .onEngineStop(releaseTmpPins)
+      .onEngineStop(() => { S.settledOnce = true; releaseTmpPins(); })
       .cooldownTime(9000)
       .d3AlphaDecay(0.028)
       .d3VelocityDecay(0.38)
@@ -1319,6 +1471,7 @@
     }
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
+    fg.d3Force('calm', calmForce());
     configureLinkForce();
     // Resizing the window (maximise, full screen, dragging an edge): keep the same spot of the map in the
     // middle while it changes, then refit once it stops, to the whole map or the region you're focused on.
@@ -1459,7 +1612,9 @@
         if (l.kind === 'mention') return 0.2;
         if (l.kind === 'question') return 0.15;
         if (l.kind === 'cites') return S.showCites ? 0.12 : 0;
-        return linkShown(l) ? 0.03 + 0.2 * score(l) : 0;
+        // similarity across two regions pulls only a little, so it can't drag the regions into each other
+        const across = l.source && l.target && l.source.cluster >= 0 && l.target.cluster >= 0 && l.source.cluster !== l.target.cluster;
+        return linkShown(l) ? (0.03 + 0.2 * score(l)) * (across ? 0.2 : 1) : 0;
       });
     kick(200);
   }
@@ -1506,6 +1661,7 @@
     return Math.max(Number(n.parts) || 0, (Number(n.mass) || 0) > 0 ? 1 : 0);
   }
 
+  const UNREAD = new Set(['to-read', 'reading', 'later', '']);
   function drawNode(n, ctx, k) {
     // zooming in should reveal structure, not inflate the dots: grow slower than the zoom
     const r = drawnRadius(n, k);
@@ -1519,9 +1675,30 @@
       ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
       ctx.fillStyle = C.red; ctx.fill();
     } else {
-      if (n.type === 'paper') {
+      if (n.type === 'paper' && n.status === 'read') {
+        // read: a white dot with an ink rim (fuller and firmer than a note's hollow ring)
+        ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+        ctx.fillStyle = C.read; ctx.fill();
+        if (C.dark) {
+          // on the dark map every paper is light: a read one is pure white with a thin dark ring inside its edge
+          ctx.beginPath(); ctx.arc(n.x, n.y, Math.max(r * 0.55, r - 1.3 * px), 0, 2 * Math.PI);
+          ctx.strokeStyle = C.ground; ctx.lineWidth = 0.8 * px; ctx.stroke();
+        } else {
+          ctx.strokeStyle = C.ink; ctx.lineWidth = Math.min(1.2, 1.1 * px); ctx.stroke();
+        }
+      } else if (n.type === 'paper') {
         ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
         ctx.fillStyle = C.ink; ctx.fill();
+        // not read yet (to read, reading, later): a small warm yellow glow at the centre, quiet at a distance
+        if (UNREAD.has(n.status || '') && r * k > 3 && Number.isFinite(n.x) && Number.isFinite(n.y) && Number.isFinite(r) && Number.isFinite(px)) {
+          const core = Math.max(0.5 * px, r * 0.14), glow = Math.min(r * 0.5, core * 2.8);
+          const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, glow);
+          g.addColorStop(0, C.unread);
+          g.addColorStop(core / glow, C.unread);
+          g.addColorStop(1, C.unreadFade);
+          ctx.beginPath(); ctx.arc(n.x, n.y, glow, 0, 2 * Math.PI);
+          ctx.fillStyle = g; ctx.fill();
+        }
       } else if (n.type === 'question') {
         const d = r * 1.25;
         ctx.beginPath(); ctx.moveTo(n.x, n.y - d); ctx.lineTo(n.x + d, n.y); ctx.lineTo(n.x, n.y + d); ctx.lineTo(n.x - d, n.y); ctx.closePath();
@@ -2119,6 +2296,8 @@
       const rf = fg.d3Force('regions'); if (rf && rf.relayout) rf.relayout();
       kick(1000);
       if (S.firstGraph && next.size) setTimeout(() => smoothFit(T(700), 90), 1400);
+      // the speed limit (calmForce) starts once the first layout has had time to unfold
+      if (S.firstGraph) setTimeout(() => { S.settledOnce = true; }, 5000);
     }
     S.firstGraph = false;
   }
@@ -3230,7 +3409,29 @@
     if (cur && !curLinked) items.push(menuItem(`Link to ${truncate(cur.title || cur.id, 40)}`, null, () => linkNotes(cur.id, n.id)));
     if (n.type !== 'fragment') items.push(menuItem('Link to…', null, () => startLinkMode(n)));
     items.push(menuItem('Open', null, () => openNote(n.id, { center: true })));
+    if (n.type === 'paper') {
+      const isRead = n.status === 'read';
+      items.push(menuItem(isRead ? 'Mark as unread' : 'Mark as read', isRead ? 'Back to To read' : 'It turns white on the map', () => markRead(n, !isRead)));
+    }
     if (n.__userPin) items.push(menuItem('Let it move freely', 'You placed this dot: it settles where you put it. This gives it back to the layout', () => unpinNode(n)));
+    // put it in a section of the map (a region) or one of your topics: it joins that group on the map,
+    // however similar it is to the papers there
+    if (n.type !== 'fragment') {
+      const regions = (S.clusters || []).filter((c) => c.id !== n.cluster && c.label).sort((a, b) => a.label.localeCompare(b.label)).slice(0, 12);
+      if (regions.length) {
+        items.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Put in section' }));
+        for (const c of regions) items.push(menuItem(truncate(c.label, 44), `${c.size} papers`, () => putInSection(n, c)));
+      }
+      const topicSlot = h('div', { class: 'menu-topics' });
+      items.push(topicSlot);
+      api('GET', '/api/topics').then((list) => {
+        const inRegion = new Set(regions.map((c) => c.topic && c.topic.slug).filter(Boolean));
+        const ts = (list || []).filter((t) => !inRegion.has(t.slug)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 12);
+        if (!ts.length || !topicSlot.isConnected) return;
+        topicSlot.append(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Add to topic' }),
+          ...ts.map((t) => menuItem(truncate(t.name, 44), `${t.count}`, () => addToTopic(n, t.slug, t.name))));
+      }).catch(() => {});
+    }
     // unlink: just the notes it's linked to, the open note's first
     const own = manualLinksOf(n.id).sort((x, y) => (cur && y.other === cur.id) - (cur && x.other === cur.id));
     if (own.length) {
@@ -3238,6 +3439,46 @@
       for (const { kind, mine, other } of own.slice(0, 8)) items.push(menuItem(truncate(nodeTitle(other), 44), null, () => unlinkAny(kind, mine, other)));
     }
     showMenu(truncate(n.title || n.id, 60), items, e);
+  }
+  /** Put a dot in a map section: the region's topic takes it (a region without one gets a topic of its own,
+   *  named like the region, holding its papers), and topics hold their papers together on the map. */
+  async function putInSection(n, c) {
+    try {
+      if (c.topic && c.topic.slug) return await addToTopic(n, c.topic.slug, c.label);
+      const members = [...S.nodes.values()].filter((x) => x.cluster === c.id && x.type !== 'fragment').map((x) => x.id);
+      let t;
+      try { t = await api('POST', '/api/topics', { name: c.label, members: [...members, n.id] }); }
+      catch (e) {  // a topic with that name exists already: use it
+        const list = await api('GET', '/api/topics');
+        const same = (list || []).find((x) => x.name.toLowerCase() === c.label.toLowerCase());
+        if (!same) throw e;
+        await api('POST', `/api/topics/${encodeURIComponent(same.slug)}/notes`, { ids: [...members, n.id] });
+        t = same;
+      }
+      toast(`Put “${truncate(n.title || n.id, 40)}” in ${c.label}.`, 'ok');
+      afterTopicChange(n, t && t.slug);
+    } catch (e) { toastErr(e, 'Could not put it there'); }
+  }
+  async function addToTopic(n, slug, name) {
+    try {
+      await api('POST', `/api/topics/${encodeURIComponent(slug)}/notes`, { ids: [n.id] });
+      toast(`Added “${truncate(n.title || n.id, 40)}” to ${name}.`, 'ok');
+      afterTopicChange(n, slug);
+    } catch (e) { toastErr(e, 'Could not add it to the topic'); }
+  }
+  function afterTopicChange(n, slug) {
+    refreshGraph();
+    if (S.cur && S.cur.id === n.id) reloadCur();
+    window.dispatchEvent(new CustomEvent('rb:topics-changed', { detail: { slug } }));  // static/topics.js reloads
+  }
+  async function markRead(n, read) {
+    const v = read ? 'read' : 'to-read';
+    const prev = n.status;
+    n.status = v; kick(300);
+    try {
+      if (S.cur && S.cur.id === n.id) { queueSave({ status: v }); S.cur.status = v; const row = $('#status-row'); if (row && row.__redraw) row.__redraw(); }
+      else await api('PUT', `/api/notes/${encodeURIComponent(n.id)}`, { status: v });
+    } catch (e) { n.status = prev; kick(300); toastErr(e, 'Could not change it'); }
   }
   /** Right-click one of your links (a red line) or a [[mention]]: unlink the two. */
   function linkMenu(l, e) {

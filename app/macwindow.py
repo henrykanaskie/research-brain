@@ -190,6 +190,22 @@ def _on_message(header: _Header, body: str) -> None:
     url = str(msg.get("open") or "")
     if url.startswith(("http://", "https://")):  # window.open() and new-tab links: in your default browser
         webbrowser.open(url)
+    if "attention" in msg:  # a Find papers search finished (static/finder.js): call you back to the app
+        _attention(str(msg.get("badge") or "")[:4])
+
+
+def _attention(badge: str) -> None:
+    """Bounce the Dock icon once and badge it, unless research brain is already the app in front. The badge
+    goes when you come back (run() clears it on NSApplicationDidBecomeActiveNotification)."""
+    import AppKit
+    app = AppKit.NSApplication.sharedApplication()
+    if app.isActive():
+        return
+    try:
+        app.dockTile().setBadgeLabel_(badge or "\u2022")
+        app.requestUserAttention_(AppKit.NSInformationalRequest)
+    except Exception as e:
+        print(f"[research_brain] couldn't badge the Dock icon: {e!r}", file=sys.stderr)
 
 
 _handler_class = None
@@ -245,6 +261,10 @@ def run(url: str, start) -> int:
     # Quit ends the process before webview.start() returns, so stop research brain as the app terminates
     keep.append(AppKit.NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
         AppKit.NSApplicationWillTerminateNotification, None, None, lambda _n: stop()))
+    # back in research brain: the Dock badge from a finished search (_attention) has done its job
+    keep.append(AppKit.NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+        AppKit.NSApplicationDidBecomeActiveNotification, None, None,
+        lambda _n: AppKit.NSApplication.sharedApplication().dockTile().setBadgeLabel_(None)))
 
     def started():
         win.events.shown.wait(20)  # the native window exists from here on

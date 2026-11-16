@@ -303,7 +303,7 @@
       h('span', { text: 'Around' }),
       h('span', { class: 'p-title', title: n.title, text: rb.truncate(n.title || id, 48) }),
       h('span', { class: 'tnum', text: `${others} within 2 links` }),
-      h('button', { class: 'btn btn-sm', title: 'Show the whole graph (Esc)', text: 'Show all', onclick: unfocus }));
+      h('button', { class: 'btn btn-sm', title: 'Close the focus and show the whole graph (Esc)', text: 'Close', onclick: unfocus }));
     pill.hidden = false;
     setTimeout(() => fitTo(keep), delay);
   }

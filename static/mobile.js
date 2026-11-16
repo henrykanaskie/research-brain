@@ -472,7 +472,7 @@
     const fg = rb.fg;
     if (!fg || !fg.onBackgroundClick) return;
     // don't replace the app's own background handler (region tags use it); add to it
-    S.backgroundClickHook = () => { if (M.on && M.sel) { M.sel = null; peek.hidden = true; S.selected = S.cur ? S.cur.id : null; rb.kick(300); } };
+    S.backgroundClickHook = () => { if (M.on && M.sel) { M.sel = null; peek.hidden = true; S.selected = S.cur ? S.cur.id : null; rb.kick(300); return true; } return false; };
   }
 
   // ====================================================================== lite: desktop-only things
