@@ -1215,7 +1215,8 @@ async function loadAgent() {
   try {
     const st = await api("/api/status");
     const SHORT = { claude: "Claude", codex: "Codex", gemini: "Gemini", copilot: "Copilot", opencode: "OpenCode", cursor: "Cursor", qwen: "Qwen", ollama: "your local model", "openai-local": "your local model" };
-    ASK.ai = (st.agent && (SHORT[st.agent.id] || st.agent.name)) || "Claude";
+    ASK.ai = (st.agent && (SHORT[st.agent.id] || st.agent.name)) || "your AI";
+    window.RB_AI = ASK.ai;  // RB.aiName() in commands.js
     ASK.ok = !!(st.claude && st.claude.available);
     ASK.why = ASK.ok ? "" : ((st.claude && st.claude.detail) || "No AI agent found on this computer.");
   } catch { ASK.ok = false; ASK.why = "Couldn't reach research_brain. Is it running?"; }

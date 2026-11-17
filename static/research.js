@@ -17,7 +17,7 @@
     get(k, d) { try { const v = localStorage.getItem('rb.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('rb.' + k, JSON.stringify(v)); } catch { /* private window */ } },
   };
-  const NOTICE = () => `${window.RB_AI || 'Claude'} can only read your library here — it can’t browse, click, or touch anything else.`;
+  const NOTICE = () => `${RB.aiName()} can only read your library here — it can’t browse, click, or touch anything else.`;
 
   const CSS = `
   .rs-mode { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; flex-wrap: wrap; }
@@ -57,7 +57,7 @@
   const bar = h('div', { class: 'rs-mode' });
   const seg = h('div', { class: 'rs-seg', role: 'group', 'aria-label': 'Answer mode' });
   const bQuick = h('button', { type: 'button', text: 'Quick', title: 'One answer from the most relevant passages (fast)', onclick: () => setMode('quick') });
-  const bRes = h('button', { type: 'button', text: 'Research', title: `${window.RB_AI || 'Claude'} searches your library itself: several searches, opens pages, follows citations`, onclick: () => setMode('research') });
+  const bRes = h('button', { type: 'button', text: 'Research', title: `${RB.aiName()} searches your library itself: several searches, opens pages, follows citations`, onclick: () => setMode('research') });
   seg.append(bQuick, bRes);
   const fastBox = h('input', { type: 'checkbox' });
   fastBox.checked = R.fast;
@@ -79,7 +79,7 @@
     const ta = $('#chat-input');
     const scoped = window.__rb && window.__rb.S && window.__rb.S.chatPaper;
     if (ta && scoped) ta.placeholder = 'Ask anything about this paper';
-    else if (ta) ta.placeholder = R.mode === 'research' ? `Ask a question for ${window.RB_AI || 'Claude'} to research in your library` : 'Ask about your papers and notes';
+    else if (ta) ta.placeholder = R.mode === 'research' ? `Ask a question for ${RB.aiName()} to research in your library` : 'Ask about your papers and notes';
   }
   paintMode();
 
@@ -218,7 +218,7 @@
     }
     if (m.pending) {
       return h('div', { class: 'msg assistant' }, h('div', { class: 'machine streaming', 'aria-live': 'polite' },
-        head(m.live ? `${window.RB_AI || 'Claude'}, writing…` : `${window.RB_AI || 'Claude'}, researching…`), trail(m),
+        head(m.live ? `${RB.aiName()}, writing…` : `${RB.aiName()}, researching…`), trail(m),
         m.live ? h('div', { class: 'msg-body md rs-live', html: rb.partialMD(m.live) }) : null));
     }
     const src = (m.sources || []).length ? h('div', { class: 'sources' }, h('span', { class: 'lbl', text: 'Sources' }),
@@ -226,7 +226,7 @@
         h('span', { class: 'tdot ' + rb.nodeType(s.id) }), h('span', { class: 't', text: s.title || s.id }),
         s.cited ? h('span', { class: 's', text: 'cited' }) : null))) : null;
     return h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
-      head(`${window.RB_AI || 'Claude'}, researched`), trail(m),
+      head(`${RB.aiName()}, researched`), trail(m),
       h('div', { class: 'msg-body md', html: renderMD(m.content) }), src, rb.chatPassages(m)));
   }
   function retry(i) {
@@ -244,7 +244,7 @@
       { id: 'research.toggle', title: 'Toggle research mode', group: 'Research', keys: 'Alt+R', allowInInput: true,
         description: 'Switches Ask your library between Quick (one answer) and Research (the AI searches your library itself).',
         aliases: ['agent', 'deep', 'quick', 'mode', 'search library'],
-        run: () => { setMode(R.mode === 'research' ? 'quick' : 'research'); rb.openChat(); toast(R.mode === 'research' ? `Research mode: ${window.RB_AI || 'Claude'} searches your library itself.` : 'Quick mode.', 'info'); } },
+        run: () => { setMode(R.mode === 'research' ? 'quick' : 'research'); rb.openChat(); toast(R.mode === 'research' ? `Research mode: ${RB.aiName()} searches your library itself.` : 'Quick mode.', 'info'); } },
       { id: 'research.ask', title: 'Ask with research', group: 'Research',
         description: 'Sends the question in the chat box in Research mode, whatever the toggle says.',
         aliases: ['research question', 'investigate', 'deep search'],

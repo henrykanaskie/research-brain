@@ -243,6 +243,53 @@ class Store:
         self.note_path(nid)
         return self.text_dir / f"{nid}.txt"
 
+    def fill_missing_abstracts(self) -> list[str]:
+        """Give every paper that has PDF text but no abstract the one its PDF prints (see write_text).
+        Runs at startup for papers stored before this existed; idempotent. Returns the ids it changed."""
+        from .pdftext import guess_abstract
+        changed: list[str] = []
+        for n in self.all():
+            if n.get("type") == "fragment" or (n.get("abstract") or "").strip():
+                continue
+            tp = self.text_path(n["id"])
+            if not tp.is_file():
+                continue
+            try:
+                abstract = guess_abstract(tp.read_text(encoding="utf-8", errors="replace")[:200_000])
+            except OSError:
+                continue
+            if not abstract:
+                continue
+            with self.lock:
+                try:
+                    full = self.get(n["id"])
+                except KeyError:
+                    continue
+                if (full.get("abstract") or "").strip() or full.get("_yaml_error"):
+                    continue
+                full["abstract"] = abstract
+                self.save(full)
+                changed.append(n["id"])
+        return changed
+
+    def write_text(self, nid: str, text: str, note: dict | None = None) -> bool:
+        """Store a paper's PDF text, and fill its abstract from the text when it has none (many journals'
+        records, APS's among them, carry no abstract, though the PDF prints one). With `note`, the abstract is
+        set on that dict and the caller saves it; otherwise the note is saved here. True if text was written."""
+        if not text.strip():
+            return False
+        from .pdftext import guess_abstract
+        with self.lock:
+            self.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
+            n = note if note is not None else self.get(nid)
+            if not (n.get("abstract") or "").strip() and n.get("type") != "fragment":
+                abstract = guess_abstract(text)
+                if abstract:
+                    n["abstract"] = abstract
+                    if note is None:
+                        self.save(n)
+        return True
+
     # ---------- read/write ----------
     def _parse(self, nid: str, raw: str) -> dict:
         meta: dict = {}

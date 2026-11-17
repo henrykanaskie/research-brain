@@ -8,7 +8,7 @@
  *     group: 'Note',                    // General, Navigate, Library, Note, Graph, Review,
  *                                       // Research, Viewer, Extension
  *     keys: 'Mod+Shift+Enter',          // or an array: ['N', 'G then N']; omit for palette-only
- *     description: 'Claude compares your summary with the paper.',
+ *     description: '{AI} compares your summary with the paper.',  // {AI}: the AI tool you chose
  *     aliases: ['feedback', 'check'],   // extra search words for the sheet and the palette
  *     when: () => !!RB.app.S.cur,       // available right now? (default: always)
  *     run: (event) => { ... },          // return false to let the browser handle the key
@@ -36,6 +36,10 @@
 (() => {
   'use strict';
   const RB = (window.RB = window.RB || {});
+  // The AI tool you chose (Settings › AI agent), for any text that names it: app.js and viewer.html set
+  // window.RB_AI from /api/status. Text written before that is known says {AI}, filled in when it's shown.
+  const aiName = (RB.aiName = () => window.RB_AI || 'your AI');
+  const aiText = (RB.aiText = (s) => String(s || '').replace(/\{AI\}/g, aiName()));
   if (RB.commands) return;
 
   const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
@@ -380,7 +384,7 @@
   function score(c, q) {
     q = words(q).trim();
     if (!q) return 0;
-    const title = words(c.title), al = words(c.aliases.join(' | ')), desc = words(c.description), grp = words(c.group);
+    const title = words(c.title), al = words(c.aliases.join(' | ')), desc = words(aiText(c.description)), grp = words(c.group);
     const keyFirst = c.seqs.map((s) => s[0].key);
     if (q.length === 1) {
       let s = -1;
@@ -482,7 +486,7 @@
           const can = available(c) && c.id !== 'general.close';
           return el('div', { class: 'rbk-row' + (can ? ' can' : ''), 'data-cmd': c.id, title: can ? 'Run it' : '',
             onclick: can ? () => { close(false); runCmd(c); } : null },
-          el('div', { class: 'rbk-txt' }, el('div', { class: 'rbk-rt', text: c.title }), c.description ? el('div', { class: 'rbk-rd', text: c.description }) : null),
+          el('div', { class: 'rbk-txt' }, el('div', { class: 'rbk-rt', text: c.title }), c.description ? el('div', { class: 'rbk-rd', text: aiText(c.description) }) : null),
           c.seqs.length ? capsEl(c.seqs) : null);
         })));
     }
@@ -531,7 +535,7 @@
         ? el('div', { class: 'rbk-item' + (on ? ' on' : ''), role: 'option', 'aria-selected': String(on), 'data-id': it.id },
           el('div', { class: 'rbk-txt' }, el('span', { class: 'rbk-it serif', text: it.title }), it.sub ? el('span', { class: 'rbk-is', text: it.sub }) : null))
         : el('div', { class: 'rbk-item' + (on ? ' on' : ''), role: 'option', 'aria-selected': String(on), 'data-cmd': it.id },
-          el('div', { class: 'rbk-txt' }, el('span', { class: 'rbk-it', text: it.title }), on && it.description ? el('span', { class: 'rbk-is', text: it.description }) : null),
+          el('div', { class: 'rbk-txt' }, el('span', { class: 'rbk-it', text: it.title }), on && it.description ? el('span', { class: 'rbk-is', text: aiText(it.description) }) : null),
           el('span', { class: 'rbk-ig', text: it.group }),
           it.seqs.length ? capsEl(it.seqs.slice(0, 1)) : null);
       row.addEventListener('mousemove', () => { if (ov.idx !== i) { ov.idx = i; drawPalette(); } });

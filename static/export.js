@@ -75,7 +75,7 @@
       const cancel = el('button', { class: 'btn', type: 'button', text: 'Cancel' });
       const form = el('form', { class: 'modal-card ex-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ex-title' },
         el('div', { class: 'modal-title', id: 'ex-title', text: heading }),
-        el('div', { class: 'modal-text', text: 'Writes a read-only website (summaries, notes, fragments and math) to the exports folder in your vault. Nothing is uploaded. Claude’s critiques are left out.' }),
+        el('div', { class: 'modal-text', text: 'Writes a read-only website (summaries, notes, fragments and math) to the exports folder in your vault. Nothing is uploaded. Critiques from your AI are left out.' }),
         el('label', { class: 'ex-field' }, 'Title', name),
         el('label', { class: 'ex-check' }, pdfs, el('span', null, 'Include PDFs', el('span', { class: 'menu-hint', text: ' Only share PDFs you’re allowed to redistribute.' }))),
         el('label', { class: 'ex-check' }, priv, el('span', null, 'Include private notes', el('span', { class: 'menu-hint', text: ' Left out unless you tick this.' }))),

@@ -269,7 +269,7 @@
       <ul class="zt-tree" role="listbox" aria-labelledby="zt-tree-label">${rows.join('')}</ul>
       <div class="zt-opts">
         <label class="zt-check"><input id="zt-pdfs" type="checkbox" checked>
-          <span>Copy PDFs<span class="menu-hint">Claude can read them, and they open in the viewer.</span></span></label>
+          <span>Copy PDFs<span class="menu-hint">Your AI can read them, and they open in the viewer.</span></span></label>
         <label class="zt-check"><input id="zt-anns" type="checkbox" checked>
           <span>Import highlights as fragments<span class="menu-hint">Each highlight becomes a fragment, with its page and your comment.</span></span></label>
       </div>`;

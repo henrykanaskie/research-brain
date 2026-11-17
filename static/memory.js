@@ -119,7 +119,7 @@
   }
 
   async function del(f) {
-    const ok = rb.confirmDialog ? await rb.confirmDialog('Delete this finding?', 'Claude saved it during Research. Deleting removes it from memory for good.', 'Delete')
+    const ok = rb.confirmDialog ? await rb.confirmDialog('Delete this finding?', `${RB.aiName()} saved it during Research. Deleting removes it from memory for good.`, 'Delete')
       : window.confirm('Delete this finding?');
     if (!ok) return;
     try { await api('DELETE', `/api/memory/findings/${encodeURIComponent(f.id)}`); toast('Finding deleted', 'info'); load(); }
@@ -135,7 +135,7 @@
     const d = data;
     const head = h('div', { class: 'mm-head' }, h('h1', { text: 'Memory' }), h('div', { class: 'spacer' }),
       h('button', { type: 'button', class: 'btn btn-sm', text: 'Close', title: 'Close (Esc)', onclick: close }));
-    const lede = h('p', { class: 'mm-lede', text: 'What Research mode reads first, to know where to look. The map is written by the app from your library; findings are short notes Claude saved while researching, and you can edit or delete any of them. Both live in vault/memory/.' });
+    const lede = h('p', { class: 'mm-lede', text: `What Research mode reads first, to know where to look. The map is written by the app from your library; findings are short notes ${RB.aiName()} saved while researching, and you can edit or delete any of them. Both live in vault/memory/.` });
     if (!d) { view.replaceChildren(h('div', { class: 'mm-col' }, head, lede, h('div', { class: 'mm-empty', text: 'Loading…' }))); return; }
     const when = d.updated ? (ago ? ago(new Date(d.updated * 1000).toISOString()) : '') : '';
     const mapSec = h('section', { class: 'mm-sec' }, h('h2', { text: 'Library map' }),
@@ -144,7 +144,7 @@
     const fs = d.findings || [];
     const findSec = h('section', { class: 'mm-sec' }, h('h2', { text: `Findings${fs.length ? ` (${fs.length})` : ''}` }),
       h('p', { class: 'sub', text: 'Added via AI during Research. Each lists the notes it came from.' }),
-      fs.length ? fs.map(finding) : h('div', { class: 'mm-empty', text: 'No findings yet. When Claude finds something worth keeping during Research, it saves one short, sourced sentence here.' }),
+      fs.length ? fs.map(finding) : h('div', { class: 'mm-empty', text: `No findings yet. When ${RB.aiName()} finds something worth keeping during Research, it saves one short, sourced sentence here.` }),
       (d.summary || []).length ? h('div', { class: 'mm-summary' }, h('h2', { text: 'Earlier findings, summarised' }),
         h('ul', {}, d.summary.map((s) => h('li', { html: renderMD(s, { inline: true }) })))) : null);
     const top = view.scrollTop;
@@ -165,7 +165,7 @@
   if (C && C.register) {
     try {
       C.register({ id: 'memory.open', title: 'Open memory', group: 'Research', keys: 'G then M',
-        description: 'The library map and the findings Claude saved during Research. Edit or delete findings here.',
+        description: 'The library map and the findings {AI} saved during Research. Edit or delete findings here.',
         aliases: ['findings', 'library map', 'core', 'remember'], run: () => (isOpen() ? close() : open()) });
     } catch (e) { console.error(e); }
   }

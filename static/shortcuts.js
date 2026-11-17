@@ -154,7 +154,7 @@
     run: () => { rb.closeMenus(); rb.pickPdf(); } });
   reg({ id: 'library.zotero', title: 'Import from Zotero…', group: 'Library', description: 'Papers, notes and highlights from your local Zotero library.',
     aliases: ['zotero', 'migrate', 'bulk import'], when: () => !!$('#btn-zotero'), run: () => { rb.openMenu('#btn-add-menu', '#add-menu'); $('#btn-zotero').click(); } });
-  reg({ id: 'library.ask', title: 'Ask your library', group: 'Library', keys: 'A', description: 'Ask Claude a question across all your papers and notes.',
+  reg({ id: 'library.ask', title: 'Ask your library', group: 'Library', keys: 'A', description: 'Ask {AI} a question across all your papers and notes.',
     aliases: ['chat', 'question', 'claude', 'query', 'rag'], run: () => { if ($('#chat').hidden) rb.openChat(); else $('#chat-input').focus(); } });
   reg({ id: 'library.review', title: 'Review', group: 'Library', keys: 'G then R', description: 'Recall your own summaries and fragment notes, then grade yourself.',
     aliases: ['recall', 'flashcards', 'spaced repetition', 'quiz', 'memory practice'], when: () => !!rb.openReview, run: () => rb.openReview() });
@@ -170,9 +170,9 @@
   reg({ id: 'note.body', title: 'Write in your notes', group: 'Note', keys: 'B', description: 'Opens the notes body for editing and puts the cursor at the end.',
     aliases: ['body', 'notes', 'focus notes', 'edit notes'], when: () => panelOpen() && !!bodySection(), run: focusBody });
   reg({ id: 'note.critique', title: 'Critique my summary', group: 'Note', keys: ['C', 'Mod+Shift+C'], allowInInput: true,
-    description: 'Claude compares your summary with the paper and points out what is wrong, missing or vague.',
+    description: '{AI} compares your summary with the paper and points out what is wrong, missing or vague.',
     aliases: ['feedback', 'check summary', 'review summary', 'claude'], when: () => panelOpen() && !!$('#summary-sec'),
-    run: () => { if (!($('#summary-sec textarea').value || '').trim()) { toast('Write your summary first, then Claude can critique it.'); return; } rb.runCritique(S.cur.id); } });
+    run: () => { if (!($('#summary-sec textarea').value || '').trim()) { toast(`Write your summary first, then ${RB.aiName()} can critique it.`); return; } rb.runCritique(S.cur.id); } });
   reg({ id: 'note.fragment', title: 'Add fragment', group: 'Note', keys: 'Shift+F', description: 'Save a quote, equation or passage with your note on it.',
     aliases: ['quote', 'highlight', 'excerpt', 'passage', 'equation', 'clip'], when: () => notFrag() && !!sec('Fragments'), run: addFragment });
   reg({ id: 'note.viewer', title: 'Open the PDF in the viewer', group: 'Note', keys: 'O', description: 'Read the paper and highlight passages as fragments.',
@@ -274,14 +274,14 @@
       ['A folder of PDFs', 'Add › Import a folder of PDFs. Let the AI sort them into topics by what they’re about, or make a topic per subfolder. For papers without a topic: the command Sort papers that have no topic into topics.', ['topics.autoSort']],
     ]],
     ['Reading and thinking', [
-      ['Your summary', 'Two or three sentences in your own words. Then ask Claude to critique it against the paper.', ['note.summary', 'note.critique']],
+      ['Your summary', 'Two or three sentences in your own words. Then ask {AI} to critique it against the paper.', ['note.summary', 'note.critique']],
       ['Fragments', 'A quote, equation or passage with your note on it. Add one in the panel, or highlight in the viewer.', ['note.fragment', 'note.viewer']],
       ['Links', 'Use the Links box near the top of the panel, or right-click a dot on the map. Type [[ in any text to mention a note. Your links are red on the graph.', ['note.link']],
       ['Math', 'Type $…$ for inline math and $$…$$ for display. A backslash opens LaTeX suggestions; Tab accepts.', []],
     ]],
     ['The graph', [
       ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. Bigger means more connected and more written about.', []],
-      ['Lines', 'Red lines are links you made. Dashed blue-grey lines are text similarity. Click a line to ask Claude why two notes connect.', ['graph.similar', 'graph.citations']],
+      ['Lines', 'Red lines are links you made. Dashed blue-grey lines are text similarity. Click a line to ask {AI} why two notes connect.', ['graph.similar', 'graph.citations']],
       ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region. Zoom in as far as you like while there’s something on screen (it stops before you’d zoom into empty space); resizing the window refits the map.', ['graph.focus', 'graph.filter', 'graph.fit']],
       ['Labels', 'Papers are labelled with first author and year; Settings › Labels shows the title too, or the title alone. Hover a dot for its full title.', []],
       ['Move dots', 'Drag a dot where you want it: it settles there (and stays next time) while still swaying with its neighbours, and the dots linked to it come along. Right-click › Let it move freely gives it back to the layout.', ['graph.unpinAll']],
@@ -315,7 +315,7 @@
           body.append(el('h3', { text: head }));
           for (const [name, text, ids] of rows) {
             const seqs = ids.flatMap((id) => keysFor(id).slice(0, 1));
-            body.append(el('div', { class: 'rbk-row' }, el('div', { class: 'rbk-txt' }, el('div', { class: 'rbk-rt', text: name }), el('div', { class: 'rbk-rd', text })),
+            body.append(el('div', { class: 'rbk-row' }, el('div', { class: 'rbk-txt' }, el('div', { class: 'rbk-rt', text: name }), el('div', { class: 'rbk-rd', text: RB.aiText(text) })),
               seqs.length ? capsEl(seqs) : null));
           }
         }

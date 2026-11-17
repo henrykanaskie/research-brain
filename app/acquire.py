@@ -260,8 +260,7 @@ def acquire(store, nid: str, meta: dict | None = None, *, email: str = "", hashe
                     rec = {"state": "has-pdf", "at": _now()}
                     break
                 shutil.move(str(tmp), store.pdf_path(nid))
-                if text.strip():
-                    store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
+                store.write_text(nid, text)
                 n = store.get(nid)
                 store.save(n)  # bumps the revision so indexes and open pages see the new PDF
             rec = {"state": "found", "at": _now(), "source": source, "url": url, "final_url": final,

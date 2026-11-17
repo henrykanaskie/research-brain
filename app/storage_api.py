@@ -336,9 +336,9 @@ def _attach(nid: str, tmp: Path, text: str) -> None:
     store = ctx.store
     with store.lock:
         shutil.move(str(tmp), store.pdf_path(nid))
-        if text.strip():
-            store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
-        store.save(store.get(nid))
+        n = store.get(nid)
+        store.write_text(nid, text, note=n)
+        store.save(n)
 
 
 def _link_text(nid: str, text: str, url: str = "") -> bool:
@@ -349,9 +349,7 @@ def _link_text(nid: str, text: str, url: str = "") -> bool:
     with store.lock:
         n = store.get(nid)
         if not n["has_pdf"]:
-            if text.strip():
-                store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
-                wrote = True
+            wrote = store.write_text(nid, text, note=n)
             n["source"] = "linked"
             if n["type"] == "note":
                 n["type"] = "paper"

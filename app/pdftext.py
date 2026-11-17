@@ -185,6 +185,64 @@ def guess_title(text: str) -> str:
     return ""
 
 
+_ABS_HEAD = re.compile(r"^\s*(abstract|summary)\b\s*[:.\-—–]?\s*", re.I)
+_ABS_END = re.compile(r"^\s*((\d+|[IVX]+)\.?\s+)?(introduction|background|keywords?|key\s*words|index terms|pacs|"
+                      r"subject areas?|contents|nomenclature)\b|^\s*(doi\s*:|submitted to\b|https?://doi|©|\(c\)\s*\d{4}|copyright\b|"
+                      r"\*?\s*corresponding author|published by\b|received\b|\*\S+@)", re.I)
+_ABS_NOT_PROSE = re.compile(r"@|\b(received|accepted|published|submitted|revised|available online)\b|"
+                            r"\b(university|universitat|universit[éeà]|institute|laboratory|department|facult)", re.I)
+
+
+def _headingish(line: str) -> bool:
+    words = [w for w in re.split(r"[\s\-]+", line) if len(w) > 3 and w[0].isalpha()]
+    return bool(words) and sum(w[0].isupper() for w in words) / len(words) >= 0.5 and not line.rstrip().endswith(".")
+
+
+def guess_abstract(text: str) -> str:
+    """The abstract printed on the first pages of a paper's text ('' if none is found). Takes the paragraph
+    under an "Abstract" heading; without one (APS and many other journals print it unlabelled between the
+    authors and the first section), the first block of prose on page 1 that is long enough to be one."""
+    head = text.split("[[page 3]]")[0]
+    lines = [ln.strip() for ln in re.sub(r"\[\[page \d+\]\]", "\n", head).splitlines()]
+    lines = [ln for ln in lines if ln]
+
+    def joined(block: list[str]) -> str:
+        t = " ".join(block)
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    for i, ln in enumerate(lines[:120]):
+        m = _ABS_HEAD.match(ln)
+        if not m or (len(ln) > 60 and not ln[m.end():m.end() + 1].isupper()):
+            continue  # "Abstract" alone, "Abstract: The ...", "ABSTRACT The ..." (not "Summary statistics ...")
+        block = [ln[m.end():]] if ln[m.end():].strip() else []
+        for nxt in lines[i + 1:i + 80]:
+            if _ABS_END.match(nxt):
+                break
+            block.append(nxt)
+        t = joined(block)
+        if len(t) >= 200:
+            return t[:5000]
+    # no heading: the first substantial run of prose on page 1 (title, authors and affiliations come before it)
+    first = [ln.strip() for ln in head.split("[[page 2]]")[0].splitlines() if ln.strip() and not ln.startswith("[[page")]
+    run: list[str] = []
+    for ln in first[:150] + [""]:
+        prose = (len(ln) >= 35 and not _ABS_END.match(ln) and not _ABS_NOT_PROSE.search(ln)
+                 and sum(c.isalpha() for c in ln) >= 0.6 * len(ln))
+        if prose:
+            run.append(ln)
+            continue
+        while run and _headingish(run[0]):  # a journal name or title right above it is not part of it
+            run.pop(0)
+        t = joined(run)
+        if len(t) >= 300 and len(run) >= 3:
+            return t[:5000]
+        run = []
+        if re.match(r"^\s*((\d+|[IVX]+)\.?\s+)?introduction\b", ln, re.I):
+            break
+    return ""
+
+
 if __name__ == "__main__":  # the child process started by extract()
     try:
         sys.path[:0] = [p for p in json.loads(os.environ.get("RB_PDF_SYS_PATH", "[]")) if isinstance(p, str)]

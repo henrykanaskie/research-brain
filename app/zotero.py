@@ -691,8 +691,7 @@ def _copy_pdf(store, nid: str, src: Path) -> bool:
         text, _ = extract(dest)
     except Exception:
         text = ""
-    if text.strip():
-        store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
+    store.write_text(nid, text)
     return True
 
 

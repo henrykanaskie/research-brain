@@ -10,7 +10,7 @@
   // ======================================================================
   // colours come from the DESIGN.md tokens in style.css (re-read on theme change)
   /** short name of the active AI agent for UI copy ("Claude", "Codex", "Your local model") */
-  const ai = () => window.RB_AI || 'Claude';
+  const ai = () => RB.aiName();
   const C = { ground: '#EEEFEB', sheet: '#F7F7F4', ink: '#15181B', ink2: '#61676C', ink3: '#9A9EA0', rule: '#D5D7D1', red: '#BD3A2C', machine: '#4A6487', dot: 'rgba(21,24,27,.16)' };
   function readTokens() {
     const cs = getComputedStyle(document.documentElement);
@@ -191,7 +191,7 @@
       try { d = JSON.parse(data.join('\n')); } catch { return; }
       if (ev === 'delta' && d.text) { text += d.text; onDelta(text); }
       else if (ev === 'done') done = d;
-      else if (ev === 'error') { const e = new Error(d.detail || 'Claude failed'); e.claude = true; throw e; }
+      else if (ev === 'error') { const e = new Error(d.detail || `${ai()} failed`); e.claude = true; throw e; }
     };
     for (;;) {
       const { value, done: end } = await reader.read();
@@ -588,10 +588,10 @@
       S.status = st; S.online = true;
       const c = st.claude || {};
       S.claudeOK = !!c.available;
-      const agentName = (st.agent && st.agent.name) || 'Claude';
+      const agentName = (st.agent && st.agent.name) || 'No AI agent';
       S.agentName = agentName;
       const SHORT = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', copilot: 'Copilot', opencode: 'OpenCode', cursor: 'Cursor', qwen: 'Qwen', ollama: 'Your local model', 'openai-local': 'Your local model' };
-      window.RB_AI = (st.agent && (SHORT[st.agent.id] || st.agent.name)) || 'Claude';
+      window.RB_AI = (st.agent && (SHORT[st.agent.id] || st.agent.name)) || 'your AI';
       const rn = document.querySelector('.rs-notice');
       if (rn && window.__rbResearch) rn.textContent = window.__rbResearch.NOTICE;
       S.claudeWhy = c.available ? '' : (c.detail || 'No AI agent found on this computer.');
@@ -632,7 +632,7 @@
       b.classList.toggle('is-disabled', off);
       b.setAttribute('aria-disabled', off ? 'true' : 'false');
       if (!b.dataset.title0) b.dataset.title0 = b.getAttribute('title') || '';
-      let t = b.dataset.title0;
+      let t = RB.aiText(b.dataset.title0);  // {AI}: the AI tool you chose
       if (!S.claudeOK) t = `${ai()} isn't available. ${S.claudeWhy}`;
       else if (extraOff && b.dataset.offWhy) t = b.dataset.offWhy;
       b.title = t;
@@ -1251,7 +1251,22 @@
         c.x += n.x; c.y += n.y; c.k++; now.set(n.cluster, c);
       }
       for (const c of now.values()) { c.x /= c.k; c.y /= c.k; }
-      anchors = packRegions(ids, sizes, now.size >= Math.max(1, ids.length * 0.6) && S.settledOnce ? now : affinityLayout(ids, sizes));
+      // A region whose dots you mostly placed yourself is where you put it: its anchor is the middle of those
+      // dots, and its disc reaches all of them. Otherwise a dot of that region you never moved (a paper added
+      // later) was pulled to an anchor computed without your pins, far from the rest of its own group.
+      const pinnedIn = new Map();
+      for (const n of top) {
+        if (n.cluster < 0 || !n.__home) continue;
+        const c = pinnedIn.get(n.cluster) || { pts: [] };
+        c.pts.push(n.__home); pinnedIn.set(n.cluster, c);
+      }
+      const fixed = new Map();
+      for (const [cid, c] of pinnedIn) {
+        if (c.pts.length < Math.max(2, 0.5 * (sizes.get(cid) || 0))) continue;
+        const x = c.pts.reduce((a, p) => a + p[0], 0) / c.pts.length, y = c.pts.reduce((a, p) => a + p[1], 0) / c.pts.length;
+        fixed.set(cid, { x, y, r: Math.max(...c.pts.map((p) => Math.hypot(p[0] - x, p[1] - y))) + 8 });
+      }
+      anchors = packRegions(ids, sizes, now.size >= Math.max(1, ids.length * 0.6) && S.settledOnce ? now : affinityLayout(ids, sizes), fixed);
       layoutSatellites();
       outerR = 30;
       for (const a of anchors.values()) outerR = Math.max(outerR, Math.hypot(a.x, a.y) + a.r + 18);
@@ -1309,11 +1324,19 @@
     for (const p of P.values()) { p.x -= cx; p.y -= cy; }
     return P;
   }
-  function packRegions(ids, sizes, now = new Map()) {
+  function packRegions(ids, sizes, now = new Map(), fixed = new Map()) {
     const GAP = 14;
     const out = new Map(), placed = [];
     const settled = now.size >= Math.max(1, ids.length * 0.6);  // a layout to keep (or the related-regions one)
-    for (const id of ids) {
+    // regions you placed by hand (most of their dots pinned) stay exactly there; the rest pack around them
+    const order = [...ids.filter((id) => fixed.has(id)), ...ids.filter((id) => !fixed.has(id))];
+    for (const id of order) {
+      const f = fixed.get(id);
+      if (f) {
+        const d = { x: f.x, y: f.y, r: Math.max(6.2 * Math.sqrt(sizes.get(id)) + 7, f.r) };
+        placed.push(d); out.set(id, d);
+        continue;
+      }
       const r = 6.2 * Math.sqrt(sizes.get(id)) + 7;
       const o = settled && now.get(id) ? now.get(id) : { x: 0, y: 0 };
       let spot = null;
@@ -2319,17 +2342,24 @@
     n.__home = [x, y]; n.__userPin = true;
     n.fx = undefined; n.fy = undefined; delete n.__tmpPin;  // the drag held it; now the spring does
     pins[n.id] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
-    savePins(); kick(200);
+    savePins(); reanchor(); kick(200);
+  }
+  /** Re-place the region anchors (a region you mostly placed by hand is anchored where you put it). */
+  function reanchor() {
+    const rf = fg && fg.d3Force('regions');
+    if (rf && rf.initialize) rf.initialize(fg.graphData().nodes);
   }
   function unpinNode(n) {
     delete pins[n.id]; savePins();
     if (!n) return;
     n.__userPin = false; delete n.__home;
+    reanchor();
     if (fg) fg.d3ReheatSimulation();
   }
   function unpinAll() {
     pins = {}; savePins();
     for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; delete n.__home; }
+    reanchor();
     if (fg) fg.d3ReheatSimulation();
     toast('Every dot moves freely again', 'ok');
   }

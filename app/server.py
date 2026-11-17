@@ -1502,8 +1502,7 @@ async def _save_upload(file: UploadFile) -> Path:
 def _store_pdf(nid: str, tmp_pdf: Path, text: str) -> None:
     shutil.move(str(tmp_pdf), store.pdf_path(nid))
     shutil.rmtree(tmp_pdf.parent, ignore_errors=True)
-    if text.strip():
-        store.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
+    store.write_text(nid, text)
 
 
 def _same_file(tmp: Path) -> str | None:
@@ -2540,7 +2539,8 @@ def article_url(url: str, page: int | None, text: str, heading: str = "") -> str
 @app.on_event("startup")
 def _warm_index():
     # load the embedding model and index existing notes in the background so the first page load is quick
-    threading.Thread(target=lambda: _safe(index), daemon=True).start()
+    # papers stored before abstracts were read from PDFs get theirs first (app/store.py fill_missing_abstracts)
+    threading.Thread(target=lambda: (_safe(store.fill_missing_abstracts), _safe(index)), daemon=True).start()
 
 
 def _safe(fn):

@@ -492,6 +492,42 @@ def test_a_dragged_dot_stays_where_you_drop_it(ctx, server):
     assert not page.errors
 
 
+def test_a_new_paper_joins_a_region_you_placed_by_hand(ctx, server):
+    """Most of a region's dots pinned where you dropped them: a paper of that region you never moved (added
+    later) settles with them, not at an anchor computed without your pins."""
+    clear_vault(server)
+    group = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Cross section paper {i}"})["id"]
+             for i in range(4)]
+    late = api(server, "POST", "/api/notes", {"type": "paper", "title": "Stopping power paper added later"})["id"]
+    other = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Line ratio paper {i}"})["id"]
+             for i in range(4)]
+    region = {**{i: 0 for i in group + [late]}, **{i: 1 for i in other}}
+
+    def two_regions(route):
+        resp = route.fetch()
+        g = resp.json()
+        for n in g["nodes"]:
+            n["cluster"], n["sub"] = region.get(n["id"], -1), -1
+        g["clusters"] = [{"id": 0, "label": "Cross sections", "size": 5, "topic": None, "near": []},
+                         {"id": 1, "label": "Line ratios", "size": 4, "topic": None, "near": []}]
+        route.fulfill(response=resp, json=g)
+    pins = {nid: [-160 + 6 * i, 40 - 5 * i] for i, nid in enumerate(group)}  # far from where packing puts it
+    page = ctx.new_page()
+    page.errors = []
+    page.on("pageerror", lambda e: page.errors.append(str(e)))
+    page.add_init_script(f"localStorage.setItem('rb.pins', {json.dumps(json.dumps(pins))})")
+    page.route("**/api/graph", two_regions)
+    page.goto(server["base"] + "/")
+    page.wait_for_function("(n) => window.__rb && window.__rb.fg && window.__rb.S.nodes.size >= n", arg=9)
+    page.wait_for_timeout(5000)
+    x, y = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y]; }", late)
+    cx = sum(p[0] for p in pins.values()) / 4
+    cy = sum(p[1] for p in pins.values()) / 4
+    assert ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 < 40, ((x, y), (cx, cy))
+    page.evaluate("RB.commands.run('graph.unpinAll')")
+    assert not page.errors
+
+
 def test_linked_dots_follow_a_dragged_dot(ctx, server):
     clear_vault(server)
     a = api(server, "POST", "/api/notes", {"type": "paper", "title": "Main dot"})["id"]
