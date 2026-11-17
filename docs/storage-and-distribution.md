@@ -87,6 +87,31 @@ A paper is **three plain files that share one id** (for example `attention-is-al
 - `pdfs/<id>.pdf`: the original PDF, kept unchanged.
 - `text/<id>.txt`: the extracted text, used by search, passages, critiques and Research.
 
+**Where the PDF is.** A paper's PDF is in one of two places (`Store.pdf_path()` answers which):
+
+- **The papers folder**, as `<id>.pdf`: `<documents>/PDFs` unless you chose another folder in Library settings ›
+  Papers folder (`state/papers.json`). Every way of adding a PDF (file, URL, extension, Zotero, a free copy found
+  online) stores it here, after checking the disk has room for it (`app/diskspace.py`).
+- **One of your folders of papers** (`app/linked.py`, `state/linked.json`): folders you already keep PDFs in, such
+  as one in OneDrive. The file stays where it is under its own name; research brain records the folder and the path
+  inside it, and never moves, renames, changes or deletes it. Each folder becomes a topic. The folders are checked
+  at start, every 10 minutes and on Check now: new PDFs are added, moved ones are followed (same name and size),
+  and a deleted paper's file is left in place and remembered so it isn't added back.
+
+**Online-only files.** Either place can be in OneDrive, iCloud Drive or Dropbox with its space freed up. A PDF is
+then downloaded only when you open it: nothing reads an online-only file in the background (`app/acquire.py`
+`cloud_only`: macOS `SF_DATALESS`, Windows recall-on-access attributes). A PDF in a folder of papers that is
+online only is downloaded, read for its text, and sent straight back to online only (`diskspace.give_back`: Windows
+unpinned; macOS `evictUbiquitousItemAtURL`, then checked), one at a time, so only its text stays. Read PDFs that
+couldn't be sent back count against a 500 MB hold limit: past it, reading pauses until they're online only again.
+With no room for one PDF, the paper is added from its file name and read later. On Windows, "Keep new PDFs online only" marks each new PDF unpinned so OneDrive frees it once
+uploaded; macOS frees online-only files itself when the disk runs low.
+
+**Disk space.** Adding a PDF always leaves `RB_MIN_FREE_MB` (300) free, and is refused with a message otherwise. A
+write that fails because the disk filled up answers 507 with a readable message, and leaves no partial file: notes,
+state files and extracted text are written to a temporary file and swapped in. Below `RB_LOW_SPACE_MB` (1024) the
+app warns.
+
 **Linked papers: link + text, no PDF file (the default from a publisher page).** The extension's
 **Save to research_brain (link + text)** stores the paper as `notes/<id>.md` with `source: linked` and `url:`
 (the article's canonical address) in the frontmatter, plus `text/<id>.txt`: the article's full text as you see it

@@ -194,6 +194,8 @@ class Store:
         self.layout.ensure()
         from .papers import folder_for  # <documents>/PDFs, or the papers folder chosen in settings (app/papers.py)
         self.pdf_dir = folder_for(self.root)
+        from .linked import Links  # PDFs kept where they are, in your own folders of papers (app/linked.py)
+        self.links = Links(self.root)
         self.text_dir = self.root / "text"
         self.index_dir = self.root / ".index"
         self.trash_dir = self.root / ".trash"
@@ -236,12 +238,30 @@ class Store:
         return self.layout.path(nid) or self.docs / ".no-such-note" / f"{nid}.md"
 
     def pdf_path(self, nid: str) -> Path:
+        """Where paper `nid`'s PDF is: in one of your folders of papers if it's linked there (app/linked.py),
+        otherwise <papers folder>/<id>.pdf."""
         self.note_path(nid)  # validates id
-        return self.pdf_dir / f"{nid}.pdf"
+        linked = self.links.path_of(nid)
+        return linked if linked is not None else self.pdf_dir / f"{nid}.pdf"
+
+    def is_linked(self, nid: str) -> bool:
+        """Its PDF is a file in one of your folders of papers: research brain never moves or deletes it."""
+        return self.links.path_of(nid) is not None
 
     def text_path(self, nid: str) -> Path:
         self.note_path(nid)
         return self.text_dir / f"{nid}.txt"
+
+    def put_pdf(self, nid: str, src: Path, copy: bool = False) -> Path:
+        """Store `src` as paper `nid`'s PDF, the one way every import does it: checks there is room on the
+        papers folder's disk first (raises app/diskspace.DiskFull, leaving nothing behind), and with "keep
+        new PDFs online only" on, hands the file to the sync app to free once uploaded."""
+        from . import diskspace, papers
+        if self.is_linked(nid):  # a new PDF for a paper whose linked file is gone: it goes in the papers folder,
+            self.links.unlink(nid)  # never into your own folder
+        dest = self.pdf_path(nid)
+        diskspace.put_file(Path(src), dest, online_only=papers.online_only(self.root), copy=copy)
+        return dest
 
     def fill_missing_abstracts(self) -> list[str]:
         """Give every paper that has PDF text but no abstract the one its PDF prints (see write_text).
@@ -280,7 +300,14 @@ class Store:
             return False
         from .pdftext import guess_abstract
         with self.lock:
-            self.text_path(nid).write_text(text, encoding="utf-8", newline="\n")
+            tp = self.text_path(nid)
+            part = tp.with_name(f".{tp.name}.part")
+            try:
+                part.write_text(text, encoding="utf-8", newline="\n")
+                fsio.replace(part, tp)
+            except BaseException:
+                part.unlink(missing_ok=True)
+                raise
             n = note if note is not None else self.get(nid)
             if not (n.get("abstract") or "").strip() and n.get("type") != "fragment":
                 abstract = guess_abstract(text)
@@ -432,8 +459,12 @@ class Store:
             path = self.layout.target(note, current)  # its type's folder, named after its title
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(f".{path.name}.tmp")  # hidden, so watchers and Obsidian ignore it
-            tmp.write_text(self._dump(note), encoding="utf-8", newline="\n")
-            fsio.replace(tmp, path)
+            try:
+                tmp.write_text(self._dump(note), encoding="utf-8", newline="\n")
+                fsio.replace(tmp, path)
+            except BaseException:  # disk full mid-write: the note on disk is still the old, whole one
+                tmp.unlink(missing_ok=True)
+                raise
             if current is not None and current != path:  # renamed (title changed) or moved to its folder
                 try:
                     if not os.path.samefile(current, path):
@@ -596,7 +627,12 @@ class Store:
             self.rev += 1
             if self.meta is not None:
                 self.meta.remove(nid)
-            for p in (self.pdf_path(nid), self.text_path(nid)):
+            if self.is_linked(nid):  # your own file stays where it is, and isn't added back (app/linked.py)
+                self.links.unlink(nid, ignore=True)
+                own = (self.text_path(nid),)
+            else:
+                own = (self.pdf_path(nid), self.text_path(nid))
+            for p in own:
                 if p.exists():
                     shutil.move(str(p), dest / p.name)
             for other in note["links"]:
@@ -675,5 +711,9 @@ class Store:
         with self.lock:
             p = self._json_path(name)
             tmp = p.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
-            fsio.replace(tmp, p)
+            try:
+                tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
+                fsio.replace(tmp, p)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise

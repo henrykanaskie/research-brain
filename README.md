@@ -216,6 +216,65 @@ The documents are Markdown, so they open in any text editor (and the folder open
 named after its title and follows it when you rename it. To see the folder from the app: **Settings › Library
 settings › Your documents › Open folder**. (A second profile gets its own *research brain (name)* folder.)
 
+### Folders of papers you already have (kept where they are)
+
+If you already keep PDFs in folders, say *OneDrive › Research* with a subfolder per project, add those
+folders instead of importing copies: **Add › Add folders of papers** (or **Library settings › Folders of
+papers**). research brain links to each PDF where it is. It never moves, renames, changes or deletes a file
+there, and stores no second copy.
+
+- **Each folder becomes a topic**, named after the folder (*Research/Plasma/Sheaths/x.pdf* goes in
+  *Sheaths*). Before anything is added you see every folder with its PDF count and topic name: change a
+  name, clear it to leave that folder out of topics, or **Suggest names with AI** (it sends your AI the folder
+  and file names only; nothing is downloaded or read for that). Two folders given the same name share a
+  topic, and a name you already use joins that topic.
+- **It keeps up.** The folders are checked when the app starts and every 10 minutes (or **Check now**): a PDF
+  you drop in is added to its folder's topic, and a new subfolder becomes a new topic. A PDF you move to
+  another folder keeps its paper, notes and highlights and moves to that folder's topic.
+- **Deleting.** Deleting a paper in research brain leaves its PDF in your folder and doesn't add it back. A
+  PDF you delete from the folder leaves its paper in the library, without the PDF. **Stop following** a
+  folder keeps its papers, without their PDFs.
+- **Every paper's full text, without filling your disk.** Each PDF is read once when it's added, for its text
+  and its DOI or arXiv id, so search, Ask and Research see the whole paper. A PDF that is online only in OneDrive
+  is downloaded, read and sent straight back to online only before the next one: only one PDF is on your
+  computer at a time, and what stays is its text, about 2% of its size (5 GB of PDFs leaves about 100 MB). Expect
+  2 to 5 seconds a paper the first time, mostly download; after that, nothing is downloaded until you open a PDF.
+  If a Mac can't send them back, reading pauses once 500 MB is held and asks you to right-click the folder ›
+  *Free up space*; it goes on by itself. With no room even for one PDF, a paper waits (named from its file name)
+  and is read when there's room, or as soon as you open it or ask about it. The same PDF in two folders is one
+  paper in both topics.
+- **Progress.** A large import shows a gauge in the bottom-right corner: how many are done, the time left, the
+  file being read, and Stop. Make it smaller with –; it keeps going while you work.
+
+### Short on disk space? Keep your PDFs in OneDrive
+
+PDFs are what fill a disk; your notes take very little. OneDrive can keep the PDFs online and download each one
+only when you open it. You need the OneDrive app (built into Windows 10 and 11; on a Mac, free from the App Store).
+
+1. Sign in to OneDrive. On a Mac, check that its settings keep files online-only until you open them (recent
+   macOS versions always do).
+2. In research brain, **Library settings › Papers folder**: move it to a folder inside OneDrive, such as
+   *OneDrive › research brain PDFs*. Your PDFs move there.
+3. Right-click that folder (Finder or File Explorer) › **Free up space**. A cloud icon means a file is online
+   only.
+4. New PDFs: on **Windows**, tick **Keep new PDFs online only** under the papers folder. Every PDF you add
+   (dropped in, by DOI, from the browser extension, from Zotero) is saved into the OneDrive folder, and OneDrive
+   frees it from the PC as soon as it has uploaded it. On a **Mac** there's no such switch: a new PDF stays on
+   the Mac until macOS frees it on its own when the disk runs low, or until you use Free up space again.
+
+A PDF then downloads when you open it in the viewer or highlight in it, and needs the internet the first time.
+Everything else (the map, the panel, search, Ask) works from your notes and from the text research brain read
+out of each PDF when you added it, so nothing else is downloaded: research brain never reads an online-only
+file on its own. iCloud Drive and Dropbox's online-only files work the same way.
+
+On Windows, OneDrive often backs up your Documents folder, so *Documents › research brain* may already be in
+OneDrive. That's fine; free up space on the PDFs folder only, not on your notes.
+
+**When the disk is nearly full.** research brain always leaves 300 MB free: it refuses to add a PDF that would
+go past that, and says how much space is left. If the disk fills up anyway (another program), saving answers
+with a clear message instead of failing silently, and nothing is half-written: your notes stay as they were.
+Below 1 GB free, the app warns you, with a button to the papers folder setting.
+
 ## Add an AI (optional, can be free)
 
 Everything works without an AI: your library and its map, PDFs and highlights, notes, links, tags and
@@ -614,8 +673,11 @@ vault/backups/     automatic zips made before a library format upgrade (format 2
 Next to the profiles: `settings.json` (open profile, Unpaywall email) and `storage.log` (moves,
 migrations, imports, exports).
 
-**Bringing in what you already have.** *Add › Import a folder of PDFs* opens your computer's folder picker:
-every PDF in the folder (and its subfolders) is added, and each subfolder can become a topic, the way bookmark
+**Bringing in what you already have.** To keep PDFs where they already are (a OneDrive folder, a folder per
+project), use *Add › Add folders of papers*: nothing is copied, each folder becomes a topic, and new PDFs you put
+there later come in by themselves (see [Folders of papers you already have](#folders-of-papers-you-already-have-kept-where-they-are)).
+To copy them into your papers folder instead, *Add › Import a folder of PDFs* opens your computer's folder picker:
+every PDF in the folder (and its subfolders) is copied in, and each subfolder can become a topic, the way bookmark
 folders work. Or **let the AI sort them into topics** (the default for a folder without subfolders): it reads each
 paper's title and opening, groups them by what they're about, and reuses your topics where they fit (private papers
 are never sent; without an AI, the map's similarity regions do the sorting). Or everything in one topic, or none.
@@ -941,6 +1003,8 @@ note by the `id:` inside it. Summary mentions, manual links and highlight nestin
 | `RB_VAULT` | — | Use this library folder (pins it: profile switching is off). Default: the open profile in the data folder |
 | `RB_PROFILE` | `default` | Open this profile (overrides the one picked in the app) |
 | `RB_DATA_DIR` | per-user data folder | Move the whole data folder (portable installs, tests) |
+| `RB_MIN_FREE_MB` | `300` | Disk space research brain always leaves free: adding a PDF that would go below it is refused |
+| `RB_LOW_SPACE_MB` | `1024` | Below this much free space, the app warns |
 | `RB_DOCUMENTS_DIR` | `~/Documents/research brain` | Where your papers, notes, questions, highlights, topics and PDFs go (a library records its choice) |
 | `RB_ACQUIRE` | `1` | `0` turns off the background open-access PDF download |
 | `RB_METADATA` | `1` | `0` turns off metadata lookups (Crossref, arXiv, PubMed, Open Library, OSTI, NTRS) |

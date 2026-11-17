@@ -586,6 +586,13 @@
     try {
       const st = await api('GET', '/api/status');
       S.status = st; S.online = true;
+      // low on disk space: say so once (and again only if it gets lower), before adding a PDF fails (app/diskspace.py)
+      const dk = st.disk || {};
+      if (dk.low && dk.free != null && (S.spaceWarned == null || dk.free < S.spaceWarned * 0.5)) {
+        S.spaceWarned = dk.free;
+        toast(`Only ${dk.free_text} free on this computer. research brain stops adding PDFs before the disk is full. Short on space? Keep your PDFs in OneDrive.`, 'info',
+          { ms: 15000, action: { label: 'Papers folder', fn: () => window.__rbSettings && window.__rbSettings.open('papers') } });
+      }
       const c = st.claude || {};
       S.claudeOK = !!c.available;
       const agentName = (st.agent && st.agent.name) || 'No AI agent';
@@ -3422,6 +3429,7 @@
     const q = $('#btn-new-question');
     if (q) items.push(menuItem('New question here', null, () => { here(); q.click(); }));
     items.push(h('div', { class: 'menu-sep' }),
+      menuItem('Add folders of papers…', null, () => { if (window.__rbBulk) window.__rbBulk.pickLinkFolder(); }),
       menuItem('Import a folder of PDFs…', null, () => { if (window.__rbBulk) window.__rbBulk.pickFolder(); }),
       menuItem('Import browser bookmarks…', null, () => { if (window.__rbBulk) window.__rbBulk.pickBookmarks(); }));
     const z = $('#btn-zotero');
@@ -4407,7 +4415,9 @@
       refreshGraph();
       return;
     }
-    reset(); hint();
+    reset();
+    if (st && st.state === 'no-space') { toast(st.message || 'Not enough disk space for the PDF.', 'error'); return; }
+    hint();
     toast(`No free copy found. ${extHint}`, 'info');
   }
 
@@ -4498,6 +4508,7 @@
 
   $('#btn-add-pdf').addEventListener('click', () => { closeMenus(); $('#pdf-input').click(); });
   $('#btn-import-folder').addEventListener('click', () => { closeMenus(); if (window.__rbBulk) window.__rbBulk.pickFolder(); });
+  $('#btn-link-folder').addEventListener('click', () => { closeMenus(); if (window.__rbBulk) window.__rbBulk.pickLinkFolder(); });
   $('#btn-import-bookmarks').addEventListener('click', () => { closeMenus(); if (window.__rbBulk) window.__rbBulk.pickBookmarks(); });
   $('#pdf-input').addEventListener('change', (e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) importPdfs(fs); });
   $('#lookup-form').addEventListener('submit', async (e) => {

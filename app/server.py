@@ -31,7 +31,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import access as access_mod, agents, papers as papers_mod, apikeys, budget, citations, claude_cli, locate as locate_mod, metadata, openalex, scholar, security, updates as updates_mod
+from . import access as access_mod, agents, papers as papers_mod, apikeys, budget, citations, claude_cli, diskspace, locate as locate_mod, metadata, openalex, scholar, security, updates as updates_mod
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .pdftext import extract, guess_title
@@ -86,6 +86,21 @@ async def origin_guard(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def _disk_full(request: Request, call_next):
+    # Out of disk space, anywhere (a PDF, a note, the search index): a clear 507 the app shows as it is, not a
+    # bare 500. The files on disk are unchanged: every write goes to a temporary file first (app/diskspace.py).
+    try:
+        return await call_next(request)
+    except Exception as e:
+        if isinstance(e, diskspace.DiskFull):
+            return JSONResponse({"detail": str(e), "disk_full": True}, status_code=507)
+        if diskspace.is_disk_full(e):
+            return JSONResponse({"detail": diskspace.FULL_MESSAGE, "disk_full": True}, status_code=507)
+        raise
+
+
+# (registered before CORS, so a 507 still carries the CORS headers the browser extension needs)
 app.add_middleware(CORSMiddleware, allow_origin_regex=ALLOWED_ORIGIN_RE.pattern,
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -116,6 +131,18 @@ def _fulltext(nid: str) -> str:
     except KeyError:
         return ""
     return p.read_text(encoding="utf-8", errors="ignore") if p.exists() else ""
+
+
+def _fulltext_needed(nid: str) -> str:
+    """_fulltext for one paper you're asking about right now: one in a folder of papers whose text wasn't read
+    yet (no room when it was added) is read first. Never used over the whole library (the index), which would
+    download every such PDF at once."""
+    try:
+        if store.is_linked(nid) and not store.text_path(nid).exists():
+            _read_linked_now(nid)
+    except KeyError:
+        pass
+    return _fulltext(nid)
 
 
 def _root(n: dict) -> str:
@@ -980,7 +1007,8 @@ STOPPING = [False]
 def api_status():
     if STOPPING[0]:
         return JSONResponse({"stopping": True}, status_code=503)
-    return {**_agent_status(), "embedder": embedder.kind, "notes": len(store.all()), "vault": str(VAULT)}
+    return {**_agent_status(), "embedder": embedder.kind, "notes": len(store.all()), "vault": str(VAULT),
+            "disk": diskspace.status(Path(store.pdf_dir), store.docs, VAULT)}  # free space: the app warns when low
 
 
 # ---------------------------------------------------------------- AI agents (app/agents)
@@ -1269,7 +1297,20 @@ def api_papers_folder():
     removed = f / papers_mod.REMOVED
     return {"folder": str(f), "default": f.resolve() == papers_mod.default_folder(store.root).resolve(), "pdfs": n,
             "removed": len(list(removed.glob("*.pdf"))) if removed.is_dir() else 0,
-            "suggested": str(papers_mod.suggested_folder()), "downloads": str(Path.home() / "Downloads")}
+            "suggested": str(papers_mod.suggested_folder()), "downloads": str(Path.home() / "Downloads"),
+            "cloud": diskspace.cloud_provider(f), "online_only": papers_mod.online_only(store.root),
+            "can_free": diskspace.can_free_new_pdfs(), "disk": diskspace.status(f)}
+
+
+class OnlineOnlyIn(BaseModel):
+    on: bool
+
+
+@app.put("/api/papers-folder/online-only")
+def api_papers_online_only(body: OnlineOnlyIn):
+    """Keep new PDFs online only (a papers folder in OneDrive and the like; app/diskspace.py)."""
+    out = papers_mod.set_online_only(store, body.on)
+    return {**api_papers_folder(), "freed": out["freed"]}
 
 
 @app.put("/api/papers-folder")
@@ -1485,13 +1526,17 @@ async def _save_upload(file: UploadFile) -> Path:
     tmpdir = Path(tempfile.mkdtemp(prefix="rb_upload_"))
     dest = tmpdir / "upload.pdf"
     size = 0
-    with dest.open("wb") as f:
-        while chunk := await file.read(1 << 20):
-            size += len(chunk)
-            if size > MAX_PDF_MB << 20:
-                shutil.rmtree(tmpdir, ignore_errors=True)
-                raise HTTPException(413, f"PDF is larger than {MAX_PDF_MB} MB")
-            f.write(chunk)
+    try:
+        diskspace.ensure_room(Path(store.pdf_dir), getattr(file, "size", None) or 0)
+        with dest.open("wb") as f:
+            while chunk := await file.read(1 << 20):
+                size += len(chunk)
+                if size > MAX_PDF_MB << 20:
+                    raise HTTPException(413, f"PDF is larger than {MAX_PDF_MB} MB")
+                f.write(chunk)
+    except BaseException:  # too big, no room, the disk filled up mid-way: no half upload left behind
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise
     with dest.open("rb") as f:
         if f.read(1024).find(b"%PDF") == -1:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -1500,8 +1545,10 @@ async def _save_upload(file: UploadFile) -> Path:
 
 
 def _store_pdf(nid: str, tmp_pdf: Path, text: str) -> None:
-    shutil.move(str(tmp_pdf), store.pdf_path(nid))
-    shutil.rmtree(tmp_pdf.parent, ignore_errors=True)
+    try:
+        store.put_pdf(nid, tmp_pdf)  # room checked first (app/diskspace.py)
+    finally:
+        shutil.rmtree(tmp_pdf.parent, ignore_errors=True)
     store.write_text(nid, text)
 
 
@@ -1677,6 +1724,162 @@ def _import_pdf_tmp(tmp: Path, filename: str, quick: bool = False) -> dict:
     return _with_extras(store.get(note["id"]))
 
 
+def _import_linked(path: Path, fid: str, rel: str, size: int) -> tuple[str, str, int]:
+    """One PDF in one of your folders of papers (app/linked.py), read where it is: never moved, changed or
+    deleted. Returns (paper id, how, held): how is "added" (a new paper), "linked" (a paper you had without a
+    PDF now has this one) or "duplicate" (same bytes, DOI or arXiv id as a paper with its PDF); held = bytes of
+    an online-only PDF that was downloaded to read it and couldn't be sent back online (0 normally).
+    An online-only PDF is downloaded, read and sent straight back, one at a time, so only its text stays here.
+    With no room for it right now, the paper is added from its file name ("_unread") and read later."""
+    from .acquire import PdfHashes, cloud_only, sha256_file
+    try:
+        was_cloud = cloud_only(path.stat())
+    except OSError:
+        was_cloud = False
+    if was_cloud:
+        try:
+            diskspace.ensure_room(path.parent, size, "this PDF")
+        except diskspace.DiskFull:  # read when there's room (linked_api's queue, or when it's opened or asked about)
+            nid, how = _import_linked_unread(path, fid, rel, size)
+            return nid, how, 0
+    held = 0
+    try:
+        info: dict = {}
+        try:
+            text, meta_title = extract(path, info=info)
+        except Exception as e:
+            raise ValueError(f"couldn't read it ({e})")
+        owner = PdfHashes(store).owner(sha256_file(path))
+        if owner:
+            return owner, "duplicate", 0
+        ids = _pdf_ids(text, info)
+        dup = store.find_duplicate(ids["doi"], ids["arxiv"], "")
+        if dup and dup["has_pdf"]:
+            return dup["id"], "duplicate", 0
+        if dup:
+            nid, how = dup["id"], "linked"
+        else:
+            guess = meta_title or guess_title(text) or Path(rel).stem.replace("_", " ")
+            nid, how = _create_paper({"title": guess, "doi": ids["doi"], "arxiv": ids["arxiv"]})["id"], "added"
+        store.links.link(nid, fid, rel, size)
+        n = store.get(nid)
+        n["source"] = "pdf"
+        store.write_text(nid, text, note=n)
+        store.save(n)
+        if dup:
+            _resolve_meta(nid, ids)
+        return nid, how, 0
+    finally:
+        if was_cloud and not diskspace.give_back(path):
+            held = size  # still on this computer: linked_api pauses once too much is held
+            _HELD[str(path)] = size
+
+
+_HELD: dict[str, int] = {}  # online-only PDFs read but not sent back (a Mac where that didn't take): path -> bytes
+
+
+def held_bytes() -> int:
+    """What research brain has downloaded from cloud folders and couldn't send back yet; drops as you free space."""
+    from .acquire import cloud_only
+    for p in list(_HELD):
+        try:
+            if cloud_only(os.stat(p)):
+                _HELD.pop(p, None)
+        except OSError:
+            _HELD.pop(p, None)
+    return sum(_HELD.values())
+
+
+def _read_linked_now(nid: str, give_back: bool = True) -> bool:
+    """Read the text of a linked PDF that was added unread (no room then). True if it was read. give_back: send it
+    back online afterwards (not when you opened it to look at it)."""
+    from .acquire import cloud_only
+    try:
+        path = store.pdf_path(nid)
+        st = path.stat()
+    except (KeyError, OSError):
+        return False
+    was_cloud = cloud_only(st)
+    if was_cloud:
+        try:
+            diskspace.ensure_room(path.parent, st.st_size, "this PDF")
+        except diskspace.DiskFull:
+            return False
+    try:
+        info: dict = {}
+        text, _ = extract(path, info=info)
+        ids = _pdf_ids(text, info)
+        n = store.get(nid)
+        for k in ("doi", "arxiv"):
+            if not n.get(k) and ids[k]:
+                n[k] = ids[k]
+        store.write_text(nid, text, note=n)
+        store.save(n)
+        if ids["doi"] or ids["arxiv"]:
+            _resolve_meta(nid, ids, fresh=True)
+        event_bus.publish({"type": "notes-changed", "ids": [nid]})
+        return True
+    except Exception as e:
+        print(f"[research_brain] couldn't read the linked PDF of {nid}: {e!r}")
+        return False
+    finally:
+        if was_cloud and give_back and not diskspace.give_back(path):
+            _HELD[str(path)] = st.st_size
+
+
+def _ids_from_name(stem: str) -> dict:
+    """A DOI or arXiv id in a file name ("10.1103_PhysRevA.106.032809.pdf", "2106.09685v2.pdf")."""
+    ids = scholar.find_ids_in_text(stem)
+    if not ids["doi"]:
+        alt = re.sub(r"^(10\.\d{4,9})[_ ]", r"\1/", stem)  # a DOI saved with its slash as an underscore
+        if alt != stem:
+            ids["doi"] = scholar.find_ids_in_text(alt)["doi"]
+    return ids
+
+
+def _import_linked_unread(path: Path, fid: str, rel: str, size: int) -> tuple[str, str]:
+    """An online-only PDF in a folder of papers, added without downloading it: named from its file name (and a
+    DOI or arXiv id in it), its details then looked up online by those. Its text is read the first time you open
+    it (get_pdf), which downloads it anyway."""
+    stem = Path(rel).stem
+    ids = _ids_from_name(stem)
+    dup = store.find_duplicate(ids["doi"], ids["arxiv"], "") if (ids["doi"] or ids["arxiv"]) else None
+    if dup and dup["has_pdf"]:
+        return dup["id"], "duplicate"
+    if dup:
+        nid, how = dup["id"], "linked"
+    else:
+        title = re.sub(r"[_\s]+", " ", stem).strip(" -") or "Untitled paper"
+        nid, how = _create_paper({"title": title, "doi": ids["doi"], "arxiv": ids["arxiv"]})["id"], "added"
+    store.links.link(nid, fid, rel, size)
+    n = store.get(nid)
+    n["source"] = "pdf"
+    store.save(n)
+    if dup:
+        _resolve_meta(nid, ids)
+    return nid, how + "_unread"
+
+
+_reading_later: set[str] = set()
+_reading_later_lock = threading.Lock()
+
+
+def _read_linked_later(nid: str) -> None:
+    """Opened a linked PDF whose text hasn't been read yet: read it in the background (it's here now anyway)."""
+    with _reading_later_lock:
+        if nid in _reading_later:
+            return
+        _reading_later.add(nid)
+
+    def run():
+        try:
+            _read_linked_now(nid, give_back=False)
+        finally:
+            with _reading_later_lock:
+                _reading_later.discard(nid)
+    threading.Thread(target=run, daemon=True, name=f"rb-read-{nid[:20]}").start()
+
+
 def _pdf_ids(text: str, info: dict | None) -> dict:
     """DOI / arXiv id of a PDF: what the file declares (XMP, document info) beats the first DOI in its text
     (which can be a cited paper's)."""
@@ -1790,6 +1993,8 @@ def get_pdf(nid: str):
     p = store.pdf_path(nid)
     if not p.exists():
         raise HTTPException(404, "This note has no PDF")
+    if store.is_linked(nid) and not store.text_path(nid).exists():  # added unread (no room then): read it now
+        _read_linked_later(nid)
     return FileResponse(p, media_type="application/pdf", content_disposition_type="inline",
                         filename=f"{nid}.pdf")
 
@@ -2002,7 +2207,7 @@ def _critique_prompt(n: dict) -> tuple[str, str]:
     _refuse_private(n)
     if not n["summary"].strip():
         raise HTTPException(400, "Write your summary first — the critique compares it against the paper")
-    text = _fulltext(nid)
+    text = _fulltext_needed(nid)
     cap = min(budget.get("critique_full_chars"), CLAUDE_CONTEXT_CHARS)
     if text and len(text) > cap:
         source = _critique_digest(n, text, cap)
@@ -2299,7 +2504,7 @@ def api_focus(nid: str, body: FocusIn):
     if not query:
         raise HTTPException(400, "Pick a question or topic, or type what you're looking for")
     _chunk_index._refresh_safe(store.all())
-    rows = focus_mod.relevant(paper, _fulltext(root), query, _chunk_index, embedder_family(embedder.kind),
+    rows = focus_mod.relevant(paper, _fulltext_needed(root), query, _chunk_index, embedder_family(embedder.kind),
                               k=max(1, min(20, body.k)))
     return {"label": label, "passages": rows, "pdf": root}
 
@@ -2437,7 +2642,7 @@ def _paper_chat_context(idx: dict, pid: str, q: str, history: list[dict], includ
     full_cap = budget.get("paper_full_chars")
     head = _describe(paper, with_text=False)
     parts.append("FOCUS PAPER:\n\n" + head)
-    text = _fulltext(pid)
+    text = _fulltext_needed(pid)
     hits: list[dict] = []
     if text and len(text) <= full_cap:
         parts.append(f"FULL TEXT of [[{pid}]] (page markers like [[page N]] tell you the page to cite):\n\n{text}")
@@ -3422,7 +3627,7 @@ class _Lib:
     def fts(q, limit):
         return api_search(q=q, limit=limit, fragments=True)
 
-    fulltext = staticmethod(_fulltext)
+    fulltext = staticmethod(_fulltext_needed)  # the agent opens one paper at a time: read it if it's waiting
     pdf_of = staticmethod(_pdf_of)
 
     @staticmethod
@@ -3928,6 +4133,13 @@ def urlsplit_path(u: str) -> str:
         return unquote(urlsplit(u).path) or ""
     except ValueError:
         return ""
+
+
+# ---------------------------------------------------------------- folders of papers kept where they are (app/linked_api.py)
+from . import linked_api  # noqa: E402
+linked_api.install(app, store=store, import_one=_import_linked, file_in_topic=_file_in_topic,
+                   ask=lambda i, c, p: _ask(i, c, p), publish=event_bus.publish, read_later=_read_linked_now,
+                   held=held_bytes)
 
 
 # ---------------------------------------------------------------- privacy: settings, audit log, lock (app/privacy_api.py)

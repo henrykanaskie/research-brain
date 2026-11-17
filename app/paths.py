@@ -195,6 +195,33 @@ LIBRARY_CONFIG = "library.json"   # <library>/state/library.json: {"documents": 
 DOCS_MARKER = ".research-brain.json"  # in the documents folder: which library it belongs to
 
 
+def documents_folder() -> Path:
+    """The user's Documents folder. On Windows it is asked of Windows: with OneDrive backing up Documents
+    (on by default on many PCs) it is ~/OneDrive/Documents, and ~/Documents is missing or a leftover that File
+    Explorer doesn't show as Documents. Elsewhere, ~/Documents."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class GUID(ctypes.Structure):
+                _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD),
+                            ("Data4", ctypes.c_ubyte * 8)]
+            # FOLDERID_Documents {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+            fid = GUID(0xFDD39AD0, 0x238F, 0x46AF, (ctypes.c_ubyte * 8)(0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7))
+            out = ctypes.c_wchar_p()
+            shell32, ole32 = ctypes.windll.shell32, ctypes.windll.ole32
+            if shell32.SHGetKnownFolderPath(ctypes.byref(fid), 0, None, ctypes.byref(out)) == 0:
+                try:
+                    if out.value:
+                        return Path(out.value)
+                finally:
+                    ole32.CoTaskMemFree(out)
+        except Exception:
+            pass
+    return Path.home() / "Documents"
+
+
 def default_documents_dir(vault: Path) -> Path:
     """Where a library's documents (papers, notes, questions, highlights, topics, PDFs; app/layout.py) go
     when nothing was chosen: ~/Documents/research brain for a profile in the normal data folder ("research
@@ -204,7 +231,7 @@ def default_documents_dir(vault: Path) -> Path:
     if env:
         return Path(env).expanduser()
     vault = Path(vault)
-    docs = Path.home() / "Documents"
+    docs = documents_folder()
     managed = not os.environ.get("RB_DATA_DIR", "").strip() and not os.environ.get("RB_VAULT", "").strip()
     try:
         managed = managed and vault.resolve().parent == (user_data_dir() / "profiles").resolve()

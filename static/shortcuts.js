@@ -268,10 +268,13 @@
   // ====================================================================== in-app guide
   const GUIDE = [
     ['Adding things', [
-      ['Add a paper', 'Drop a PDF on the window, add one by DOI, arXiv id or title, or right-click an empty spot on the map (what you add appears right there). Metadata comes from Semantic Scholar.', ['library.addById', 'library.importPdf']],
+      ['Add a paper', 'Drop a PDF on the window, add one by DOI, arXiv id or title, or right-click an empty spot on the map (what you add appears right there). Its details come from Crossref, arXiv and Semantic Scholar; when none has an abstract, it’s read from the PDF itself.', ['library.addById', 'library.importPdf']],
+      ['Find papers', 'Find papers in the top bar: describe a topic and {AI} searches OpenAlex and arXiv and proposes papers. Nothing is added until you say so, and you’re told when a search finishes.', ['papers.find']],
       ['Write a note', 'Your own idea or synthesis, not tied to one paper.', ['library.newNote']],
       ['Zotero', 'Add, then Import from Zotero brings in papers, notes and highlights.', []],
-      ['A folder of PDFs', 'Add › Import a folder of PDFs. Let the AI sort them into topics by what they’re about, or make a topic per subfolder. For papers without a topic: the command Sort papers that have no topic into topics.', ['topics.autoSort']],
+      ['Folders you keep PDFs in', 'Add › Add folders of papers: pick a folder (one in OneDrive works too). The PDFs stay where they are, never moved, renamed or deleted, and no copy is made. Each folder becomes a topic named after it: before adding you can rename any, clear one, or let {AI} suggest names. PDFs you add to those folders later come in by themselves, and a PDF you move to another folder changes topic. Online-only PDFs are read one at a time and sent straight back to OneDrive, so every paper has its full text and only the text stays on your computer. A large import shows a gauge in the bottom-right corner. Settings › Library settings › Folders of papers lists them, with Check now and Stop following.', ['import.linkFolder']],
+      ['Copy in a folder of PDFs', 'Add › Import a folder of PDFs copies each one into your papers folder instead. Let {AI} sort them into topics, or make a topic per subfolder. For papers without a topic: the command Sort papers that have no topic into topics.', ['import.folder', 'topics.autoSort']],
+      ['Short on disk space', 'Keep your PDFs in OneDrive: Library settings › Papers folder › move it into OneDrive, then right-click it › Free up space. A PDF downloads only when you open it. On Windows, tick Keep new PDFs online only. research brain always leaves 300 MB free, refuses a PDF that won’t fit, and warns you below 1 GB.', ['library.settings']],
     ]],
     ['Reading and thinking', [
       ['Your summary', 'Two or three sentences in your own words. Then ask {AI} to critique it against the paper.', ['note.summary', 'note.critique']],
@@ -280,12 +283,12 @@
       ['Math', 'Type $…$ for inline math and $$…$$ for display. A backslash opens LaTeX suggestions; Tab accepts.', []],
     ]],
     ['The graph', [
-      ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. Bigger means more connected and more written about.', []],
+      ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. Bigger means more connected and more written about. A paper you haven’t read yet has a small yellow glow at its centre.', []],
       ['Lines', 'Red lines are links you made. Dashed blue-grey lines are text similarity. Click a line to ask {AI} why two notes connect.', ['graph.similar', 'graph.citations']],
       ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region. Zoom in as far as you like while there’s something on screen (it stops before you’d zoom into empty space); resizing the window refits the map.', ['graph.focus', 'graph.filter', 'graph.fit']],
       ['Labels', 'Papers are labelled with first author and year; Settings › Labels shows the title too, or the title alone. Hover a dot for its full title.', []],
-      ['Move dots', 'Drag a dot where you want it: it settles there (and stays next time) while still swaying with its neighbours, and the dots linked to it come along. Right-click › Let it move freely gives it back to the layout.', ['graph.unpinAll']],
-      ['Regions', 'Groups of related papers get a name above them. A region with the same papers as a topic shows the topic’s name. Click a name to focus the region, then Rename to change it (the topic follows, unless you keep them different).', ['graph.focusRegion', 'graph.renameRegion']],
+      ['Move dots', 'Drag a dot where you want it: it settles there (and stays next time) while still swaying with its neighbours, and the dots linked to it come along. A region whose dots you mostly placed stays where you put them, and new papers in it settle with them. Right-click › Let it move freely gives a dot back to the layout.', ['graph.unpinAll']],
+      ['Regions', 'Groups of related papers get a name above them. A region with the same papers as a topic shows the topic’s name. Click a name to focus the region, then Rename to change it (the topic follows, unless you keep them different). To move a paper into a region or a topic, right-click its dot › Put in section or Add to topic.', ['graph.focusRegion', 'graph.renameRegion']],
     ]],
     ['Finding and recalling', [
       ['Search', 'Highlights matches on the graph. Enter opens the first; ↓ and ↑ step through the rest.', ['nav.search', 'nav.nextResult']],
@@ -327,7 +330,7 @@
 
   // ====================================================================== first-run tour (coach marks)
   const TOUR = [
-    { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere.', keys: ['library.addById', 'library.newNote'] },
+    { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere. Already keep PDFs in folders (OneDrive too)? Add folders of papers links them where they are, and each folder becomes a topic.', keys: ['library.addById', 'import.linkFolder'] },
     { sel: '.search', title: 'Search', text: 'Matching nodes light up on the graph. Enter opens the first match.', keys: ['nav.search'] },
     { sel: '#legend', fallback: '#graph', title: 'Reading the graph', text: 'Dots are papers, rings are notes, red points are fragments. Size grows with what you write and link. Red lines are your links; dashed lines are similar text.', keys: ['graph.fit'] },
     { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a node to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes. Drag a dot to place it; linked dots follow.', keys: ['note.summary', 'note.critique'] },
@@ -391,7 +394,7 @@
     const next = mk('button', 'btn btn-primary btn-sm', last ? 'Done' : 'Next'); next.type = 'button';
     next.onclick = () => { if (last) endTour(); else { tour.i++; showStep(); } };
     const act = mk('div', 'c-act'); act.append(skip, mk('span', 'sp'), back, next);
-    card.append(mk('div', 'c-step', `${tour.i + 1} of ${TOUR.length}`), mk('div', 'c-title', s.title), mk('div', 'c-text', s.text), keys.children.length ? keys : '', act);
+    card.append(mk('div', 'c-step', `${tour.i + 1} of ${TOUR.length}`), mk('div', 'c-title', s.title), mk('div', 'c-text', RB.aiText(s.text)), keys.children.length ? keys : '', act);
     document.body.appendChild(card);
     tour.card = card;
     // place it next to the target, inside the viewport

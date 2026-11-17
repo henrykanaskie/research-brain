@@ -553,6 +553,41 @@ Logic in `app/paths.py`, `app/profiles.py`, `app/migrate.py`, `app/acquire.py`, 
 - Every vault has `state/meta.json` `{"schema", "app_version", "created", "migrations": [...]}`. On start, older
   schemas are migrated after a zip backup to `vault/backups/`; a newer schema stops the server with a message.
 
+## ADDED: Folders of papers, cloud folders and disk space
+Folders you already keep PDFs in, linked where they are (`app/linked.py`, endpoints in `app/linked_api.py`);
+online-only PDFs and running out of space (`app/diskspace.py`). Files in linked folders are never moved, renamed,
+changed or deleted.
+- `GET /api/linked-folders` → `{"folders": [{"id", "path", "name", "papers", "there", "cloud", "added", "job"}]}`.
+  `there`: the folder is reachable now; `cloud`: `"OneDrive"`, `"iCloud Drive"`, ... or `""`; `job`: a running check.
+- `POST /api/linked-folders/preview` body `{"path", "names"?}` → `{"path", "name", "pdfs", "known", "online", "cloud", "limit",
+  "added", "topics", "folders": [{"dir", "label", "pdfs", "topic", "default", "exists", "shared_with"}]}`. Lists
+  names and sizes only (no file is opened). `dir` is the folder inside `path` (`""` for `path` itself); `topic` is
+  the name it will get (the deepest folder's name unless `names` says otherwise; `""` = no topic). 400 for a path
+  that isn't a folder, or one that is or holds research brain's own folders.
+- `POST /api/linked-folders/suggest-names` body `{"path"}` → `{"names": {dir: name}}` from the AI agent, given the
+  folder names and up to 15 file names per folder (never the PDFs). 502 when no usable answer.
+- `POST /api/linked-folders` body `{"path", "names": {dir: name}}` → 201 `{"folder", "job"}`: adds the folder and
+  starts importing. 400 when it overlaps a folder already added.
+- `POST /api/linked-folders/{id}/check` → `{"job"}`: add new PDFs, follow moved ones. Also runs at start and every
+  10 minutes.
+- `GET /api/linked-folders/jobs/{job}` → `{"id", "folder", "state": "running"|"done"|"error", "total", "done",
+  "added", "linked", "duplicate", "moved", "missing", "unread", "read", "failed": [str], "current", "message",
+  "name", "started", "paused_s"}`. `state` can also be `"paused"` (read online-only PDFs that couldn't be sent back
+  are held past 500 MB; `message` says to free space on the folder; it resumes by itself) and `"stopped"`. `unread`:
+  papers added from their file names because there was no room to download the PDF; `read`: such papers read on
+  this run. `started` is a Unix time, `paused_s` the seconds spent paused (for a time-left estimate).
+- `POST /api/linked-folders/jobs/{job}/stop` → the job, stopping after the PDF it's on. `linked`: a paper you
+  had without a PDF got this one; `duplicate`: same bytes, DOI or arXiv id as a paper with a PDF (it joins the topic).
+- `DELETE /api/linked-folders/{id}` → `{"ok", "papers"}`: stops following it; its papers stay, without PDFs.
+- `DELETE /api/notes/{id}?pdf=keep|trash` on a paper whose PDF is linked leaves the file and returns `{"pdf": "left"}`.
+- `GET /api/papers-folder` also returns `"cloud"`, `"online_only"`, `"can_free"` (Windows) and `"disk"`.
+  `PUT /api/papers-folder/online-only` body `{"on"}` → the same, plus `"freed"`: keep new PDFs online only.
+- `GET /api/status` → also `"disk": {"free", "free_text", "low", "min_free"}` for the fullest of the papers folder,
+  documents folder and library disks.
+- Out of space: adding a PDF that would leave less than `RB_MIN_FREE_MB` (300) free → 507 `{"detail"}`; any write
+  that fails because the disk is full → 507 `{"detail", "disk_full": true}`. `GET /api/notes/{id}/acquire` can
+  answer `"state": "no-space"` with a `"message"`.
+
 ## ADDED: Paper metadata (identifiers first; app/metadata.py)
 
 ```

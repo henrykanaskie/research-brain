@@ -23,6 +23,9 @@ AFTERWARDS
 - Chrome extension (optional): unzip research-brain-extension-....zip into a folder you keep (for
   example in Documents), then in Chrome go to chrome://extensions, turn on Developer mode, click
   "Load unpacked" and choose that folder.
+- Already keep your PDFs in folders (OneDrive too)? In research brain: Add > Add folders of papers.
+  They stay where they are (nothing is copied), and each folder becomes a topic.
+- Short on disk space? Keep your PDFs in OneDrive: README.md, "Short on disk space?".
 - Updates: when your lab shares a newer version, download it and run its installer again, the same
   way. Your library stays exactly as it is.
 - Everything else (adding papers, the AI, free paper-lookup keys, a first-ten-minutes tour, and how

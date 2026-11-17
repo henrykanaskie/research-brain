@@ -28,6 +28,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import threading
 import time
 from pathlib import Path
@@ -90,9 +91,25 @@ def sha256_file(p: Path) -> str:
     return h.hexdigest()
 
 
+# A file that is only in the cloud (OneDrive, iCloud Drive, Dropbox "online only"): listed, with its size, but
+# reading it makes the sync app download it. macOS marks these SF_DATALESS; Windows (OneDrive Files On-Demand)
+# marks them recall-on-access (or, older, offline).
+_SF_DATALESS = getattr(stat, "SF_DATALESS", 0x40000000)
+_WIN_CLOUD = 0x00400000 | 0x00040000 | 0x00001000  # RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN, OFFLINE
+
+
+def cloud_only(st: os.stat_result) -> bool:
+    """True if the file behind this stat() is online-only, so reading it would download it."""
+    if getattr(st, "st_flags", 0) & _SF_DATALESS:
+        return True
+    return bool(getattr(st, "st_file_attributes", 0) & _WIN_CLOUD)
+
+
 class PdfHashes:
     """sha256 of every pdfs/<id>.pdf, cached in .index/pdf_hashes.json (derived: rebuilt from the files,
-    re-hashing only files whose size or mtime changed)."""
+    re-hashing only files whose size or mtime changed). An online-only file (a papers folder in OneDrive or
+    iCloud Drive with its space freed up) is never read here: it keeps the hash it had, or has none yet, so
+    checking an import for duplicates doesn't download the whole library."""
 
     _locks: dict = {}           # one lock per index file, shared by every instance (each import makes its own)
     _locks_guard = threading.Lock()
@@ -121,18 +138,25 @@ class PdfHashes:
         """{nid: sha} for every stored PDF."""
         with self.lock:
             old, new, changed = self._load(), {}, False
-            for p in Path(self.store.pdf_dir).glob("*.pdf"):
+            files = [(p.stem, p) for p in Path(self.store.pdf_dir).glob("*.pdf")]
+            links = getattr(self.store, "links", None)
+            if links is not None:  # and the PDFs in your own folders of papers (app/linked.py)
+                files += list(links.linked_ids().items())
+            for stem, p in files:
                 try:
                     s = p.stat()
                 except OSError:
                     continue
                 key = [s.st_size, s.st_mtime_ns]
-                rec = old.get(p.stem)
+                rec = old.get(stem)
                 if isinstance(rec, list) and len(rec) == 3 and rec[:2] == key:
-                    new[p.stem] = rec
+                    new[stem] = rec
+                elif cloud_only(s):
+                    if isinstance(rec, list) and len(rec) == 3:
+                        new[stem] = rec  # the hash from when it was on this computer
                 else:
                     try:
-                        new[p.stem] = key + [sha256_file(p)]
+                        new[stem] = key + [sha256_file(p)]
                     except OSError:
                         continue
                     changed = True
@@ -224,6 +248,13 @@ def acquire(store, nid: str, meta: dict | None = None, *, email: str = "", hashe
         _record(store, nid, rec)
         return rec
     rec = {"state": "not-found", "at": _now(), "tried": tried}
+    from . import diskspace
+    try:  # no room for a PDF on the papers folder's disk: don't download one (app/diskspace.py)
+        diskspace.ensure_room(Path(store.pdf_dir), 0, "a free copy of this paper")
+    except diskspace.DiskFull as e:
+        rec = {"state": "no-space", "at": _now(), "message": str(e)}
+        _record(store, nid, rec)
+        return rec
     try:
         cands = candidates(note, meta, email)
     except Exception as e:  # Unpaywall down, odd data...
@@ -259,7 +290,14 @@ def acquire(store, nid: str, meta: dict | None = None, *, email: str = "", hashe
                 if store.pdf_path(nid).exists():  # the user attached one meanwhile: keep theirs
                     rec = {"state": "has-pdf", "at": _now()}
                     break
-                shutil.move(str(tmp), store.pdf_path(nid))
+                try:
+                    store.put_pdf(nid, tmp)
+                except OSError as e:
+                    if not diskspace.is_disk_full(e):
+                        raise
+                    rec = {"state": "no-space", "at": _now(), "message": str(e) if isinstance(e, diskspace.DiskFull)
+                           else diskspace.FULL_MESSAGE, "tried": tried}
+                    break
                 store.write_text(nid, text)
                 n = store.get(nid)
                 store.save(n)  # bumps the revision so indexes and open pages see the new PDF

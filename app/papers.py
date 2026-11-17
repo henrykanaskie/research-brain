@@ -54,6 +54,32 @@ def default_folder(root: Path) -> Path:
     return paths.documents_dir(root) / PDFS_DIR
 
 
+def _config(root: Path) -> dict:
+    try:
+        cfg = json.loads((Path(root) / "state" / CONFIG).read_text(encoding="utf-8"))
+        return cfg if isinstance(cfg, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def online_only(root: Path) -> bool:
+    """Keep new PDFs online only (a papers folder in OneDrive; app/diskspace.py)."""
+    return bool(_config(root).get("online_only"))
+
+
+def set_online_only(store, on: bool) -> dict:
+    """Turn "keep new PDFs online only" on or off. Turning it on also asks the sync app to free the PDFs
+    already there (Windows; on a Mac, Finder's Free up space does that)."""
+    from . import diskspace
+    with _lock:
+        cfg = _config(store.root)
+        cfg["online_only"] = bool(on)
+        _write_json(_state(store.root) / CONFIG, cfg)
+    freed = bool(on) and diskspace.keep_online_only(Path(store.pdf_dir), recursive=True)
+    _log(store, f"papers folder: keep new PDFs online only {'on' if on else 'off'}")
+    return {"online_only": bool(on), "freed": freed}
+
+
 def folder_for(root: Path) -> Path:
     """The papers folder of the library at `root` (default <documents>/PDFs)."""
     try:
@@ -73,7 +99,8 @@ def _write_json(path: Path, data) -> None:
 
 
 def suggested_folder() -> Path:
-    docs = Path.home() / "Documents"
+    from .paths import documents_folder
+    docs = documents_folder()
     return (docs if docs.is_dir() else Path.home()) / "Research papers"
 
 
@@ -97,6 +124,13 @@ def move_folder(store, new: str) -> dict:
         clash = [p.name for p in pdfs if (dest / p.name).exists() and _sha(dest / p.name) != _sha(p)]
         if clash:
             raise ValueError(f"{dest} already has different files named like yours (e.g. {clash[0]}). Pick an empty folder.")
+        try:
+            other_disk = os.stat(dest).st_dev != os.stat(old).st_dev if old.is_dir() else False
+        except OSError:
+            other_disk = False
+        if other_disk:  # moving to another disk copies every PDF: there must be room for all of them first
+            from . import diskspace
+            diskspace.ensure_room(dest, sum(p.stat().st_size for p in pdfs), f"your {len(pdfs)} PDFs")
         moved = 0
         for p in pdfs:
             target = dest / p.name
@@ -111,7 +145,7 @@ def move_folder(store, new: str) -> dict:
             for p in removed.glob("*.pdf"):
                 if not (dest / REMOVED / p.name).exists():
                     shutil.move(str(p), dest / REMOVED / p.name)
-        _write_json(_state(store.root) / CONFIG, {"folder": "" if dest == default else str(dest)})
+        _write_json(_state(store.root) / CONFIG, {**_config(store.root), "folder": "" if dest == default else str(dest)})
         store.pdf_dir = dest
         try:  # an emptied default folder can go; a chosen one stays
             if old.resolve() == default:
@@ -165,7 +199,10 @@ def find_by_hash(store, sha: str) -> str | None:
 
 # ---------------------------------------------------------------- removing a paper's PDF
 def remove_pdf(store, nid: str, mode: str) -> dict:
-    """Before deleting note `nid`: keep its PDF (moved to Removed from library/) or send it to the Trash."""
+    """Before deleting note `nid`: keep its PDF (moved to Removed from library/) or send it to the Trash. A PDF in
+    one of your own folders of papers (app/linked.py) is never moved or deleted, whichever was asked."""
+    if getattr(store, "is_linked", None) and store.is_linked(nid):
+        return {"pdf": "left", "path": str(store.pdf_path(nid))}
     p = store.pdf_path(nid)
     if not p.is_file():
         return {"pdf": None}

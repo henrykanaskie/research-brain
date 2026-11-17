@@ -683,14 +683,11 @@ MAX_PDF_BYTES = 300 << 20
 def _copy_pdf(store, nid: str, src: Path) -> bool:
     if not _looks_like_pdf(src) or src.stat().st_size > MAX_PDF_BYTES:
         return False  # not a PDF (or absurdly large): leave it in Zotero
-    dest = store.pdf_path(nid)
-    part = dest.with_name(dest.name + ".part")
-    shutil.copyfile(src, part)          # copy, never move: the Zotero file stays where it is
-    part.replace(dest)
     try:
-        text, _ = extract(dest)
+        text, _ = extract(src)  # read from Zotero's copy: the stored one may go online only (app/diskspace.py)
     except Exception:
         text = ""
+    store.put_pdf(nid, src, copy=True)  # copy, never move: the Zotero file stays where it is
     store.write_text(nid, text)
     return True
 
@@ -902,14 +899,18 @@ def start_import(store, collection_key: str | None, include_pdfs: bool, include_
                     job["highlights_kept"] += len(r["kept"])
                     job["kept"] = (job["kept"] + r["kept"])[:50]
                 except Exception as e:  # one bad item shouldn't stop the rest
+                    from .diskspace import is_disk_full
+                    if is_disk_full(e):  # but a full disk stops it: every next item would fail the same way
+                        raise
                     if len(job["errors"]) < 50:
                         job["errors"].append(f"{it['title'][:120]}: {e}")
                     traceback.print_exc()
                 job["done"] += 1
             job["state"] = "done"
         except Exception as e:
+            from .diskspace import FULL_MESSAGE, DiskFull, is_disk_full
             job["state"] = "error"
-            job["message"] = str(e)
+            job["message"] = str(e) if isinstance(e, DiskFull) else FULL_MESSAGE if is_disk_full(e) else str(e)
             traceback.print_exc()
         finally:
             job["current"] = ""

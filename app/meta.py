@@ -237,7 +237,13 @@ class MetaIndex:
                     return frozenset(e.name[:-len(ext)] for e in it if e.name.endswith(ext))
             except OSError:
                 return frozenset()
-        return names(self.store.pdf_dir, ".pdf"), names(self.store.text_dir, ".txt")
+        pdfs = names(self.store.pdf_dir, ".pdf")
+        links = getattr(self.store, "links", None)
+        if links is not None:  # PDFs in your own folders of papers (app/linked.py) that are there right now
+            linked = links.linked_ids()
+            if linked:
+                pdfs = pdfs | frozenset(nid for nid, p in linked.items() if p.exists())
+        return pdfs, names(self.store.text_dir, ".txt")
 
     def sync(self, force: bool = False, only: set[str] | None = None) -> list[str]:
         """Bring rows in line with the files. Returns ids that changed (added, edited or removed)."""

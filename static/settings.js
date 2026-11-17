@@ -33,6 +33,10 @@
   .ls-sec:first-of-type { border-top: 0; margin-top: 8px; padding-top: 0; }
   .ls-h { font: 600 12px/1.4 var(--sans); color: var(--ink); letter-spacing: .01em; margin-bottom: 6px; }
   .ls-p { font: 12.5px/1.55 var(--sans); color: var(--ink-2); margin: 4px 0 8px; }
+  .ls-p.ls-warn { color: var(--red); }
+  .ls-linked-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 8px 0; border-top: 1px solid var(--rule); flex-wrap: wrap; }
+  #ls-linked { margin-top: 16px; }
+  .ls-p.ls-hint { color: var(--ink-3); margin-top: -4px; }
   .ls-path { font: 11.5px/1.5 var(--mono); color: var(--ink); background: var(--ground); padding: 6px 9px;
     border-radius: 3px; overflow-wrap: anywhere; user-select: all; }
   .ls-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
@@ -388,13 +392,75 @@
       move.disabled = true;
       try {
         const r = await api('/api/papers-folder', json('PUT', { folder: to }));
-        f = r; where.textContent = r.folder; setCount(r);
+        f = r; where.textContent = r.folder; setCount(r); cloudBox.replaceChildren(...cloudParts(r));
         say(`Moved ${r.moved} PDF${r.moved === 1 ? '' : 's'} to ${r.folder}.`);
       } catch (e) { say(e.message, true); } finally { move.disabled = false; }
     });
+    // a papers folder in OneDrive (iCloud Drive, Dropbox...): new PDFs can stay online only (app/diskspace.py)
+    function cloudParts(x) {
+      const d = x.disk || {};
+      const space = el('p', { class: 'ls-p' + (d.low ? ' ls-warn' : ''), id: 'ls-papers-space',
+        text: d.free == null ? '' : d.low
+          ? `Only ${d.free_text} free on this disk. research brain stops adding PDFs before the disk is full.`
+          : `${d.free_text} free on this disk.` });
+      if (!x.cloud) {
+        return [space, el('p', { class: 'ls-p', text: 'Short on space? Move this folder into OneDrive (or iCloud Drive, Dropbox) and keep the PDFs online only: they download when you open one.' })];
+      }
+      if (!x.can_free) {  // macOS: no command for it; the system and Finder do it
+        return [space, el('p', { class: 'ls-p', id: 'ls-online-hint', text: `This folder is in ${x.cloud}. To keep its PDFs online only, right-click it in Finder › Free up space. New PDFs start out on this Mac, and macOS frees them on its own when the disk runs low. research brain never downloads an online-only PDF unless you open it.` })];
+      }
+      const box = el('input', { type: 'checkbox', id: 'ls-online-only' });
+      box.checked = !!x.online_only;
+      box.addEventListener('change', async () => {
+        box.disabled = true;
+        try {
+          const r = await api('/api/papers-folder/online-only', json('PUT', { on: box.checked }));
+          f = r;
+          say(r.online_only ? `New PDFs stay online only: ${x.cloud} frees each one once it has uploaded it.` : 'New PDFs are kept on this computer.');
+        } catch (e) { box.checked = !box.checked; say(e.message, true); } finally { box.disabled = false; }
+      });
+      return [space,
+        el('label', { class: 'ls-p ls-check', for: 'ls-online-only' }, box, ` Keep new PDFs online only (in ${x.cloud}, not on this computer)`),
+        el('p', { class: 'ls-p ls-hint', text: `Each PDF you add is saved into this folder, and ${x.cloud} frees the space on this computer as soon as it has uploaded it. It downloads again when you open it. Turning this on also frees the PDFs already here.` })];
+    }
+    const cloudBox = el('div', { id: 'ls-papers-cloud' }, ...cloudParts(f));
+
+    // folders of papers kept where they are (app/linked.py): yours, linked, never moved or copied
+    const linkedBox = el('div', { id: 'ls-linked' });
+    async function renderLinked() {
+      let r;
+      try { r = await api('/api/linked-folders'); } catch { return; }
+      const rows = r.folders.map((x) => {
+        const check = el('button', { class: 'btn btn-sm', type: 'button', text: 'Check now', title: 'Add new PDFs, follow moved ones' });
+        check.addEventListener('click', async () => {
+          check.disabled = true;
+          try { await api(`/api/linked-folders/${x.id}/check`, json('POST', {})); say(`Checking ${x.name} for new and moved PDFs.`); setTimeout(renderLinked, 2500); }
+          catch (e) { say(e.message, true); } finally { check.disabled = false; }
+        });
+        const drop = el('button', { class: 'btn btn-sm btn-text', type: 'button', text: 'Stop following' });
+        drop.addEventListener('click', async () => {
+          const R = rb() || {};
+          const ok = R.confirmDialog ? await R.confirmDialog(`Stop following “${x.name}”?`, `Its ${x.papers} paper${x.papers === 1 ? '' : 's'} stay in your library with your notes and highlights, but without their PDFs. Nothing in the folder is touched.`, 'Stop following') : true;
+          if (!ok) return;
+          try { await api(`/api/linked-folders/${x.id}`, json('DELETE')); say(`Stopped following ${x.name}.`); renderLinked(); if (R.refreshGraph) R.refreshGraph(); }
+          catch (e) { say(e.message, true); }
+        });
+        const job = x.job && x.job.state === 'running' ? ` · adding ${x.job.done} of ${x.job.total || '…'}` : '';
+        return el('div', { class: 'ls-linked-row' },
+          el('div', null, el('div', { class: 'ls-path', text: x.path }),
+            el('div', { class: 'ls-p', text: `${x.papers} paper${x.papers === 1 ? '' : 's'}${x.cloud ? ` · in ${x.cloud}` : ''}${x.there ? '' : ' · not connected right now'}${job}` })),
+          el('div', { class: 'ls-row' }, check, drop));
+      });
+      const add = el('button', { class: 'btn', type: 'button', text: r.folders.length ? 'Add another folder…' : 'Add a folder…', onclick: () => window.__rbBulk && window.__rbBulk.pickLinkFolder() });
+      linkedBox.replaceChildren(
+        el('div', { class: 'ls-h', text: 'Folders of papers' }),
+        el('p', { class: 'ls-p', text: 'Folders you already keep PDFs in, such as one in OneDrive. They stay where they are: research brain links to each PDF, never moves, renames or deletes one, and adds new ones you put there. Each subfolder becomes a topic.' }),
+        ...rows, el('div', { class: 'ls-row' }, add));
+    }
+    renderLinked();
     sec.append(where, count, el('div', { class: 'ls-row' }, open),
-      el('label', { class: 'ls-p', for: 'ls-papers-dest', text: f.default ? 'Keep them somewhere you can find them, like your Documents folder or a synced folder:' : 'Move them somewhere else:' }),
-      el('div', { class: 'ls-row' }, dest, destPick, move));
+      el('label', { class: 'ls-p', for: 'ls-papers-dest', text: f.default ? 'Keep them somewhere you can find them, like your Documents folder or a synced folder (OneDrive):' : 'Move them somewhere else:' }),
+      el('div', { class: 'ls-row' }, dest, destPick, move), cloudBox, linkedBox);
 
     // check a folder you pick for papers you already have, or haven't added
     const scanIn = el('input', { type: 'text', id: 'ls-scan-folder', spellcheck: 'false', value: f.downloads, 'aria-label': 'Folder to check' });

@@ -292,6 +292,8 @@ async def _stream_to_temp(request: Request, max_bytes: int, suffix: str, magic: 
         clen = request.headers.get("content-length", "")
         if clen.isdigit() and int(clen) > max_bytes:
             raise HTTPException(413, f"The file is larger than {max_bytes >> 20} MB")
+        from . import diskspace
+        diskspace.ensure_room(Path(ctx.store.pdf_dir), int(clen) if clen.isdigit() else 0)
         with dest.open("wb") as f:
             async for chunk in request.stream():
                 if not chunk:
@@ -335,7 +337,7 @@ def _viewer(nid: str, **flags) -> dict:
 def _attach(nid: str, tmp: Path, text: str) -> None:
     store = ctx.store
     with store.lock:
-        shutil.move(str(tmp), store.pdf_path(nid))
+        store.put_pdf(nid, tmp)  # room checked first (app/diskspace.py)
         n = store.get(nid)
         store.write_text(nid, text, note=n)
         store.save(n)
