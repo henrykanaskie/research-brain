@@ -1375,6 +1375,65 @@
     force.initialize = (ns) => { nodes = ns; };
     return force;
   }
+  /** Every dot in its own space: a line passing over a dot it doesn't connect to pushes that dot sideways, off the
+   *  line (the lines are the traces linkGeom draws, so the clearance is measured against what you see). A dot you
+   *  placed stays where it is: the line's own ends move a little instead. Not while you drag. */
+  function edgeClearForce() {
+    let nodes = [];
+    const MARGIN = 2.2;  // clear space between a dot's edge and a line, in graph units
+    function force() {
+      if (S.dragging || !nodes.length) return;
+      const geoms = [];
+      for (const l of S.links || []) {
+        if (l.kind === 'part' || !linkShown(l)) continue;
+        const g = linkGeom(l);
+        if (!g) continue;
+        const P = g.pts;
+        let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+        for (let i = 0; i < P.length; i += 2) {
+          if (P[i] < minx) minx = P[i]; if (P[i] > maxx) maxx = P[i];
+          if (P[i + 1] < miny) miny = P[i + 1]; if (P[i + 1] > maxy) maxy = P[i + 1];
+        }
+        geoms.push({ l, P, a: lid(l.source), b: lid(l.target), minx, maxx, miny, maxy });
+      }
+      if (!geoms.length) return;
+      for (const n of nodes) {
+        if (n.type === 'fragment' || !Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
+        const clear = nodeRadius(n) + MARGIN;
+        for (const g of geoms) {
+          if (g.a === n.id || g.b === n.id) continue;
+          if (n.x < g.minx - clear || n.x > g.maxx + clear || n.y < g.miny - clear || n.y > g.maxy + clear) continue;
+          // the nearest point of the trace
+          let best = Infinity, bx = 0, by = 0, sdx = 1, sdy = 0;
+          const P = g.P;
+          for (let i = 0; i + 3 < P.length; i += 2) {
+            const px = P[i], py = P[i + 1], qx = P[i + 2], qy = P[i + 3];
+            const vx = qx - px, vy = qy - py, len2 = vx * vx + vy * vy;
+            let t = len2 ? ((n.x - px) * vx + (n.y - py) * vy) / len2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const cx = px + vx * t, cy = py + vy * t, d2 = (n.x - cx) * (n.x - cx) + (n.y - cy) * (n.y - cy);
+            if (d2 < best) { best = d2; bx = cx; by = cy; sdx = vx; sdy = vy; }
+          }
+          if (best >= clear * clear) continue;
+          let d = Math.sqrt(best), ux = n.x - bx, uy = n.y - by;
+          if (d < 1e-6) {  // right on the line: step off it square to the line, to a side fixed by the dot's id
+            const L = Math.hypot(sdx, sdy) || 1, side = strHash(n.id) % 2 ? 1 : -1;
+            ux = (-sdy / L) * side; uy = (sdx / L) * side; d = 0;
+          } else { ux /= d; uy /= d; }
+          // the dot steps off and the line's ends step back, so a dot held by many links (a hub) and the line
+          // both give way; a dot you placed doesn't move, so its share goes to the line
+          const push = (clear - d) * 0.3;
+          const placed = n.__home || n.fx !== undefined;
+          const ends = [g.l.source, g.l.target].filter((e) => e && typeof e === 'object' && !e.__home && e.fx === undefined);
+          const lineShare = placed ? 1 : ends.length ? 0.4 : 0;
+          if (!placed) { n.vx += ux * push * (1 - lineShare); n.vy += uy * push * (1 - lineShare); }
+          for (const e of ends) { e.vx -= (ux * push * lineShare) / ends.length; e.vy -= (uy * push * lineShare) / ends.length; }
+        }
+      }
+    }
+    force.initialize = (ns) => { nodes = ns; };
+    return force;
+  }
   /** simple collision (avoids loading d3-force just for forceCollide) */
   function collideForce() {
     let nodes = [];
@@ -1501,6 +1560,7 @@
     }
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
+    fg.d3Force('edgeClear', edgeClearForce());  // no dot sits on a line that isn't its own
     fg.d3Force('calm', calmForce());
     configureLinkForce();
     // Resizing the window (maximise, full screen, dragging an edge): keep the same spot of the map in the
@@ -4763,7 +4823,7 @@
     });
   }
   // expose for debugging/tests
-  window.__rb = { S, renderMD, refreshGraph, openNote, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); } };
+  window.__rb = { S, renderMD, refreshGraph, openNote, linkGeom, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); } };
   // hooks for static/review.js and static/views.js (review mode, critique history, graph views)
   Object.assign(window.__rb, {
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,

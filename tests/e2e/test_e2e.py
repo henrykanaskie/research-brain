@@ -987,3 +987,48 @@ def test_hover_card_pops_out_and_dots_make_room(ctx, server):
         ax, ay, dx, dy = after[nid]
         assert abs(ax - x) < 0.5 and abs(ay - y) < 0.5 and dx == 0 and dy == 0, nid
     assert not page.errors
+
+
+def test_no_dot_sits_on_a_line_that_isnt_its_own(ctx, server):
+    clear_vault(server)
+    q = api(server, "POST", "/api/notes", {"type": "question", "title": "Why do cross sections matter?"})["id"]
+    linked = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Cross section paper {i}"})["id"] for i in range(8)]
+    for p in linked:
+        api(server, "POST", f"/api/notes/{q}/link", {"target": p})
+    others = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Other paper about thrusters {i}"})["id"] for i in range(8)]
+    for a, b in ((others[0], others[1]), (others[0], linked[3]), (others[2], linked[6])):
+        api(server, "POST", f"/api/notes/{a}/link", {"target": b})
+    page = open_app(ctx, server)
+    page.wait_for_function("(n) => window.__rb.S.nodes.size >= n", arg=17)
+    page.wait_for_function("() => window.__rb.S.links.filter(l => l.kind === 'manual' && typeof l.source === 'object').length >= 11")
+    # put every dot that isn't on a line right onto the middle of one, then let the map settle
+    page.evaluate("""() => { const rb = window.__rb, S = rb.S;
+      const lines = S.links.filter(l => l.kind !== 'part' && l.kind !== 'similar' && typeof l.source === 'object');
+      if (!lines.length) throw new Error('no lines: ' + JSON.stringify(S.links.map(l => l.kind)));
+      let i = 0;
+      for (const n of S.nodes.values()) {
+        if (lines.some(l => l.source.id === n.id || l.target.id === n.id)) continue;
+        const g = rb.linkGeom(lines[i++ % lines.length]); if (!g) continue;
+        n.x = (g.pts[0] + g.pts[g.pts.length - 2]) / 2; n.y = (g.pts[1] + g.pts[g.pts.length - 1]) / 2; n.vx = 0; n.vy = 0;
+      }
+      rb.fg.d3ReheatSimulation(); }""")
+    page.wait_for_timeout(6000)
+    worst = page.evaluate("""() => { const rb = window.__rb, S = rb.S; let worst = [Infinity, ''];
+      for (const l of S.links) {
+        if (l.kind === 'part' || (l.kind === 'similar' && !(S.showSim && l.top && l.score >= S.threshold)) || (l.kind === 'cites' && !S.showCites)) continue;
+        const g = rb.linkGeom(l); if (!g) continue;
+        for (const n of S.nodes.values()) {
+          if (n.type === 'fragment' || n.id === l.source.id || n.id === l.target.id) continue;
+          let best = Infinity;
+          for (let i = 0; i + 3 < g.pts.length; i += 2) {
+            const [px, py, qx, qy] = g.pts.slice(i, i + 4), vx = qx - px, vy = qy - py, L = vx * vx + vy * vy;
+            let t = L ? ((n.x - px) * vx + (n.y - py) * vy) / L : 0; t = Math.max(0, Math.min(1, t));
+            best = Math.min(best, Math.hypot(n.x - (px + vx * t), n.y - (py + vy * t)));
+          }
+          const gap = best - rb.nodeRadius(n);
+          if (gap < worst[0]) worst = [gap, n.id];
+        }
+      }
+      return worst; }""")
+    assert worst[0] > 0.5, worst  # every dot's edge is clear of every line it isn't on
+    assert not page.errors
