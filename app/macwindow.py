@@ -87,6 +87,9 @@ class _Header:
 
     def __init__(self):
         self.keep_clear: list = []
+        self.unsaved = False      # the page has edits not yet on disk (static/app.js tellWindow)
+        self.may_close = False    # the page said close (after its own "Save before closing?" dialog)
+        self.win = None
 
 
 def _titlebar(nsw) -> None:
@@ -192,6 +195,12 @@ def _on_message(header: _Header, body: str) -> None:
         webbrowser.open(url)
     if "attention" in msg:  # a Find papers search finished (static/finder.js): call you back to the app
         _attention(str(msg.get("badge") or "")[:4])
+    if "unsaved" in msg:
+        header.unsaved = bool(msg["unsaved"])
+    if msg.get("close") and header.win is not None:  # the page's dialog said close: now it may
+        header.may_close = True
+        win = header.win
+        threading.Thread(target=win.destroy, daemon=True).start()
 
 
 def _attention(badge: str) -> None:
@@ -246,6 +255,18 @@ def run(url: str, start) -> int:
     state = {"loaded": False, "ours": False, "stopped": False}
     closed = threading.Event()
     win.events.closed += closed.set
+    header.win = win
+
+    def closing():
+        """Closing the window (or Quit) with edits not yet saved: stay open, and let the page ask, with its own
+        dialog (static/app.js askBeforeClose), which closes the window itself when you've chosen."""
+        if not header.unsaved or header.may_close or not state["loaded"]:
+            return True
+        script = "window.__rb && window.__rb.askBeforeClose ? (window.__rb.askBeforeClose(), 1) : 0"
+        # not from here: this runs on the main thread, and evaluate_js waits for it
+        threading.Thread(target=lambda: win.evaluate_js(script), daemon=True).start()
+        return False
+    win.events.closing += closing
 
     def stop():
         """Quit (Cmd+Q, the Dock) or the window closed: gone from the screen at once, research brain asked

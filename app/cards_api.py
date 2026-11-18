@@ -72,7 +72,7 @@ def default_private() -> bool:
     try:
         return bool(pv.is_private({"type": "note"}) or pv.is_private({"type": "card"}))
     except Exception:
-        return False
+        return True  # couldn't tell: private
 
 
 def paper_private(n: dict) -> bool:
@@ -80,7 +80,7 @@ def paper_private(n: dict) -> bool:
     try:
         return bool(pv and pv.is_private(n))
     except Exception:
-        return False
+        return True  # couldn't tell: private, so nothing is sent
 
 
 def _keys() -> dict:

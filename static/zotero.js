@@ -74,7 +74,7 @@
     try {
       r = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
     } catch (e) {
-      throw new Error("Couldn't reach the research_brain server. Check that it's still running in Terminal.");
+      throw new Error("Couldn't reach research brain. Close this window and open research brain again.");
     }
     let data = null;
     try { data = await r.json(); } catch (e) { /* non-JSON error */ }
@@ -222,14 +222,23 @@
 
   function renderNotFound(s) {
     const unreadable = /couldn't read/i.test(s.message || '');
-    setSub(unreadable ? 'Zotero was found but couldn\'t be read.' : "Zotero wasn't found on this Mac.");
+    setSub(unreadable ? 'Zotero was found but couldn\'t be read.' : "Zotero wasn't found on this computer.");
     body().innerHTML = unreadable
       ? `<div class="zt-error" role="alert"><strong>Couldn't read the library.</strong> ${esc(s.message)}</div>
          <p class="zt-empty">Make sure Zotero has finished starting or syncing, then check again.</p>`
       : `<div class="zt-error" role="alert"><strong>No library at <span class="ident">${esc(s.dir)}</span>.</strong></div>
-         <p class="zt-empty">In Zotero, open Settings, then Advanced, then Files and Folders, and copy the data directory
-           location. Quit research_brain, run <span class="ident">export RB_ZOTERO_DIR="/that/folder"</span> in Terminal,
-           and start it again.</p>`;
+         <p class="zt-empty">If your Zotero library is somewhere else: in Zotero, open Settings › Advanced › Files and
+           Folders to see where its data folder is, then choose that folder here.</p>
+         <p class="zt-empty"><button type="button" class="btn" id="zt-choose">Choose the Zotero folder…</button></p>`;
+    const choose = body().querySelector('#zt-choose');
+    if (choose) choose.addEventListener('click', async () => {
+      choose.disabled = true;
+      try {
+        const r = await api('POST', '/api/pick-folder', { prompt: 'Choose Zotero’s data folder (the one with zotero.sqlite)' });
+        if (r && r.path) { st.status = await api('PUT', '/api/zotero/folder', { folder: r.path }); renderPicker(); return; }
+      } catch (e) { setSub(esc(e.message)); }
+      choose.disabled = false;
+    });
     setActions({ primary: 'Check again', cancel: 'Close' });
     st.retry = true;
   }

@@ -703,13 +703,22 @@ def import_linked(body: LinkedIn):
 
 
 # ---------------------------------------------------------------- whole-vault zip
+@router.get("/api/vault/export/plan")
+async def vault_export_plan(pdfs: bool = True, online: bool = False):
+    """What an export would take (sizes only: nothing is opened or downloaded), and whether there's room for
+    the zip and the downloaded copy of it. The app asks this first, then says what will happen."""
+    return await run_in_threadpool(vaultzip.plan_export, ctx.vault, pdfs, online, 2, Path(tempfile.gettempdir()))
+
+
 @router.get("/api/vault/export")
-async def vault_export(pdfs: bool = True):
+async def vault_export(pdfs: bool = True, online: bool = False):
+    """The library as a zip. online=false (the default) leaves out PDFs that are online only (they stay safe in
+    the cloud), so exporting doesn't download them; there must be room for the zip and your downloaded copy."""
     tmpdir = Path(tempfile.mkdtemp(prefix="rb_export_"))
     name = f"research_brain-{ctx.resolved.profile or 'library'}-{dt.date.today().isoformat()}.zip"
     dest = tmpdir / name
     try:
-        await run_in_threadpool(vaultzip.export_zip, ctx.vault, dest, pdfs)
+        await run_in_threadpool(vaultzip.export_zip, ctx.vault, dest, pdfs, online, 2)
     except Exception:
         shutil.rmtree(tmpdir, ignore_errors=True)
         raise

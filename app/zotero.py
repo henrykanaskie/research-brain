@@ -76,10 +76,38 @@ def _prefs_data_dir() -> Path | None:
     return None
 
 
+def _chosen_file() -> Path:
+    from . import paths
+    return paths.user_data_dir() / "zotero.json"
+
+
+def chosen_dir() -> Path | None:
+    """The Zotero data folder you picked in the app (Add > Import from Zotero > Choose the Zotero folder)."""
+    try:
+        d = json.loads(_chosen_file().read_text(encoding="utf-8")).get("folder")
+        return Path(d).expanduser() if d else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def choose_dir(folder: str) -> Path:
+    """Remember the Zotero data folder you picked: the one holding zotero.sqlite."""
+    d = Path(folder).expanduser()
+    if not (d / "zotero.sqlite").is_file():
+        raise ZoteroError(f"There's no Zotero library (zotero.sqlite) in {d}. In Zotero: Settings › Advanced › "
+                          "Files and Folders shows the right folder.")
+    from .paths import write_json_atomic
+    write_json_atomic(_chosen_file(), {"folder": str(d)})
+    return d
+
+
 def data_dir() -> Path:
     env = os.environ.get("RB_ZOTERO_DIR", "").strip()
     if env:
         return Path(env).expanduser()
+    chosen = chosen_dir()
+    if chosen is not None and (chosen / "zotero.sqlite").exists():
+        return chosen
     default = Path.home() / "Zotero"
     if (default / "zotero.sqlite").exists():
         return default

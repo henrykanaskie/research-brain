@@ -56,8 +56,12 @@ def test_defaults_inheritance_and_settings(lib):
     shared = s.create({"type": "note", "title": "Shared note", "private": False})
     q = s.create({"type": "question", "title": "Why does it oscillate?"})
     frag = s.create({"type": "fragment", "parent": paper["id"], "quote": "q", "title": "f"})
-    assert not P.is_private(paper) and not P.is_private(frag)       # papers, fragments, summaries: shareable
-    assert P.is_private(note) and P.is_private(q)                   # standalone notes and questions: private
+    on_paper = s.create({"type": "note", "parent": paper["id"], "title": "My note on the paper"})
+    assert not P.is_private(paper)                                  # papers (published work): shareable
+    assert P.is_private(note) and P.is_private(q)                   # what you write is private by default:
+    assert P.is_private(frag) and P.is_private(on_paper)            # notes, questions, highlights, notes on a paper
+    open_frag = s.create({"type": "fragment", "parent": paper["id"], "quote": "q3", "title": "f3", "private": False})
+    assert not P.is_private(open_frag)                              # until you mark one shareable
     assert not P.is_private(shared)                                 # explicit private: false wins over the default
     assert P.explicit_flag(shared) is False and P.explicit_flag(note) is None
     # a fragment of a private paper inherits, even with its own private: false
@@ -423,3 +427,29 @@ def test_guard_covers_private_idea_cards(lib):
     cards.card_store().update(mine["id"], {"private": False})
     P.refresh()
     P.guard_prompt("Context: " + IDEA + ". Thanks.", FakeBackend())
+
+
+def test_first_defaults_upgrade_and_a_failed_check_fails_closed(lib, monkeypatch):
+    """A library saved with the first defaults (attached notes and highlights shareable) gets the current ones;
+    a choice you made is kept. If the library can't be read, nothing is treated as shareable."""
+    s, P = lib
+    state = s.root / "state"
+    state.mkdir(exist_ok=True)
+    (state / "privacy.json").write_text(json.dumps({"private_by_default": ["note", "question"]}), encoding="utf-8")
+    P.configure(s)
+    assert P.settings()["private_by_default"] == ["fragment", "note", "question"]
+    P.save_settings(private_by_default=["note", "question"])  # chosen in settings: kept as chosen
+    P.configure(s)
+    assert P.settings()["private_by_default"] == ["note", "question"]
+    note = s.create({"type": "note", "title": "Shared idea", "private": False, "body": IDEA})
+    paper = s.create({"type": "paper", "title": "A paper"})
+    P.refresh()
+    cloud = FakeBackend("c", "cli")
+    assert P.allow_ai(note["id"], cloud)
+    # the library can't be read: every note counts as private and nothing at all is sent
+    monkeypatch.setattr(s, "all", lambda: (_ for _ in ()).throw(OSError("disk went away")))
+    P.refresh()
+    assert not P.allow_ai(note["id"], cloud)
+    with pytest.raises(P.PrivacyError):
+        P.guard_prompt("Anything at all", cloud)
+    assert paper["id"]

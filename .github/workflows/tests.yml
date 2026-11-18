@@ -76,3 +76,58 @@ jobs:
           research-brain where
           research-brain install-app
           research-brain install-app --remove
+
+  # The installer a labmate runs, on a clean Windows machine, from a folder with a space in its path, the way
+  # it comes out of the release zip: install, check the version, run it again while research brain is running
+  # (it must close it and update), and check what happens when it's started from inside the zip.
+  windows-installer:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the release folder
+        shell: bash
+        run: |
+          python -m pip install --upgrade build
+          python -m build --wheel
+          V=$(python -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('app/__init__.py').read()).group(1))")
+          W=$(basename dist/*.whl)
+          mkdir -p "/c/rb test/research-brain-$V"
+          cp dist/*.whl install.ps1 constraints.txt Install-research-brain.cmd "/c/rb test/research-brain-$V/"
+          printf '{"version": "%s", "wheel": "%s"}' "$V" "$W" > "/c/rb test/research-brain-$V/latest.json"
+          echo "RBDIR=C:\\rb test\\research-brain-$V" >> "$GITHUB_ENV"
+          echo "RBV=$V" >> "$GITHUB_ENV"
+      - name: Install with Windows PowerShell 5.1, as the .cmd does
+        shell: powershell
+        run: |
+          $env:RB_NO_UV = ""
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RBDIR\install.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed: $LASTEXITCODE" }
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
+          $v = research-brain --version
+          if ($v -notmatch [regex]::Escape($env:RBV)) { throw "installed $v, expected $env:RBV" }
+      - name: Update while research brain is running
+        shell: powershell
+        run: |
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
+          $env:RB_VAULT = "$env:RUNNER_TEMP\vault"
+          $p = Start-Process research-brain -ArgumentList "serve" -PassThru -WindowStyle Hidden
+          for ($i = 0; $i -lt 60; $i++) {
+            try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8765/api/status -TimeoutSec 2 | Out-Null; break } catch { Start-Sleep 1 }
+          }
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RBDIR\install.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "updating while it ran failed: $LASTEXITCODE" }
+          $v = research-brain --version
+          if ($v -notmatch [regex]::Escape($env:RBV)) { throw "after the update: $v" }
+      - name: Started from inside the zip, it says to extract first
+        shell: cmd
+        run: |
+          mkdir "C:\zipview"
+          copy "%RBDIR%\Install-research-brain.cmd" "C:\zipview\"
+          echo.| call "C:\zipview\Install-research-brain.cmd" > "C:\zipview\out.txt"
+          type "C:\zipview\out.txt"
+          findstr /C:"Extract All" "C:\zipview\out.txt"

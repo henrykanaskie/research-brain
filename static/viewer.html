@@ -351,7 +351,7 @@ a.cite{color:var(--machine)}
   <div class="pf">
     <span class="hint" id="pTools"></span>
     <button class="btn ghost" id="pCancel" type="button">Cancel</button>
-    <button class="btn primary" id="pSave" type="button" title="Save (⌘↵)">Save</button>
+    <button class="btn primary" id="pSave" type="button" title="Save (Ctrl+Enter, or ⌘↵ on a Mac)">Save</button>
   </div>
 </div>
 
@@ -424,7 +424,7 @@ async function init() {
   } catch (e) {
     console.error(e);
     const why = String((e && e.message) || e).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
-    showStatus("Couldn't load the PDF renderer", `<p>PDF.js ${PDFJS_VER} should load from <code>static/vendor/pdfjs/</code>, but it didn't. Stop the app, start it again with <code>./run.sh</code>, then reload this page with Cmd+Shift+R.</p><p class="why">Browser said: ${why}</p>`);
+    showStatus("Couldn't load the PDF renderer", `<p>PDF.js ${PDFJS_VER} should load from <code>static/vendor/pdfjs/</code>, but it didn't. Close research brain and open it again, then reload this page (Ctrl+Shift+R, or Cmd+Shift+R on a Mac).</p><p class="why">Browser said: ${why}</p>`);
   }
 
   const note = await notePromise;
@@ -432,7 +432,7 @@ async function init() {
     $("#title").textContent = ID; $("#pTitle").textContent = ID;
     renderFrags();
     if (note.status === 404) showStatus("Note not found", `<p>No note with id <code>${esc(ID)}</code>.</p><p><a href="/">Back to the graph</a></p>`);
-    else showStatus("Couldn't reach research_brain", `<p>${esc(note.message)}</p><p>Is the server running? Start it with <code>./run.sh</code>.</p>`);
+    else showStatus("Couldn't reach research_brain", `<p>${esc(note.message)}</p><p>Is research brain open? Open it again, then reload this page.</p>`);
     return;
   }
   S.note = note;
@@ -1043,7 +1043,7 @@ async function highlightSelection() {
     window.getSelection().removeAllRanges();
     toast(`Highlighted at p.${s.page}`);
   } catch (e) {
-    toast(e.status ? `Couldn't save the highlight: ${e.message}` : "Couldn't reach research_brain. Start it with ./run.sh, then try again.", true);
+    toast(e.status ? `Couldn't save the highlight: ${e.message}` : "Couldn't reach research brain. Open it again, then try again.", true);
   }
 }
 function addSavedFrag(n, payload) {
@@ -1075,7 +1075,7 @@ async function saveFrag() {
     closePop();
     toast(f.locator ? `Saved fragment at ${f.locator}` : "Saved fragment");
   } catch (e) {
-    showPopErr(e.status ? `Couldn't save the fragment: ${e.message}` : "Couldn't reach research_brain. Start it with ./run.sh, then try again.");
+    showPopErr(e.status ? `Couldn't save the fragment: ${e.message}` : "Couldn't reach research brain. Open it again, then try again.");
     btn.disabled = false; btn.textContent = "Save";
   }
 }

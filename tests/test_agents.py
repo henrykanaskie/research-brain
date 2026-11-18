@@ -545,7 +545,7 @@ def test_chat_about_one_paper(server):
         srv.store.text_path(focus["id"]).write_text(
             "[[page 1]]\nThe Bohm criterion requires ions to enter the sheath at the sound speed.\n"
             "[[page 2]]\nSecondary electron emission weakens the sheath potential drop.", encoding="utf-8")
-        c.post("/api/notes", json={"type": "fragment", "parent": focus["id"], "quote": "sound speed",
+        c.post("/api/notes", json={"type": "fragment", "parent": focus["id"], "quote": "sound speed", "private": False,
                                    "body": "My shareable highlight about ion entry."})
         c.post("/api/notes", json={"type": "note", "parent": focus["id"], "title": "Private hunch", "private": True,
                                    "body": "Unpublished idea about emissive walls changing the criterion."})

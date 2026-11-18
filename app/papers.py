@@ -104,9 +104,24 @@ def suggested_folder() -> Path:
     return (docs if docs.is_dir() else Path.home()) / "Research papers"
 
 
-def move_folder(store, new: str) -> dict:
-    """Move every PDF to `new` and use it from now on. Refuses a folder holding other PDFs with the same
-    names, a folder inside the library's own state, or a path that can't be created."""
+def _library_pdfs(store, folder: Path) -> list[Path]:
+    """The library's own PDFs in its papers folder: <paper id>.pdf for a paper in the library. Anything else
+    there (PDFs you put in the folder yourself) isn't the library's, and is never moved."""
+    if not folder.is_dir():
+        return []
+    out = []
+    for p in sorted(folder.glob("*.pdf")):
+        try:
+            if store.exists(p.stem) and not store.is_linked(p.stem):
+                out.append(p)
+        except (ValueError, OSError):
+            continue
+    return out
+
+
+def _dest(store, new: str) -> Path:
+    """Where `new` points, checked: a full path, outside the library's own folder, and not one of (or around)
+    the folders of papers you follow, whose PDFs research brain never moves."""
     dest = Path(new).expanduser()
     if not dest.is_absolute():
         raise ValueError("Give a full path, like ~/Documents/Research papers")
@@ -115,12 +130,57 @@ def move_folder(store, new: str) -> dict:
     default = default_folder(store.root).resolve()
     if dest != default and (root in dest.parents or dest == root):
         raise ValueError("Pick a folder outside the library's own folder (or its PDFs folder).")
+    name = followed_folder(store, dest)
+    if name:
+        raise ValueError(f"That's inside (or around) “{name}”, a folder of papers you follow. Its PDFs are already in "
+                         "your library where they are, so the papers folder needs a place of its own: pick another folder.")
+    return dest
+
+
+def plan_move(store, new: str) -> dict:
+    """What moving the papers folder to `new` would do, without doing it: which PDFs move (only the library's
+    own), which stay (anything else in either folder), whether there's room, whether it's another disk."""
+    dest = _dest(store, new)
+    old = Path(store.pdf_dir)
+    pdfs = _library_pdfs(store, old)
+    size = sum(p.stat().st_size for p in pdfs)
+    others = [p for p in old.glob("*.pdf")] if old.is_dir() else []
+    others = [p.name for p in others if p not in pdfs]
+    there = [p.name for p in dest.glob("*.pdf")] if dest.is_dir() else []
+    clash = [p.name for p in pdfs if (dest / p.name).exists() and _sha(dest / p.name) != _sha(p)]
+    try:
+        probe = dest if dest.exists() else next(x for x in dest.parents if x.exists())
+        other_disk = os.stat(probe).st_dev != os.stat(old).st_dev if old.is_dir() else False
+    except (OSError, StopIteration):
+        other_disk = False
+    from . import diskspace
+    room = True
+    if other_disk:
+        try:
+            diskspace.ensure_room(dest, size, "these PDFs")
+        except diskspace.DiskFull:
+            room = False
+    removed = len(list((old / REMOVED).glob("*.pdf"))) if (old / REMOVED).is_dir() else 0
+    return {"from": str(old), "to": str(dest), "same": dest == old.resolve(), "moves": len(pdfs), "bytes": size,
+            "removed": removed, "stay_behind": others[:20], "stay_behind_count": len(others),
+            "already_there": there[:20], "already_there_count": len(there), "clash": clash[:5],
+            "other_disk": other_disk, "room": room, "free": diskspace.free_bytes(dest),
+            "cloud": diskspace.cloud_provider(dest)}
+
+
+def move_folder(store, new: str) -> dict:
+    """Move the library's own PDFs (one per paper, named after it) to `new` and use it from now on. Anything
+    else in either folder is left exactly where it is. Refuses a folder holding different files with the same
+    names, a folder inside the library's own state, a folder of papers you follow (or one around it), or a
+    path that can't be created. plan_move() says beforehand what this will do."""
+    dest = _dest(store, new)
+    default = default_folder(store.root).resolve()
     with _lock, store.lock:
         old = Path(store.pdf_dir)
         if dest == old.resolve():
             return {"folder": str(dest), "moved": 0}
         dest.mkdir(parents=True, exist_ok=True)
-        pdfs = sorted(old.glob("*.pdf")) if old.is_dir() else []
+        pdfs = _library_pdfs(store, old)
         clash = [p.name for p in pdfs if (dest / p.name).exists() and _sha(dest / p.name) != _sha(p)]
         if clash:
             raise ValueError(f"{dest} already has different files named like yours (e.g. {clash[0]}). Pick an empty folder.")
@@ -250,6 +310,29 @@ def _inside_home(p: Path) -> bool:
         return False
 
 
+def followed_folder(store, p: Path) -> str | None:
+    """The folder of papers you follow (app/linked.py) that `p` is in or is, by its name; None if it's in none.
+    research brain never moves or sends to the Trash anything in one: those PDFs are the library's own copies,
+    kept where you keep them, and often in OneDrive, where a deletion reaches the cloud too."""
+    try:
+        rp = Path(p).expanduser().resolve()
+    except OSError:
+        rp = Path(p).expanduser()
+    try:
+        folders = store.links.folders()
+    except Exception:
+        return None
+    for f in folders:
+        root = Path(f.get("path") or "").expanduser()
+        try:
+            root = root.resolve()
+        except OSError:
+            pass
+        if rp == root or root in rp.parents or rp in root.parents:
+            return root.name or str(root)
+    return None
+
+
 def scan(store, folder: str, recursive: bool = False) -> dict:
     """The PDFs in a folder you picked: {"in_library": [{path, name, size, note}], "new": [{path, name, size}]}."""
     f = Path(folder).expanduser()
@@ -259,16 +342,27 @@ def scan(store, folder: str, recursive: bool = False) -> dict:
         raise ValueError("Pick a folder inside your home folder")
     if f.resolve() == Path(store.pdf_dir).resolve():
         raise ValueError("That's the papers folder itself")
+    from .acquire import cloud_only
     by_sha = _by_sha(store)
     files = f.rglob("*.pdf") if recursive else f.glob("*.pdf")
-    inl, new = [], []
+    inl, new, followed, online = [], [], [], []
+    i = -1
     for i, p in enumerate(files):
         if i >= SCAN_LIMIT:
             break
         if not p.is_file() or Path(store.pdf_dir) in p.parents:
             continue
+        # a PDF in a folder of papers you follow is the library's own copy, kept there: not a spare copy, and
+        # never offered for the Trash; it isn't even read here
+        if followed_folder(store, p):
+            followed.append({"path": str(p), "name": p.name})
+            continue
         try:
-            sha, size = _sha(p), p.stat().st_size
+            st = p.stat()
+            if cloud_only(st):  # online only (OneDrive with its space freed): reading it would download it
+                online.append({"path": str(p), "name": p.name, "size": st.st_size})
+                continue
+            sha, size = _sha(p), st.st_size
         except OSError:
             continue
         row = {"path": str(p), "name": p.name, "size": size}
@@ -277,11 +371,13 @@ def scan(store, folder: str, recursive: bool = False) -> dict:
             inl.append({**row, "note": nid, "title": store.get(nid)["title"]})
         else:
             new.append(row)
-    return {"folder": str(f), "in_library": inl, "new": new, "limited": i + 1 >= SCAN_LIMIT if inl or new else False}
+    return {"folder": str(f), "in_library": inl, "new": new, "followed": followed, "online": online,
+            "limited": i + 1 >= SCAN_LIMIT}
 
 
 def trash_copies(store, paths: list[str]) -> dict:
-    """Move to the Trash only files that are byte-for-byte copies of a PDF in the library."""
+    """Move to the Trash only files that are byte-for-byte copies of a PDF in the library, and never one in a
+    folder of papers you follow (followed_folder). Only ever on your say-so: nothing calls this by itself."""
     from send2trash import send2trash
     by_sha = set(_by_sha(store))
     done, refused = [], []
@@ -289,7 +385,7 @@ def trash_copies(store, paths: list[str]) -> dict:
         p = Path(s).expanduser()
         try:
             if (not p.is_file() or not _inside_home(p) or Path(store.pdf_dir).resolve() in p.resolve().parents
-                    or _sha(p) not in by_sha):
+                    or followed_folder(store, p) or _sha(p) not in by_sha):
                 refused.append(s)
                 continue
             send2trash(str(p))

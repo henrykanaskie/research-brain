@@ -1,32 +1,50 @@
 research brain: installing it
 =============================
 
-This folder has everything you need. You don't need Python, GitHub or anything else.
+You don't need Python, GitHub or anything else. You need about 700 MB of free space for the install
+(plus room for any PDFs you keep on this computer) and an internet connection for the install itself.
 
 MAC
-1. Double-click "Install-research-brain.command".
-2. If the Mac says it "can't be opened" or "Apple could not verify" it: open System Settings >
+1. Double-click the zip if you haven't yet, then open the folder it makes.
+2. Double-click "Install-research-brain.command".
+3. If the Mac says it "can't be opened" or "Apple could not verify" it: open System Settings >
    Privacy & Security, scroll down, click "Open Anyway" next to Install-research-brain.command,
    then double-click it again.
    Still blocked? Open Terminal (Applications > Utilities), type  bash  and a space, drag
    Install-research-brain.command into the Terminal window, and press Return.
-3. A window shows the install (a few minutes the first time). When it says Done, research brain
+4. A window shows the install (a few minutes the first time). When it says Done, research brain
    opens. From then on, open it from Launchpad or your Applications folder.
 
 WINDOWS
-1. Double-click "Install-research-brain.cmd".
-2. If Windows says "Windows protected your PC": click "More info", then "Run anyway".
-3. When it says Done, research brain opens. From then on, open it from the Start menu.
+1. Unzip it first: right-click research-brain-installer-....zip and choose "Extract All...", then
+   Extract. (Double-clicking the zip only shows what's inside it; the installer won't run from there.)
+2. In the folder that opens, double-click "Install-research-brain.cmd".
+3. If Windows says "Windows protected your PC": click "More info", then "Run anyway".
+4. When it says Done, research brain opens. From then on, open it from the Start menu.
+   On a university-managed PC, an antivirus or IT policy can block installers like this one. If it
+   stops with an error, take a screenshot of the window and send it along (see PROBLEMS below).
 
 AFTERWARDS
 - You can delete this folder (and the zip it came in). Your library lives in Documents > research brain.
-- Chrome extension (optional): unzip research-brain-extension-....zip into a folder you keep (for
-  example in Documents), then in Chrome go to chrome://extensions, turn on Developer mode, click
-  "Load unpacked" and choose that folder.
+- AI (optional): asking questions about your papers, critiques and explanations use an AI you set up
+  yourself. The free option is Gemini. In research brain, click the AI name at the top of the window,
+  or see README.md, "Add an AI". Everything else works without one.
+- Chrome extension (optional): unzip research-brain-extension-....zip into a folder you keep that is
+  NOT in OneDrive or another synced folder (for example C:\research brain extension, or a folder in
+  your home folder), then in Chrome go to chrome://extensions, turn on Developer mode, click
+  "Load unpacked" and choose that folder. (A university-managed Chrome may not allow Developer mode.)
 - Already keep your PDFs in folders (OneDrive too)? In research brain: Add > Add folders of papers.
   They stay where they are (nothing is copied), and each folder becomes a topic.
 - Short on disk space? Keep your PDFs in OneDrive: README.md, "Short on disk space?".
-- Updates: when your lab shares a newer version, download it and run its installer again, the same
-  way. Your library stays exactly as it is.
-- Everything else (adding papers, the AI, free paper-lookup keys, a first-ten-minutes tour, and how
-  to report a problem) is in README.md in this folder: open it with any text editor or a browser.
+- Updates: when your lab shares a newer version, download it, unzip it and run its installer again,
+  the same way. If research brain is open, the installer closes it first. Your library stays exactly
+  as it is.
+- Everything else (adding papers, free paper-lookup keys, a first-ten-minutes tour) is in README.md
+  in this folder: open it with any text editor or a browser.
+
+PROBLEMS
+Tell the person who shared research brain with you. Send: what you did, what you saw (a screenshot
+helps), your research brain version (Library settings, or the installer window), and the end of the log:
+  Mac:     ~/Library/Application Support/research_brain/app.log
+  Windows: paste  %APPDATA%\research_brain  into File Explorer's address bar, open app.log
+Never send API keys or passwords.

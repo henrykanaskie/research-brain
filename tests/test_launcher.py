@@ -305,6 +305,22 @@ def test_window_messages_from_the_page(monkeypatch):
     macwindow._on_message(h, '{"open": "file:///etc/passwd"}')
     macwindow._on_message(h, "not json")
     assert opened == ["http://127.0.0.1:8765/viewer/x"]
+    # unsaved edits: the window learns it, and closes only once the page's own dialog says so
+    destroyed = []
+
+    class Win:
+        def destroy(self):
+            destroyed.append(1)
+    h.win = Win()
+    macwindow._on_message(h, '{"unsaved": true}')
+    assert h.unsaved and not h.may_close
+    macwindow._on_message(h, '{"close": true}')
+    import time
+    for _ in range(50):
+        if destroyed:
+            break
+        time.sleep(0.01)
+    assert h.may_close and destroyed == [1]
 
 
 def test_window_header_drags_except_on_its_buttons(monkeypatch):

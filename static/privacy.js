@@ -96,7 +96,7 @@
   hook();
 
   // ---------------------------------------------------------------- Library settings section
-  const KIND_LABEL = { note: 'Standalone notes', question: 'Open questions', paper: 'Papers', fragment: 'Fragments' };
+  const KIND_LABEL = { note: 'Notes (including notes on a paper)', question: 'Open questions', paper: 'Papers', fragment: 'Highlights' };
 
   function settingsSection(say) {
     const sec = el('section', { class: 'ls-sec', id: 'ls-privacy' },

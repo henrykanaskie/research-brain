@@ -321,9 +321,11 @@ GitHub, your library lives in your data folder. research_brain lets you mark ite
 take neither way out.
 
 **What is private.** An item is private if its file says `private: true`, or its type is private by default
-and it doesn't say `private: false`. Out of the box, **open questions** and **standalone notes** (a note with
-no parent) are private; **papers, fragments and your summaries** are shareable. A fragment or note attached
-to a private parent is private too, whatever it says itself. Change the defaults in Library settings ›
+and it doesn't say `private: false`. Out of the box everything you write is private: **notes** (including
+notes on a paper), **open questions** and **highlights** (fragments); **papers** are shareable. A fragment or
+note attached to a private parent is private too, whatever it says itself. The check fails closed: if the
+library can't be read to tell what's private, every note counts as private and no prompt is sent. A library
+saved with the first defaults (questions and standalone notes only) is upgraded to these. Change the defaults in Library settings ›
 Privacy (they are stored in the library, `state/privacy.json`, so they survive a browser change and move with
 the library), or one item with the lock in its header (`POST /api/notes/{id}/privacy`). The graph shows a
 lock on private nodes.

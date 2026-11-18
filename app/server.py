@@ -1313,6 +1313,15 @@ def api_papers_online_only(body: OnlineOnlyIn):
     return {**api_papers_folder(), "freed": out["freed"]}
 
 
+@app.post("/api/papers-folder/plan")
+def api_papers_folder_plan(body: FolderIn):
+    """What moving the papers folder there would do (nothing is moved): app/papers.py plan_move."""
+    try:
+        return papers_mod.plan_move(store, body.folder.strip())
+    except (ValueError, OSError) as e:
+        raise HTTPException(400, str(e))
+
+
 @app.put("/api/papers-folder")
 def api_papers_folder_move(body: FolderIn):
     try:
@@ -1381,12 +1390,13 @@ def api_papers_trash_copies(body: PathsIn):
 
 @app.post("/api/papers/import-files")
 def api_papers_import_files(body: PathsIn):
-    """Add PDFs from this computer. mode=move: once the library has each file, the original goes to the
-    computer's Trash (so one copy is left, in the papers folder, and the original is still recoverable);
-    mode=copy: the original stays where it is."""
+    """Add PDFs from this computer: the library keeps its own copy, and the originals stay where they are.
+    Nothing is sent to the Trash here: "originals" lists the ones you could tidy away, which the app offers
+    as a separate step you confirm (POST /api/papers/trash-copies). A PDF in a folder of papers you follow is
+    skipped: it's already in the library from there. `mode` is accepted for older callers and changes nothing."""
     if body.mode not in ("move", "copy"):
         raise HTTPException(400, "mode is move or copy")
-    added, dup, failed = [], [], []
+    added, dup, failed, followed, originals = [], [], [], [], []
     for s in body.paths[:200]:
         src = Path(s).expanduser()
         if not src.is_file() or src.suffix.lower() != ".pdf" or not papers_mod._inside_home(src):
@@ -1394,10 +1404,14 @@ def api_papers_import_files(body: PathsIn):
             continue
         if Path(store.pdf_dir).resolve() in src.resolve().parents:
             continue
+        if papers_mod.followed_folder(store, src):
+            followed.append({"path": s})
+            continue
         tmpdir = Path(tempfile.mkdtemp(prefix="rb_local_"))
         tmp = tmpdir / "upload.pdf"
         try:
-            shutil.copy2(src, tmp)  # the original is only touched once the library has the file
+            diskspace.ensure_room(tmpdir, src.stat().st_size, src.name)
+            shutil.copy2(src, tmp)  # the library takes its own copy; the original is left as it is
             same = _same_file(tmp)
             if same:
                 dup.append({"path": s, "note": same})
@@ -1412,13 +1426,8 @@ def api_papers_import_files(body: PathsIn):
             continue
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
-        if body.mode == "move":  # the library has it now (or already had it): the original goes to the Trash
-            try:
-                from send2trash import send2trash
-                send2trash(str(src))
-            except Exception:
-                pass  # no Trash available: leave the original where it was
-    return {"added": added, "duplicates": dup, "failed": failed}
+        originals.append(s)  # the library has its own copy now (or already had one)
+    return {"added": added, "duplicates": dup, "failed": failed, "followed": followed, "originals": originals}
 
 
 class RefreshMetaIn(BaseModel):
@@ -1567,6 +1576,8 @@ def _downloads_copy(out: dict, filename: str, nid: str) -> dict:
         twin = papers_mod.downloads_twin(filename, papers_mod._sha(p)) if p.is_file() else None
     except OSError:
         twin = None
+    if twin and (papers_mod.followed_folder(store, Path(twin)) or store.is_linked(nid)):
+        twin = None  # a PDF in a folder of papers you follow is never offered for the Trash
     if twin:
         out["downloads_copy"] = twin
     return out
@@ -2768,6 +2779,16 @@ class ZoteroImportIn(BaseModel):
 
 @app.get("/api/zotero/status")
 def api_zotero_status():
+    return zotero.status()
+
+
+@app.put("/api/zotero/folder")
+def api_zotero_folder(body: FolderIn):
+    """Use this Zotero data folder (the one holding zotero.sqlite) from now on."""
+    try:
+        zotero.choose_dir(body.folder.strip())
+    except zotero.ZoteroError as e:
+        raise HTTPException(400, str(e))
     return zotero.status()
 
 

@@ -8,16 +8,18 @@ What is private
 ---------------
     is_private(item)   `private: true` in the item (frontmatter), or the item's type is in the library's
                        "private by default" set and it has no explicit `private: false`. Defaults:
-                       {"question", "note"}, where "note" means a standalone note (type note, no parent).
-                       Papers, fragments and summaries are shareable by default. A fragment or note
-                       attached to a private parent is private too (the parent wins over the child's own
-                       `private: false`).
+                       {"question", "note", "fragment"}: everything you write (notes, including ones on a
+                       paper, questions, highlights) is private until you mark it shareable; papers (published
+                       work) are shareable. A fragment or note attached to a private parent is private too (the
+                       parent wins over the child's own `private: false`). If the check itself can't be made
+                       (the library couldn't be read), everything counts as private and nothing is sent.
     allow_ai(item, agent)   False for a private item, unless the agent is a local model server
                        (kind "local-server") and the setting `private_ok_for_local_ai` is on (default off).
     filter_for_ai(items, agent)   the items allow_ai lets through (for context builders and agent tools).
 
 Settings live in the library (vault/state/privacy.json), so they move with it and survive a browser change:
-    {"private_by_default": ["question", "note"], "private_ok_for_local_ai": false}
+    {"private_by_default": ["fragment", "note", "question"], "private_ok_for_local_ai": false, "defaults": 2}
+A library saved with the first defaults (["note", "question"], no "defaults") gets the current ones.
 
 The choke point
 ---------------
@@ -67,7 +69,9 @@ from pathlib import Path
 SETTINGS_FILE = "privacy.json"
 LOG_FILE = "ai_log.jsonl"
 LOG_MAX_BYTES = int(os.environ.get("RB_AI_LOG_MAX_BYTES", str(5 * 1024 * 1024)))
-DEFAULT_PRIVATE = ("question", "note")
+DEFAULT_PRIVATE = ("fragment", "note", "question")
+OLD_DEFAULT_PRIVATE = ["note", "question"]  # before "defaults": 2: attached notes and highlights were shareable
+DEFAULTS_VERSION = 2
 # web_search: the agent may search the web, in General chats only (never with library content); off by default
 # web_with_attachments: you confirmed once that attached library items may share a session with web search
 DEFAULTS = {"private_by_default": list(DEFAULT_PRIVATE), "private_ok_for_local_ai": False, "web_search": False,
@@ -152,7 +156,10 @@ def settings() -> dict:
         out["web_with_attachments"] = bool(data.get("web_with_attachments", False))
         kinds = data.get("private_by_default")
         if isinstance(kinds, list):
-            out["private_by_default"] = sorted({str(k).strip().lower() for k in kinds if str(k).strip()})
+            kinds = sorted({str(k).strip().lower() for k in kinds if str(k).strip()})
+            # saved with the first defaults and never changed since: those were the defaults, not a choice
+            if not (kinds == OLD_DEFAULT_PRIVATE and data.get("defaults") is None):
+                out["private_by_default"] = kinds
         if isinstance(data.get("private_ok_for_local_ai"), bool):
             out["private_ok_for_local_ai"] = data["private_ok_for_local_ai"]
         _settings_cache = out
@@ -177,6 +184,7 @@ def save_settings(private_by_default=None, private_ok_for_local_ai=None, web_sea
             cur["web_search"] = bool(web_search)
         if web_with_attachments is not None:
             cur["web_with_attachments"] = bool(web_with_attachments)
+        cur["defaults"] = DEFAULTS_VERSION
         d = _state_dir()
         if d is not None:
             from .paths import write_json_atomic
@@ -234,10 +242,7 @@ def _own(item: dict, kinds_set: set) -> bool:
     flag = explicit_flag(item)
     if flag is not None:
         return flag
-    t = str(item.get("type") or "note").lower()
-    if t == "note":
-        return "note" in kinds_set and not str(item.get("parent") or "").strip()
-    return t in kinds_set
+    return str(item.get("type") or "note").lower() in kinds_set
 
 
 def _compute(item: dict, by_id: dict, kinds_set: set, depth: int = 0) -> bool:
@@ -269,7 +274,11 @@ def is_private(note_or_item: dict) -> bool:
 
 
 def is_private_id(nid: str) -> bool:
-    return str(nid or "") in (_fresh_index().get("private") or ())
+    idx = _fresh_index()
+    if idx.get("failed"):  # couldn't tell: everything but a paper counts as private
+        n = (idx.get("by_id") or {}).get(str(nid or ""))
+        return not (n and n.get("type") == "paper" and explicit_flag(n) is not True)
+    return str(nid or "") in (idx.get("private") or ())
 
 
 def private_ids() -> frozenset:
@@ -424,22 +433,27 @@ def _cards_sig() -> str:
         return ""
 
 
-def _private_cards(private_notes: set) -> list[dict]:
+def _private_cards(private_notes: set) -> list[dict] | None:
+    """Idea cards that are private; None if the cards couldn't be read (then the check fails closed)."""
+    from . import cards
+    if getattr(cards, "_cs", None) is None:  # no idea cards here (not set up): nothing to check
+        return []
     try:
-        from . import cards
         return [c for c in cards.card_store().all_cards()
                 if c.get("private") or str(c.get("paper") or "") in private_notes]
-    except Exception:
-        return []
+    except Exception as e:
+        print(f"[research_brain] privacy: couldn't read the idea cards: {e!r}")
+        return None
 
 
 def _rebuild(key) -> None:
     global _index
+    failed = False
     try:
         notes = list(_store.all())
-    except Exception as e:
+    except Exception as e:  # fail closed: with no way to tell what's private, nothing goes to an AI
         print(f"[research_brain] privacy index failed: {e!r}")
-        notes = []
+        notes, failed = [], True
     kinds_set = set(settings()["private_by_default"])
     by_id = {n["id"]: n for n in notes if isinstance(n, dict) and n.get("id")}
     private = {i for i, n in by_id.items() if _compute(n, by_id, kinds_set)}
@@ -471,7 +485,10 @@ def _rebuild(key) -> None:
             titles.setdefault(tk, nid)
     # private idea cards (written by hand, or on a private paper) are fingerprinted too, so the guard
     # backs up the cards module's own filters
-    for c in _private_cards(private):
+    cards_found = _private_cards(private)
+    if cards_found is None:
+        failed, cards_found = True, []
+    for c in cards_found:
         cid = str(c.get("id") or "")
         if not cid:
             continue
@@ -489,7 +506,7 @@ def _rebuild(key) -> None:
             titles.pop(_title_key(n.get("title") or ""), None)
     _index = {"key": key, "cheap": _cheap_key(), "private": frozenset(private), "shingles": shingles,
               "bare": frozenset(bare), "titles": titles, "all_ids": frozenset(by_id), "by_id": by_id,
-              "types": {str(n.get("type") or "note") for n in by_id.values()}}
+              "types": {str(n.get("type") or "note") for n in by_id.values()}, "failed": failed}
 
 
 # ---------------------------------------------------------------- the check
@@ -546,6 +563,9 @@ def guard_prompt(text: str, agent, *, sources=None) -> None:
     knows went into the text (only used in the message). No-op for the local-AI exception."""
     if local_exception(agent):
         return
+    if _fresh_index().get("failed"):
+        raise PrivacyError(f"research brain couldn't check which of your notes are private just now, so nothing was "
+                           f"sent to {_agent_label(agent)}. Try again in a moment; if it keeps happening, restart research brain.")
     leaks = find_leaks(text or "")
     if not leaks:
         return

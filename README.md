@@ -21,15 +21,17 @@ the ideas you mark private never leave it.
 | | |
 | --- | --- |
 | A computer | a Mac (macOS 11 or newer), a Windows 10 or 11 PC, or Linux |
-| Free space | about **300 MB**, plus room for your PDFs |
+| Free space | about **700 MB** (the app, its own Python and the download cache), plus room for any PDFs kept on this computer |
 | Internet | for the install (a few minutes); afterwards it works offline, except looking papers up |
 | Anything else? | **No.** You don't need Python, conda, Anaconda or any coding tools: the installer brings what it needs and keeps it separate from anything else on your computer. |
 
 ### Step 1: get the research brain folder
 
 - **From your lab** (the usual way): in your lab's shared folder (OneDrive, SharePoint, Google Drive, Box, … in the
-  browser is fine), click **research-brain-installer-….zip** and **Download** it. Double-click the downloaded zip and
-  open the folder it makes: you'll install from there (*READ ME FIRST.txt* inside says the same in short).
+  browser is fine), click **research-brain-installer-….zip** and **Download** it. Unzip it: on a Mac, double-click it;
+  on **Windows, right-click it › Extract All… › Extract** (double-clicking a zip on Windows only shows what's inside,
+  and the installer won't run from there). Open the folder it makes: you'll install from there (*READ ME
+  FIRST.txt* inside says the same in short).
 - **From GitHub** (if you have access): open the research brain page, click the green **Code** button,
   choose **Download ZIP**, then double-click the downloaded ZIP to unpack it.
 
@@ -52,7 +54,8 @@ when the installer comes from a shared drive), use Terminal instead:
 
 **On Windows**
 
-1. In the folder, double-click **`Install-research-brain.cmd`**.
+1. In the unzipped folder (Step 1: *Extract All*, not just double-clicking the zip), double-click
+   **`Install-research-brain.cmd`**.
 2. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**.
 3. A black window shows the install. Keep it open; the first time takes a few minutes. When it says
    **Done**, research brain opens by itself, and you can close the window.
@@ -81,10 +84,11 @@ after you close it); nothing runs in the background and nothing starts when your
 The extension saves papers, highlights and quotes from web pages (arXiv, journal sites, PDFs open in Chrome)
 straight into research brain. It isn't in the Chrome Web Store; you add it once from a folder:
 
-1. **Get the extension folder.** In the folder you installed from, double-click **`research-brain-extension-….zip`**
-   to unzip it, and move the folder it makes somewhere permanent, such as **Documents**
-   (Chrome loads it from there every time, so don't delete it, and don't leave it in a synced folder that may offload
-   it). From a GitHub download or checkout: the **`extension`** folder inside the research brain folder.
+1. **Get the extension folder.** In the folder you installed from, unzip **`research-brain-extension-….zip`**
+   (Windows: right-click › *Extract All*), and move the folder it makes somewhere permanent that **isn't synced**:
+   your home folder on a Mac, or something like `C:\research brain extension` on Windows, where Documents is often
+   in OneDrive. Chrome loads it from there every time, so don't delete it, and a synced folder may offload it.
+   A university-managed Chrome may not allow Developer mode (step 3); then ask IT, or skip the extension. From a GitHub download or checkout: the **`extension`** folder inside the research brain folder.
 2. In Chrome, go to `chrome://extensions` (type it in the address bar).
 3. Turn on **Developer mode** (the switch in the top right).
 4. Click **Load unpacked** and choose that folder.
@@ -341,11 +345,14 @@ check for updates by itself.)
 | The Mac won't open the installer | See the note under "On a Mac" above: **Open Anyway**, or the Terminal way. |
 | *Windows protected your PC* | Click **More info**, then **Run anyway**. |
 | The installer stops with an error | Keep the window open and take a screenshot; send it to whoever helps you. Running the installer again is always safe. |
+| Windows: *The installer can't find its other files* | It was opened from inside the zip. Right-click the zip › **Extract All…**, then run the installer from the folder that makes. |
+| An antivirus or IT policy blocks the installer (common on university-managed PCs) | The installer downloads uv, Astral's Python installer, with a PowerShell command, which some antivirus tools flag. Ask IT to allow it, or install uv yourself from [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/) and run the installer again. |
+| Updating says the update *didn't take* | research brain was still running. Close its window, wait a minute, and run the installer again (it also tries to close it for you). |
 | The app doesn't open, or opens and closes | Open the log: in Finder **Go › Go to Folder…** and paste `~/Library/Application Support/research_brain/app.log` (Windows: `%APPDATA%\research_brain\app.log`). The last lines say why. |
 | The first start after installing is slow | Normal once: the computer checks the newly installed files the first time. Later starts take about a second. |
 | The AI shows a red dot, or says it isn't signed in | Open Terminal, type the AI's name (`gemini`, `claude`, `copilot`…), sign in, then pick it again in research brain. |
 | *Copilot … is too old* | In Terminal, run `copilot update`. |
-| Not much disk space | research brain needs about 300 MB. After installing, `uv cache clean` in Terminal frees the download cache. Prefer Gemini over Ollama, whose models take several GB. |
+| Not much disk space | research brain needs about 700 MB. After installing, `uv cache clean` in Terminal frees the download cache. Prefer Gemini over Ollama, whose models take several GB. |
 | Adding or searching for papers says *rate limited*, *allowance used up* or *couldn't reach* | The free lookup services are busy (your internet is usually fine). Add your own free keys: see [Step 5](#step-5-recommended-free-keys-for-looking-papers-up). |
 | Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **Settings › Library settings › Your documents › Open folder**. |
 
@@ -359,8 +366,8 @@ Your labmates don't need GitHub, Python or anything else: one file does it.
    keeps the Mac installer double-clickable, which single files downloaded in a browser don't. It holds the
    installers, the app, the Chrome extension, this README and *READ ME FIRST.txt*.
 2. **Send your labmates something like:** *"In our shared folder, download research-brain-installer-….zip.
-   Double-click it, open the folder it makes, and double-click Install-research-brain.command (Mac) or
-   Install-research-brain.cmd (Windows). READ ME FIRST.txt in there covers anything that gets in the way."* The
+   Unzip it (Mac: double-click it; Windows: right-click › Extract All), open the folder it makes, and double-click
+   Install-research-brain.command (Mac) or Install-research-brain.cmd (Windows). READ ME FIRST.txt in there covers anything that gets in the way."* The
    README's [Install it](#install-it-no-coding-needed) steps cover the security prompts (*Open Anyway* on a Mac,
    *More info › Run anyway* on Windows).
 3. **New versions:** upload the newer zip and tell people; they download it and run its installer the same way.
@@ -368,7 +375,7 @@ Your labmates don't need GitHub, Python or anything else: one file does it.
 
 Each person gets their own library on their own computer: nothing is shared between labmates unless someone
 exports something (a reading list, a `.bib`, a library zip). Each person adds their own AI and their own free
-paper-lookup keys (Steps 4 and 5 and [Add an AI](#add-an-ai-optional-can-be-free)). The Chrome extension is in the zip
+paper-lookup keys ([Add an AI](#add-an-ai-optional-can-be-free) and [Step 5](#step-5-recommended-free-keys-for-looking-papers-up)). The Chrome extension is in the zip
 as `research-brain-extension-….zip` ([Step 4](#step-4-optional-add-the-chrome-extension)). More detail, including how
 a library-format change is handled: [docs/releasing.md](docs/releasing.md).
 
@@ -700,8 +707,9 @@ into the papers folder (or copying, if you'd rather leave the originals).
 
 ## Private notes (your own ideas stay on your computer)
 
-Open questions and standalone notes are **private** by default; papers, fragments and summaries are
-shareable. Private items are never sent to an AI agent (chat, critique, Research, review checks) and are left
+Everything you write is **private** by default: notes (including notes on a paper), open questions and
+highlights. Papers themselves, being published work, are shareable. If research brain can't tell what's private
+(the library couldn't be read), it sends nothing. Private items are never sent to an AI agent (chat, critique, Research, review checks) and are left
 out of reading-list exports; search, similarity and the graph still work on them, because those run locally.
 Click the lock in a note's header to switch one item, or change the defaults in **Library settings ›
 Privacy**, which also shows *What was sent to AI*: a log of every request (agent, model, purpose, item ids,
@@ -724,7 +732,7 @@ value ± uncertainty, unit, conditions) or a **method** (Langmuir probe, OES, co
 - **Machine-suggested until you confirm.** Suggested cards are quiet (dashed blue-grey rule). **Confirm** (Y),
   **Edit** (E) or **Reject** (X); J and K move between cards; **Confirm all** takes them all. Confirmed and edited
   cards are your knowledge (red rule), and only they are used by chat and Research (`cards_search`). **Add card**
-  writes your own: it is private if your standalone notes are (Library settings › Privacy).
+  writes your own: it is private if your notes are (Library settings › Privacy).
 - **Units.** Values are converted to SI with pint for comparing (temperatures in eV become kelvin, `cm-3`
   becomes m⁻³, mTorr, sccm and gauss are understood); the original value and unit are kept.
 - **Across papers.** Cards that say the same thing in different papers are linked (local embeddings, same kind;

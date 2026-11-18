@@ -104,9 +104,9 @@
     for (const c of kids) if (c != null) e.append(c);
     return e;
   }
-  function toast(msg, kind = 'info') {
+  function toast(msg, kind = 'info', opts) {
     const t = rb() && rb().toast;
-    if (t) return t(msg, kind);
+    if (t) return t(msg, kind, opts);
     const box = document.getElementById('toasts');
     if (box) { const n = el('div', { class: `toast ${kind}` }, el('span', { class: 't-msg', text: msg })); box.appendChild(n); setTimeout(() => n.remove(), 5000); }
   }
@@ -391,6 +391,22 @@
       if (!to || to === f.folder) return;
       move.disabled = true;
       try {
+        // first say what will happen, then do it only on your say-so (app/papers.py plan_move)
+        const p = await api('/api/papers-folder/plan', json('POST', { folder: to }));
+        if (p.same) { say('That’s already your papers folder.'); return; }
+        if (p.clash.length) { say(`${p.to} already has different files named like yours (e.g. ${p.clash[0]}). Pick an empty folder.`, true); return; }
+        if (!p.room) { say(`Not enough room on that disk for the ${p.moves} PDFs (${fmtMB(p.bytes)}). Free some space, or pick a folder on this disk.`, true); return; }
+        const lines = [
+          `Moves the library’s ${p.moves} PDF${p.moves === 1 ? '' : 's'} (${fmtMB(p.bytes)}${p.removed ? `, plus ${p.removed} in “Removed from library”` : ''}) from\n${p.from}\nto\n${p.to}`,
+          p.other_disk ? 'That’s another disk, so each is copied there first, then removed here.' : 'They’re moved, not copied: no extra space is used.',
+          p.stay_behind_count ? `${p.stay_behind_count} other PDF${p.stay_behind_count === 1 ? '' : 's'} in the current folder aren’t the library’s (e.g. ${p.stay_behind[0]}), and stay where they are.` : '',
+          p.already_there_count ? `${p.already_there_count} PDF${p.already_there_count === 1 ? '' : 's'} already in the new folder are left alone.` : '',
+          p.cloud ? `The new folder is in ${p.cloud}: the PDFs sync there.` : '',
+          'Your notes, highlights and links don’t change. New PDFs you add go to the new folder.',
+        ].filter(Boolean);
+        const R = rb() || {};
+        const ok = R.confirmDialog ? await R.confirmDialog('Move your papers folder?', lines.join('\n\n'), `Move ${p.moves} PDF${p.moves === 1 ? '' : 's'}`) : false;
+        if (ok !== true) return;
         const r = await api('/api/papers-folder', json('PUT', { folder: to }));
         f = r; where.textContent = r.folder; setCount(r); cloudBox.replaceChildren(...cloudParts(r));
         say(`Moved ${r.moved} PDF${r.moved === 1 ? '' : 's'} to ${r.folder}.`);
@@ -478,41 +494,68 @@
       el('div', { class: 'ls-row' }, scanIn, scanPick, scanBtn),
       el('label', { class: 'ls-p ls-check', for: 'ls-scan-deep' }, deep, ' Include folders inside it'), out);
   }
+  /** Sending files to the computer's Trash is never a side effect: it's its own step, after a dialog that says
+   *  which files and that the library keeps its own copy. Files in a folder of papers you follow are never offered
+   *  (the server refuses them too: app/papers.py followed_folder). */
+  async function offerTrash(paths, say, button) {
+    if (!paths.length) return;
+    const R = rb() || {};
+    const names = paths.slice(0, 6).map((p) => '· ' + p.split(/[\\/]/).pop()).join('\n') + (paths.length > 6 ? `\n· and ${paths.length - 6} more` : '');
+    const ok = R.confirmDialog ? await R.confirmDialog(`Move ${paths.length} original${paths.length === 1 ? '' : 's'} to the Trash?`,
+      `Your library keeps its own copy of each, so nothing in research brain changes. These files go to the computer's Trash, where you can still get them back:\n${names}`,
+      'Move to Trash') : false;
+    if (ok !== true) return;
+    if (button) button.disabled = true;
+    try {
+      const t = await api('/api/papers/trash-copies', json('POST', { paths }));
+      say(`Moved ${t.trashed.length} to the Trash${t.refused.length ? `; left ${t.refused.length} that no longer match the library's copy` : ''}.`);
+      if (button) button.textContent = 'Done';
+    } catch (e) { if (button) button.disabled = false; say(e.message, true); }
+  }
   function drawScan(out, r, say) {
     const kids = [];
     if (r.in_library.length) {
-      const trash = el('button', { class: 'btn', type: 'button', text: `Move ${r.in_library.length} extra cop${r.in_library.length === 1 ? 'y' : 'ies'} to Trash` });
-      trash.addEventListener('click', async () => {
-        trash.disabled = true;
-        try {
-          const t = await api('/api/papers/trash-copies', json('POST', { paths: r.in_library.map((x) => x.path) }));
-          say(`Moved ${t.trashed.length} cop${t.trashed.length === 1 ? 'y' : 'ies'} to the Trash${t.refused.length ? `; left ${t.refused.length} that no longer match` : ''}.`);
-          trash.textContent = 'Done';
-        } catch (e) { trash.disabled = false; say(e.message, true); }
-      });
-      kids.push(el('div', { class: 'ls-p' }, el('b', { text: `${r.in_library.length} already in your library` }), ' (the same file):'),
+      const trash = el('button', { class: 'btn btn-text', type: 'button', text: `Move these ${r.in_library.length} to the Trash…` });
+      trash.addEventListener('click', () => offerTrash(r.in_library.map((x) => x.path), say, trash));
+      kids.push(el('div', { class: 'ls-p' }, el('b', { text: `${r.in_library.length} already in your library` }), ' (the same file; your library has its own copy):'),
         el('ul', { class: 'ls-scan-list' }, r.in_library.slice(0, 50).map((x) => el('li', { title: x.path }, el('span', { text: x.name }), el('span', { class: 'm', text: ` → ${x.title}` })))),
+        el('p', { class: 'ls-hint', text: 'They’re left where they are. Only if you want them gone:' }),
         el('div', { class: 'ls-row' }, trash));
+    }
+    if (r.followed && r.followed.length) {
+      kids.push(el('p', { class: 'ls-p' }, el('b', { text: `${r.followed.length} in a folder of papers you follow` }),
+        ': those are the library’s own copies, kept where you keep them. research brain never moves or deletes them.'));
+    }
+    if (r.online && r.online.length) {
+      kids.push(el('p', { class: 'ls-p' }, el('b', { text: `${r.online.length} online only` }),
+        ' (in the cloud, not on this computer): not checked, since reading them would download them. Add the folder under Folders of papers to bring them in without keeping the PDFs here.'));
     }
     if (r.new.length) {
       const boxes = r.new.map((x) => el('input', { type: 'checkbox', checked: true, 'data-path': x.path, 'aria-label': x.name }));
-      const copy = el('input', { type: 'checkbox', id: 'ls-scan-copy' });
       const add = el('button', { class: 'btn', type: 'button', text: 'Add selected' });
+      const after = el('div');
       add.addEventListener('click', async () => {
         const paths = boxes.filter((b) => b.checked).map((b) => b.dataset.path);
         if (!paths.length) return;
         add.disabled = true; add.textContent = `Adding ${paths.length}…`;
         try {
-          const a = await api('/api/papers/import-files', json('POST', { paths, mode: copy.checked ? 'copy' : 'move' }));
+          const a = await api('/api/papers/import-files', json('POST', { paths, mode: 'copy' }));
           say(`Added ${a.added.length}${a.duplicates.length ? `, ${a.duplicates.length} were already in your library` : ''}${a.failed.length ? `, ${a.failed.length} couldn’t be read` : ''}.`);
           add.textContent = 'Done';
           if (window.__rb && window.__rb.refreshGraph) window.__rb.refreshGraph();
+          // tidying up is a separate choice: the originals stay unless you ask
+          if (a.originals && a.originals.length) {
+            const tidy = el('button', { class: 'btn btn-text', type: 'button', text: `Move the ${a.originals.length} original${a.originals.length === 1 ? '' : 's'} to the Trash…` });
+            tidy.addEventListener('click', () => offerTrash(a.originals, say, tidy));
+            after.replaceChildren(el('p', { class: 'ls-hint', text: 'The originals are still where they were. Your library has its own copy of each, so you can keep both, or tidy them away:' }),
+              el('div', { class: 'ls-row' }, tidy));
+          }
         } catch (e) { add.disabled = false; add.textContent = 'Add selected'; say(e.message, true); }
       });
       kids.push(el('div', { class: 'ls-p' }, el('b', { text: `${r.new.length} not in your library` }), ':'),
         el('ul', { class: 'ls-scan-list' }, r.new.slice(0, 200).map((x, i) => el('li', null, el('label', { title: x.path }, boxes[i], ` ${x.name} `, el('span', { class: 'm', text: fmtMB(x.size) }))))),
-        el('label', { class: 'ls-p ls-check', for: 'ls-scan-copy' }, copy, ' Leave the originals where they are (otherwise they move into your papers folder, and the old copy goes to the Trash)'),
-        el('div', { class: 'ls-row' }, add));
+        el('p', { class: 'ls-hint', text: 'The library takes its own copy; the originals stay where they are.' }),
+        el('div', { class: 'ls-row' }, add), after);
     }
     if (!kids.length) kids.push(el('p', { class: 'ls-p', text: `No PDFs in ${r.folder}.` }));
     out.replaceChildren(...kids);
@@ -682,8 +725,27 @@
     list.append(el('li', null, el('div', { class: 'ls-row' }, again)));
   }
 
-  function exportZip(pdfs) {
-    const a = el('a', { href: `/api/vault/export?pdfs=${pdfs ? 'true' : 'false'}`, download: '' });
+  /** Export: first how big it will be and whether there's room (sizes only, so nothing in OneDrive downloads),
+   *  and a choice about PDFs that are online only, then the download. */
+  async function exportZip(pdfs) {
+    const mb = (b) => (b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1e6)) + ' MB');
+    let online = false;
+    try {
+      let p = await api(`/api/vault/export/plan?pdfs=${pdfs}&online=false`);
+      const R = rb() || {};
+      if (p.online && R.confirmDialog) {
+        const c = await R.confirmDialog(`${p.online} PDF${p.online === 1 ? ' is' : 's are'} online only`,
+          `They’re in the cloud, not on this computer. Leaving them out keeps the zip small and downloads nothing; they stay safe where they are.\n\nPutting them in downloads them first (${mb(p.online_bytes)}), and they stay on this computer afterwards.`,
+          'Leave them out', `Download and include (${mb(p.online_bytes)})`);
+        if (c === false) return;
+        if (c === 'alt') { online = true; p = await api(`/api/vault/export/plan?pdfs=${pdfs}&online=true`); }
+      }
+      if (!p.room) {
+        toast(`Not enough space for the library zip: it needs about ${p.need_text} (the zip, then your downloaded copy), and ${p.free_text} is free.${pdfs ? ' Try exporting without the PDFs.' : ''}`, 'error', { ms: 12000 });
+        return;
+      }
+    } catch (e) { toast(e.message, 'error'); return; }
+    const a = el('a', { href: `/api/vault/export?pdfs=${pdfs ? 'true' : 'false'}&online=${online}`, download: '' });
     document.body.appendChild(a); a.click(); a.remove();
     toast('Preparing your library zip. Your browser will download it in a moment.');
   }

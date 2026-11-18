@@ -43,7 +43,7 @@ async function callServer(path, method = "GET", body = null) {
     let data = null; try { data = await r.json(); } catch { }
     return r.ok ? { ok: true, status: r.status, data } : { ok: false, status: r.status, error: (data && data.detail) || `HTTP ${r.status}` };
   } catch (e) {
-    return { ok: false, status: 0, offline: true, error: "research_brain isn't running. Start it with ./run.sh." };
+    return { ok: false, status: 0, offline: true, error: "research brain isn't open. Open it (Start menu, Launchpad or the Dock), then try again." };
   }
 }
 

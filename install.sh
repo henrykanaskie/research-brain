@@ -129,7 +129,10 @@ if [ "${RB_NO_DESKTOP:-}" != 1 ]; then
   else echo "  ! Couldn't add the app entry: $APP_MSG"; echo "    Try again later with: research-brain install-app"; fi
   echo "  (RB_NO_DESKTOP=1 skips the app entry; research-brain install-app --remove takes it away.)"
 fi
-if ! command -v claude >/dev/null 2>&1; then
-  echo "  The 'claude' CLI isn't installed. Everything except summaries, critiques and Ask/Research works without it."
+found_ai=""
+for a in claude codex gemini copilot opencode ollama; do command -v "$a" >/dev/null 2>&1 && found_ai=1; done
+if [ -z "$found_ai" ]; then
+  echo "  No AI set up yet. That's fine: everything works without one except asking questions, critiques and"
+  echo "  explanations. The free option is Gemini: README, 'Add an AI' (or click the AI name at the top of the app)."
 fi
 echo "  Open it from the app icon, or with: research-brain open    (Chrome extension: README, Install step 4)"

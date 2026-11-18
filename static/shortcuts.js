@@ -4,6 +4,8 @@
  * commands too (views.js focus, review.js keys, topics.js reading queue).
  */
 (() => {
+  // ⌘ on a Mac, Ctrl+ elsewhere, for shortcuts written into text
+  const MOD = (window.RB && window.RB.commands && window.RB.commands.isMac) ? '⌘' : 'Ctrl+';
   'use strict';
   const rb = window.__rb;
   const CMD = window.RB && window.RB.commands;
@@ -132,7 +134,7 @@
   // ====================================================================== commands
   // Navigate
   reg({ id: 'nav.nextResult', title: 'Next search result', group: 'Navigate', keys: ['Down', 'Mod+J'], allowInInput: true,
-    description: 'While searching, opens the next match. ↓ and ↑ work in the search box; ⌘J works anywhere.', aliases: ['match', 'find next', 'cycle'],
+    description: `While searching, opens the next match. ↓ and ↑ work in the search box; ${MOD}J works anywhere.`, aliases: ['match', 'find next', 'cycle'],
     when: notTypingElsewhere, run: (e) => (e && e.key === 'ArrowDown' && !inSearch() ? false : step(1)) });
   reg({ id: 'nav.prevResult', title: 'Previous search result', group: 'Navigate', keys: ['Up', 'Mod+Shift+J'], allowInInput: true,
     description: 'While searching, opens the previous match.', aliases: ['match', 'find previous'],
@@ -184,7 +186,7 @@
   reg({ id: 'note.title', title: 'Rename', group: 'Note', keys: 'R', description: 'Puts the cursor in the title.', aliases: ['title', 'rename'],
     when: () => panelOpen() && !!$('#panel-body .title-input'), run: () => { const t = $('#panel-body .title-input'); t.focus(); t.select(); } });
   reg({ id: 'note.toggleEdit', title: 'Switch between edit and preview', group: 'Note', keys: 'Mod+E', allowInInput: true,
-    description: 'For the notes body. ⌘↵ in the editor also shows the preview.', aliases: ['preview', 'render', 'markdown', 'edit mode'],
+    description: `For the notes body. ${MOD}↵ in the editor also shows the preview.`, aliases: ['preview', 'render', 'markdown', 'edit mode'],
     when: () => panelOpen() && !!bodySection(), run: toggleEdit });
   reg({ id: 'note.discover', title: 'Find related papers', group: 'Note', description: 'References, citing papers and recommendations from Semantic Scholar.',
     aliases: ['discover', 'references', 'citations', 'semantic scholar', 'recommend'],
@@ -222,7 +224,7 @@
   }
 
   // Review (review.js handles these keys itself while Review is open)
-  const RV = [['review.reveal', 'Reveal your original', 'Space', 'After writing what you remember. ⌘↵ works while typing.', ['show answer', 'flip']],
+  const RV = [['review.reveal', 'Reveal your original', 'Space', `After writing what you remember. ${MOD}↵ works while typing.`, ['show answer', 'flip']],
     ['review.again', 'Grade: again', '1', 'You did not remember it. It comes back tomorrow.', ['forgot', 'fail']],
     ['review.hard', 'Grade: hard', '2', 'You remembered with effort.', ['difficult']],
     ['review.good', 'Grade: good', '3', 'You remembered it.', ['correct']],

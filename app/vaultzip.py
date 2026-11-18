@@ -80,10 +80,49 @@ def iter_files(vault: Path, include_pdfs: bool = True):
                 yield p, f"{top}/{p.relative_to(base).as_posix()}"
 
 
-def export_zip(vault: Path, dest: Path, include_pdfs: bool = True) -> dict:
-    """Write the library to `dest` (a .zip). Returns the manifest."""
+def plan_export(vault: Path, include_pdfs: bool = True, include_online: bool = False, copies: int = 1,
+                where: Path | None = None) -> dict:
+    """What a zip export would take, read from the files' sizes only (nothing is opened, so nothing in OneDrive
+    is downloaded): {"files", "bytes", "online": PDFs that are online only, "online_bytes", "free", "room"}.
+    Online-only PDFs are left out unless include_online (then they're downloaded for the zip, and counted).
+    `copies`: how many times the zip's size must fit on the disk at once (a download: the zip, then your copy)."""
+    from . import diskspace
+    from .acquire import cloud_only
+    files, total, online, online_bytes = 0, 0, 0, 0
+    for p, rel in iter_files(vault, include_pdfs):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        if rel.startswith(f"{PDFS_DIR}/") and cloud_only(st):
+            online += 1
+            online_bytes += st.st_size
+            if not include_online:
+                continue
+        files += 1
+        total += st.st_size
+    where = Path(where) if where else Path(vault)
+    free = diskspace.free_bytes(where)
+    need = total * max(1, copies)
+    room = free is None or free - need >= diskspace.MIN_FREE
+    return {"files": files, "bytes": total, "online": online, "online_bytes": online_bytes, "need": need,
+            "free": free, "free_text": diskspace.human(free), "need_text": diskspace.human(need), "room": room}
+
+
+def export_zip(vault: Path, dest: Path, include_pdfs: bool = True, include_online: bool = True,
+               copies: int = 1) -> dict:
+    """Write the library to `dest` (a .zip). Returns the manifest. First checks there's room for it (plan_export),
+    and raises diskspace.DiskFull with a message if not. include_online=False leaves out PDFs that are online only
+    (still safe in the cloud), so the export doesn't download them."""
+    from . import diskspace
+    from .acquire import cloud_only
     vault, dest = Path(vault), Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    plan = plan_export(vault, include_pdfs, include_online, copies, where=dest.parent)
+    if not plan["room"]:
+        raise diskspace.DiskFull(f"Not enough space for the library zip: it needs about {plan['need_text']}, and "
+                                 f"{plan['free_text']} is free (research brain always leaves {diskspace.human(diskspace.MIN_FREE)}). "
+                                 "Free some space, or export without the PDFs.")
     tmp = dest.with_name(dest.name + ".tmp")
     counts = {"files": 0, "bytes": 0, "notes": 0, "pdfs": 0}
     schema = None
@@ -91,18 +130,32 @@ def export_zip(vault: Path, dest: Path, include_pdfs: bool = True) -> dict:
         schema = json.loads((vault / "state" / "meta.json").read_text(encoding="utf-8")).get("schema")
     except (OSError, ValueError):
         pass
-    with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as z:
-        for p, rel in iter_files(vault, include_pdfs):
-            # PDFs are already compressed; storing them is much faster and barely bigger
-            pdf = rel.startswith(f"{PDFS_DIR}/")
-            z.write(p, rel, compress_type=zipfile.ZIP_STORED if pdf else zipfile.ZIP_DEFLATED)
-            counts["files"] += 1
-            counts["bytes"] += p.stat().st_size
-            counts["notes"] += rel.split("/", 1)[0] in NOTE_DIRS and rel.endswith(".md")
-            counts["pdfs"] += pdf
-        manifest = {"format": "research_brain-vault", "format_version": 2, "app_version": __version__,
-                    "schema": schema, "created": _now(), "include_pdfs": include_pdfs, **counts}
-        z.writestr(MANIFEST, json.dumps(manifest, indent=1))
+    try:
+        with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as z:
+            for p, rel in iter_files(vault, include_pdfs):
+                # PDFs are already compressed; storing them is much faster and barely bigger
+                pdf = rel.startswith(f"{PDFS_DIR}/")
+                if pdf and not include_online:
+                    try:
+                        if cloud_only(p.stat()):
+                            counts["online_left_out"] = counts.get("online_left_out", 0) + 1
+                            continue
+                    except OSError:
+                        continue
+                z.write(p, rel, compress_type=zipfile.ZIP_STORED if pdf else zipfile.ZIP_DEFLATED)
+                counts["files"] += 1
+                counts["bytes"] += p.stat().st_size
+                counts["notes"] += rel.split("/", 1)[0] in NOTE_DIRS and rel.endswith(".md")
+                counts["pdfs"] += pdf
+            manifest = {"format": "research_brain-vault", "format_version": 2, "app_version": __version__,
+                        "schema": schema, "created": _now(), "include_pdfs": include_pdfs, **counts}
+            z.writestr(MANIFEST, json.dumps(manifest, indent=1))
+    except BaseException:
+        try:  # a failed export (the disk filled up meanwhile) leaves no half-written zip behind
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
     os.replace(tmp, dest)
     return manifest
 

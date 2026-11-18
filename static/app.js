@@ -623,7 +623,7 @@
         setThreshold(typeof saved === 'number' ? saved : def, false);
       }
     } catch (e) {
-      S.online = false; S.claudeOK = false; S.claudeWhy = "The research_brain server isn't responding. Start it with ./run.sh, then reload.";
+      S.online = false; S.claudeOK = false; S.claudeWhy = "research brain isn't responding. Close this window and open research brain again.";
       el.className = 'status down';
       $('.status-text', el).textContent = 'Server offline';
       el.title = 'Cannot reach the research_brain server.\n' + e.message;
@@ -2766,7 +2766,7 @@
     if (!id) return;
     if (S.onOpenNote) { try { S.onOpenNote(id); } catch (e) { console.warn(e); } } // static/shortcuts.js: back/forward history
     const seq = ++openSeq;
-    if (S.cur && S.cur.id !== id) await flushSave();
+    if (S.cur && S.cur.id !== id && !(await leaveNote())) return;  // a failed save: you chose to stay
     if (seq !== openSeq) return;
     if (S.selected !== hostOf(id) || (S.cur && S.cur.id !== id)) {
       S.selected = hostOf(id); firePulse(S.selected);
@@ -2837,8 +2837,59 @@
     el.className = 'save-ind ' + (state || '');
     el.textContent = text || '';
     el.title = state === 'err' ? (S.saveErr || '') + '\nClick to retry' : '';
+    // the Save button: there while something is unsaved (or failed), with its shortcut
+    const b = $('#btn-save');
+    if (b) {
+      const dirty = unsaved();
+      b.hidden = !dirty && state !== 'saving';
+      b.disabled = !dirty;
+      b.textContent = state === 'err' ? 'Try again' : 'Save';
+    }
+    tellWindow();
   }
   $('#save-indicator').addEventListener('click', () => { if (S.saveErr) { S.saveErr = null; doSave(); } });
+  $('#btn-save').addEventListener('click', () => saveNow());
+
+  /** Edits not yet safely on disk: waiting for the autosave, on their way, or a save that failed. */
+  function unsaved() {
+    return !!(S.cur && (S.saveTimer || Object.keys(S.patch || {}).length || S.inflight || S.saveErr));
+  }
+  /** Save now (the Save button, Mod+S): true once everything is on disk. */
+  async function saveNow() {
+    if (!S.cur) return true;
+    S.saveErr = null;
+    await flushSave();
+    if (S.saving) await S.saving.catch(() => {});
+    if (unsaved()) return false;
+    setSaveInd('', 'Saved');
+    return true;
+  }
+  /** research brain's own Mac window asks before it closes while something is unsaved (app/macwindow.py):
+   *  it learns that from here, over the page's message channel. */
+  let toldUnsaved = null;
+  function tellWindow() {
+    const ch = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
+    const now = unsaved();
+    if (!ch || now === toldUnsaved) return;
+    toldUnsaved = now;
+    try { ch.postMessage(JSON.stringify({ unsaved: now })); } catch { /* not that window */ }
+  }
+  /** Asked by the Mac window when you close it with unsaved edits: the app's own dialog, then close or stay. */
+  async function askBeforeClose() {
+    const close = () => {
+      const ch = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
+      if (ch) ch.postMessage(JSON.stringify({ close: true }));
+    };
+    if (!unsaved()) { close(); return; }
+    const title = (S.cur && S.cur.title) || 'This note';
+    const choice = await confirmDialog(`Save “${truncate(title, 50)}” before closing?`,
+      S.saveErr ? `The last save didn’t go through (${S.saveErr}). Your changes are still here.` : 'Some of your changes haven’t been saved yet.',
+      'Save and close', 'Close without saving');
+    if (choice === 'alt') { S.patch = {}; S.saveErr = null; clearTimeout(S.saveTimer); S.saveTimer = null; close(); return; }
+    if (choice !== true) return;  // keep editing
+    if (await saveNow()) close();
+    else toast('Still not saved, so research brain stayed open. Try again, or copy your text somewhere safe.', 'error', { ms: 10000 });
+  }
 
   function queueSave(fields) {
     if (!S.cur) return;
@@ -2869,6 +2920,7 @@
       try {
         const updated = await api('PUT', `/api/notes/${encodeURIComponent(id)}`, patch);
         S.saveErr = null;
+        S.inflight = null;
         if (S.cur && S.cur.id === id) {
           // keep any newer local edits; take server-derived fields
           for (const k of ['updated', 'has_pdf', 'has_text', 'links', 'title']) if (updated && k in updated && !(k in S.patch)) S.cur[k] = updated[k];
@@ -2892,16 +2944,35 @@
     if (S.saveTimer || Object.keys(S.patch).length) await doSave();
     else if (S.saving) await S.saving.catch(() => {});
   }
+  /** Before leaving a note: save it, and if that fails, ask rather than lose the edits. True: go on. */
+  async function leaveNote() {
+    await flushSave();
+    while (unsaved()) {
+      const title = (S.cur && S.cur.title) || 'this note';
+      const choice = await confirmDialog(`“${truncate(title, 50)}” isn’t saved`,
+        `The save didn’t go through${S.saveErr ? ` (${S.saveErr})` : ''}. Your changes are still here.`, 'Try again', 'Discard changes');
+      if (choice === 'alt') { S.patch = {}; S.saveErr = null; clearTimeout(S.saveTimer); S.saveTimer = null; setSaveInd('', ''); return true; }
+      if (choice !== true) return false;  // stay on it
+      if (await saveNow()) return true;
+    }
+    return true;
+  }
   let graphRefreshT = null;
   function scheduleGraphRefresh() { clearTimeout(graphRefreshT); graphRefreshT = setTimeout(refreshGraph, 1200); }
+  // closing the window (or reloading) with edits not yet on disk: send them as the page goes, and ask first.
+  // In a browser or a Chrome app window (Windows, Linux) the question is the browser's own "Leave site?" box: a
+  // page can't show its own dialog there. research brain's Mac window asks with the app's dialog before it gets
+  // this far (askBeforeClose).
   window.addEventListener('beforeunload', (e) => {
-    if (S.saveTimer || Object.keys(S.patch).length) {
-      // best-effort synchronous-ish save
+    if (!unsaved()) return;
+    const body = JSON.stringify({ ...(S.inflight || {}), ...S.patch });
+    if (body !== '{}' && body.length < 60000) {  // a keepalive request carries at most 64 KB
       try {
-        const id = S.cur.id;
-        fetch(`/api/notes/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(S.patch), keepalive: true });
-      } catch { /* ignore */ }
+        fetch(`/api/notes/${encodeURIComponent(S.cur.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+      } catch { /* the page is going */ }
     }
+    e.preventDefault();
+    e.returnValue = '';
   });
 
   // ---------- render ----------
@@ -4457,7 +4528,10 @@
     const name = path.split(/[\\/]/).pop();
     toast(`“${truncate(name, 50)}” is also in your Downloads. Your library has its own copy.`, 'info', {
       ms: 12000,
-      action: { label: 'Move that copy to Trash', fn: async () => {
+      action: { label: 'Move that copy to Trash…', fn: async () => {
+        const ok = await confirmDialog(`Move “${truncate(name, 50)}” to the Trash?`,
+          `Your library keeps its own copy, so nothing in research brain changes. The one in Downloads goes to the computer's Trash, where you can still get it back.`, 'Move to Trash');
+        if (ok !== true) return;
         try {
           const r = await api('POST', '/api/papers/trash-copies', { paths: [path] });
           toast(r.trashed.length ? 'Moved to the Trash.' : 'Left it where it is (it no longer matches the library copy).', r.trashed.length ? 'ok' : 'info');
@@ -4792,6 +4866,9 @@
     CMD.register({ id: 'nav.search', title: 'Search your library', group: 'Navigate', keys: '/', aliases: ['find', 'filter', 'look up'],
       description: 'Highlights matching papers, notes and fragments. Enter opens the first match.',
       run: () => { searchInput.focus(); searchInput.select(); } });
+    CMD.register({ id: 'note.save', title: 'Save the note', group: 'Note', keys: 'Mod+S', allowInInput: true, scope: 'any',
+      aliases: ['save', 'write'], description: 'Saves the open note now. It also saves by itself a moment after you stop typing.',
+      run: async () => { if (!S.cur) { toast('No note open to save.', 'info'); return; } if (await saveNow()) toast('Saved.', 'ok'); } });
     CMD.register({ id: 'library.addById', title: 'Add paper by DOI, arXiv id or title…', group: 'Library', keys: ['Mod+Shift+A', 'G then A'], allowInInput: true,
       aliases: ['doi', 'arxiv', 'import', 'lookup', 'new paper', 'semantic scholar'],
       description: 'Looks the paper up on Semantic Scholar and adds it, with its abstract.', run: addById });
@@ -4907,7 +4984,7 @@
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
     setNodeFilter(fn) { S.nodeFilter = typeof fn === 'function' ? fn : null; kick(400); },
     setHidden(set) { S.hidden = set && set.size ? set : null; S.focusCache = null; configureLinkForce(); kick(400); },
-    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog,
+    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose,
     rerenderCritique() { const s = S.cur && $('#summary-sec', pbody); if (s && s.__refresh) s.__refresh(); },
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },

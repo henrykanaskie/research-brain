@@ -59,7 +59,7 @@ def lib(env):
                     "$$\\omega_{pe} = \\sqrt{\\frac{n e^2}{\\varepsilon_0 m_e}}$$\n\n<script>alert(1)</script>")
     secret = _mk(c, type="note", private=False, title="Secret draft", body="private thoughts")
     frag = _mk(c, type="fragment", parent=paper["id"], quote="$\\nabla \\cdot E = \\rho/\\varepsilon_0$",
-               locator="p. 4, Eq. 7", page=4, body="Gauss, links to [[Plasma notes]]")
+               locator="p. 4, Eq. 7", page=4, body="Gauss, links to [[Plasma notes]]", private=False)
     c.post(f"/api/notes/{paper['id']}/link", json={"target": secret["id"]})
     c.post(f"/api/notes/{paper['id']}/critique")
     return c, server, paper, note, secret, frag

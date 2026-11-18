@@ -1072,3 +1072,51 @@ def test_a_click_on_the_map_closes_the_open_note_but_dragging_it_doesnt(ctx, ser
     page.locator(".reopen-tab").click()
     expect(page.locator("#panel")).to_be_visible()
     assert not page.errors
+
+
+def test_save_now_and_nothing_lost_when_a_save_fails(ctx, server):
+    """Mod+S saves at once (and the Save button with it); when a save fails, switching to another note asks
+    instead of throwing the edits away; closing with unsaved edits asks too."""
+    clear_vault(server)
+    other = api(server, "POST", "/api/notes", {"type": "note", "title": "Another note"})["id"]
+    page = open_app(ctx, server)
+    nid = new_note(page, "Saving test")
+    page.wait_for_function("() => !window.__rb.unsaved()")
+    ta = body_editor(page)
+    ta.fill("Typed and saved at once")
+    expect(page.locator("#btn-save")).to_be_visible()
+    page.keyboard.press("ControlOrMeta+s")
+    page.wait_for_function("() => !window.__rb.unsaved()", timeout=600)  # well before the 800 ms autosave
+    assert api(server, "GET", f"/api/notes/{nid}")["body"] == "Typed and saved at once"
+    expect(page.locator("#btn-save")).to_be_hidden()
+    # the server stops answering saves: the edit stays, and leaving the note asks
+    page.route(f"**/api/notes/{nid}", lambda route: route.fulfill(status=500, body='{"detail":"disk unplugged"}',
+                                                                  content_type="application/json")
+               if route.request.method == "PUT" else route.continue_())
+    ta.fill("This edit must not be lost")
+    page.locator("#btn-save").click()
+    expect(page.locator("#btn-save")).to_have_text("Try again")
+    page.evaluate("(id) => { window.__rb.openNote(id); }", other)
+    expect(page.locator("#modal")).to_be_visible()
+    expect(page.locator("#modal-title")).to_contain_text("isn’t saved")
+    page.click("#modal-cancel")  # stay on it
+    expect(page.locator("#modal")).to_be_hidden()
+    assert page.evaluate("window.__rb.S.cur.id") == nid and page.evaluate("window.__rb.unsaved()")
+    # still failing: Try again keeps asking, nothing is dropped
+    page.evaluate("(id) => { window.__rb.openNote(id); }", other)
+    expect(page.locator("#modal")).to_be_visible()
+    page.click("#modal-ok")
+    expect(page.locator("#modal-title")).to_contain_text("isn’t saved")
+    # the server is back: Try again saves it, then the other note opens
+    page.unroute(f"**/api/notes/{nid}")
+    page.click("#modal-ok")
+    page.wait_for_function("(id) => window.__rb.S.cur && window.__rb.S.cur.id === id", arg=other)
+    assert api(server, "GET", f"/api/notes/{nid}")["body"] == "This edit must not be lost"
+    # closing the page with an unsaved edit asks first (the browser's own box, outside the Mac window)
+    body_editor(page).fill("Unsaved when closing")
+    asked = []
+    page.on("dialog", lambda d: (asked.append(d.type), d.dismiss()))
+    page.close(run_before_unload=True)
+    page.wait_for_timeout(500)
+    assert asked == ["beforeunload"]
+    assert not page.errors
