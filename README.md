@@ -16,108 +16,143 @@ the ideas you mark private never leave it.
 
 ## Install it (no coding needed)
 
-### What you need
+Download **research-brain-installer-….zip**, then follow the steps for your computer.
 
-| | |
-| --- | --- |
-| A computer | a Mac (macOS 11 or newer), a Windows 10 or 11 PC, or Linux |
-| Free space | about **700 MB** (the app, its own Python and the download cache), plus room for any PDFs kept on this computer |
-| Internet | for the install (a few minutes); afterwards it works offline, except looking papers up |
-| Anything else? | **No.** You don't need Python, conda, Anaconda or any coding tools: the installer brings what it needs and keeps it separate from anything else on your computer. |
+<details>
+<summary>What you need</summary>
 
-### Step 1: get the research brain folder
+Windows 10 or 11, macOS 11 or newer, or Linux; about 700 MB of free space; and internet for the install. No
+Python or coding tools: the installer brings its own Python and keeps it separate from anything else.
+</details>
 
-- **The installer zip** (the usual way): download **research-brain-installer-….zip**, from the release page or
-  wherever it was shared with you (a shared OneDrive, SharePoint, Google Drive or Box folder in the browser is fine). Unzip it: on a Mac, double-click it;
-  on **Windows, right-click it › Extract All… › Extract** (double-clicking a zip on Windows only shows what's inside,
-  and the installer won't run from there). Open the folder it makes: you'll install from there (*READ ME
-  FIRST.txt* inside says the same in short).
-- **From GitHub** (if you have access): open the research brain page, click the green **Code** button,
-  choose **Download ZIP**, then double-click the downloaded ZIP to unpack it.
+### Windows
 
-### Step 2: run the installer
+1. Right-click the zip › **Extract All…** › **Extract**.
+2. In the folder that opens, double-click **`Install-research-brain.cmd`**.
+3. Wait for **Done**, and research brain opens.
+4. Later, open it from the Start menu.
 
-**On a Mac**
+<details>
+<summary>Windows blocked it or it won't run</summary>
 
-1. In the folder, double-click **`Install-research-brain.command`**.
-2. A Terminal window opens and shows the install. Keep it open; the first time takes a few minutes.
-3. When it says **Done**, research brain opens by itself. You can close the Terminal window.
+- *Windows protected your PC*: click **More info**, then **Run anyway**.
+- *Can't find its other files*: you ran it from inside the zip. Use **Extract All…** first; double-clicking a zip
+  only shows what's inside.
+- On a university-managed PC, antivirus or IT policy can block installers. Take a screenshot and see
+  [Reporting a problem](#reporting-a-problem).
+</details>
 
-If the Mac says it *can't be opened* or *Apple could not verify* it: open **System Settings › Privacy &
-Security**, scroll down, and click **Open Anyway** next to the file's name; then double-click it again.
-If that doesn't appear, or it says *permission denied* or *you do not have appropriate access privileges* (common
-when the installer comes from a shared drive), use Terminal instead:
+<details>
+<summary>Add the Chrome extension (optional)</summary>
 
-1. Open **Terminal**: in Finder, **Applications › Utilities › Terminal**.
-2. Type `bash ` (the word bash and a space; don't press Return yet).
-3. Drag `Install-research-brain.command` from the folder into the Terminal window, then press Return.
+1. Right-click **`research-brain-extension-….zip`** › **Extract All…**, into a folder outside OneDrive such as
+   `C:\research brain extension`.
+2. In Chrome, go to `chrome://extensions` and turn on **Developer mode**.
+3. Click **Load unpacked** and choose that folder.
 
-**On Windows**
+Keep the folder: Chrome loads it from there every time, and a synced folder may offload it. A university-managed
+Chrome may not allow Developer mode.
+</details>
 
-1. In the unzipped folder (Step 1: *Extract All*, not just double-clicking the zip), double-click
-   **`Install-research-brain.cmd`**.
-2. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**.
-3. A black window shows the install. Keep it open; the first time takes a few minutes. When it says
-   **Done**, research brain opens by itself, and you can close the window.
+### Mac
 
-**On Linux**
+1. Double-click the zip, then open the folder it makes.
+2. Double-click **`Install-research-brain.command`**.
+3. Wait for **Done**, and research brain opens.
+4. Later, open it from Launchpad or Applications.
 
-Open a terminal in the folder (right-click › *Open in Terminal*) and type `bash install.sh`, then press
-Return.
+<details>
+<summary>The Mac blocked it or it won't run</summary>
 
-### Step 3: open it
+- *Can't be opened* or *Apple could not verify*: open **System Settings › Privacy & Security**, scroll down, click
+  **Open Anyway**, then double-click the installer again.
+- Still blocked, or *permission denied* (common from a shared drive): open **Terminal** (Applications ›
+  Utilities), type `bash ` with a space, drag the installer into the window and press Return.
+</details>
 
-From now on, open research brain like any other app:
+<details>
+<summary>Add the Chrome extension (optional)</summary>
 
-- **Mac:** Launchpad, or the Applications folder in Finder. To keep it in the Dock, right-click its icon
-  while it's open › **Options › Keep in Dock**, then open it from there.
-- **Windows:** the Start menu, under *research brain*.
-- **Linux:** your app menu.
+1. Double-click **`research-brain-extension-….zip`** and move the folder it makes into your home folder.
+2. In Chrome, go to `chrome://extensions` and turn on **Developer mode**.
+3. Click **Load unpacked** and choose that folder.
 
-It opens in about a second. The first time, a short tour shows you around. On a Mac, research brain has its
-own window with no title bar: drag the window by the empty space in its top bar, and close it with the
-red button (or **⌘ Q**). Closing the window stops research brain (on Windows and Linux, a few minutes
-after you close it); nothing runs in the background and nothing starts when your computer starts.
+Keep the folder: Chrome loads it from there every time. A university-managed Chrome may not allow Developer mode.
+</details>
 
-### Step 4 (optional): add the Chrome extension
+<details>
+<summary>Using research brain on a Mac</summary>
 
-The extension saves papers, highlights and quotes from web pages (arXiv, journal sites, PDFs open in Chrome)
-straight into research brain. It isn't in the Chrome Web Store; you add it once from a folder:
+- Keep it in the Dock: while it's open, right-click its icon › **Options › Keep in Dock**.
+- The window has no title bar: drag it by the empty space in its top bar, and quit with **⌘ Q**.
+</details>
 
-1. **Get the extension folder.** In the folder you installed from, unzip **`research-brain-extension-….zip`**
-   (Windows: right-click › *Extract All*), and move the folder it makes somewhere permanent that **isn't synced**:
-   your home folder on a Mac, or something like `C:\research brain extension` on Windows, where Documents is often
-   in OneDrive. Chrome loads it from there every time, so don't delete it, and a synced folder may offload it.
-   A university-managed Chrome may not allow Developer mode (step 3); then ask IT, or skip the extension. From a GitHub download or checkout: the **`extension`** folder inside the research brain folder.
-2. In Chrome, go to `chrome://extensions` (type it in the address bar).
-3. Turn on **Developer mode** (the switch in the top right).
-4. Click **Load unpacked** and choose that folder.
-5. Click the puzzle-piece icon in Chrome's toolbar and pin **research_brain**, so its button stays visible.
+### Linux
 
-research brain has to be open for the extension to work: it only talks to research brain on your computer.
-To use it, on a paper's page click the toolbar button and **Save to research_brain**; to clip a passage, select
-it, right-click and choose **Add to research_brain…**; to highlight a page, press **Alt+Shift+A**. After you
-update research brain, replace that folder with the new installer's extension (unzip it over the old one) and
-press the reload arrow on the extension's card in `chrome://extensions`. More in
-[Chrome extension](#chrome-extension-web-clipping).
+1. Unzip it and open a terminal in the folder it makes.
+2. Run `bash install.sh`.
+3. Later, open it from your app menu.
 
-### Step 5 (recommended): free keys for looking papers up
+<details>
+<summary>Add the Chrome extension (optional)</summary>
 
-research brain finds papers, citations and related work through two free services, **OpenAlex** and
-**Semantic Scholar**. Without a key, each one shares a small allowance with lots of other people (OpenAlex:
-everyone on your network; Semantic Scholar: everyone), and when it runs out, adding or searching for papers
-fails with *rate limited* or *couldn't reach*. A free key of your own fixes that. These keys are only for
-looking papers up, not for the AI, and they cost nothing.
+1. Unzip **`research-brain-extension-….zip`** into your home folder.
+2. In Chrome, go to `chrome://extensions` and turn on **Developer mode**.
+3. Click **Load unpacked** and choose that folder.
+</details>
 
-**OpenAlex** (do this one first):
+### After installing
 
-1. Go to [openalex.org](https://openalex.org) and sign up (free; an email is enough).
-2. Open [openalex.org/settings/api](https://openalex.org/settings/api) and copy your API key.
+<details>
+<summary>Using the Chrome extension</summary>
 
-**Semantic Scholar:** open [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key-form)
-and scroll to *Request a Semantic Scholar API Key*. Each person asks for their own key. Semantic Scholar
-favours academic, nonprofit and government requests and reviews each one by hand, so the key comes by email,
-usually after a few days. Here is what to put in each field:
+- research brain has to be open for it to work.
+- Pin **research_brain** from Chrome's puzzle-piece menu.
+- Save a paper: on its page, click the button › **Save to research_brain**.
+- Clip a passage: select it, right-click › **Add to research_brain…**.
+- Highlight a page: **Alt+Shift+A**.
+- After updating research brain, unzip the new extension over the old folder and click reload on its card in
+  `chrome://extensions`.
+
+More in [Chrome extension](#chrome-extension-web-clipping).
+</details>
+
+<details>
+<summary>Installing from GitHub instead</summary>
+
+Click **Code › Download ZIP**, unzip it, and follow the same steps. The extension is the `extension` folder inside.
+</details>
+
+<details>
+<summary>Does it run in the background?</summary>
+
+No. Closing the window stops research brain (on Windows and Linux, a few minutes later), and nothing starts when
+your computer starts.
+</details>
+
+### Free keys for looking papers up (recommended)
+
+Free keys stop *rate limited* errors when adding or searching for papers.
+
+1. **OpenAlex:** sign up at [openalex.org](https://openalex.org), then copy your key from [openalex.org/settings/api](https://openalex.org/settings/api).
+2. **Semantic Scholar:** request a key at [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key-form) (it arrives by email in a few days).
+3. In research brain, paste each key into **Settings › Library settings › Paper lookup** and save.
+
+<details>
+<summary>Why these keys help</summary>
+
+research brain finds papers, citations and related work through OpenAlex and Semantic Scholar. Without a key,
+each one shares a small allowance with lots of other people (OpenAlex: everyone on your network; Semantic
+Scholar: everyone), and when it runs out, adding or searching fails with *rate limited* or *couldn't reach*.
+These keys are only for looking papers up, not for the AI, and they cost nothing. They stay on your computer
+and are sent only to their own service. You can add one now and the other later.
+</details>
+
+<details>
+<summary>What to put in the Semantic Scholar form</summary>
+
+Scroll to *Request a Semantic Scholar API Key*. Each person asks for their own key. Semantic Scholar favours
+academic, nonprofit and government requests and reviews each one by hand.
 
 | Field | What to put |
 | --- | --- |
@@ -159,9 +194,7 @@ Fields: paperId, title, year, authors, abstract, externalIds, venue, publication
 publicationDate, url, citationCount, isOpenAccess, openAccessPdf
 ```
 
-**Then, in research brain:** **Settings › Library settings › Paper lookup**, paste each key into its box and save.
-The keys stay on your computer and are sent only to their own service. You can add one now and the other
-later.
+</details>
 
 ### Add your first papers
 
@@ -195,10 +228,11 @@ What helps most:
 
 - **What you did and what happened** (and what you expected), with a screenshot if it's visual.
 - **Your version**: Settings (the gear) › Library settings › Library tab, or `research-brain --version` in Terminal.
-- **The log** if something failed or wouldn't start: `~/Library/Application Support/research_brain/app.log` on a
-  Mac (Finder › Go › Go to Folder…, paste it), `%APPDATA%\research_brain\app.log` on Windows. Send the last 50 lines
-  or so.
-- **Your computer**: Mac or Windows, and which AI you chose, if any.
+- **The log** if something failed or wouldn't start. Send the last 50 lines or so.
+  - Windows: paste `%APPDATA%\research_brain` into File Explorer's address bar, open `app.log`.
+  - Mac: Finder › Go › Go to Folder…, paste `~/Library/Application Support/research_brain/app.log`.
+  - Linux: `~/.local/share/research_brain/app.log`.
+- **Your computer**: Windows, Mac or Linux, and which AI you chose, if any.
 
 Don't send your library or your API keys: no one needs them to fix a bug.
 
@@ -353,7 +387,7 @@ check for updates by itself.)
 | The AI shows a red dot, or says it isn't signed in | Open Terminal, type the AI's name (`gemini`, `claude`, `copilot`…), sign in, then pick it again in research brain. |
 | *Copilot … is too old* | In Terminal, run `copilot update`. |
 | Not much disk space | research brain needs about 700 MB. After installing, `uv cache clean` in Terminal frees the download cache. Prefer Gemini over Ollama, whose models take several GB. |
-| Adding or searching for papers says *rate limited*, *allowance used up* or *couldn't reach* | The free lookup services are busy (your internet is usually fine). Add your own free keys: see [Step 5](#step-5-recommended-free-keys-for-looking-papers-up). |
+| Adding or searching for papers says *rate limited*, *allowance used up* or *couldn't reach* | The free lookup services are busy (your internet is usually fine). Add your own free keys: see [Free keys](#free-keys-for-looking-papers-up-recommended). |
 | Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **Settings › Library settings › Your documents › Open folder**. |
 
 ## Sharing research brain with others
@@ -375,8 +409,8 @@ The people you share it with don't need GitHub, Python or anything else: one fil
 
 Each person gets their own library on their own computer: nothing is shared between people unless someone
 exports something (a reading list, a `.bib`, a library zip). Each person adds their own AI and their own free
-paper-lookup keys ([Add an AI](#add-an-ai-optional-can-be-free) and [Step 5](#step-5-recommended-free-keys-for-looking-papers-up)). The Chrome extension is in the zip
-as `research-brain-extension-….zip` ([Step 4](#step-4-optional-add-the-chrome-extension)). More detail, including how
+paper-lookup keys ([Add an AI](#add-an-ai-optional-can-be-free) and [Free keys](#free-keys-for-looking-papers-up-recommended)). The Chrome extension is in the zip
+as `research-brain-extension-….zip` ([Install it](#install-it-no-coding-needed)). More detail, including how
 a library-format change is handled: [docs/releasing.md](docs/releasing.md).
 
 ## For developers: more ways to install
