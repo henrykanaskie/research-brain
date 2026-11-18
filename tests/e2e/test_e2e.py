@@ -1023,7 +1023,9 @@ def test_no_dot_sits_on_a_line_that_isnt_its_own(ctx, server):
       // still end with every dot clear
       window.__stops0 = S.stops || 0; rb.fg.cooldownTime(150); rb.fg.d3ReheatSimulation(); }""")
     page.wait_for_function("() => (window.__rb.S.stops || 0) > window.__stops0", timeout=15000)
-    page.wait_for_timeout(200)
+    # and still: the layout can start again (new data arrives) and stop again, each time ending with settle
+    page.wait_for_function("""() => { const S = window.__rb.S, now = JSON.stringify([...S.nodes.values()].map(n => [n.x, n.y]));
+      const same = window.__still === now; window.__still = now; return same; }""", polling=500, timeout=20000)
     worst = page.evaluate("""() => { const rb = window.__rb, S = rb.S; let worst = [Infinity, ''];
       for (const l of S.links) {
         if (l.kind === 'part' || (l.kind === 'similar' && !(S.showSim && l.top && l.score >= S.threshold)) || (l.kind === 'cites' && !S.showCites)) continue;
