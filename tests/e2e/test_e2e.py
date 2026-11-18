@@ -992,10 +992,18 @@ def test_hover_card_pops_out_and_dots_make_room(ctx, server):
 def test_no_dot_sits_on_a_line_that_isnt_its_own(ctx, server):
     clear_vault(server)
     q = api(server, "POST", "/api/notes", {"type": "question", "title": "Why do cross sections matter?"})["id"]
-    linked = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Cross section paper {i}"})["id"] for i in range(8)]
+    # distinct titles: papers that all read alike are joined by similarity lines between every pair, and a hub
+    # in the middle of its papers then has those lines across it wherever it goes; a real library isn't like that
+    topics = ["Electron impact ionization of xenon", "Hollow cathode plume oscillations", "Sputter yield of boron nitride",
+              "Hall thruster wall erosion", "Charge exchange collisions in plumes", "Ion optics grid lifetime",
+              "Magnetic nozzle detachment", "Plasma sheath kinetics near walls"]
+    linked = [api(server, "POST", "/api/notes", {"type": "paper", "title": t})["id"] for t in topics]
     for p in linked:
         api(server, "POST", f"/api/notes/{q}/link", {"target": p})
-    others = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Other paper about thrusters {i}"})["id"] for i in range(8)]
+    others = [api(server, "POST", "/api/notes", {"type": "paper", "title": t})["id"] for t in (
+        "Spacecraft charging in geostationary orbit", "Langmuir probe interpretation", "Vacuum facility backpressure effects",
+        "Propellant feed system design", "Thrust stand calibration methods", "Radiation tolerant power processing",
+        "Mission analysis for orbit raising", "Optical emission spectroscopy diagnostics")]
     for a, b in ((others[0], others[1]), (others[0], linked[3]), (others[2], linked[6])):
         api(server, "POST", f"/api/notes/{a}/link", {"target": b})
     page = open_app(ctx, server)
@@ -1011,8 +1019,9 @@ def test_no_dot_sits_on_a_line_that_isnt_its_own(ctx, server):
         const g = rb.linkGeom(lines[i++ % lines.length]); if (!g) continue;
         n.x = (g.pts[0] + g.pts[g.pts.length - 2]) / 2; n.y = (g.pts[1] + g.pts[g.pts.length - 1]) / 2; n.vx = 0; n.vy = 0;
       }
-      // a short layout clock, like a slow computer gets: the map must still end with every dot clear
-      window.__stops0 = S.stops || 0; rb.fg.cooldownTime(1200); rb.fg.d3ReheatSimulation(); }""")
+      // a very short layout clock, like a slow computer gets (it fails without the final settle): the map must
+      // still end with every dot clear
+      window.__stops0 = S.stops || 0; rb.fg.cooldownTime(150); rb.fg.d3ReheatSimulation(); }""")
     page.wait_for_function("() => (window.__rb.S.stops || 0) > window.__stops0", timeout=15000)
     page.wait_for_timeout(200)
     worst = page.evaluate("""() => { const rb = window.__rb, S = rb.S; let worst = [Infinity, ''];

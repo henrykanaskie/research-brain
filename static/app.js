@@ -1378,16 +1378,15 @@
   /** Every dot in its own space: a line passing over a dot it doesn't connect to pushes that dot sideways, off the
    *  line (the lines are the traces linkGeom draws, so the clearance is measured against what you see). A dot you
    *  placed stays where it is: the line's own ends move a little instead. Not while you drag.
-   *  force.settle() finishes the job when the layout stops: the layout stops on a clock (cooldownTime), so a
-   *  slow computer gets fewer steps and could stop with a dot still on a line; settle moves the dots themselves,
-   *  a few rounds, until every one is clear. Returns whether anything moved. */
+   *  force.settle() finishes the job when the layout stops. The layout stops on a clock (cooldownTime), so a slow
+   *  computer gets fewer steps and can stop with a dot still on a line; and a dot can be caught between lines that
+   *  push it opposite ways (inside a group of similar papers, every pair joined). settle moves each such dot to
+   *  the nearest spot that is clear of every line, of the other dots, and whose own lines then cross no other
+   *  dot. Returns whether anything moved. */
   function edgeClearForce() {
     let nodes = [];
     const MARGIN = 2.2;  // clear space between a dot's edge and a line, in graph units
-    // byPosition: move x/y the whole way out (settle) rather than nudging velocities (a layout step)
-    function pass(byPosition) {
-      if (S.dragging || !nodes.length) return false;
-      let moved = false;
+    const shownLines = () => {
       const geoms = [];
       for (const l of S.links || []) {
         if (l.kind === 'part' || !linkShown(l)) continue;
@@ -1401,24 +1400,35 @@
         }
         geoms.push({ l, P, a: lid(l.source), b: lid(l.target), minx, maxx, miny, maxy });
       }
-      if (!geoms.length) return false;
+      return geoms;
+    };
+    // the nearest point of a trace to (x, y): [distance squared, x, y, segment dx, segment dy]
+    const nearest = (P, x, y) => {
+      let best = Infinity, bx = 0, by = 0, sdx = 1, sdy = 0;
+      for (let i = 0; i + 3 < P.length; i += 2) {
+        const px = P[i], py = P[i + 1], vx = P[i + 2] - px, vy = P[i + 3] - py, len2 = vx * vx + vy * vy;
+        let t = len2 ? ((x - px) * vx + (y - py) * vy) / len2 : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const cx = px + vx * t, cy = py + vy * t, d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+        if (d2 < best) { best = d2; bx = cx; by = cy; sdx = vx; sdy = vy; }
+      }
+      return [best, bx, by, sdx, sdy];
+    };
+    const near = (g, x, y, c) => !(x < g.minx - c || x > g.maxx + c || y < g.miny - c || y > g.maxy + c)
+      && nearest(g.P, x, y)[0] < c * c;
+    const placed = (n) => !!n.__home || n.fx !== undefined;
+
+    function force() {
+      if (S.dragging || !nodes.length) return;
+      const geoms = shownLines();
+      if (!geoms.length) return;
       for (const n of nodes) {
         if (n.type === 'fragment' || !Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
         const clear = nodeRadius(n) + MARGIN;
         for (const g of geoms) {
           if (g.a === n.id || g.b === n.id) continue;
           if (n.x < g.minx - clear || n.x > g.maxx + clear || n.y < g.miny - clear || n.y > g.maxy + clear) continue;
-          // the nearest point of the trace
-          let best = Infinity, bx = 0, by = 0, sdx = 1, sdy = 0;
-          const P = g.P;
-          for (let i = 0; i + 3 < P.length; i += 2) {
-            const px = P[i], py = P[i + 1], qx = P[i + 2], qy = P[i + 3];
-            const vx = qx - px, vy = qy - py, len2 = vx * vx + vy * vy;
-            let t = len2 ? ((n.x - px) * vx + (n.y - py) * vy) / len2 : 0;
-            t = t < 0 ? 0 : t > 1 ? 1 : t;
-            const cx = px + vx * t, cy = py + vy * t, d2 = (n.x - cx) * (n.x - cx) + (n.y - cy) * (n.y - cy);
-            if (d2 < best) { best = d2; bx = cx; by = cy; sdx = vx; sdy = vy; }
-          }
+          const [best, bx, by, sdx, sdy] = nearest(g.P, n.x, n.y);
           if (best >= clear * clear) continue;
           let d = Math.sqrt(best), ux = n.x - bx, uy = n.y - by;
           if (d < 1e-6) {  // right on the line: step off it square to the line, to a side fixed by the dot's id
@@ -1427,26 +1437,70 @@
           } else { ux /= d; uy /= d; }
           // the dot steps off and the line's ends step back, so a dot held by many links (a hub) and the line
           // both give way; a dot you placed doesn't move, so its share goes to the line
-          const placed = n.__home || n.fx !== undefined;
-          const ends = [g.l.source, g.l.target].filter((e) => e && typeof e === 'object' && !e.__home && e.fx === undefined);
-          if (placed && !ends.length) continue;  // nothing here may move
-          const push = byPosition ? clear - d + 0.05 : (clear - d) * 0.3;
-          const lineShare = placed ? 1 : ends.length ? 0.4 : 0;
-          const k = byPosition ? 'x' : 'vx', kk = byPosition ? 'y' : 'vy';
-          // a dot moved by position steps aside the whole way; the line's ends each move its full share, so
-          // the stretch of line next to the dot moves too
-          if (!placed) { n[k] += ux * push * (1 - lineShare); n[kk] += uy * push * (1 - lineShare); }
-          const each = byPosition ? 1 : 1 / ends.length;
-          for (const e of ends) { e[k] -= ux * push * lineShare * each; e[kk] -= uy * push * lineShare * each; }
-          moved = true;
+          const push = (clear - d) * 0.3, mine = placed(n);
+          const ends = [g.l.source, g.l.target].filter((e) => e && typeof e === 'object' && !placed(e));
+          const lineShare = mine ? 1 : ends.length ? 0.4 : 0;
+          if (!mine) { n.vx += ux * push * (1 - lineShare); n.vy += uy * push * (1 - lineShare); }
+          for (const e of ends) { e.vx -= (ux * push * lineShare) / ends.length; e.vy -= (uy * push * lineShare) / ends.length; }
         }
       }
-      return moved;
     }
-    const force = () => { pass(false); };
+
     force.settle = () => {
+      if (S.dragging || !nodes.length) return false;
+      const dots = nodes.filter((n) => n.type !== 'fragment' && Number.isFinite(n.x) && Number.isFinite(n.y));
+      const own = new Map();  // a dot's own lines, which move with it
+      for (const l of S.links || []) {
+        if (l.kind === 'part' || !linkShown(l)) continue;
+        for (const e of [l.source, l.target]) if (e && typeof e === 'object') (own.get(e.id) || own.set(e.id, []).get(e.id)).push(l);
+      }
       let any = false;
-      for (let round = 0; round < 12 && pass(true); round++) any = true;
+      const until = performance.now() + 80;  // a big library on a slow computer: never hold the window up long
+      for (let round = 0; round < 8 && performance.now() < until; round++) {
+        const geoms = shownLines();
+        const onLine = (n, x, y) => {
+          const c = nodeRadius(n) + MARGIN;
+          return geoms.some((g) => g.a !== n.id && g.b !== n.id && near(g, x, y, c));
+        };
+        const stuck = dots.filter((n) => !placed(n) && onLine(n, n.x, n.y));
+        if (!stuck.length) break;
+        let moved = false;
+        for (const n of stuck) {
+          if (performance.now() > until) break;
+          const x0 = n.x, y0 = n.y, r = nodeRadius(n);
+          // how many other dots its own lines touch, drawn from (x, y)
+          const crossed = (x, y) => {
+            n.x = x; n.y = y;
+            let k = 0;
+            for (const l of own.get(n.id) || []) {
+              const g = linkGeom(l);
+              if (!g) continue;
+              const a = lid(l.source), b = lid(l.target);
+              for (const m of dots) if (m.id !== a && m.id !== b && nearest(g.pts, m.x, m.y)[0] < (nodeRadius(m) + 0.5) ** 2) k++;
+            }
+            n.x = x0; n.y = y0;
+            return k;
+          };
+          const already = crossed(x0, y0);
+          const fits = (x, y) => {
+            if (onLine(n, x, y)) return false;
+            for (const m of dots) if (m !== n && Math.hypot(m.x - x, m.y - y) < r + nodeRadius(m) + 0.9) return false;
+            return crossed(x, y) <= already;  // moving it doesn't put its own lines over more dots
+          };
+          // rings out from where it is, nearest first; the first spot that fits wins
+          const turn = (strHash(n.id) % 360) * (Math.PI / 180);
+          let to = null;
+          for (let ring = 1; ring <= 40 && !to; ring++) {
+            const rad = ring * 0.8, steps = Math.max(8, Math.round(rad * 3));
+            for (let i = 0; i < steps && !to; i++) {
+              const t = turn + (i / steps) * Math.PI * 2, x = x0 + Math.cos(t) * rad, y = y0 + Math.sin(t) * rad;
+              if (fits(x, y)) to = [x, y];
+            }
+          }
+          if (to) { n.x = to[0]; n.y = to[1]; n.vx = 0; n.vy = 0; moved = any = true; }
+        }
+        if (!moved) break;
+      }
       return any;
     };
     force.initialize = (ns) => { nodes = ns; };
@@ -1561,8 +1615,8 @@
       .onEngineTick(restoreShiftAfterTick)
       .onEngineStop(() => {
         S.settledOnce = true; S.stops = (S.stops || 0) + 1;
+        releaseTmpPins();  // first: a dot held only until the layout cooled is free to step off a line
         if (fg.d3Force('edgeClear')?.settle?.()) kick();  // a slow computer may stop with a dot still on a line
-        releaseTmpPins();
       })
       .cooldownTime(9000)
       .d3AlphaDecay(0.028)
