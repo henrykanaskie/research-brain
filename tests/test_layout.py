@@ -99,6 +99,7 @@ def test_the_documents_folder(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / "Documents").mkdir(parents=True)
     monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(paths, "documents_folder", lambda: home / "Documents")  # Windows would answer its own
     for k in ("RB_DATA_DIR", "RB_VAULT", "RB_DOCUMENTS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
