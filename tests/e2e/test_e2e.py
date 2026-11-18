@@ -173,7 +173,7 @@ def test_empty_state(ctx, server):
     expect(page.locator("#status .status-text")).to_contain_text("Claude")
     # real, self-hosted fonts are in use
     assert page.evaluate("document.fonts.check('500 13px \"Archivo\"')")
-    assert page.evaluate("document.fonts.check('italic 500 20px \"Bodoni Moda\"')")
+    assert page.evaluate("document.fonts.check('italic 500 20px \"Newsreader\"')")
     assert not page.errors
 
 

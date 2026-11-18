@@ -897,7 +897,7 @@
     const fs = 15.5 * small * px, padX = 8 * small * px, h = 24 * small * px, lh = h + 4 * px;
     // keep tags inside the visible plate
     const vtl = fg.screen2GraphCoords(0, 0), vbr = fg.screen2GraphCoords(graphEl.clientWidth, graphEl.clientHeight);
-    const nameFont = `italic 500 ${fs}px "Bodoni Moda", Didot, Georgia, serif`;
+    const nameFont = `italic 500 ${fs}px "Newsreader", Georgia, serif`;
     const numFont = `500 ${10.5 * small * px}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
     for (const r of S.regionLabels) {
       r.box = null;
@@ -1929,7 +1929,7 @@
       const big = sel;
       const fs = (big ? 14 : 10.5) * px;
       ctx.save();
-      ctx.font = big ? `italic 500 ${fs}px "Bodoni Moda", Didot, Georgia, serif`
+      ctx.font = big ? `italic 500 ${fs}px "Newsreader", Georgia, serif`
         : `500 ${fs}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
       if ('fontStretch' in ctx) ctx.fontStretch = big ? 'normal' : 'semi-condensed';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
@@ -1994,7 +1994,7 @@
   }
   const CARD_FONT = {
     kick: '600 9.5px "Archivo", -apple-system, "Segoe UI", sans-serif',
-    title: 'italic 500 15px "Bodoni Moda", Didot, Georgia, serif',
+    title: 'italic 500 15px "Newsreader", Georgia, serif',
     by: '500 11.5px "Archivo", -apple-system, "Segoe UI", sans-serif',
   };
   /** The card's text, measured in screen pixels (cached: it only changes with the dot's details). */

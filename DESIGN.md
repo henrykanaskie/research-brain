@@ -106,14 +106,14 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
   means you have written about the note.
 - Field: plain `--ground`, no pattern. Fine measuring ticks run along the top and left edges of the
   plate and move with pan and zoom.
-- Regions: Bodoni Moda italic names with the member count in small Archivo, placed above the region,
+- Regions: Newsreader italic names with the member count in small Archivo, placed above the region,
   no outlines or fills.
-- Selection: a hairline reticle (circle and four ticks); the label switches to Bodoni italic.
+- Selection: a hairline reticle (circle and four ticks); the label switches to Newsreader italic.
 - Motion: one signal per click along the traces, optional quiet ambient signals; off under
   prefers-reduced-motion.
 
 ## Type (current; supersedes "Type" above)
-- Bodoni Moda (variable, optical size): wordmark, paper titles, region names, drawer and dialog titles.
+- Newsreader (variable, optical size): wordmark, paper titles, region names, drawer and dialog titles.
 - Archivo (variable width): all interface text; labels and controls at 88% width.
 - STIX Two Text: reading text (abstracts, summaries, notes, Claude's answers), because it matches KaTeX.
 - Tokens: `--ground #EEEFEB` vellum, `--sheet #F7F7F4`, `--ink #15181B`, `--ink-2 #61676C`, `--ink-3 #9A9EA0`,
@@ -153,7 +153,7 @@ view is a full sheet like Memory: a hairline-ruled table, sortable headers, tabu
 
 ## Open questions (static/questions.js)
 A question is the user's own thinking, so it carries the red pen: a small red diamond as its type dot, the
-question itself as the panel title in italic Bodoni (display serif), and *Your answer* behind the 2px `--red`
+question itself as the panel title in italic Newsreader (display serif), and *Your answer* behind the 2px `--red`
 margin rule with a live KaTeX preview. Evidence is source material: STIX snippets in `--ink-2`, the source title
 in STIX `--ink`, its p. / § link in `--machine`, the local similarity as a small tabular number in `--ink-3`.
 Kept evidence gets a 2px inset rule by verdict: supports `--moss`, against `--red`, related `--violet`;

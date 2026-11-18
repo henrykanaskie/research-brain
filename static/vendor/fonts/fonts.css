@@ -50,16 +50,16 @@
 }
 
 /* Display and interface faces (2026-11 redesign), from @fontsource-variable 5, SIL OFL 1.1.
-   Bodoni Moda: paper titles, region names, the wordmark (variable weight + optical size).
+   Newsreader: paper titles, region names, the wordmark (variable weight + optical size).
    Archivo: all interface text (variable weight + width; labels use a narrower width). */
 @font-face {
-  font-family: 'Bodoni Moda'; font-style: normal; font-display: swap; font-weight: 400 900;
-  src: url(./bodoni-moda-latin-opsz-normal.woff2) format('woff2-variations');
+  font-family: 'Newsreader'; font-style: normal; font-display: swap; font-weight: 200 800;
+  src: url(./newsreader-latin-opsz-normal.woff2) format('woff2-variations');
   unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
 }
 @font-face {
-  font-family: 'Bodoni Moda'; font-style: italic; font-display: swap; font-weight: 400 900;
-  src: url(./bodoni-moda-latin-opsz-italic.woff2) format('woff2-variations');
+  font-family: 'Newsreader'; font-style: italic; font-display: swap; font-weight: 200 800;
+  src: url(./newsreader-latin-opsz-italic.woff2) format('woff2-variations');
   unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
 }
 @font-face {

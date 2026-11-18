@@ -287,7 +287,7 @@ body {{ margin:0; min-height:100vh; background:var(--ground); color:var(--ink); 
   padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }}
 main {{ width:min(440px,100%); }}
 img {{ width:44px; height:38px; display:block; margin-bottom:28px; }}
-h1 {{ font:italic 500 34px/1.1 "Bodoni Moda","Didot",Georgia,serif; margin:0 0 14px; letter-spacing:-.01em; }}
+h1 {{ font:italic 500 34px/1.1 "Newsreader",Georgia,serif; margin:0 0 14px; letter-spacing:-.01em; }}
 p {{ color:var(--ink-2); margin:0 0 14px; }}
 .mark {{ border-left:2px solid var(--red); padding-left:14px; }}
 label {{ display:block; font-size:14px; color:var(--ink-2); margin:22px 0 6px; }}
