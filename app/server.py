@@ -621,9 +621,14 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
     by_id = idx["by_id"]
     tops = sorted(i for i, n in by_id.items() if n["type"] != "fragment")
     thr = 0.12 if embedder.kind == "tfidf" else 0.42
+    neighbours, q_idx = idx["neighbours"], idx
+    centred = _centred_neighbours(idx, tops)
+    if centred is not None:  # a neural model: compare papers by what sets them apart (see the helper)
+        neighbours, mc = centred
+        thr, q_idx = 0.15, {**idx, "m": mc}
     adj: dict[str, dict[str, float]] = {i: {} for i in tops}
     for i in tops:
-        for j, s in idx["neighbours"].get(i, []):
+        for j, s in neighbours.get(i, []):
             if j in adj and s >= thr:
                 adj[i][j] = max(adj[i].get(j, 0), s)
                 adj[j][i] = max(adj[j].get(i, 0), s)
@@ -655,7 +660,7 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
                     adj[a][b] = adj[a].get(b, 0) + 1.0
     # open questions: a question gathers the papers that match it (and the evidence you kept for it), so
     # papers you found for a question group with it and with each other on the map
-    for q, ps in _question_ties(idx, thr).items():
+    for q, ps in _question_ties(q_idx, thr).items():
         if q not in adj:
             continue
         for p, w in ps:
@@ -698,6 +703,38 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
     clusters = [{"id": cid, "label": names[cid], "size": len(g), "near": near.get(cid, [])} for cid, g in enumerate(ordered)]
     idx["_sub_of"] = _subclusters(ordered, adj, by_id)
     return cluster_of, clusters
+
+
+def _centred_neighbours(idx: dict, tops: list[str]):
+    """For regions with a neural embedding model: every note's embedding minus the library's average,
+    re-normalised, then the top 8 neighbours by cosine. A library in one field (all plasma physics, say)
+    has neural similarities that are nearly all high, so plain thresholds chain every paper into one region;
+    taking away what the whole library shares leaves what sets each paper apart. TF-IDF already discounts
+    shared words, and with fewer than 6 notes an average says little, so those keep the plain neighbours.
+    Returns (neighbours, centred matrix in idx["ids"] order) or None."""
+    ids, m = idx.get("ids") or [], idx.get("m")
+    if embedder.kind == "tfidf" or m is None or len(tops) < 6:
+        return None
+    try:
+        M = np.asarray(m, dtype=float)
+        pos = {i: k for k, i in enumerate(ids)}
+        rows = [pos[i] for i in tops if i in pos]
+        if len(rows) < 6:
+            return None
+        mc = M - M[rows].mean(axis=0)
+        mc /= np.linalg.norm(mc, axis=1, keepdims=True) + 1e-12
+    except Exception:
+        return None
+    by_id = idx["by_id"]
+    sims = mc[rows] @ mc[rows].T
+    roots = np.array([hash(_root(by_id[ids[r]])) for r in rows])
+    sims = np.where(roots[:, None] == roots[None, :], -1.0, sims)  # a note's own family isn't "similar"
+    k = min(8, len(rows) - 1)
+    out: dict[str, list[tuple[str, float]]] = {}
+    for a, r in enumerate(rows):
+        order = np.argsort(-sims[a], kind="stable")[:k]
+        out[ids[r]] = [(ids[rows[c]], float(min(1.0, sims[a, c]))) for c in order if sims[a, c] > 0.01]
+    return out, mc
 
 
 def _region_affinity(ordered: list[list[str]], adj: dict) -> dict[int, list[list]]:
