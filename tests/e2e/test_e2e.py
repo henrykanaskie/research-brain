@@ -1011,8 +1011,10 @@ def test_no_dot_sits_on_a_line_that_isnt_its_own(ctx, server):
         const g = rb.linkGeom(lines[i++ % lines.length]); if (!g) continue;
         n.x = (g.pts[0] + g.pts[g.pts.length - 2]) / 2; n.y = (g.pts[1] + g.pts[g.pts.length - 1]) / 2; n.vx = 0; n.vy = 0;
       }
-      rb.fg.d3ReheatSimulation(); }""")
-    page.wait_for_timeout(6000)
+      // a short layout clock, like a slow computer gets: the map must still end with every dot clear
+      window.__stops0 = S.stops || 0; rb.fg.cooldownTime(1200); rb.fg.d3ReheatSimulation(); }""")
+    page.wait_for_function("() => (window.__rb.S.stops || 0) > window.__stops0", timeout=15000)
+    page.wait_for_timeout(200)
     worst = page.evaluate("""() => { const rb = window.__rb, S = rb.S; let worst = [Infinity, ''];
       for (const l of S.links) {
         if (l.kind === 'part' || (l.kind === 'similar' && !(S.showSim && l.top && l.score >= S.threshold)) || (l.kind === 'cites' && !S.showCites)) continue;

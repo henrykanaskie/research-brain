@@ -1377,12 +1377,17 @@
   }
   /** Every dot in its own space: a line passing over a dot it doesn't connect to pushes that dot sideways, off the
    *  line (the lines are the traces linkGeom draws, so the clearance is measured against what you see). A dot you
-   *  placed stays where it is: the line's own ends move a little instead. Not while you drag. */
+   *  placed stays where it is: the line's own ends move a little instead. Not while you drag.
+   *  force.settle() finishes the job when the layout stops: the layout stops on a clock (cooldownTime), so a
+   *  slow computer gets fewer steps and could stop with a dot still on a line; settle moves the dots themselves,
+   *  a few rounds, until every one is clear. Returns whether anything moved. */
   function edgeClearForce() {
     let nodes = [];
     const MARGIN = 2.2;  // clear space between a dot's edge and a line, in graph units
-    function force() {
-      if (S.dragging || !nodes.length) return;
+    // byPosition: move x/y the whole way out (settle) rather than nudging velocities (a layout step)
+    function pass(byPosition) {
+      if (S.dragging || !nodes.length) return false;
+      let moved = false;
       const geoms = [];
       for (const l of S.links || []) {
         if (l.kind === 'part' || !linkShown(l)) continue;
@@ -1396,7 +1401,7 @@
         }
         geoms.push({ l, P, a: lid(l.source), b: lid(l.target), minx, maxx, miny, maxy });
       }
-      if (!geoms.length) return;
+      if (!geoms.length) return false;
       for (const n of nodes) {
         if (n.type === 'fragment' || !Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
         const clear = nodeRadius(n) + MARGIN;
@@ -1422,15 +1427,28 @@
           } else { ux /= d; uy /= d; }
           // the dot steps off and the line's ends step back, so a dot held by many links (a hub) and the line
           // both give way; a dot you placed doesn't move, so its share goes to the line
-          const push = (clear - d) * 0.3;
           const placed = n.__home || n.fx !== undefined;
           const ends = [g.l.source, g.l.target].filter((e) => e && typeof e === 'object' && !e.__home && e.fx === undefined);
+          if (placed && !ends.length) continue;  // nothing here may move
+          const push = byPosition ? clear - d + 0.05 : (clear - d) * 0.3;
           const lineShare = placed ? 1 : ends.length ? 0.4 : 0;
-          if (!placed) { n.vx += ux * push * (1 - lineShare); n.vy += uy * push * (1 - lineShare); }
-          for (const e of ends) { e.vx -= (ux * push * lineShare) / ends.length; e.vy -= (uy * push * lineShare) / ends.length; }
+          const k = byPosition ? 'x' : 'vx', kk = byPosition ? 'y' : 'vy';
+          // a dot moved by position steps aside the whole way; the line's ends each move its full share, so
+          // the stretch of line next to the dot moves too
+          if (!placed) { n[k] += ux * push * (1 - lineShare); n[kk] += uy * push * (1 - lineShare); }
+          const each = byPosition ? 1 : 1 / ends.length;
+          for (const e of ends) { e[k] -= ux * push * lineShare * each; e[kk] -= uy * push * lineShare * each; }
+          moved = true;
         }
       }
+      return moved;
     }
+    const force = () => { pass(false); };
+    force.settle = () => {
+      let any = false;
+      for (let round = 0; round < 12 && pass(true); round++) any = true;
+      return any;
+    };
     force.initialize = (ns) => { nodes = ns; };
     return force;
   }
@@ -1541,7 +1559,11 @@
         if (performance.now() > animUntil && !pulses.length) fg.autoPauseRedraw(true);
       })
       .onEngineTick(restoreShiftAfterTick)
-      .onEngineStop(() => { S.settledOnce = true; releaseTmpPins(); })
+      .onEngineStop(() => {
+        S.settledOnce = true; S.stops = (S.stops || 0) + 1;
+        if (fg.d3Force('edgeClear')?.settle?.()) kick();  // a slow computer may stop with a dot still on a line
+        releaseTmpPins();
+      })
       .cooldownTime(9000)
       .d3AlphaDecay(0.028)
       .d3VelocityDecay(0.38)
