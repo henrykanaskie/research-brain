@@ -198,47 +198,62 @@ publicationDate, url, citationCount, isOpenAccess, openAccessPdf
 
 ### Add your first papers
 
-Drag PDFs onto the window, or click **Add** and paste a DOI, an arXiv link or a paper's title. research
-brain fills in the authors, year and journal, and looks for a free legal copy of the PDF. Then click a
-paper on the map to read it, highlight it and write about it.
+1. Drag PDFs onto the window, or click **Add** and paste a DOI, arXiv link or title.
+2. Click a paper on the map to read, highlight and write about it.
+
+<details>
+<summary>What happens when you add a paper</summary>
+
+research brain fills in the authors, year and journal, and looks for a free legal copy of the PDF.
+</details>
 
 ### Your first ten minutes
 
-A quick tour of what research brain is for. (The app's own tour, *Help: quick tour* in the command palette, ⌘K,
-points at the same things.)
+1. **Add three or four papers you know.** Papers about the same thing gather into a named region.
+2. **Click a dot** and highlight a passage in its PDF (**Open in viewer**).
+3. **Write a short summary**, then click **Critique my summary** (needs an AI).
+4. **Link two papers** in the panel's **Links** box, or right-click a dot.
+5. **Make a topic** from **Topics** at the top, and add papers to it.
+6. **Ask** (top right) a question about your papers.
+7. **Cite** with **Alt+C**.
 
-1. **Add three or four papers you know** (drag the PDFs onto the window, or **Add** › paste a DOI or arXiv link). Each
-   becomes a dot; papers about the same thing gather into a named region.
-2. **Click a dot.** The side panel opens: read the abstract, open the PDF (**Open in viewer**), and highlight a
-   passage there: it becomes a red *fragment* on the paper.
-3. **Write two or three sentences of summary** in your own words, then **Critique my summary** (needs an AI, see
-   below): it checks your summary against the paper.
-4. **Link two papers** that you think belong together (the **Links** box in the panel, or right-click a dot). Drag a
-   dot where you want it; linked dots come along.
-5. **Make a topic** (**Topics** at the top) and add papers to it; it keeps a *Next to read* list for you.
-6. **Ask** (top right): **Library** answers from all your papers, **Topics…** from the papers in the topics you pick,
-   **General** is the agent on its own (attach papers or notes if you like). Answers cite pages you can click.
-7. **Cite**: Alt+C, pick papers, *Copy \cite{…}* or *Copy BibTeX* for LaTeX, *Copy bibliography* for Word.
+<details>
+<summary>More on each step</summary>
 
-Then explore: the gear (top right) has Library settings in tabs with a search box, and **?** lists every shortcut.
+- The app's own tour is *Help: quick tour* in the command palette (⌘K).
+- A highlight becomes a red *fragment* on the paper.
+- A critique checks your summary against the paper.
+- Drag a dot where you want it; linked dots come along.
+- A topic keeps a *Next to read* list for you.
+- **Ask › Library** answers from all your papers, **Topics…** from the topics you pick, and **General** is the agent
+  on its own (attach papers or notes if you like). Answers cite pages you can click.
+- **Cite:** pick papers, then *Copy \cite{…}* or *Copy BibTeX* for LaTeX, or *Copy bibliography* for Word.
+- The gear (top right) has Library settings in tabs with a search box, and **?** lists every shortcut.
+</details>
 
 ### Reporting a problem
 
-What helps most:
+Send what you did, what happened, a screenshot, your version and the end of the log.
 
-- **What you did and what happened** (and what you expected), with a screenshot if it's visual.
-- **Your version**: Settings (the gear) › Library settings › Library tab, or `research-brain --version` in Terminal.
-- **The log** if something failed or wouldn't start. Send the last 50 lines or so.
+<details>
+<summary>Where to find your version and the log</summary>
+
+- **Version:** Settings (the gear) › Library settings › Library tab, or `research-brain --version` in Terminal.
+- **Log** (send the last 50 lines or so):
   - Windows: paste `%APPDATA%\research_brain` into File Explorer's address bar, open `app.log`.
   - Mac: Finder › Go › Go to Folder…, paste `~/Library/Application Support/research_brain/app.log`.
   - Linux: `~/.local/share/research_brain/app.log`.
-- **Your computer**: Windows, Mac or Linux, and which AI you chose, if any.
-
-Don't send your library or your API keys: no one needs them to fix a bug.
+- Also say Windows, Mac or Linux, and which AI you chose, if any.
+- Don't send your library or your API keys: no one needs them to fix a bug.
+</details>
 
 ## Where your things are
 
-Everything you keep is an ordinary file on your computer, in **Documents › research brain**:
+Your library is ordinary files in **Documents › research brain**. To open it from the app: **Settings › Library
+settings › Your documents › Open folder**.
+
+<details>
+<summary>What's in the folder</summary>
 
 ```
 research brain/
@@ -251,167 +266,232 @@ research brain/
 ```
 
 The documents are Markdown, so they open in any text editor (and the folder opens in Obsidian). Each is
-named after its title and follows it when you rename it. To see the folder from the app: **Settings › Library
-settings › Your documents › Open folder**. (A second profile gets its own *research brain (name)* folder.)
+named after its title and follows it when you rename it. A second profile gets its own *research brain (name)*
+folder.
+</details>
 
 ### Folders of papers you already have (kept where they are)
 
-If you already keep PDFs in folders, say *OneDrive › Research* with a subfolder per project, add those
-folders instead of importing copies: **Add › Add folders of papers** (or **Library settings › Folders of
-papers**). research brain links to each PDF where it is. It never moves, renames, changes or deletes a file
-there, and stores no second copy.
+1. Click **Add › Add folders of papers** (or **Library settings › Folders of papers**).
+2. Choose your folders, check the topic names, and confirm.
 
-- **Each folder becomes a topic**, named after the folder (*Research/Plasma/Sheaths/x.pdf* goes in
-  *Sheaths*). Before anything is added you see every folder with its PDF count and topic name: change a
-  name, clear it to leave that folder out of topics, or **Suggest names with AI** (it sends your AI the folder
-  and file names only; nothing is downloaded or read for that). Two folders given the same name share a
-  topic, and a name you already use joins that topic.
-- **It keeps up.** The folders are checked when the app starts and every 10 minutes (or **Check now**): a PDF
-  you drop in is added to its folder's topic, and a new subfolder becomes a new topic. A PDF you move to
-  another folder keeps its paper, notes and highlights and moves to that folder's topic.
-- **Deleting.** Deleting a paper in research brain leaves its PDF in your folder and doesn't add it back. A
-  PDF you delete from the folder leaves its paper in the library, without the PDF. **Stop following** a
-  folder keeps its papers, without their PDFs.
-- **Every paper's full text, without filling your disk.** Each PDF is read once when it's added, for its text
-  and its DOI or arXiv id, so search, Ask and Research see the whole paper. A PDF that is online only in OneDrive
-  is downloaded, read and sent straight back to online only before the next one: only one PDF is on your
-  computer at a time, and what stays is its text, about 2% of its size (5 GB of PDFs leaves about 100 MB). Expect
-  2 to 5 seconds a paper the first time, mostly download; after that, nothing is downloaded until you open a PDF.
-  If a Mac can't send them back, reading pauses once 500 MB is held and asks you to right-click the folder ›
-  *Free up space*; it goes on by itself. With no room even for one PDF, a paper waits (named from its file name)
-  and is read when there's room, or as soon as you open it or ask about it. The same PDF in two folders is one
-  paper in both topics.
-- **Progress.** A large import shows a gauge in the bottom-right corner: how many are done, the time left, the
-  file being read, and Stop. Make it smaller with –; it keeps going while you work.
+research brain links to each PDF where it is, and never moves, renames, changes or deletes a file there.
+
+<details>
+<summary>Topics from folders</summary>
+
+Each folder becomes a topic named after it (*Research/Plasma/Sheaths/x.pdf* goes in *Sheaths*). Before anything
+is added you see every folder with its PDF count and topic name: change a name, clear it to leave that folder out
+of topics, or **Suggest names with AI** (it sends your AI the folder and file names only). Two folders given the
+same name share a topic, and a name you already use joins that topic.
+</details>
+
+<details>
+<summary>Keeping up with new and moved PDFs</summary>
+
+The folders are checked when the app starts and every 10 minutes (or **Check now**). A PDF you drop in is added
+to its folder's topic, and a new subfolder becomes a new topic. A PDF you move to another folder keeps its paper,
+notes and highlights and moves to that folder's topic.
+</details>
+
+<details>
+<summary>Deleting papers or PDFs</summary>
+
+Deleting a paper in research brain leaves its PDF in your folder and doesn't add it back. A PDF you delete from
+the folder leaves its paper in the library, without the PDF. **Stop following** a folder keeps its papers,
+without their PDFs.
+</details>
+
+<details>
+<summary>OneDrive online-only files and disk space</summary>
+
+Each PDF is read once when it's added, for its text and its DOI or arXiv id, so search, Ask and Research see the
+whole paper. A PDF that is online only in OneDrive is downloaded, read and sent straight back to online only
+before the next one: only one PDF is on your computer at a time, and what stays is its text, about 2% of its size
+(5 GB of PDFs leaves about 100 MB). Expect 2 to 5 seconds a paper the first time; after that, nothing is
+downloaded until you open a PDF.
+
+If a Mac can't send them back, reading pauses once 500 MB is held and asks you to right-click the folder ›
+*Free up space*; it goes on by itself. With no room even for one PDF, a paper waits (named from its file name)
+and is read when there's room, or as soon as you open it or ask about it. The same PDF in two folders is one
+paper in both topics.
+
+A large import shows a gauge in the bottom-right corner: how many are done, the time left, the file being read,
+and Stop. Make it smaller with the minus button; it keeps going while you work.
+</details>
 
 ### Short on disk space? Keep your PDFs in OneDrive
 
-PDFs are what fill a disk; your notes take very little. OneDrive can keep the PDFs online and download each one
-only when you open it. You need the OneDrive app (built into Windows 10 and 11; on a Mac, free from the App Store).
+1. Sign in to the OneDrive app (built into Windows; free from the App Store on a Mac).
+2. In **Library settings › Papers folder**, move it into OneDrive, such as *OneDrive › research brain PDFs*.
+3. Right-click that folder › **Free up space**.
+4. Windows only: tick **Keep new PDFs online only** under the papers folder.
 
-1. Sign in to OneDrive. On a Mac, check that its settings keep files online-only until you open them (recent
-   macOS versions always do).
-2. In research brain, **Library settings › Papers folder**: move it to a folder inside OneDrive, such as
-   *OneDrive › research brain PDFs*. Your PDFs move there.
-3. Right-click that folder (Finder or File Explorer) › **Free up space**. A cloud icon means a file is online
-   only.
-4. New PDFs: on **Windows**, tick **Keep new PDFs online only** under the papers folder. Every PDF you add
-   (dropped in, by DOI, from the browser extension, from Zotero) is saved into the OneDrive folder, and OneDrive
-   frees it from the PC as soon as it has uploaded it. On a **Mac** there's no such switch: a new PDF stays on
-   the Mac until macOS frees it on its own when the disk runs low, or until you use Free up space again.
+<details>
+<summary>How it works</summary>
 
-A PDF then downloads when you open it in the viewer or highlight in it, and needs the internet the first time.
-Everything else (the map, the panel, search, Ask) works from your notes and from the text research brain read
-out of each PDF when you added it, so nothing else is downloaded: research brain never reads an online-only
-file on its own. iCloud Drive and Dropbox's online-only files work the same way.
+PDFs are what fill a disk; your notes take very little. A cloud icon means a file is online only. A PDF downloads
+when you open it in the viewer or highlight in it, and needs the internet the first time. Everything else (the
+map, the panel, search, Ask) works from your notes and from the text read out of each PDF when you added it:
+research brain never reads an online-only file on its own. iCloud Drive and Dropbox's online-only files work the
+same way.
 
-On Windows, OneDrive often backs up your Documents folder, so *Documents › research brain* may already be in
-OneDrive. That's fine; free up space on the PDFs folder only, not on your notes.
+- **Windows:** with **Keep new PDFs online only** on, every PDF you add (dropped in, by DOI, from the extension,
+  from Zotero) is freed from the PC as soon as OneDrive has uploaded it.
+- **Mac:** check that OneDrive keeps files online-only until you open them (recent macOS versions always do).
+  There's no switch for new PDFs: one stays on the Mac until macOS frees it when the disk runs low, or until you
+  use Free up space again.
+- OneDrive often backs up Documents on Windows, so *Documents › research brain* may already be in OneDrive. That's
+  fine; free up space on the PDFs folder only, not on your notes.
+</details>
 
-**When the disk is nearly full.** research brain always leaves 300 MB free: it refuses to add a PDF that would
-go past that, and says how much space is left. If the disk fills up anyway (another program), saving answers
-with a clear message instead of failing silently, and nothing is half-written: your notes stay as they were.
-Below 1 GB free, the app warns you, with a button to the papers folder setting.
+<details>
+<summary>When the disk is nearly full</summary>
+
+research brain always leaves 300 MB free: it refuses to add a PDF that would go past that, and says how much space
+is left. If the disk fills up anyway, saving answers with a clear message, and nothing is half-written. Below 1 GB
+free, the app warns you, with a button to the papers folder setting.
+</details>
 
 ## Add an AI (optional, can be free)
 
-Everything works without an AI: your library and its map, PDFs and highlights, notes, links, tags and
-topics, search, similar papers, citations and exporting a bibliography. An AI adds: critiques of your
-summaries, explanations of why two papers are connected, summaries, and **Ask your library** (questions
-answered from your papers, with page numbers).
+An AI adds summary critiques, explanations of links, and **Ask your library**. Everything else works without one.
 
-research brain doesn't sell or include an AI. It uses one you install and sign in to yourself, so it costs
-whatever that AI costs you, which can be nothing:
+| Option | Cost |
+| --- | --- |
+| **Gemini CLI** (recommended) | free with a Google account, within a daily limit |
+| **Ollama** or **LM Studio** | free and offline, but needs a powerful computer |
+| **GitHub Copilot CLI** | small free monthly allowance (version 1.0.109 or newer) |
+| Claude Code, Codex CLI, Cursor | your existing Claude, ChatGPT or Cursor plan |
 
-| Option | Cost | Good to know |
-| --- | --- | --- |
-| **Gemini CLI** (recommended free option) | free with a personal Google account, within a daily limit (about 1,000 requests a day per Google's docs at the time of writing) | the easiest free one; good answers |
-| **Ollama** or **LM Studio** | free, and works offline | needs a fairly powerful computer and several GB per model; answers are weaker |
-| **GitHub Copilot CLI** | GitHub's free Copilot plan has a small monthly allowance; paid plans more | needs version 1.0.109 or newer |
-| Claude Code, Codex CLI, Cursor | your Claude, ChatGPT or Cursor plan | use them if you already pay for one |
+<details>
+<summary>More about the options</summary>
 
-Free plans and their limits change; check the provider's current terms.
+- Without an AI you still get your library and its map, PDFs and highlights, notes, links, tags and topics,
+  search, similar papers, citations and bibliographies.
+- research brain doesn't sell or include an AI: it uses one you install and sign in to yourself.
+- Gemini's free limit was about 1,000 requests a day per Google's docs at the time of writing. It's the easiest
+  free option, with good answers.
+- Ollama and LM Studio models take several GB each, and their answers are weaker.
+- Free plans and their limits change; check the provider's current terms.
+- To keep usage low, research brain sends only the passages a question needs (*Balanced* in **Library settings ›
+  AI usage**), and never calls the AI in the background.
+</details>
 
 ### Setting up Gemini (free)
 
-1. **Install Node.js:** go to [nodejs.org](https://nodejs.org), download the **LTS** installer for your
-   computer and run it (click through with the defaults).
-2. **Install Gemini:** open Terminal (Mac: Finder › **Applications › Utilities › Terminal**; Windows: Start menu › *Terminal*
-   or *PowerShell*), type the line below and press Return:
+1. Install the **LTS** version of Node.js from [nodejs.org](https://nodejs.org).
+2. In a terminal, run `npm install -g @google/gemini-cli`.
+3. Run `gemini`, choose **Sign in with Google**, then type `/quit` when it's ready.
+4. In research brain, click the AI name in the top bar and pick **Gemini CLI**.
 
-   ```
-   npm install -g @google/gemini-cli
-   ```
+<details>
+<summary>Help with these steps</summary>
 
-   On a Mac, if it says *permission denied*, type `sudo ` in front of it, press Return and enter your Mac
-   password (nothing shows while you type it).
-3. **Sign in once:** in the same window type `gemini`, press Return, choose **Sign in with Google**, and
-   follow the browser page. When Gemini says it's ready, type `/quit` and close the window.
-4. **Choose it in research brain:** click the AI name in research brain's top bar (or **Settings › Library
-   settings › AI agent**) and pick **Gemini CLI**. A green dot means it's ready.
-
-To keep usage low, research brain sends an AI only the passages a question needs (the *Balanced* setting
-in **Library settings › AI usage**), and nothing ever calls the AI in the background.
+- **Opening a terminal:** Windows: Start menu › *Terminal* or *PowerShell*. Mac: Finder › Applications › Utilities ›
+  Terminal.
+- **Mac, *permission denied*:** put `sudo ` in front of the npm line and enter your Mac password (nothing shows
+  while you type it).
+- Signing in opens a browser page; follow it.
+- The AI choice is also in **Settings › Library settings › AI agent**. A green dot means it's ready.
+</details>
 
 ## Updating
 
-When there's a newer version, download its **research-brain-installer-….zip**, unzip it, and run the installer
-again, the same way as the first time. It replaces the app and never touches your library. (research brain doesn't
-check for updates by itself.)
+Download the newer installer zip, unzip it, and run its installer the same way as the first time.
+
+<details>
+<summary>More about updating</summary>
+
+It replaces the app and never touches your library. If research brain is open, the installer closes it first.
+research brain doesn't check for updates by itself.
+</details>
 
 ## Uninstalling
 
-1. Mac: quit research brain. In Terminal, run `research-brain install-app --remove` (removes the app from
-   Applications), then `uv tool uninstall research-brain` (removes the program, about 175 MB). Windows:
-   the same two lines in PowerShell. The installer tool, uv, and its Python (about 100 MB together) stay,
-   as other programs may use them; uv's own documentation says how to remove them.
-2. Your library is kept, in case you reinstall. To delete it too, delete **Documents › research brain**
-   (your papers, notes and PDFs) and the app's data folder:
-   `~/Library/Application Support/research_brain` on a Mac (in Finder: **Go › Go to Folder…** and paste
-   it), `%APPDATA%\research_brain` on Windows (paste it into File Explorer's address bar),
-   `~/.local/share/research_brain` on Linux. **This deletes your notes and PDFs.**
-3. Optional: `uv cache clean` frees the installer's download cache.
+1. Quit research brain.
+2. In Terminal (PowerShell on Windows), run `research-brain install-app --remove`.
+3. Then run `uv tool uninstall research-brain`.
+
+Your library is kept, in case you reinstall.
+
+<details>
+<summary>Delete your library too</summary>
+
+**This deletes your notes and PDFs.** Delete **Documents › research brain** and the app's data folder:
+
+- Windows: `%APPDATA%\research_brain` (paste it into File Explorer's address bar).
+- Mac: `~/Library/Application Support/research_brain` (Finder › Go › Go to Folder…).
+- Linux: `~/.local/share/research_brain`.
+</details>
+
+<details>
+<summary>What stays behind</summary>
+
+The first command removes the app from your Applications or Start menu; the second removes the program (about
+175 MB). The installer tool, uv, and its Python (about 100 MB together) stay, as other programs may use them; uv's
+own documentation says how to remove them. `uv cache clean` frees the installer's download cache.
+</details>
 
 ## If something goes wrong
 
 | What you see | What to do |
 | --- | --- |
-| The Mac won't open the installer | See the note under "On a Mac" above: **Open Anyway**, or the Terminal way. |
 | *Windows protected your PC* | Click **More info**, then **Run anyway**. |
-| The installer stops with an error | Keep the window open and take a screenshot; send it to whoever helps you. Running the installer again is always safe. |
-| Windows: *The installer can't find its other files* | It was opened from inside the zip. Right-click the zip › **Extract All…**, then run the installer from the folder that makes. |
-| An antivirus or IT policy blocks the installer (common on university-managed PCs) | The installer downloads uv, Astral's Python installer, with a PowerShell command, which some antivirus tools flag. Ask IT to allow it, or install uv yourself from [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/) and run the installer again. |
-| Updating says the update *didn't take* | research brain was still running. Close its window, wait a minute, and run the installer again (it also tries to close it for you). |
-| The app doesn't open, or opens and closes | Open the log: in Finder **Go › Go to Folder…** and paste `~/Library/Application Support/research_brain/app.log` (Windows: `%APPDATA%\research_brain\app.log`). The last lines say why. |
-| The first start after installing is slow | Normal once: the computer checks the newly installed files the first time. Later starts take about a second. |
-| The AI shows a red dot, or says it isn't signed in | Open Terminal, type the AI's name (`gemini`, `claude`, `copilot`…), sign in, then pick it again in research brain. |
-| *Copilot … is too old* | In Terminal, run `copilot update`. |
-| Not much disk space | research brain needs about 700 MB. After installing, `uv cache clean` in Terminal frees the download cache. Prefer Gemini over Ollama, whose models take several GB. |
-| Adding or searching for papers says *rate limited*, *allowance used up* or *couldn't reach* | The free lookup services are busy (your internet is usually fine). Add your own free keys: see [Free keys](#free-keys-for-looking-papers-up-recommended). |
-| Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **Settings › Library settings › Your documents › Open folder**. |
+| Windows: *can't find its other files* | Right-click the zip › **Extract All…**, and run it from that folder. |
+| The Mac won't open the installer | Use **Open Anyway** (see [Mac](#mac)). |
+| The installer stops with an error | Take a screenshot and run it again; that's always safe. |
+| Antivirus or IT blocks the installer | Ask IT to allow uv, or [install uv yourself](https://docs.astral.sh/uv/getting-started/installation/) and run it again. |
+| The update *didn't take* | Close research brain, wait a minute, and run the installer again. |
+| The app doesn't open, or closes at once | Read the end of the log (see [Reporting a problem](#reporting-a-problem)). |
+| The first start is slow | Normal once; later starts take about a second. |
+| The AI shows a red dot | In Terminal, run the AI's name (`gemini`, `claude`…), sign in, and pick it again. |
+| *Copilot … is too old* | Run `copilot update`. |
+| Not much disk space | Run `uv cache clean`, and prefer Gemini over Ollama. |
+| *Rate limited* or *couldn't reach* when adding papers | Add [free keys](#free-keys-for-looking-papers-up-recommended). |
+| Where is my library? | **Documents › research brain**. |
+
+<details>
+<summary>More detail on these</summary>
+
+- **Antivirus:** the installer downloads uv, Astral's Python installer, with a PowerShell command, which some
+  antivirus tools flag. This is common on university-managed PCs.
+- **Update didn't take:** research brain was still running. The installer also tries to close it for you.
+- **Slow first start:** the computer checks the newly installed files the first time.
+- **Disk space:** research brain needs about 700 MB. Ollama's models take several GB.
+- **Rate limited:** the free lookup services are busy; your internet is usually fine.
+- **Library:** also in the app at **Settings › Library settings › Your documents › Open folder**. See
+  [Where your things are](#where-your-things-are).
+</details>
 
 ## Sharing research brain with others
 
-The people you share it with don't need GitHub, Python or anything else: one file does it.
+1. Download **`research-brain-installer-<version>.zip`** from the release page.
+2. Upload the zip, not unzipped, to a shared folder (OneDrive, SharePoint, Google Drive, Box…).
+3. Tell people to download it and follow [Install it](#install-it-no-coding-needed).
+4. For new versions, upload the newer zip and tell people to run its installer the same way.
 
-1. **Upload the installer zip.** On the release page, download **`research-brain-installer-<version>.zip`** and upload
-   it to a shared folder (OneDrive, SharePoint, Google Drive, Box…; or with the GitHub command line:
-   `gh release download v1.0.14 --pattern "research-brain-installer-*"`). Upload the zip itself, don't unzip it: it
-   keeps the Mac installer double-clickable, which single files downloaded in a browser don't. It holds the
-   installers, the app, the Chrome extension, this README and *READ ME FIRST.txt*.
-2. **Send them something like:** *"In the shared folder, download research-brain-installer-….zip.
-   Unzip it (Mac: double-click it; Windows: right-click › Extract All), open the folder it makes, and double-click
-   Install-research-brain.command (Mac) or Install-research-brain.cmd (Windows). READ ME FIRST.txt in there covers anything that gets in the way."* The
-   README's [Install it](#install-it-no-coding-needed) steps cover the security prompts (*Open Anyway* on a Mac,
-   *More info › Run anyway* on Windows).
-3. **New versions:** upload the newer zip and tell people; they download it and run its installer the same way.
-   Their libraries stay as they are.
+<details>
+<summary>Why the zip, and a message you can send</summary>
 
-Each person gets their own library on their own computer: nothing is shared between people unless someone
-exports something (a reading list, a `.bib`, a library zip). Each person adds their own AI and their own free
-paper-lookup keys ([Add an AI](#add-an-ai-optional-can-be-free) and [Free keys](#free-keys-for-looking-papers-up-recommended)). The Chrome extension is in the zip
-as `research-brain-extension-….zip` ([Install it](#install-it-no-coding-needed)). More detail, including how
-a library-format change is handled: [docs/releasing.md](docs/releasing.md).
+The zip keeps the Mac installer double-clickable, which single files downloaded in a browser don't. It holds the
+installers, the app, the Chrome extension, this README and *READ ME FIRST.txt*. With the GitHub command line:
+`gh release download v1.0.14 --pattern "research-brain-installer-*"`.
+
+A message you can send: *"In the shared folder, download research-brain-installer-….zip. Unzip it (Windows:
+right-click › Extract All; Mac: double-click it), open the folder it makes, and double-click
+Install-research-brain.cmd (Windows) or Install-research-brain.command (Mac). READ ME FIRST.txt in there covers
+anything that gets in the way."*
+</details>
+
+<details>
+<summary>What each person gets</summary>
+
+Each person gets their own library on their own computer: nothing is shared unless someone exports something (a
+reading list, a `.bib`, a library zip). Each person adds their own [AI](#add-an-ai-optional-can-be-free) and their
+own [free keys](#free-keys-for-looking-papers-up-recommended). Updating never changes their library. More detail,
+including how a library-format change is handled: [docs/releasing.md](docs/releasing.md).
+</details>
 
 ## For developers: more ways to install
 
@@ -591,15 +671,34 @@ conversation** forgets the current one.
 
 ## Chrome extension (web clipping)
 
-The extension isn't in the Chrome Web Store: load it from this folder.
+1. In Chrome, go to `chrome://extensions` and turn on **Developer mode**.
+2. Click **Load unpacked** and pick the `extension/` folder.
+3. Pin it from the puzzle-piece menu.
 
-1. Open `chrome://extensions` and turn on **Developer mode**.
-2. Click **Load unpacked** and pick the `extension/` folder. Pin it from the puzzle-piece menu so its button stays in the toolbar. research_brain must be running for it to work.
-3. On any page (including arXiv, journal sites, and Chrome's PDF viewer), select text, then right-click and choose **Add to research_brain…**, or use the keyboard shortcut listed in `extension/README.md`.
-4. **Save to research_brain (link + text)** (popup, on a publisher article page, an arXiv page or a PDF tab): saves the paper as a *linked paper*: its link, its full text and its citation details (title, authors, DOI, journal, year, abstract), read from the page you are looking at in your own browser session. No PDF file is kept. **Save PDF too** (the second button) also downloads the PDF in your browser, with your own access to the site (subscription, university login). research_brain never sees your login and never downloads from a paywalled site itself. One paper per click.
-5. To annotate a page in place, click the toolbar icon and choose **Annotate this page** (or press Alt+Shift+A): select text, then **Highlight** or **Highlight + note**. Highlights reappear when you come back. On a PDF tab the popup offers **Annotate this PDF in research_brain**, which imports it and opens the built-in viewer. The extension has no AI and talks only to research_brain on this computer; see `extension/README.md`.
+research brain must be open for it to work.
 
-arXiv and DOI pages get imported as papers automatically. Other pages become a source note.
+| To | Do |
+| --- | --- |
+| Save a paper | Click its button › **Save to research_brain (link + text)**. |
+| Save the PDF too | Click **Save PDF too** instead. |
+| Clip a passage | Select it, right-click › **Add to research_brain…**. |
+| Highlight a page | Press **Alt+Shift+A**, select text, then **Highlight** or **Highlight + note**. |
+| Annotate a PDF tab | Click its button › **Annotate this PDF in research_brain**. |
+
+<details>
+<summary>More about the extension</summary>
+
+- It works on any page, including arXiv, journal sites and Chrome's PDF viewer. Keyboard shortcuts are in
+  `extension/README.md`.
+- **Save to research_brain** keeps the paper as a *linked paper*: its link, its full text and its citation details
+  (title, authors, DOI, journal, year, abstract), read from the page in your own browser session. No PDF file is
+  kept. One paper per click.
+- **Save PDF too** downloads the PDF in your browser, with your own access to the site (subscription, university
+  login). research_brain never sees your login and never downloads from a paywalled site itself.
+- Highlights reappear when you come back to a page. Annotating a PDF tab imports it and opens the built-in viewer.
+- arXiv and DOI pages are imported as papers automatically. Other pages become a source note.
+- The extension has no AI and talks only to research_brain on this computer; see `extension/README.md`.
+</details>
 
 ### Saving papers: link + text, or the PDF too
 
@@ -655,12 +754,17 @@ ask); the app sends it the page URL, and it fetches the page itself. Stop it wit
 
 ## Import from Zotero
 
-**Add → Import from Zotero** brings in your local Zotero library: papers, their child notes, and the
-highlights you made in Zotero's PDF reader.
+1. Click **Add › Import from Zotero**.
+2. Pick the library (if you're in groups) and **Entire library** or a collection.
+3. Leave **Copy PDFs** and **Import highlights as fragments** on, then click **Import**.
 
-1. If you're in Zotero groups, pick the library first (**My Library** or a group). Then pick **Entire library** or a collection. Sub-collections are included, and the counts show how many papers each one holds.
-2. Leave **Copy PDFs** and **Import highlights as fragments** on (both default), then click **Import**.
-3. You can close the dialog while it runs. When it finishes it shows a summary and the graph refreshes.
+It brings in your papers, their notes and your Zotero highlights. You can close the dialog while it runs.
+
+<details>
+<summary>What each Zotero item becomes</summary>
+
+Sub-collections are included, and the counts show how many papers each one holds. When the import finishes it
+shows a summary and the graph refreshes.
 
 | From Zotero | Becomes |
 | --- | --- |
@@ -668,12 +772,17 @@ highlights you made in Zotero's PDF reader.
 | Child notes | The paper's notes (HTML converted to Markdown) |
 | PDF attachment | Copied into `PDFs/` in your documents folder, with text extracted for the AI |
 | Highlights and comments | Fragments under the paper: the highlighted text is the quote, your comment is the note, and the page is filled in (`p. <page label>`) |
+</details>
+
+<details>
+<summary>Re-importing, sync and where Zotero is found</summary>
 
 - **Zotero is never modified.** The app copies `zotero.sqlite` (and its `-wal` file) to a temp folder and reads the copy, so Zotero can stay open.
 - **Safe to run again.** Each note remembers its Zotero key (`zotero_key`). Papers you already have, matched by DOI, arXiv id or exact title, are not duplicated. They get a PDF if they had none, highlights they don't have yet (matched by quoted text), and any blank metadata filled in. Your own summary and notes are never overwritten.
 - **Highlights stay in sync.** On a re-import, a highlight whose text, comment or page you changed in Zotero updates its fragment, and a highlight you deleted in Zotero moves its fragment to `vault/.trash/`. If you've edited a fragment in research_brain since it was imported, it is never changed or removed; the summary lists it as "kept (edited)".
 - It doesn't call Semantic Scholar, so a few hundred papers import in seconds. Items in Zotero's trash and standalone notes are skipped.
 - The library is found at `~/Zotero`, or at a custom data directory set in Zotero's preferences. If yours lives somewhere else, start the app with `export RB_ZOTERO_DIR=/path/to/Zotero`.
+</details>
 
 ## Where things live
 
