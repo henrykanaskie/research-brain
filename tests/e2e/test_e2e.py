@@ -1045,3 +1045,30 @@ def test_no_dot_sits_on_a_line_that_isnt_its_own(ctx, server):
       return worst; }""")
     assert worst[0] > 0.5, worst  # every dot's edge is clear of every line it isn't on
     assert not page.errors
+
+
+def test_a_click_on_the_map_closes_the_open_note_but_dragging_it_doesnt(ctx, server):
+    clear_vault(server)
+    nid = api(server, "POST", "/api/notes", {"type": "paper", "title": "Hollow cathode plume oscillations"})["id"]
+    page = open_app(ctx, server)
+    page.wait_for_function("(id) => window.__rb.S.nodes.has(id)", arg=nid)
+    page.wait_for_timeout(1500)  # let the layout settle
+    page.evaluate("(id) => window.__rb.openNote(id)", nid)
+    expect(page.locator("#panel")).to_be_visible()
+    box = page.locator("#graph").bounding_box()
+    # a spot of empty map well away from the dot, left of the panel
+    sx, sy = page.evaluate(f"() => {{ const n = window.__rb.S.nodes.get('{nid}'), p = window.__rb.fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }}")
+    x, y = box["x"] + max(60, sx - 180), box["y"] + min(box["height"] - 60, sy + 120)
+    # dragging the map around keeps the note open
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 80, y + 40, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    expect(page.locator("#panel")).to_be_visible()
+    # a click on empty map closes it, and the reopen tab brings it back
+    page.mouse.click(x - 30, y - 30)
+    expect(page.locator("#panel")).to_be_hidden()
+    page.locator(".reopen-tab").click()
+    expect(page.locator("#panel")).to_be_visible()
+    assert not page.errors

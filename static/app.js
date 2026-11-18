@@ -1583,9 +1583,11 @@
       .onBackgroundClick((e) => {
         if (regionTagClick(e)) return;
         if (S.backgroundClickHook && S.backgroundClickHook(e)) return;  // static/mobile.js handled it
-        // a click in free space lets go of the focused dot (the open note stays open); with no dot
-        // focused, it lets go of a focused region
-        if (S.selected) { S.selected = null; S.focusCache = null; kick(300); }
+        // a click in free space means you're done with the open note: it closes (the reopen tab brings it
+        // back) and lets go of its dot. Panning the map isn't a click, so dragging with the note open keeps it.
+        // With no note open, it lets go of the focused dot, then of a focused region.
+        if (!panel.hidden) { S.focusCache = null; closePanel(); }
+        else if (S.selected) { S.selected = null; S.focusCache = null; kick(300); }
         else if (S.focusCluster != null) unfocusRegion();
       })
       .onBackgroundRightClick((e) => backgroundMenu(e))
