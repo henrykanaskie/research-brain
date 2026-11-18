@@ -520,8 +520,14 @@ def test_status_without_any_agent(server, monkeypatch):
         monkeypatch.setattr(type(b), "detect", lambda self: agents.Detection(False, note="missing"))
     agents.forget_detection()
     st = c.get("/api/status").json()
-    assert st["claude"]["available"] is False and "No AI agent found" in st["claude"]["detail"]
-    assert st["agent"]["id"] == "claude"
+    assert st["claude"]["available"] is False and "No AI is set up yet" in st["claude"]["detail"]
+    assert "Gemini is free" in st["claude"]["detail"]
+    # Claude is only the stand-in: the app shows "No AI set up", not an AI you don't have
+    assert st["agent"]["id"] == "claude" and st["agent"]["none"] is True
+    # an AI you picked that isn't there is named (it's your choice, and it says why it can't run)
+    agents.set_active("codex")
+    st = c.get("/api/status").json()
+    assert st["agent"]["none"] is False and st["agent"]["id"] == "codex"
 
 
 def test_status_text_in_app_js():

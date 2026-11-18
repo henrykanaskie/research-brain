@@ -1120,3 +1120,25 @@ def test_save_now_and_nothing_lost_when_a_save_fails(ctx, server):
     page.wait_for_timeout(500)
     assert asked == ["beforeunload"]
     assert not page.errors
+
+
+def test_with_no_ai_set_up_the_top_bar_says_so(ctx, server):
+    """No AI chosen and none installed: the top bar says "No AI set up" (not the name of one you don't have),
+    and AI buttons explain how to set one up."""
+    import json as _json
+
+    def no_ai(route):
+        r = route.fetch()
+        st = r.json()
+        st["claude"] = {"available": False, "path": None, "detail": "No AI is set up yet. Gemini is free."}
+        st["agent"] = {**st.get("agent", {}), "id": "claude", "name": "Claude Code", "available": False, "none": True, "model": ""}
+        route.fulfill(response=r, body=_json.dumps(st), content_type="application/json")
+    page = ctx.new_page()
+    page.route("**/api/status", no_ai)
+    page.errors = []
+    page.on("pageerror", lambda e: page.errors.append(str(e)))
+    page.goto(server["base"] + "/")
+    expect(page.locator("#status .status-text")).to_have_text("No AI set up")
+    assert "Claude" not in page.locator("#status").get_attribute("aria-label")
+    assert page.evaluate("window.RB_AI") == "your AI"
+    assert not page.errors

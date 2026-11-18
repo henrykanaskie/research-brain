@@ -970,13 +970,18 @@ def _agent_status() -> dict:
                 "agent": {"id": "", "name": "AI agent", "available": False, "note": str(e)}}
     det = agents.detection(b)
     detail = det.note
+    # none: you haven't picked an AI and none is installed, so `b` is only a stand-in; the app says
+    # "No AI set up" rather than naming one you don't have
+    none = not det.available and not agents.chosen_id()
     if det.available:
         detail = f"{b.name} {det.version}".strip() + (f". {det.note}" if det.note else "")
-    elif not agents.chosen_id():
-        detail = ("No AI agent found on this computer. research_brain uses the AI tool you already have "
-                  "(Claude Code, Codex, Gemini, Copilot, Ollama, ...); open Library settings › AI agent.")
+    elif none:
+        detail = ("No AI is set up yet. Everything works without one except asking questions, critiques and "
+                  "explanations. research brain uses an AI you install yourself (Gemini is free; Claude Code, Codex, "
+                  "Copilot or Ollama work too): click here to choose one, or see the README, \"Add an AI\".")
     return {"claude": {"available": det.available, "path": det.path or None, "detail": detail},
-            "agent": {"id": b.id, "name": b.name, "kind": b.kind, "model": agents.model_for(b.id) or "", **det.as_dict()}}
+            "agent": {"id": b.id, "name": b.name, "kind": b.kind, "model": agents.model_for(b.id) or "", "none": none,
+                      **det.as_dict()}}
 
 
 # Set once the server starts stopping (Quit, the idle exit, Ctrl+C): /api/status answers 503 from then on, so

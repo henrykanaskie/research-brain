@@ -516,23 +516,24 @@
       }
       const c = st.claude || {};
       S.claudeOK = !!c.available;
-      const agentName = (st.agent && st.agent.name) || 'No AI agent';
+      const noAI = !st.agent || !!st.agent.none;  // nothing chosen and nothing installed: don't name an AI they don't have
+      const agentName = noAI ? 'No AI set up' : (st.agent.name || 'No AI set up');
       S.agentName = agentName;
       const SHORT = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', copilot: 'Copilot', opencode: 'OpenCode', cursor: 'Cursor', qwen: 'Qwen', ollama: 'Your local model', 'openai-local': 'Your local model' };
-      window.RB_AI = (st.agent && (SHORT[st.agent.id] || st.agent.name)) || 'your AI';
+      window.RB_AI = noAI ? 'your AI' : (SHORT[st.agent.id] || st.agent.name || 'your AI');
       const rn = document.querySelector('.rs-notice');
       if (rn && window.__rbResearch) rn.textContent = window.__rbResearch.NOTICE;
       S.claudeWhy = c.available ? '' : (c.detail || 'No AI agent found on this computer.');
       el.className = 'status ' + (S.claudeOK ? 'ok' : 'bad');
       // just the agent (and model) with a green or red dot; the dot carries ready/unavailable
       const stText = $('.status-text', el);
-      stText.textContent = window.RB_AI === 'Your local model' ? agentName : window.RB_AI;
-      const mdl = st.agent && st.agent.model;
+      stText.textContent = noAI ? 'No AI set up' : window.RB_AI === 'Your local model' ? agentName : window.RB_AI;
+      const mdl = !noAI && st.agent && st.agent.model;
       if (mdl) stText.append(h('span', { class: 'st-model', text: mdl }));
       el.setAttribute('aria-label', `${agentName}${mdl ? ' ' + mdl : ''}, ${S.claudeOK ? 'ready' : 'unavailable'}. Click to switch agent or model.`);
       const emb = st.embedder || '';
       el.title = [
-        S.claudeOK ? `${agentName} available${c.path ? ' — ' + c.path : ''}${c.detail ? '\n' + c.detail : ''}` : `${agentName} unavailable — ${S.claudeWhy}`,
+        S.claudeOK ? `${agentName} available${c.path ? ' — ' + c.path : ''}${c.detail ? '\n' + c.detail : ''}` : noAI ? S.claudeWhy : `${agentName} unavailable — ${S.claudeWhy}`,
         `Embedder: ${emb || 'unknown'}`,
         `Notes: ${st.notes ?? '?'}`,
         st.vault ? `Vault: ${st.vault}` : '',
@@ -561,13 +562,19 @@
       b.setAttribute('aria-disabled', off ? 'true' : 'false');
       if (!b.dataset.title0) b.dataset.title0 = b.getAttribute('title') || '';
       let t = RB.aiText(b.dataset.title0);  // {AI}: the AI tool you chose
-      if (!S.claudeOK) t = `${ai()} isn't available. ${S.claudeWhy}`;
+      if (!S.claudeOK) t = unavailableText();
       else if (extraOff && b.dataset.offWhy) t = b.dataset.offWhy;
       b.title = t;
     }
   }
+  /** Why an AI button doesn't work: no AI set up yet (the reason says what to do), or the chosen one isn't available. */
+  function unavailableText() {
+    const st = S.status || {};
+    if (!st.agent || st.agent.none) return S.claudeWhy;
+    return `${ai()} isn't available. ${S.claudeWhy}`;
+  }
   function claudeBlocked(btn) {
-    if (!S.claudeOK) { toast(`${ai()} isn't available. ${S.claudeWhy}`, 'error'); return true; }
+    if (!S.claudeOK) { toast(unavailableText(), 'error'); return true; }
     if (btn && (btn.classList.contains('busy') || btn.dataset.off === '1')) {
       if (btn.dataset.offWhy && btn.dataset.off === '1') toast(btn.dataset.offWhy, 'info');
       return true;
