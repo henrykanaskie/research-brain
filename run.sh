@@ -37,7 +37,7 @@ if [ ! -f "$VENV/.deps-ok" ] || [ requirements.txt -nt "$VENV/.deps-ok" ] || [ c
     echo "   (the tested versions in constraints.txt didn't install here; using the newest compatible ones)"
     "$VENV/bin/python" -m pip install -q -r requirements.txt
   fi
-  if [ "${RB_EMBEDDER:-auto}" != "tfidf" ]; then
+  if [ "${RB_EMBEDDINGS:-}" = "1" ]; then
     echo "→ Installing local embedding model support (sentence-transformers; one-time, a few hundred MB)…"
     "$VENV/bin/python" -m pip install -q "sentence-transformers>=3.0" \
       || echo "   (couldn't install sentence-transformers — falling back to TF-IDF similarity)"
@@ -55,6 +55,10 @@ if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   [ -n "$NO_OPEN" ] || open "http://127.0.0.1:$PORT" 2>/dev/null || true
   exit 0
 fi
+
+# Similarity: word-based (TF-IDF) unless RB_EMBEDDINGS=1, the same as the installers, so this matches the app
+# people install even if this folder's .venv has sentence-transformers from an earlier run.
+if [ -z "${RB_EMBEDDER:-}" ] && [ "${RB_EMBEDDINGS:-}" != "1" ]; then export RB_EMBEDDER=tfidf; fi
 
 case "$HOST" in 0.0.0.0|::|"") LOCAL="127.0.0.1" ;; *) LOCAL="$HOST" ;; esac
 if [ -z "$NO_OPEN" ]; then
