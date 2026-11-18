@@ -1,4 +1,4 @@
-"""Static, read-only HTML export of selected notes (for sharing a reading list with the lab).
+"""Static, read-only HTML export of selected notes (for sharing a reading list with others).
 
     site = export_site(store, ids=None | [ids], include_pdfs=False, static_dir=STATIC)
 

@@ -243,7 +243,7 @@
     const papSec = el('section', { class: 'ls-sec', id: 'ls-papers' }, el('div', { class: 'ls-h', text: 'Papers folder' }));
     renderPapers(papSec, say);
 
-    // (No updates section: to update, people run the lab's newer installer. `research-brain update` stays for admins.)
+    // (No updates section: to update, people run a newer installer. `research-brain update` stays for admins.)
 
     // Saving from publisher pages (the browser extension's primary button)
     const modeSec = el('section', { class: 'ls-sec', id: 'ls-save-mode' },

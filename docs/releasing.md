@@ -1,7 +1,7 @@
 # Releasing and rolling out updates
 
 Releases are versioned (`vX.Y.Z`, from `__version__` in `app/__init__.py`) and published by
-`.github/workflows/release.yml`. Lab members install and update from a shared folder, so nobody needs
+`.github/workflows/release.yml`. People can install and update from a shared folder, so nobody needs
 access to the private GitHub repository.
 
 ## Publish a release
@@ -32,9 +32,9 @@ access to the private GitHub repository.
 
    The notes are the commit subjects since the previous tag, so write commit subjects for people.
 
-## Roll it out to the lab
+## Roll it out
 
-Upload `research-brain-installer-X.Y.Z.zip` to the lab's shared folder (OneDrive, SharePoint, Google Drive, Box:
+Upload `research-brain-installer-X.Y.Z.zip` to a shared folder (OneDrive, SharePoint, Google Drive, Box:
 in the browser is fine) and tell people. It holds the installers (the Mac one with its executable bit kept: single
 files downloaded in a browser lose it), the wheel, `latest.json`, `constraints.txt`, the extension zip, README.md and
 `READ ME FIRST.txt`. People download it, unzip it and run the installer; running a newer one later updates them in
@@ -53,7 +53,7 @@ profile's `backups/`). Say so in the notes, and don't roll back past it.
 
 ## Updates
 
-The app doesn't check for updates or show an update notice: labmates install new versions by running the newer
+The app doesn't check for updates or show an update notice: people install new versions by running the newer
 installer. For admins, `research-brain update` installs the newest release from GitHub (it needs a `GITHUB_TOKEN`
 or the `gh` command signed in while the repository is private), or from a folder of release files with
 `research-brain update --source <folder>`; `--to X.Y.Z` installs a specific version.

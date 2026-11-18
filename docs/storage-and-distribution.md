@@ -7,7 +7,7 @@ what the app does today, and where it says "design only" the reason is given.
 ## The short version
 
 - **One library per person, on their own computer.** research_brain runs on your laptop and serves
-  `http://127.0.0.1:8765`. Nothing is uploaded. There is no server for the lab to run.
+  `http://127.0.0.1:8765`. Nothing is uploaded. There is no server to run.
 - **No accounts and no passwords.** Your computer login is your identity. Everything saves to disk as
   you work. UI state that matters is saved in the library too, not just in the browser.
 - **A paper is a folder of plain files:** a Markdown note with the metadata, the PDF if there is one,
@@ -243,9 +243,9 @@ works because the request is then same-origin.
 **Alternatives considered:**
 
 - *Per-user passwords in the app.* No security gain on a single-user laptop, as above. Rejected.
-- *A central lab server with accounts.* It would make sharing easy, but paper storage would then
+- *A central server with accounts.* It would make sharing easy, but paper storage would then
   become a copyright and IT problem, the PDFs would be on someone else's machine, and the server
-  would need backups, TLS and admin time. This is the right design only if the lab wants a shared
+  would need backups, TLS and admin time. This is the right design only if a group wants a shared
   library. That's a different product. The zip export/import below covers "send me your library".
 - *Sync through a cloud folder (iCloud or Dropbox).* Point a profile at a synced folder with
   `research-brain profiles create shared --path ~/Dropbox/rb` and it works for **one person on
@@ -312,10 +312,9 @@ its `.venv` and then runs `python -m app.cli serve`.
 
 **Install and update** (recommended order):
 
-1. `uv tool install <wheel URL>` or `uv tool install git+https://<lab git host>/research_brain@vX.Y.Z`.
+1. `uv tool install <wheel URL>` or `uv tool install git+https://<git host>/research_brain@vX.Y.Z`.
    Update with `uv tool upgrade research-brain`, or install the newer tag. uv brings its own Python,
-   so nobody has to fight Homebrew. (Publishing to PyPI isn't planned, because the tool is for the
-   lab.)
+   so nobody has to fight Homebrew. (Publishing to PyPI isn't planned yet.)
 2. `pipx install <wheel>`, then `pipx upgrade research-brain`.
 3. The one-line installer, `curl -fsSL <release URL>/install.sh | RB_SOURCE=<wheel URL> bash`. It
    uses uv, then pipx, then falls back to a private venv in the data folder with a link in
@@ -324,8 +323,8 @@ its `.venv` and then runs `python -m app.cli serve`.
 
 **Releases.** Tag `vX.Y.Z`. `.github/workflows/release.yml` runs the tests on every OS, builds and
 smoke-tests the wheel, and publishes it with the installers, `constraints.txt`, the extension zip and
-`latest.json` as a GitHub release, plus `research-brain-installer-X.Y.Z.zip` with all of it for sharing. The lab
-puts that zip in its shared folder; people download it and run the installer, and run a newer one to update (the
+`latest.json` as a GitHub release, plus `research-brain-installer-X.Y.Z.zip` with all of it for sharing. Put
+that zip in a shared folder; people download it and run the installer, and run a newer one to update (the
 app doesn't check for updates itself). See [releasing.md](releasing.md).
 
 **Browser extension.**
@@ -335,7 +334,7 @@ app doesn't check for updates itself). See [releasing.md](releasing.md).
   the new folder over the old one and click reload.
 - *Chrome Web Store, unlisted* (recommended once more than a handful of people use it): it updates
   automatically, and the id is stable, which `app/security.py` pins. *Design only:* it needs a
-  developer account and a review, and that is the lab's decision.
+  developer account and a review.
 - *Version sync:* the extension's `manifest.json` version is released together with the app. The
   extension only uses endpoints the app keeps stable (`/api/status`, `/api/match`, `/api/fragments`,
   `/api/clip`, `/api/search`, `/api/import/url`, `/api/import/pdf-bytes`). A newer app keeps accepting

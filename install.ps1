@@ -27,7 +27,7 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Src = $env:RB_SOURCE
 if (-not $Src) {
   if ((Test-Path (Join-Path $Here "pyproject.toml")) -and (Test-Path (Join-Path $Here "app"))) { $Src = $Here }
-  elseif (Test-Path (Join-Path $Here "latest.json")) { $Src = $Here }   # a release / the lab's update folder
+  elseif (Test-Path (Join-Path $Here "latest.json")) { $Src = $Here }   # a release / a shared update folder
   else { Write-Error "Set RB_SOURCE to a research_brain wheel, a release folder, or git+https://github.com/henrykanaskie/research-brain.git"; exit 2 }
 }
 $UpdateSource = ""
@@ -148,7 +148,7 @@ Write-Host "-> Installed: $Have"
 if ($Latest -and $Latest.version -and ($Have -notmatch [regex]::Escape([string]$Latest.version))) {
   Fail "This installer has version $($Latest.version), but $Have is still the one installed: the update didn't take. Close research brain, wait a minute, and run this again."
 }
-Write-Host "  To update later: run a newer installer from your lab the same way. Your library stays as it is."
+Write-Host "  To update later: run a newer version's installer the same way. Your library stays as it is."
 
 # Start menu shortcut: opens research brain like an app only when you click it; it stops by itself a few
 # minutes after its window closes (research-brain open). Nothing runs at login.

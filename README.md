@@ -27,8 +27,8 @@ the ideas you mark private never leave it.
 
 ### Step 1: get the research brain folder
 
-- **From your lab** (the usual way): in your lab's shared folder (OneDrive, SharePoint, Google Drive, Box, … in the
-  browser is fine), click **research-brain-installer-….zip** and **Download** it. Unzip it: on a Mac, double-click it;
+- **The installer zip** (the usual way): download **research-brain-installer-….zip**, from the release page or
+  wherever it was shared with you (a shared OneDrive, SharePoint, Google Drive or Box folder in the browser is fine). Unzip it: on a Mac, double-click it;
   on **Windows, right-click it › Extract All… › Extract** (double-clicking a zip on Windows only shows what's inside,
   and the installer won't run from there). Open the folder it makes: you'll install from there (*READ ME
   FIRST.txt* inside says the same in short).
@@ -123,8 +123,8 @@ usually after a few days. Here is what to put in each field:
 | --- | --- |
 | First name, Last name | Your name. |
 | Email | Your university or work email (they ask for an academic or corporate address, not Gmail). |
-| Affiliation | Your university and lab, e.g. *Example University, Department of Physics*. |
-| Affiliation website URL | Your lab's or department's web page (or the university's home page). |
+| Affiliation | Your university or organization, e.g. *Example University, Department of Physics*. |
+| Affiliation website URL | Your group's or department's web page (or your organization's home page). |
 | Country/Region | Where you are. |
 | Application use | **Private**: the key is only for your own copy of research brain on your own computer. |
 | How do you plan to use Semantic Scholar API in your project? (50 words or more) | Paste the paragraph below, changing the parts in [brackets]. |
@@ -189,9 +189,9 @@ points at the same things.)
 
 Then explore: the gear (top right) has Library settings in tabs with a search box, and **?** lists every shortcut.
 
-### Trying it out for your lab? Report problems like this
+### Reporting a problem
 
-Thank you. What helps most:
+What helps most:
 
 - **What you did and what happened** (and what you expected), with a screenshot if it's visual.
 - **Your version**: Settings (the gear) › Library settings › Library tab, or `research-brain --version` in Terminal.
@@ -321,7 +321,7 @@ in **Library settings › AI usage**), and nothing ever calls the AI in the back
 
 ## Updating
 
-When your lab shares a newer version, download its **research-brain-installer-….zip** and run the installer
+When there's a newer version, download its **research-brain-installer-….zip**, unzip it, and run the installer
 again, the same way as the first time. It replaces the app and never touches your library. (research brain doesn't
 check for updates by itself.)
 
@@ -356,16 +356,16 @@ check for updates by itself.)
 | Adding or searching for papers says *rate limited*, *allowance used up* or *couldn't reach* | The free lookup services are busy (your internet is usually fine). Add your own free keys: see [Step 5](#step-5-recommended-free-keys-for-looking-papers-up). |
 | Where is my library? | **Documents › research brain** (see [Where your things are](#where-your-things-are)). In the app: **Settings › Library settings › Your documents › Open folder**. |
 
-## Sharing research brain with your lab
+## Sharing research brain with others
 
-Your labmates don't need GitHub, Python or anything else: one file does it.
+The people you share it with don't need GitHub, Python or anything else: one file does it.
 
 1. **Upload the installer zip.** On the release page, download **`research-brain-installer-<version>.zip`** and upload
-   it to your lab's shared folder (OneDrive, SharePoint, Google Drive, Box…; or with the GitHub command line:
+   it to a shared folder (OneDrive, SharePoint, Google Drive, Box…; or with the GitHub command line:
    `gh release download v1.0.13 --pattern "research-brain-installer-*"`). Upload the zip itself, don't unzip it: it
    keeps the Mac installer double-clickable, which single files downloaded in a browser don't. It holds the
    installers, the app, the Chrome extension, this README and *READ ME FIRST.txt*.
-2. **Send your labmates something like:** *"In our shared folder, download research-brain-installer-….zip.
+2. **Send them something like:** *"In the shared folder, download research-brain-installer-….zip.
    Unzip it (Mac: double-click it; Windows: right-click › Extract All), open the folder it makes, and double-click
    Install-research-brain.command (Mac) or Install-research-brain.cmd (Windows). READ ME FIRST.txt in there covers anything that gets in the way."* The
    README's [Install it](#install-it-no-coding-needed) steps cover the security prompts (*Open Anyway* on a Mac,
@@ -373,13 +373,13 @@ Your labmates don't need GitHub, Python or anything else: one file does it.
 3. **New versions:** upload the newer zip and tell people; they download it and run its installer the same way.
    Their libraries stay as they are.
 
-Each person gets their own library on their own computer: nothing is shared between labmates unless someone
+Each person gets their own library on their own computer: nothing is shared between people unless someone
 exports something (a reading list, a `.bib`, a library zip). Each person adds their own AI and their own free
 paper-lookup keys ([Add an AI](#add-an-ai-optional-can-be-free) and [Step 5](#step-5-recommended-free-keys-for-looking-papers-up)). The Chrome extension is in the zip
 as `research-brain-extension-….zip` ([Step 4](#step-4-optional-add-the-chrome-extension)). More detail, including how
 a library-format change is handled: [docs/releasing.md](docs/releasing.md).
 
-## For developers and lab admins: more ways to install
+## For developers: more ways to install
 
 Under the hood the installers use [uv](https://docs.astral.sh/uv/), which downloads its own Python 3.12
 (about 66 MB) and installs research brain in its own environment (about 175 MB), so nothing conflicts with
@@ -397,7 +397,7 @@ research-brain                                          # or: the server in this
 From a release folder, the installer installs the release in it. The app doesn't check for updates itself; for
 admins, **`research-brain update`** installs the newest GitHub release (it needs the `gh` command, signed in, while
 the repository is private). A library that a newer version has converted won't open in an older one (it stops with a
-clear message instead). Publishing a release and rolling it out to the lab: [docs/releasing.md](docs/releasing.md).
+clear message instead). Publishing a release and rolling it out: [docs/releasing.md](docs/releasing.md).
 
 **From the repository** (you have access to it on GitHub):
 

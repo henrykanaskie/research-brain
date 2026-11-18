@@ -22,7 +22,7 @@ WINDOWS
 3. If Windows says "Windows protected your PC": click "More info", then "Run anyway".
 4. When it says Done, research brain opens. From then on, open it from the Start menu.
    On a university-managed PC, an antivirus or IT policy can block installers like this one. If it
-   stops with an error, take a screenshot of the window and send it along (see PROBLEMS below).
+   stops with an error, take a screenshot of the window (see REPORTING A PROBLEM below).
 
 AFTERWARDS
 - You can delete this folder (and the zip it came in). Your library lives in Documents > research brain.
@@ -36,15 +36,15 @@ AFTERWARDS
 - Already keep your PDFs in folders (OneDrive too)? In research brain: Add > Add folders of papers.
   They stay where they are (nothing is copied), and each folder becomes a topic.
 - Short on disk space? Keep your PDFs in OneDrive: README.md, "Short on disk space?".
-- Updates: when your lab shares a newer version, download it, unzip it and run its installer again,
-  the same way. If research brain is open, the installer closes it first. Your library stays exactly
+- Updates: when there's a newer version, download it, unzip it and run its installer again, the
+  same way. If research brain is open, the installer closes it first. Your library stays exactly
   as it is.
 - Everything else (adding papers, free paper-lookup keys, a first-ten-minutes tour) is in README.md
   in this folder: open it with any text editor or a browser.
 
-PROBLEMS
-Tell the person who shared research brain with you. Send: what you did, what you saw (a screenshot
-helps), your research brain version (Library settings, or the installer window), and the end of the log:
+REPORTING A PROBLEM
+Include what you did, what you saw (a screenshot helps), your research brain version (Library settings,
+or the installer window), and the end of the log:
   Mac:     ~/Library/Application Support/research_brain/app.log
   Windows: paste  %APPDATA%\research_brain  into File Explorer's address bar, open app.log
 Never send API keys or passwords.

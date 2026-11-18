@@ -1,6 +1,6 @@
 # Security
 
-research_brain runs on your own computer, for you alone. Each lab member installs their own copy and puts
+research_brain runs on your own computer, for you alone. Each person installs their own copy and puts
 in their own papers. The notes are not secret, but three things must hold:
 
 1. **Nothing leaves your computer** except the lookups listed under [What goes over the network](#what-goes-over-the-network).

@@ -7,9 +7,9 @@ install scripts, constraints.txt, the browser extension as a zip, and `latest.js
 
 The app looks for that file in its *update source*, in this order:
 
-1. RB_UPDATE_SOURCE, or the "update_source" setting (Settings → Updates): a folder (the lab's shared drive,
+1. RB_UPDATE_SOURCE, or the "update_source" setting (Settings → Updates): a folder (a shared drive,
    OneDrive, Box, a network share: anything synced to disk) holding latest.json and the wheels, or an
-   https URL of a latest.json. This is the lab channel, and it needs no GitHub account.
+   https URL of a latest.json. It needs no GitHub account.
 2. Otherwise the GitHub repository's latest release, which needs read access to the (private) repo: a
    GITHUB_TOKEN, or the `gh` command signed in. Without either, the check quietly finds nothing.
 

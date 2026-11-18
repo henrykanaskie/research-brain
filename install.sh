@@ -5,7 +5,7 @@
 #   RB_SOURCE=<wheel file, wheel URL or git+https URL@tag> ./install.sh
 #   curl -fsSL <release URL>/install.sh | RB_SOURCE=<wheel URL> bash        (the one-line version)
 #
-#   ./install.sh  (inside a release folder, e.g. the lab's shared update folder: installs its latest.json)
+#   ./install.sh  (inside a release folder, e.g. a shared update folder: installs its latest.json)
 #
 # Uses uv (installed first if missing; it brings its own Python), else pipx, else a private virtualenv in
 # the data folder with a link in ~/.local/bin. Re-running it updates the app. Your library is never touched: it lives in
@@ -19,7 +19,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
 SRC="${RB_SOURCE:-}"
 if [ -z "$SRC" ]; then
   if [ -f "$HERE/pyproject.toml" ] && [ -d "$HERE/app" ]; then SRC="$HERE"
-  elif [ -f "$HERE/latest.json" ]; then SRC="$HERE"   # run from a release / the lab's update folder
+  elif [ -f "$HERE/latest.json" ]; then SRC="$HERE"   # run from a release / a shared update folder
   else echo "Set RB_SOURCE to a research_brain wheel (file or URL), a release folder, or git+https://...@vX.Y.Z" >&2; exit 2; fi
 fi
 UPDATE_SOURCE=""
@@ -121,7 +121,7 @@ for m in ('numpy', 'pypdfium2', 'pypdf', 'lxml.etree',
     except ImportError:
         pass" >/dev/null 2>&1 || true
 fi
-echo "  To update later: run a newer installer from your lab the same way. Your library stays as it is."
+echo "  To update later: run a newer version's installer the same way. Your library stays as it is."
 if [ "${RB_NO_DESKTOP:-}" != 1 ]; then
   # an app entry that opens research brain only when you click it (Launchpad/Dock on macOS, the app menu on
   # Linux); the app stops by itself a few minutes after its window closes. Nothing runs at login.

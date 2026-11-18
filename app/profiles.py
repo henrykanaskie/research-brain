@@ -1,5 +1,5 @@
 """Profiles: separate libraries (vaults) on one computer, e.g. "thesis" and "teaching", or two people
-sharing a lab machine. A profile is only a folder; there are no accounts or passwords (the computer's
+sharing a computer. A profile is only a folder; there are no accounts or passwords (the computer's
 own user account is the identity, see docs/storage-and-distribution.md).
 
     <data dir>/profiles/<name>/      one vault per profile

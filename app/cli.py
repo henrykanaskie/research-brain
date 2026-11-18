@@ -253,7 +253,7 @@ def cmd_update(a) -> int:
     if not info:
         src = updates.source()
         print("Couldn't find a release. " + (f"Nothing readable at {src}." if src else
-              "Set the lab's update folder with: research-brain update --source <folder>, or sign in with `gh auth login`."),
+              "Set a shared update folder with: research-brain update --source <folder>, or sign in with `gh auth login`."),
               file=sys.stderr)
         return 1
     print(f"Installed: {__version__}   Latest: {info['version']}")
@@ -346,11 +346,11 @@ def build_parser() -> argparse.ArgumentParser:
     lib_opts(b)
     b.set_defaults(fn=cmd_backup)
 
-    u = sub.add_parser("update", help="install the newest release (from the lab's update folder or GitHub)")
+    u = sub.add_parser("update", help="install the newest release (from a shared update folder or GitHub)")
     u.add_argument("--check", action="store_true", help="only say whether there's a newer version")
     u.add_argument("--to", metavar="VERSION", help="install this version (also to go back to an older one)")
     u.add_argument("--source", metavar="FOLDER_OR_URL",
-                   help="where releases are published: the lab's shared folder holding latest.json, or its https URL "
+                   help="where releases are published: a shared folder holding latest.json, or its https URL "
                         "(\"\" goes back to GitHub)")
     u.set_defaults(fn=cmd_update)
 
