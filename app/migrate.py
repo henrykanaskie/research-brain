@@ -72,13 +72,6 @@ def _has_content(vault: Path) -> bool:
     return False
 
 
-def current_version(vault: Path) -> int:
-    m = read_meta(vault)
-    if m is not None:
-        return m["schema"]
-    return 0 if _has_content(vault) else SCHEMA_VERSION
-
-
 # ---------------------------------------------------------------- migrations
 def _m1_state_files(vault: Path) -> None:
     """v0 -> v1: per-user state (review schedule, open counts) lives in state/, not the derived .index/."""

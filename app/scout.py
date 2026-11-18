@@ -139,8 +139,7 @@ SOURCES = {"openalex": search_openalex, "arxiv": search_arxiv}
 
 
 # ---------------------------------------------------------------- matching
-def _norm_title(t: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+from .metadata import norm_title as _norm_title  # noqa: E402  (one rule for matching titles)
 
 
 def library_keys(notes: list[dict]) -> set[str]:

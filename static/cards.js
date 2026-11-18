@@ -294,18 +294,21 @@
   function watchJob(jid, pid) {
     P.job = { id: jid, message: 'Suggesting ideas from the paper…' };
     paint();
-    clearInterval(P.poll);
-    P.poll = setInterval(async () => {
+    clearTimeout(P.poll);
+    // one check at a time: the next is scheduled when this one has its answer, so a slow server can't
+    // make two of them see "done" (and toast twice)
+    const tick = async () => {
       let j;
       try { j = await api('GET', `/api/cards/jobs/${enc(jid)}`); } catch (e) { j = { state: 'error', message: e.message }; }
-      if (P.pid !== pid) { if (j.state !== 'running') { clearInterval(P.poll); P.poll = null; P.job = null; } return; }
-      if (j.state === 'running') { P.job.message = `${j.message || 'Suggesting ideas'}…`; paint(); return; }
-      clearInterval(P.poll); P.poll = null; P.job = null;
+      if (P.pid !== pid) { if (j.state !== 'running') { P.poll = null; P.job = null; } else P.poll = setTimeout(tick, 700); return; }
+      if (j.state === 'running') { P.job.message = `${j.message || 'Suggesting ideas'}…`; paint(); P.poll = setTimeout(tick, 700); return; }
+      P.poll = null; P.job = null;
       if (j.state === 'done') toast(j.message || 'Done', j.added ? 'ok' : 'info');
       else toast(j.message || 'Suggesting ideas failed', 'error');
       await load(pid, false);
       if (window.__rb && rb.refreshGraph) rb.refreshGraph();
-    }, 700);
+    };
+    P.poll = setTimeout(tick, 700);
   }
 
   rb.onPanelRender((n, body) => {

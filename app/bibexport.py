@@ -29,7 +29,7 @@ _SPECIAL = {"ß": r"{\ss}", "æ": r"{\ae}", "Æ": r"{\AE}", "œ": r"{\oe}", "Œ"
             "Ø": r"{\O}", "ł": r"{\l}", "Ł": r"{\L}", "å": r"{\aa}", "Å": r"{\AA}", "ı": r"{\i}", "đ": r"{\dj}",
             "Đ": r"{\DJ}", "þ": r"{\th}", "Þ": r"{\TH}", "ð": r"{\dh}", "Ð": r"{\DH}",
             "–": "--", "—": "---", "‘": "`", "’": "'", "“": "``", "”": "''", "…": r"{\ldots}", " ": "~",
-            "×": r"$\times$", "±": r"$\pm$", "°": r"{\textdegree}", "µ": r"$\mu$", "Å": r"{\AA}", "€": r"{\texteuro}",
+            "×": r"$\times$", "±": r"$\pm$", "°": r"{\textdegree}", "µ": r"$\mu$", "€": r"{\texteuro}",
             "§": r"{\S}", "©": r"{\textcopyright}", "®": r"{\textregistered}", "™": r"{\texttrademark}",
             "≤": r"$\leq$", "≥": r"$\geq$", "≈": r"$\approx$", "→": r"$\rightarrow$", "∞": r"$\infty$",
             "·": r"$\cdot$", "′": "'", "−": "-", " ": r"\,", "¿": r"{?`}", "¡": r"{!`}"}
@@ -147,7 +147,7 @@ def _title_protector(title: str):
     plain = _TAG.sub(" ", _MATH.sub(" ", title))
     words = [w for w in re.split(r"[\s\-–—/]+", plain) if re.search(r"[A-Za-z]", w)]
     small = {"a", "an", "the", "and", "or", "of", "in", "on", "for", "to", "with", "by", "at", "from", "via",
-             "vs", "vs.", "as", "into", "is", "are", "its", "via"}
+             "vs", "vs.", "as", "into", "is", "are", "its"}
     content = [w for w in words[1:] if w.lower().strip(".,:;()") not in small]
     capped = sum(1 for w in content if w[:1].isupper())
     sentence_case = not content or capped / len(content) < 0.5

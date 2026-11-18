@@ -390,9 +390,6 @@ def fetch(url: str, *, allowed_hosts, accept: str = "application/json", headers:
     raise FetchError(f"Too many redirects (more than {max_redirects})", 502)
 
 
-LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
-
-
 def _request_local(port: int, path: str, method: str, headers: dict, body: bytes | None, timeout: tuple):
     """One request to 127.0.0.1:<port> (replaced in tests)."""
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout[1])

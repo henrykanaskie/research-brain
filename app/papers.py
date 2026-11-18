@@ -25,7 +25,6 @@ bytes match a library PDF can be trashed through this, and only inside your home
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil

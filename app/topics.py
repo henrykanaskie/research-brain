@@ -29,6 +29,8 @@ Functions other modules (the Research agent, the library map) can call without t
 """
 from __future__ import annotations
 
+from . import fsio
+
 import datetime as dt
 import hashlib
 import os
@@ -77,8 +79,7 @@ def _parse_time(s) -> dt.datetime | None:
         return None
 
 
-def norm_title(t: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+from .metadata import norm_title  # noqa: E402  (one rule for matching titles)
 
 
 # ---------------------------------------------------------------- files
@@ -146,7 +147,7 @@ def _write(store, t: dict) -> None:
     p = _path(store, t["slug"])
     tmp = p.with_suffix(".md.tmp")
     tmp.write_text(f"---\n{front}---\n{body}", encoding="utf-8", newline="\n")
-    tmp.replace(p)
+    fsio.replace(tmp, p)
 
 
 def _all_slugs(store) -> list[str]:

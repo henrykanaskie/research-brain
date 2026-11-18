@@ -147,13 +147,3 @@ def kill_tree(proc: subprocess.Popen) -> None:
     except OSError:
         pass
 
-
-def stop_gently(proc: subprocess.Popen) -> None:
-    """Ask a child server to shut down (Ctrl+C on POSIX, Ctrl+Break on Windows)."""
-    try:
-        if WINDOWS:
-            proc.send_signal(signal.CTRL_BREAK_EVENT)
-        else:
-            proc.send_signal(signal.SIGINT)
-    except (OSError, ValueError):
-        proc.terminate()

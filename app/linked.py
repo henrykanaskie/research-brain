@@ -130,14 +130,6 @@ class Links:
             self.save(d)
             return gone
 
-    def set_name(self, fid: str, rel_dir: str, name: str) -> None:
-        with self.lock:
-            d = self.data()
-            f = self.folder(fid)
-            if f is not None:
-                f.setdefault("names", {})[rel_dir] = name
-                self.save(d)
-
     # ------------------------------------------------------------ files
     def path_of(self, nid: str) -> Path | None:
         x = self.data()["files"].get(nid)

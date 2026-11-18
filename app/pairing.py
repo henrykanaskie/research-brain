@@ -69,7 +69,7 @@ COMPUTER_ONLY = [
     (re.compile(r"^/api/zotero/.*$"), None),
     (re.compile(r"^/api/export$"), None),
     (re.compile(r"^/api/backfill/.*$"), None),
-    (re.compile(r"^/api/(pick-folder|update/source)$"), None),  # a dialog on this computer; where updates come from
+    (re.compile(r"^/api/pick-folder$"), None),  # a dialog on this computer
 ]
 
 _lock = threading.Lock()
@@ -269,13 +269,6 @@ def rename(did: str, name: str) -> dict | None:
                 paths.save_settings({SETTINGS_KEY: devs})
                 return public(d)
     return None
-
-
-def reset_for_tests() -> None:
-    with _lock:
-        _codes.clear()
-        _fails.clear()
-        _seen.clear()
 
 
 # ---------------------------------------------------------------- the pages an unpaired device sees

@@ -37,7 +37,6 @@ import queue
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -328,20 +327,6 @@ class StreamProcess:
             fsio.remove_tree(self.cwd)
 
 
-def stream_lines(cmd: list[str], *, stdin: str = "", timeout: float = 180, cwd: Path | str | None = None,
-                 env: dict | None = None, state: dict | None = None, heartbeat: float | None = None) -> Iterator[str]:
-    """Generator form of StreamProcess: yields stdout lines; afterwards `state` holds returncode, stderr,
-    timed_out. Closing the generator early kills the process group."""
-    with StreamProcess(cmd, stdin=stdin, timeout=timeout, cwd=cwd, env=env) as sp:
-        try:
-            yield from sp.lines(heartbeat)
-        finally:
-            if state is not None:
-                state.update(returncode=sp.returncode, stderr=sp.stderr, timed_out=sp.timed_out)
-    if state is not None:
-        state.update(returncode=sp.returncode, stderr=sp.stderr, timed_out=sp.timed_out)
-
-
 def run_process(cmd: list[str], *, stdin: str = "", timeout: float = 60, cwd: Path | str | None = None,
                 env: dict | None = None) -> tuple[int | None, str, str]:
     """Run to completion: (returncode, stdout, stderr). Raises AgentError on timeout (group killed)."""
@@ -351,6 +336,3 @@ def run_process(cmd: list[str], *, stdin: str = "", timeout: float = 60, cwd: Pa
             out.append(line)
     return sp.returncode, "\n".join(out), sp.stderr
 
-
-def is_windows() -> bool:
-    return sys.platform == "win32"

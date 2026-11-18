@@ -19,6 +19,8 @@ DTDs, entities and network access refused (see load_user_style / SECURITY.md).
 """
 from __future__ import annotations
 
+from . import fsio
+
 import html
 import re
 import threading
@@ -575,7 +577,7 @@ def save_user_style(vault: Path, filename: str, raw: bytes) -> dict:
         raise StyleError("A link with that name is in the styles folder; remove it first.")
     tmp = d / f".{stem}.csl.tmp"
     tmp.write_bytes(raw)
-    tmp.replace(dest)
+    fsio.replace(tmp, dest)
     return next(s for s in list_styles(vault) if s["id"] == "user:" + stem)
 
 

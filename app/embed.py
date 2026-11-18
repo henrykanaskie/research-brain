@@ -7,6 +7,8 @@ changed notes are re-embedded.
 """
 from __future__ import annotations
 
+from . import fsio
+
 import hashlib
 import json
 import os
@@ -85,7 +87,7 @@ class Embedder:
     def _persist(self):
         tmp = self._cache_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._cache), encoding="utf-8", newline="\n")
-        tmp.replace(self._cache_file)
+        fsio.replace(tmp, self._cache_file)
 
     # ---- public ----
     def matrix(self, docs: dict[str, str]) -> tuple[list[str], np.ndarray | None]:
@@ -142,14 +144,3 @@ class Embedder:
                 return v / n if n > 0 else v
             return self._embed_text(text)
 
-
-def top_neighbours(ids: list[str], m: np.ndarray | None, k: int = 5) -> dict[str, list[tuple[str, float]]]:
-    if m is None or len(ids) < 2:
-        return {i: [] for i in ids}
-    sims = m @ m.T
-    np.fill_diagonal(sims, -1.0)
-    out = {}
-    for r, i in enumerate(ids):
-        order = np.argsort(-sims[r])[:k]
-        out[i] = [(ids[c], float(max(0.0, min(1.0, sims[r, c])))) for c in order if sims[r, c] > 0]
-    return out

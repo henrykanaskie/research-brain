@@ -63,7 +63,7 @@
   async function api(path, opts = {}) {
     const r = await fetch(path, opts);
     let data = null; try { data = await r.json(); } catch { /* not JSON */ }
-    if (!r.ok) { const e = new Error((data && data.detail) || `HTTP ${r.status}`); e.status = r.status; throw e; }
+    if (!r.ok) { const R = rb() || {}; const e = new Error(R.errText ? R.errText(data, r.status) : ((data && data.detail) || `HTTP ${r.status}`)); e.status = r.status; throw e; }
     return data;
   }
   const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

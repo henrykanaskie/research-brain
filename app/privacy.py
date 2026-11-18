@@ -15,7 +15,8 @@ What is private
                        (the library couldn't be read), everything counts as private and nothing is sent.
     allow_ai(item, agent)   False for a private item, unless the agent is a local model server
                        (kind "local-server") and the setting `private_ok_for_local_ai` is on (default off).
-    filter_for_ai(items, agent)   the items allow_ai lets through (for context builders and agent tools).
+    filter_for_ai(items, agent)   the items allow_ai lets through, in order (a convenience; the context
+                       builders and agent tools call allow_ai / is_private_id item by item).
 
 Settings live in the library (vault/state/privacy.json), so they move with it and survive a browser change:
     {"private_by_default": ["fragment", "note", "question"], "private_ok_for_local_ai": false, "defaults": 2}
@@ -28,7 +29,7 @@ The choke point
         Called by the agents layer (app/agents/__init__.py) on every outgoing prompt, whatever path built
         it: plain asks, streams, every turn of the universal Research loop, the Claude native Research
         path's context and each tool result it hands the model. Context builders filter first
-        (filter_for_ai), so the guard is the backstop that catches what they missed.
+        (allow_ai, is_private_id), so the guard is the backstop that catches what they missed.
 
         How it detects a leak, fast (a 50k-character prompt against 2,000 private items in well under
         20 ms), using an index that is rebuilt when the library changes:
@@ -731,8 +732,3 @@ def check_send(agent, purpose: str, parts, *, sources=None, approve=()) -> list[
                 _approved[_akey(agent, s)] = now + APPROVE_TTL
     return clean
 
-
-def approved(agent, text: str) -> bool:
-    with _lock:
-        t = _approved.get(_akey(agent, text))
-        return t is not None and t >= time.monotonic()

@@ -1,4 +1,4 @@
-"""Release updates (app/updates.py, `research-brain update`, /api/update)."""
+"""Release updates (app/updates.py, `research-brain update`)."""
 import json
 import sys
 
@@ -83,13 +83,3 @@ def test_cli_update_check_and_source(upd, tmp_path, capsys):
     assert "git pull" in capsys.readouterr().out
 
 
-def test_update_endpoints(upd, tmp_path):
-    from fastapi.testclient import TestClient
-    from app import server
-    c = TestClient(server.app)
-    lab = _folder(tmp_path, "9.1.0")
-    out = c.put("/api/update/source", json={"source": str(lab)}).json()
-    assert out["newer"] and out["latest"] == "9.1.0" and out["command"] == "research-brain update"
-    assert c.get("/api/update").json()["latest"] == "9.1.0"
-    assert c.put("/api/update/source", json={"source": str(tmp_path / "missing")}).status_code == 400
-    assert c.put("/api/update/source", json={"source": ""}).json()["source"] == "github"

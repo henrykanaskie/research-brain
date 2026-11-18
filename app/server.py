@@ -31,7 +31,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import access as access_mod, agents, papers as papers_mod, apikeys, budget, citations, claude_cli, diskspace, locate as locate_mod, metadata, openalex, scholar, security, updates as updates_mod
+from . import access as access_mod, agents, papers as papers_mod, apikeys, budget, citations, claude_cli, diskspace, locate as locate_mod, metadata, openalex, scholar, security
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .pdftext import extract, guess_title
@@ -493,25 +493,6 @@ def api_ai_usage_set(body: AIUsageIn):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {**out, "usage": budget.usage(privacy.read_log(5000), days=7)}
-
-
-@app.get("/api/update")
-def api_update(refresh: bool = False):
-    """Whether a newer release exists in the update source (checked at most daily; see app/updates.py)."""
-    return updates_mod.check(force=refresh)
-
-
-class UpdateSourceIn(BaseModel):
-    source: str = ""
-
-
-@app.put("/api/update/source")
-def api_update_source(body: UpdateSourceIn):
-    try:
-        updates_mod.set_source(body.source)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return updates_mod.check(force=True)
 
 
 class PickFolderIn(BaseModel):
@@ -1753,7 +1734,6 @@ def _import_linked(path: Path, fid: str, rel: str, size: int) -> tuple[str, str,
         except diskspace.DiskFull:  # read when there's room (linked_api's queue, or when it's opened or asked about)
             nid, how = _import_linked_unread(path, fid, rel, size)
             return nid, how, 0
-    held = 0
     try:
         info: dict = {}
         try:
@@ -1782,8 +1762,7 @@ def _import_linked(path: Path, fid: str, rel: str, size: int) -> tuple[str, str,
         return nid, how, 0
     finally:
         if was_cloud and not diskspace.give_back(path):
-            held = size  # still on this computer: linked_api pauses once too much is held
-            _HELD[str(path)] = size
+            _HELD[str(path)] = size  # still on this computer: linked_api pauses once too much is held
 
 
 _HELD: dict[str, int] = {}  # online-only PDFs read but not sent back (a Mac where that didn't take): path -> bytes
@@ -2611,7 +2590,6 @@ def _chat_context(idx: dict, q: str, history: list[dict], summary: str = "", all
 # Talking about one paper: the whole paper when it fits (so the agent can answer anything about it, not just
 # what a search happens to pick), otherwise its most relevant passages; plus your summary, notes and
 # highlights on it (unless private), and optionally the most similar papers' passages.
-PAPER_CHAT_FULLTEXT = 48000  # the most the "thorough" AI usage level sends whole (app/budget.py decides)
 PAPER_CHAT_INSTRUCTION = (
     "The student wants to talk about ONE paper (the FOCUS PAPER below). Answer their QUESTION (at the end of stdin) "
     "about that paper: explain, critique, derive, compare with what they wrote, or help them think it through. Cite "

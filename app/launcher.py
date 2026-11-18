@@ -28,7 +28,6 @@ from pathlib import Path
 from . import paths
 
 APP_NAME = "research brain"
-IDLE_DEFAULT = 180
 
 
 def _status_ok(url: str, timeout: float = 1.0) -> bool:
@@ -487,7 +486,7 @@ def _windows_shortcut(remove: bool) -> str:
     r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], capture_output=True, text=True)
     if r.returncode != 0:
         raise OSError(r.stderr.strip() or "PowerShell couldn't make the shortcut")
-    return f"Added “{APP_NAME}” to the Start menu."
+    return f"Added \"{APP_NAME}\" to the Start menu."  # plain quotes: a Windows console shows curly ones as ?
 
 
 def _linux_desktop(remove: bool) -> str:

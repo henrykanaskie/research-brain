@@ -18,6 +18,8 @@ Either way the region keeps the name as its own, so nothing automatic can replac
 """
 from __future__ import annotations
 
+from . import fsio
+
 import json
 import threading
 import time
@@ -54,7 +56,7 @@ def _save(store, items: list[dict], name: str = "region_names.json") -> None:
     p = _file(store, name)
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(p)
+    fsio.replace(tmp, p)
 
 
 def _jaccard(a: set, b: set) -> float:

@@ -32,7 +32,6 @@ from .memory import MemoryError, fmt_sources
 EXCERPT = 600
 PAGE_CHARS = 3500
 MAX_PAGES = 3
-SEED_PASSAGES = 8
 MAX_QUERIES = 4
 BUDGET = float(os.environ.get("RB_AGENT_BUDGET", "45"))
 MAX_TURNS = int(os.environ.get("RB_AGENT_MAX_TURNS", "0"))  # 0: from the AI usage level (app/budget.py)

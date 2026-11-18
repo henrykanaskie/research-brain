@@ -34,6 +34,7 @@ import json
 import threading
 from pathlib import Path
 
+from . import fsio
 from . import agent_scout, budget, scout
 
 MAX_PROPOSALS = 10
@@ -101,7 +102,7 @@ def _save(store, data: dict) -> None:
     p = _path(store)
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
-    tmp.replace(p)
+    fsio.replace(tmp, p)
 
 
 # ---------------------------------------------------------------- searching

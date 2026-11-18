@@ -125,7 +125,6 @@
       d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
   function truncate(s, n) { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
-  const typeLabel = (t) => (t === 'paper' ? 'paper' : t === 'fragment' ? 'fragment' : 'note');
 
   // ======================================================================
   // API
@@ -413,48 +412,7 @@
   // ======================================================================
   // Markdown + math rendering
   // ======================================================================
-  function safeUrl(href) {
-    if (!href) return null;
-    const s = String(href).trim();
-    // judge the scheme as the browser will: it drops tabs/newlines/control chars first ("java\tscript:")
-    const probe = s.replace(/[\u0000-\u0020\u007f-\u009f]/g, '');
-    if (/^(https?:|mailto:)/i.test(probe)) return s;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(probe)) return null; // javascript:, data:, vbscript:, file:, ...
-    return s; // relative
-  }
-  // marked may hand us already-escaped hrefs/titles; normalise to avoid double escaping
-  const unesc = (s) => String(s ?? '').replace(/&(amp|lt|gt|quot|#39);/g, (m, k) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" }[k]));
-
-  let md = null;
-  if (window.marked && window.marked.Marked) {
-    md = new window.marked.Marked({ gfm: true, breaks: false });
-    md.use({
-      renderer: {
-        html(token) { return esc(typeof token === 'string' ? token : (token && (token.raw || token.text)) || ''); },
-        link(href, title, text) {
-          if (href && typeof href === 'object') { title = href.title; text = href.text; href = href.href; }
-          const u = safeUrl(unesc(href));
-          if (!u) return text;
-          return `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer"${title ? ` title="${esc(unesc(title))}"` : ''}>${text}</a>`;
-        },
-        image(href, title, text) {
-          if (href && typeof href === 'object') { title = href.title; text = href.text; href = href.href; }
-          const u = safeUrl(unesc(href));
-          if (!u) return esc(text || '');
-          return `<img src="${esc(u)}" alt="${esc(unesc(text || ''))}" style="max-width:100%"${title ? ` title="${esc(unesc(title))}"` : ''}>`;
-        },
-      },
-    });
-  }
-
-  function renderTex(tex, display) {
-    if (window.katex) {
-      try {
-        return window.katex.renderToString(tex, { displayMode: display, throwOnError: false, errorColor: 'var(--red)', strict: 'ignore', trust: false, output: 'htmlAndMathml' });
-      } catch (e) { /* fall through */ }
-    }
-    return `<code class="math-err">${esc(display ? `$$${tex}$$` : `$${tex}$`)}</code>`;
-  }
+  // static/latex-editor.js renders everything (Markdown, math, [[links]]); it loads before this file
 
   /** [[target]] -> note: an id, else what the open note's server-side `mentions` say, else an exact
    *  (case-insensitive) title in S.nodes, preferring non-fragments, like the server does. */
@@ -527,47 +485,10 @@
    * are swapped for inert placeholders before marked runs, then restored afterwards.
    */
   function renderMD(src, { inline = false } = {}) {
-    if (window.LatexEditor) {
-      return window.LatexEditor.render(src, {
-        inline,
-        transform: citeSub,
-      });
-    }
-    src = String(src ?? '');
-    if (!src.trim()) return '';
-    const slots = [];
-    const put = (html) => `KXPH${slots.push(html) - 1}XK`;
-    const codes = [];
-    const hide = (m) => `KXCODE${codes.push(m) - 1}XK`;
-
-    let s = src.replace(/\r\n?/g, '\n');
-    // 1. shield fenced + inline code
-    s = s.replace(/(^|\n)([ \t]*)(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\3[ \t]*(?=\n|$)|$)/g, (m, pre) => pre + hide(m.slice(pre.length)));
-    s = s.replace(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g, (m) => hide(m));
-    // 2. math
-    s = s.replace(/\$\$([\s\S]+?)\$\$/g, (m, t) => put(renderTex(t.trim(), true)));
-    s = s.replace(/\\\[([\s\S]+?)\\\]/g, (m, t) => put(renderTex(t.trim(), true)));
-    s = s.replace(/\\\(([\s\S]+?)\\\)/g, (m, t) => put(renderTex(t.trim(), false)));
-    s = s.replace(/(^|[^\\$])\$(?=[^\s$])((?:\\.|[^$\\\n]|\n(?!\s*\n))+?)\$(?!\d)/g, (m, pre, t) => {
-      if (/\s$/.test(t)) return m; // closing $ preceded by space: not math (e.g. "$5 and $")
-      return pre + put(renderTex(t, false));
-    });
-    // 3. [[note-id]] citations
-    s = citeSub(s, put);
-    // 4. restore code
-    s = s.replace(/KXCODE(\d+)XK/g, (m, i) => codes[Number(i)]);
-
-    let out;
-    if (md) {
-      try { out = inline ? md.parseInline(s) : md.parse(s); }
-      catch (e) { out = esc(s).replace(/\n/g, '<br>'); }
-    } else {
-      out = esc(s).replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>');
-      if (!inline) out = '<p>' + out + '</p>';
-    }
-    out = out.replace(/<p>\s*(KXPH\d+XK)\s*<\/p>/g, '$1'); // block-level display math
-    out = out.replace(/KXPH(\d+)XK/g, (m, i) => slots[Number(i)] ?? '');
-    return out;
+    if (window.LatexEditor) return window.LatexEditor.render(src, { inline, transform: citeSub });
+    // only if latex-editor.js failed to load: the text itself, escaped, so nothing is lost or unsafe
+    const out = esc(String(src ?? '')).replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>');
+    return inline ? out : `<p>${out}</p>`;
   }
   function mdEl(src, cls = 'md', opts) { return h('div', { class: cls, html: renderMD(src, opts) }); }
   /** Attach the shared LaTeX helper (autocomplete, Cmd/Ctrl+M, symbols, live preview) if loaded. */
@@ -862,14 +783,6 @@
   }
 
   function strHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
-  function linkCurv(l) {
-    if (l.__curv === undefined) {
-      const h = strHash(l.kind + linkKey(lid(l.source), lid(l.target)));
-      const mag = l.kind === 'part' ? 0.18 : [0.05, 0.09, 0.13][h % 3];
-      l.__curv = (h & 8 ? 1 : -1) * mag;
-    }
-    return l.__curv;
-  }
 
   function linkStyle(l) {
     const a = l.source, b = l.target;
@@ -2932,7 +2845,7 @@
         // restore patch so nothing is lost; retry on next edit or click
         if (S.cur && S.cur.id === id) S.patch = { ...patch, ...S.patch };
         S.saveErr = e.message;
-        setSaveInd('err', 'Not saved. Retry');
+        setSaveInd('err', 'Not saved');
         toastErr(e, 'Save failed');
         throw e;
       }
@@ -4542,8 +4455,8 @@
 
   /** Open a freshly imported note unless the user opened something else meanwhile (then offer it). */
   function openOrOffer(note, seq0) {
-    const busy = openSeq !== seq0 && !panel.hidden && (Object.keys(S.patch).length || S.saveTimer || (document.activeElement && document.activeElement.closest && document.activeElement.closest('#panel')));
-    if (busy || (openSeq !== seq0 && !panel.hidden)) {
+    // you opened something else meanwhile: don't take it away, offer this one
+    if (openSeq !== seq0 && !panel.hidden) {
       toast(`Ready: “${truncate(note.title, 60)}”`, 'ok', { action: { label: 'Open', fn: () => openNote(note.id, { center: true }) } });
     } else openNote(note.id, { center: true });
   }
@@ -4984,7 +4897,7 @@
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
     setNodeFilter(fn) { S.nodeFilter = typeof fn === 'function' ? fn : null; kick(400); },
     setHidden(set) { S.hidden = set && set.size ? set : null; S.focusCache = null; configureLinkForce(); kick(400); },
-    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose,
+    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose, errText,
     rerenderCritique() { const s = S.cur && $('#summary-sec', pbody); if (s && s.__refresh) s.__refresh(); },
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },

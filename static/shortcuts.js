@@ -279,6 +279,8 @@
       ['Short on disk space', 'Keep your PDFs in OneDrive: Library settings › Papers folder › move it into OneDrive, then right-click it › Free up space. A PDF downloads only when you open it. On Windows, tick Keep new PDFs online only. research brain always leaves 300 MB free, refuses a PDF that won’t fit, and warns you below 1 GB.', ['library.settings']],
     ]],
     ['Reading and thinking', [
+      ['Saving', 'Everything saves by itself a moment after you stop typing. Save (or the Save key) saves at once. If a save fails, the panel says so and keeps your text, and research brain asks before you leave that note or close the window.', ['note.save']],
+      ['Private by default', 'Your notes, questions and highlights stay on this computer: no AI reads them until you click the lock in a note’s header to share it. Papers are shareable.', []],
       ['Your summary', 'Two or three sentences in your own words. Then ask {AI} to critique it against the paper.', ['note.summary', 'note.critique']],
       ['Fragments', 'A quote, equation or passage with your note on it. Add one in the panel, or highlight in the viewer.', ['note.fragment', 'note.viewer']],
       ['Links', 'Use the Links box near the top of the panel, or right-click a dot on the map. Type [[ in any text to mention a note. Your links are red on the graph.', ['note.link']],
@@ -305,7 +307,7 @@
     ['Getting around', [
       ['Commands', 'Find any action by name. Every action has a title; frequent ones have a key.', ['general.palette', 'general.shortcuts']],
       ['Panel width', 'Drag the grip on the left edge of the note panel or the chat to make it wider or narrower (or focus it and use ← →). Double-click it to reset. Widths are kept.', []],
-      ['Updates', 'When your lab shares a newer version, download its installer zip and run the installer again, the same way as the first time. Your library stays exactly as it is.', []],
+      ['Updates', 'When your lab shares a newer version, download its installer zip, unzip it (Windows: right-click › Extract All) and run the installer again, the same way as the first time. Your library stays exactly as it is.', []],
       ['Settings', 'The gear at the top right: Library settings (in tabs, with a search box), what the graph shows, and appearance.', []],
       ['History', 'Go back and forward through the notes you opened.', ['nav.back', 'nav.forward']],
       ['Paper lookup keys', 'If adding or searching for papers says rate limited, add free keys: get one at openalex.org/settings/api and one from semanticscholar.org/product/api, then paste them in Settings › Library settings › Paper lookup.', []],

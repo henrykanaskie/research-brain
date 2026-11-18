@@ -78,7 +78,7 @@
     }
     let data = null;
     try { data = await r.json(); } catch (e) { /* non-JSON error */ }
-    if (!r.ok) throw new Error((data && data.detail) || `The server answered ${r.status}.`);
+    if (!r.ok) throw new Error(rb().errText ? rb().errText(data, r.status) : ((data && data.detail) || `The server answered ${r.status}.`));
     return data;
   }
 

@@ -21,7 +21,6 @@ from .. import fsio
 import json
 import os
 import re
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
@@ -97,9 +96,6 @@ def tool_guard(name: str, what: str) -> ToolGuardError:
     return ToolGuardError(f"Stopped {name}: it tried to use a tool ({what}), which research_brain never allows. "
                           "The process was killed at once. If this keeps happening, update research_brain or "
                           "choose another AI agent in Settings.")
-
-
-SAFE_NAME = re.compile(r"^[A-Za-z0-9_.@:/ -]{1,120}$")
 
 
 def _version_tuple(text: str) -> tuple[int, ...]:

@@ -34,6 +34,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from . import fsio
 from . import urlfetch
 
 MAX_MB = int(os.environ.get("RB_OA_MAX_MB", "60"))
@@ -132,7 +133,7 @@ class PdfHashes:
         # second rename failed with FileNotFoundError, so that PDF's import answered 500
         tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(d), encoding="utf-8", newline="\n")
-        tmp.replace(self.path)
+        fsio.replace(tmp, self.path)
 
     def refresh(self) -> dict:
         """{nid: sha} for every stored PDF."""
@@ -202,7 +203,7 @@ def _record(store, nid: str, rec: dict) -> None:
         data[nid] = rec
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
-        tmp.replace(p)
+        fsio.replace(tmp, p)
 
 
 # ---------------------------------------------------------------- candidates

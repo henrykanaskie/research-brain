@@ -15,6 +15,8 @@ second even for a large library). Only notes whose key changed are re-chunked an
 """
 from __future__ import annotations
 
+from . import fsio
+
 import hashlib
 import json
 import re
@@ -29,7 +31,6 @@ MIN_CHUNK_CHARS = 40          # drop page furniture like a lone running header o
 PAGE_RE = re.compile(r"\[\[page (\d+)\]\]")
 # Linked HTML articles (saved by the browser extension without a PDF) mark headings instead of pages:
 # [[section 3.2 Results]]. Passages under one carry its label, so citations read "§3.2".
-SECTION_RE = re.compile(r"\[\[section ([^\[\]\n]{1,200})\]\]")
 MARKER_RE = re.compile(r"\[\[(page \d+|section [^\[\]\n]{1,200})\]\]")
 SECTION_NUM_RES = (re.compile(r"^(\d{1,3}(?:\.\d{1,3})*)\.?(?=\s|$)"),              # 3.2 Results, 4. Discussion
                    re.compile(r"^([A-Z](?:\.\d{1,3})+)\.?(?=\s|$)"),                  # A.1 Proofs
@@ -234,7 +235,7 @@ class ChunkIndex:
         jf, nf = self._files(self._kind)
         tmp = jf.with_suffix(".tmp")
         tmp.write_text(json.dumps({"notes": self._notes, "rows": self._rows}, ensure_ascii=False), encoding="utf-8", newline="\n")
-        tmp.replace(jf)
+        fsio.replace(tmp, jf)
         if self._kind != "tfidf" and self._m is not None:
             tmpn = nf.with_name(nf.stem + ".tmp.npy")
             np.save(tmpn, self._m.astype(np.float32))

@@ -243,18 +243,18 @@
     const css = `
 .le-pop{position:fixed;z-index:1000;min-width:220px;max-width:320px;max-height:264px;overflow-y:auto;margin:0;padding:3px 0;list-style:none;
   background:var(--sheet,#FAFAFA);color:var(--ink,#1E2226);border:1px solid var(--rule,#D3D7DC);border-radius:3px;
-  font:13px/1.3 "Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
+  font:13px/1.3 var(--sans,system-ui,-apple-system,"Segoe UI",sans-serif)}
 .le-pop li{display:flex;align-items:center;gap:10px;padding:4px 10px;cursor:pointer;white-space:nowrap}
 .le-pop li.on{background:var(--red-wash,rgba(178,58,51,.10))}
 .le-pop .le-g{min-width:44px;text-align:center;font-size:14px;color:var(--ink,#1E2226)}
 .le-pop .le-g .katex{font-size:1em}
 .le-pop .le-n{color:var(--ink-2,#5A6169);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
 .le-tools{display:flex;justify-content:flex-end;margin-top:3px}
-.le-sym-btn{all:unset;cursor:pointer;font:12px/1.4 "Instrument Sans",system-ui,sans-serif;color:var(--ink-2,#5A6169);padding:1px 4px;border-radius:3px}
+.le-sym-btn{all:unset;cursor:pointer;font:12px/1.4 var(--sans,system-ui,sans-serif);color:var(--ink-2,#5A6169);padding:1px 4px;border-radius:3px}
 .le-sym-btn:hover,.le-sym-btn.on{color:var(--ink,#1E2226);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--rule,#D3D7DC)}
 .le-sym-btn:focus-visible{outline:1px solid var(--ink-2,#5A6169)}
 .le-pal{position:fixed;z-index:1000;width:332px;background:var(--sheet,#FAFAFA);color:var(--ink,#1E2226);border:1px solid var(--rule,#D3D7DC);border-radius:3px;
-  font:12px/1.3 "Instrument Sans",system-ui,sans-serif}
+  font:12px/1.3 var(--sans,system-ui,sans-serif)}
 .le-tabs{display:flex;flex-wrap:wrap;gap:2px 10px;padding:7px 10px 6px;border-bottom:1px solid var(--rule,#D3D7DC)}
 .le-tabs button{all:unset;cursor:pointer;color:var(--ink-2,#5A6169);padding:1px 0;border-bottom:1px solid transparent}
 .le-tabs button:hover{color:var(--ink,#1E2226)}

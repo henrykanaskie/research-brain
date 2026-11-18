@@ -473,7 +473,9 @@ button{font:inherit;color:inherit}
     const last = rects[rects.length - 1] || sel.range.getBoundingClientRect();
     noteWrap.innerHTML = "";
     const frame = document.createElement("iframe");
-    frame.src = chrome.runtime.getURL("note.html") + "#" + res.token; // the page's own (dynamic) extension URL frame.title = "Write a note"; frame.setAttribute("allow", "clipboard-write");
+    frame.src = chrome.runtime.getURL("note.html") + "#" + res.token; // the page's own (dynamic) extension URL
+    frame.title = "Write a note";
+    frame.setAttribute("allow", "clipboard-write");
     noteWrap.appendChild(frame);
     noteWrap.hidden = false;
     S.note = { token: res.token, range: sel.range, frame };

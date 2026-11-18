@@ -14,11 +14,11 @@ back off on rate limiting.
 from __future__ import annotations
 
 import os
-import re
 import threading
 import time
 import uuid
 
+from . import fsio
 from . import scholar
 from .store import now_iso
 
@@ -70,12 +70,13 @@ def s2_key(n: dict) -> str:
     return ""
 
 
-def _norm_title(t: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+from .metadata import norm_title as _norm_title  # noqa: E402  (one rule for matching titles)
 
 
 def _norm_arxiv(a: str) -> str:
-    return re.sub(r"v\d+$", "", (a or "").strip().lower())
+    """The arXiv id without its version (app/metadata.py clean_arxiv); "\0", which matches nothing, if it isn't one."""
+    from .metadata import clean_arxiv
+    return clean_arxiv(a).lower() or "\0"
 
 
 class LibraryIndex:
@@ -115,7 +116,7 @@ def _set_cites(store, nid: str, cites: list[str]) -> bool:
         path = store.note_path(nid)
         tmp = path.with_suffix(".md.tmp")
         tmp.write_text(store._dump(note), encoding="utf-8", newline="\n")
-        tmp.replace(path)
+        fsio.replace(tmp, path)
         store.rev += 1
         return True
 
@@ -205,7 +206,7 @@ def _run_backfill(store, jid: str, ids: list[str]) -> None:
             _upd(jid, current=store.get(nid)["title"])
             try:
                 linked += link_paper(store, nid, lib=lib)["added"]
-            except Unreachable as e:
+            except Unreachable:
                 raise
             except Exception as e:
                 errors.append(f"{store.get(nid)['title'][:80]}: {e}")

@@ -248,7 +248,6 @@ def test_mac_folder_chooser_command():
 def test_a_paired_phone_cant_open_a_dialog_on_the_computer():
     from app import pairing
     assert any(rx.match("/api/pick-folder") for rx, _ in pairing.COMPUTER_ONLY)
-    assert any(rx.match("/api/update/source") for rx, _ in pairing.COMPUTER_ONLY)
 
 
 def test_ai_sorts_imported_papers_into_topics(client, server, monkeypatch):

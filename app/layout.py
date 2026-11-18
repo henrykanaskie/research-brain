@@ -96,7 +96,6 @@ class Layout:
         self.lock = threading.RLock()
         self._by_id: dict[str, Path] = {}
         self._info: dict[str, tuple[int, int, str, Path]] = {}  # path -> (mtime_ns, size, id, Path): ids read once per change
-        self._scanned = 0.0
         self._dirs: dict[str, int] = {}  # every folder scanned -> its mtime (a file added, removed or renamed changes it)
         self._listing: dict[str, tuple[int, list[str], list[str]]] = {}  # folder -> (mtime, .md files, subfolders)
         self._warned: set[Path] = set()
@@ -210,7 +209,6 @@ class Layout:
             self._by_id = {nid: v[2] for nid, v in found.items()}
             self._info = info
             self._dirs = dirs
-            self._scanned = time.monotonic()
         return {nid: (v[0], v[1]) for nid, v in found.items()}
 
     def path(self, nid: str) -> Path | None:

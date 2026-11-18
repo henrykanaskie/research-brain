@@ -13,6 +13,8 @@ Nothing here is sent anywhere; the files stay on this computer with the library.
 """
 from __future__ import annotations
 
+from . import fsio
+
 import json
 import re
 import threading
@@ -138,7 +140,7 @@ def save(store, key: str, messages: list, title: str = "") -> dict:
         p = _path(store, key)
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(p)
+        fsio.replace(tmp, p)
         _prune(store)
         return d
 

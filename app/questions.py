@@ -34,6 +34,8 @@ neither it, the library, the cards, the settings nor the day changed since its l
 """
 from __future__ import annotations
 
+from . import fsio
+
 import datetime as dt
 import hashlib
 import json
@@ -178,7 +180,7 @@ def _save(store, qid: str, data: dict) -> None:
     p = _path(store, qid)
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
-    tmp.replace(p)
+    fsio.replace(tmp, p)
     REV[0] += 1
 
 

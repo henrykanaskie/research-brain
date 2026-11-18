@@ -541,8 +541,9 @@ def test_renderer_neutralises_xss(tmp_path, le):
 
 
 @pytest.mark.skipif(not NODE, reason="node is not installed")
-def test_app_js_safe_url():
-    src = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+def test_renderer_safe_url():
+    """The link check of the renderer every note goes through (static/latex-editor.js)."""
+    src = (ROOT / "static" / "latex-editor.js").read_text(encoding="utf-8")
     fn = re.search(r"function safeUrl\(href\) \{[\s\S]*?\n  \}", src).group(0)
     js = fn + "\nconst cases = " + json.dumps(["javascript:x", "java\tscript:x", "\x01javascript:x", " data:x",
                                                  "vbscript:x", "https://a.b", "mailto:a@b", "#x", "/viewer/a",
@@ -587,3 +588,9 @@ def test_page_and_scripts_are_rechecked_after_an_update(live):
     _, _, body = raw_request(live.port, f"GET / HTTP/1.1\nHost: 127.0.0.1:{live.port}\nConnection: close\n")
     body = body.decode() if isinstance(body, bytes) else body
     assert f'src="/static/app.js?v={__version__}"' in body and f'href="/static/style.css?v={__version__}"' in body
+
+
+def test_the_extension_uses_the_same_renderer_as_the_app():
+    """One renderer: extension/vendor/latex-editor.js is a copy of static/latex-editor.js (fonts come from each
+    page's --sans), so a fix to one is never missing from the other. Copy the file over when you change it."""
+    assert (ROOT / "extension/vendor/latex-editor.js").read_bytes() == (ROOT / "static/latex-editor.js").read_bytes()

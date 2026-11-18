@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import re
 import threading
 import time
 
@@ -94,7 +93,7 @@ class Tools:
             for name, fn in self.sources.items():
                 try:
                     found += fn(q, self.since)[:SEARCH_RESULTS]
-                except Exception as e:
+                except Exception:
                     errs.append(name)
             hs = []
             for p in found:
@@ -274,6 +273,3 @@ def due(data: dict, now: dt.datetime | None = None) -> bool:
     except (TypeError, ValueError):
         return True
 
-
-def clean_title(t: str) -> str:
-    return re.sub(r"\s+", " ", t or "").strip()[:200]

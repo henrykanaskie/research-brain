@@ -763,7 +763,17 @@ if (RBC) {
 } else {
   document.addEventListener("keydown", (e) => {
     if (popIsOpen()) {
-      if (e.key === "Escape") { e.preventDefault(); closePop(); }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        // a note you've typed isn't thrown away by one key: Escape again (within 2 s) or Cancel discards it
+        if ($("#pBody").value.trim() && !(window.__escAt && Date.now() - window.__escAt < 2000)) {
+          window.__escAt = Date.now();
+          toast("Your note isn't saved. Press Esc again to discard it, or save it.", false);
+          return;
+        }
+        window.__escAt = 0;
+        closePop();
+      }
       else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveFrag(); }
       return;
     }

@@ -29,7 +29,6 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
-import math
 import os
 import re
 import secrets
@@ -40,6 +39,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import fsio
 from . import units
 
 KINDS = ("claim", "equation", "quantity", "method")
@@ -176,7 +176,7 @@ class PaperText:
                 continue
             best = None
             for start in range(len(blocks)):
-                covered, a0, b0 = 0, blocks[start].a, blocks[start].b
+                covered, b0 = 0, blocks[start].b
                 last = blocks[start]
                 for b in blocks[start:]:
                     if b.b - (last.b + last.size) > 12 or b.a - (last.a + last.size) > 12:
@@ -468,7 +468,7 @@ class CardStore:
             body = {"paper": pid, "cards": data.get("cards") or [], "extractions": (data.get("extractions") or [])[-10:]}
             tmp = p.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(body, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
-            tmp.replace(p)
+            fsio.replace(tmp, p)
             self.rev += 1
             self._ids = None
 
@@ -1023,7 +1023,7 @@ class CardIndex:
                     self.cs.index_dir.mkdir(parents=True, exist_ok=True)
                     tmp = self._cache_file().with_suffix(".tmp")
                     tmp.write_text(json.dumps(cache), encoding="utf-8", newline="\n")
-                    tmp.replace(self._cache_file())
+                    fsio.replace(tmp, self._cache_file())
                 except OSError:
                     pass
             return np.asarray([cache[c["id"]]["v"] for c in cards], np.float32)
@@ -1093,7 +1093,7 @@ class CardIndex:
             self.cs.index_dir.mkdir(parents=True, exist_ok=True)
             tmp = f.with_suffix(".tmp")
             tmp.write_text(json.dumps({"sig": sig, "links": out}, ensure_ascii=False), encoding="utf-8", newline="\n")
-            tmp.replace(f)
+            fsio.replace(tmp, f)
         except OSError:
             pass
         return out
@@ -1241,6 +1241,3 @@ def counts() -> dict[str, int]:
 def signature() -> str:
     return card_store().signature() if _cs is not None else ""
 
-
-def finite(x) -> bool:
-    return isinstance(x, (int, float)) and math.isfinite(x)

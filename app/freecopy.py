@@ -19,7 +19,6 @@ Tests replace SOURCES.
 """
 from __future__ import annotations
 
-import re
 
 import requests
 
@@ -30,8 +29,7 @@ RANK = {"published": 0, "accepted": 1, "unknown": 2, "preprint": 3}
 TIMEOUT = 15
 
 
-def _norm(t: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+from .metadata import norm_title as _norm  # noqa: E402  (one rule for matching titles)
 
 
 def from_openalex(p: dict, email: str = "") -> list[dict]:

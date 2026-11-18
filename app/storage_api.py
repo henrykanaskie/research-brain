@@ -43,7 +43,6 @@ from . import __version__, acquire, metadata, migrate, paths, profiles, scholar,
 UPLOAD_MAX_MB = int(os.environ.get("RB_UPLOAD_MAX_MB", "150"))
 UI_STATE_MAX = 256 * 1024
 UI_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.\-]{0,63}$")
-SETTINGS_KEYS = {"unpaywall_email": str, "auto_open_access": bool, "save_mode": str}
 # When saving from a publisher page in the extension: "link" = link + full text + metadata (default; no PDF
 # file), "pdf" = the same and the PDF too.
 SAVE_MODES = ("link", "pdf")

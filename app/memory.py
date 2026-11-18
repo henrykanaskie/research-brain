@@ -199,7 +199,6 @@ class Memory:
         self.page_count = page_count or (lambda nid: None)
         self._lock = threading.RLock()
         self._core_key = None
-        self._core_dirty_at = 0.0
         self._thread = None
         self._stop = threading.Event()
         self.ensure_layout()

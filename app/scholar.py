@@ -10,7 +10,7 @@ import os
 import re
 import time
 import xml.etree.ElementTree as ET
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
 import requests
 
@@ -37,13 +37,9 @@ class RateLimited(ScholarError):
 
 
 def clean_doi(doi: str) -> str:
-    doi = unquote(doi).strip().rstrip(".,;)]}'\"")
-    doi = re.sub(r"(?i)^(https?://)?(dx\.)?doi\.org/", "", doi)
-    doi = re.sub(r"(?i)^doi:\s*", "", doi)
-    for suffix in (".pdf", "/full", "/abstract", "/epdf"):
-        if doi.lower().endswith(suffix):
-            doi = doi[: -len(suffix)]
-    return doi
+    """One DOI cleaner for the whole app (app/metadata.py): the same DOI reads the same however it came in."""
+    from .metadata import clean_doi as _clean
+    return _clean(doi, keep_case=True)
 
 
 def parse_identifier(text: str) -> tuple[str, str]:
@@ -157,9 +153,10 @@ def arxiv_meta(arxiv_id: str) -> dict | None:
     if r.status_code != 200:
         return None
     ns = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+    from .metadata import MetaError, _safe_xml  # refuses DOCTYPE/ENTITY declarations, like every other feed read
     try:
-        root = ET.fromstring(r.content)
-    except ET.ParseError:
+        root = _safe_xml(r.content.decode("utf-8", errors="replace"))
+    except (ET.ParseError, MetaError):
         return None
     e = root.find("a:entry", ns)
     if e is None or e.find("a:title", ns) is None:

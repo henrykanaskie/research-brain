@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urlencode, urlsplit, unquote
 
+from . import fsio
 from . import urlfetch
 
 # ---------------------------------------------------------------------------------------------- settings
@@ -166,7 +167,7 @@ class Cache:
                     self.path.parent.mkdir(parents=True, exist_ok=True)
                     tmp = self.path.with_suffix(".json.tmp")
                     tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8", newline="\n")
-                    tmp.replace(self.path)
+                    fsio.replace(tmp, self.path)
                 except OSError:
                     pass
 
@@ -436,7 +437,9 @@ ARXIV_DOI_RE = re.compile(r"^10\.48550/arxiv\.(.+)$", re.I)
 ARXIV_ID_RE = re.compile(r"^(\d{4}\.\d{4,5}|[a-z\-]+(\.[A-Z]{2})?/\d{7})(v\d+)?$", re.I)
 
 
-def clean_doi(d: str) -> str:
+def clean_doi(d: str, keep_case: bool = False) -> str:
+    """A DOI from a link, "doi:" text or a bare DOI; "" if it isn't one. Lower case (DOIs ignore case) unless
+    keep_case: then as written, for showing what someone typed or pasted."""
     d = unquote(str(d or "")).strip()
     d = re.sub(r"(?i)^(https?://)?(dx\.)?doi\.org/", "", d)
     d = re.sub(r"(?i)^doi:\s*", "", d).strip().rstrip(".,;)]}'\"")
@@ -444,7 +447,15 @@ def clean_doi(d: str) -> str:
         if d.lower().endswith(suffix):
             d = d[: -len(suffix)]
     m = DOI_RE.match(d)
-    return m.group(1).lower() if m else ""
+    if not m:
+        return ""
+    return m.group(1) if keep_case else m.group(1).lower()
+
+
+def norm_title(t: str) -> str:
+    """A title for matching: lower case, letters and digits only, single spaces. One rule for the whole app,
+    so citations, suggested papers, free copies and topics match titles the same way."""
+    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
 
 
 def clean_arxiv(a: str) -> str:
@@ -603,14 +614,6 @@ def _first(v) -> str:
     if isinstance(v, list):
         v = next((x for x in v if x), "")
     return str(v or "").strip()
-
-
-def _custom(csl: dict) -> dict:
-    c = csl.get("custom")
-    if not isinstance(c, dict):
-        c = {}
-        csl["custom"] = c
-    return c
 
 
 def finalize(csl: dict) -> dict:
