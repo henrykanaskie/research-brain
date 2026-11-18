@@ -579,7 +579,7 @@
 
   // ---------------------------------------------------------------- paper lookup keys (app/apikeys.py)
   const KEY_HELP = {
-    s2: 'Request one on Semantic Scholar’s API page. The form asks how you’ll use it (50+ words) and which endpoints: the README (Install, step 5) has text to paste into each field. They review requests by hand; the key arrives by email, usually after a few days.',
+    s2: 'Request one on Semantic Scholar’s API page. The form asks how you’ll use it (50+ words) and which endpoints: the README (Free keys for looking papers up) has text to paste into each field. They review requests by hand; the key arrives by email, usually after a few days.',
     openalex: 'Recommended: without a key, OpenAlex shares one small daily allowance with everyone on your network, and runs out. A free key (sign up at openalex.org, then Settings → API) gives this app its own.',
   };
   async function renderKeys(sec, say) {

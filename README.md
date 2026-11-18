@@ -493,75 +493,6 @@ own [free keys](#free-keys-for-looking-papers-up-recommended). Updating never ch
 including how a library-format change is handled: [docs/releasing.md](docs/releasing.md).
 </details>
 
-## For developers: more ways to install
-
-Under the hood the installers use [uv](https://docs.astral.sh/uv/), which downloads its own Python 3.12
-(about 66 MB) and installs research brain in its own environment (about 175 MB), so nothing conflicts with
-Python, conda or Homebrew already on the computer.
-
-**From a terminal**, in an unzipped installer folder or a checkout:
-
-```bash
-./install.sh                                            # macOS and Linux
-powershell -ExecutionPolicy Bypass -File .\install.ps1  # Windows
-research-brain open                                     # opens it in its own window
-research-brain                                          # or: the server in this terminal + a browser tab (Ctrl+C stops it)
-```
-
-From a release folder, the installer installs the release in it. The app doesn't check for updates itself; for
-admins, **`research-brain update`** installs the newest GitHub release (it needs the `gh` command, signed in, while
-the repository is private). A library that a newer version has converted won't open in an older one (it stops with a
-clear message instead). Publishing a release and rolling it out: [docs/releasing.md](docs/releasing.md).
-
-**From the repository** (you have access to it on GitHub):
-
-```bash
-git clone https://github.com/henrykanaskie/research-brain.git
-cd research-brain
-./install.sh        # or install.ps1 on Windows
-```
-
-With uv, one line installs a release on every OS:
-`uv tool install --python 3.12 "git+https://github.com/henrykanaskie/research-brain.git@v1.0.14"`.
-Without installing, from a checkout: `./run.sh` (the first run builds `.venv`, a few minutes), or
-double-click `research_brain.command` (Mac) or `research_brain.cmd` (Windows).
-
-**The app entry.** The installer adds a **research brain** app: in Applications, Launchpad and the Dock
-on macOS (made on your computer, so there's no developer signature or Gatekeeper prompt involved), the
-Start menu on Windows, the app menu on Linux. It runs `research-brain open`, which starts research brain if
-it isn't running and opens it in a window. On a Mac that is research brain's own window (WebKit, with no
-title bar); `RB_APP_WINDOW=browser` uses a Chrome, Edge or Brave app window instead, which is what Windows
-and Linux use (otherwise a browser tab). Closing it stops research brain (on Windows and Linux, a few
-minutes after the window closes). Nothing starts when your computer starts. `research-brain install-app`
-adds the app entry again, `--remove` takes it away. `research-brain --version` prints the version;
-`research-brain where` shows where your library is.
-
-**Your data.** Your papers, notes, questions, highlights, topics and PDFs are in your documents folder,
-`~/Documents/research brain` (see [Where your things are](#where-your-things-are); a profile in a folder you
-chose, `RB_DATA_DIR` or `RB_VAULT` keep them in the library folder itself, and `RB_DOCUMENTS_DIR` picks one).
-The app's own data (search index, extracted text, settings, review history, trash) lives in a per-user
-folder, separate from the app: `~/Library/Application Support/research_brain/`
-on macOS (`~/.local/share/research_brain/` on Linux, `%APPDATA%\research_brain\` on Windows). Each
-library ("profile") is a folder under `profiles/`. There are no accounts or passwords: your computer
-login is your identity and everything autosaves. An older `./vault` with notes keeps working where it
-is; **Settings → Library settings** offers to move it. Details, and how PDFs are obtained:
-[docs/storage-and-distribution.md](docs/storage-and-distribution.md).
-
-**Finding the AI tool.** For Claude Code, the app finds `claude` on your PATH, `~/.local/bin`
-(`%USERPROFILE%\.local\bin\claude.exe` on Windows), Homebrew, npm (`%APPDATA%\npm` on Windows), WinGet,
-Scoop, snap or nvm; if it lives somewhere else, set `RB_CLAUDE_BIN` to its full path. On Windows, agents
-installed with npm run through Node directly, never through `cmd.exe`, so a prompt can't be misread as a
-command.
-
-**Using your plan sparingly.** Every request uses your AI plan's limits, so research brain sends as little
-as each job needs. **Library settings › AI usage** sets how much: *Light*, *Balanced* (the default) or
-*Thorough*. At *Balanced*, a 12-page paper is answered from its best passages (about 2,600 tokens per
-question) instead of being sent whole (about 11,000); a critique of a long paper sends its opening, its end
-and the passages nearest your summary. Small jobs (explaining a link, checking a review answer,
-suggesting idea cards) use the provider's small model (Claude Haiku, Gemini Flash) unless you turn that
-off. Critiquing an unchanged summary shows the last critique instead of asking again. The panel shows an
-estimate of the last 7 days. Nothing calls the AI in the background.
-
 ## Choosing an AI agent
 
 **Settings → Library settings → AI agent** (or the command palette: "Choose AI agent") lists every AI tool
@@ -593,37 +524,25 @@ looks it up and sends back what it found, and the model never gets tools.
 
 | Thing | How |
 | --- | --- |
-| Add a paper | Drag a PDF anywhere onto the window, or **Add PDF**. The app finds the DOI or arXiv id in the PDF (its XMP metadata first, then the first pages) and fills in the citation details from Crossref, arXiv & co. (see "How metadata is found" below). |
-| Add from the map | Right-click an empty spot on the map: add a paper by DOI, arXiv id or title, import a PDF, write a note or start a question. What you add appears at that spot. |
-| Add without a PDF | **Add by DOI / arXiv / title** (⌘⇧A, or ⌘K and type "add paper"). Accepts `10.xxxx/...`, `2301.01234`, arXiv or doi.org URLs, a PMID, an ISBN (books), an OSTI or NTRS link, or a title. |
-| Summaries | Write the summary yourself, then **Critique my summary**. Claude reads the full PDF text and reports errors, what's missing, what's vague, and questions to check yourself. It does not rewrite the summary for you. |
-| Review | **Review** in the top bar (it shows how many are due, and hides when nothing is) brings back your own summaries and fragment notes for recall: write what you remember, **Reveal** your original side by side, then grade yourself. Claude can optionally **Check my recall** in at most three lines. Details below. |
-| Graph views | **Filter** at the top left of the graph fades everything except a type, year range, tag or region. Save a filter plus the current search as a named view. Double-click a node (or select it and press **F**) to show only its 2-hop neighbourhood; **Esc** or **Close** brings everything back. |
-| Notes on a specific part | **Fragments**: a quote, equation or passage plus your note about it. Each fragment is its own small node orbiting its paper, and it links by meaning to other papers. Add one from the note panel, or highlight text in the built-in PDF viewer (**Open in viewer**), or clip from any web page with the Chrome extension. |
-| Map labels | Papers are labelled with their first author and year ("Boeuf, 2018"); notes and questions with their title. Settings (the gear) › **Labels** switches to author, year and title, or the title alone. Hover a dot for its full title. |
-| Move dots | Drag a dot where you want it: it settles there and stays there next time, while still swaying a little with its neighbours, and the dots linked to it come along. Right-click › **Let it move freely**, or the command *Let every dot move freely*, gives it back to the layout. Zoom in as far as you like while something is on screen (it stops before you would zoom into empty space); resizing the window refits the map. |
-| Regions | Related papers form regions, each a separate disc on the map sized by how many papers it holds, with clear space between them; papers in no region sit around the outside. Where regions sit follows how related they are (similar papers, your links, shared topics and open questions): related areas side by side, unrelated ones further apart. Papers that match an open question, or that you kept as its evidence, group with that question. When you link a paper, it glides over to the linked paper's region and takes its own place around it, so several links fan out instead of piling up on one side. Each region is named for its research area (*Atomic Cross Sections*, *Collisional-Radiative Models*): your AI agent names new regions in the background from their paper titles (never private ones; `RB_REGION_AI=0` turns it off), and without an agent the region's most distinctive phrase is used. A region with the same papers as one of your topics shows the topic's name. Click a region's name to focus it, then **Rename**. A name you give is yours: it beats topic, AI and automatic names and follows the region as papers join or leave it. Renaming also renames the matching topic unless you tick *Keep the topic's name*. Click empty map to let go of a focused dot or region. |
-| Topics on the map | A paper you add to a topic joins that topic's region on the map, even when nothing in your library is textually similar to it. Add it from its panel (**+ Add to a topic**) or right-click its dot: **Put in section** lists the map's regions (a region without a topic gets one, named like the region, so the paper stays there) and **Add to topic** lists your other topics. |
-| Dots you placed | A dragged dot stays where you drop it. When you've placed most of a region's dots, the region stays where you put them, so a paper that joins it later settles among them instead of where the map would have put the region on its own. |
-| Read and unread | A paper you've read is a white dot; one you haven't (To read, Reading, Later) has a small warm yellow glow at its centre. Mark it in the paper's panel (**Read**, Alt+3) or right-click its dot: **Mark as read** / **Mark as unread**. |
-| Panel width | Drag the grip on the left edge of the note panel or the chat to make it wider (up to all but a strip of the map) or narrower; ← and → work when it has focus, and a double-click resets it. Each panel keeps its width. |
-| Settings | The gear at the top right: **Library settings** (tabs: Library, Adding papers, AI and privacy, Citations, Devices, plus a search box), what the graph shows, and appearance. |
-| Connections | Dashed lines are semantic similarity (local embeddings; tune with the slider). Solid lines are links you made. Click any line, or **Why?** in the related list, to have Claude explain the relationship. |
-| Find more papers | **Discover papers** on a paper shows its references, citing papers, and recommendations. **Add** imports one and links it. |
-| Find papers on a topic | **Find papers** in the top bar (or **Shift+P**): type a topic, optionally what you're after and a date range, and your AI agent searches OpenAlex and arXiv, reads abstracts, follows reference lists and proposes up to 10 papers. They land **On deck** in the same panel, grouped by search, each with authors, year, venue, whether it's free to read, the agent's one-line reason and the abstract, plus **Open**, **PDF** (arXiv), **Add to library** and **Dismiss**. Nothing is added until you say so, and a dismissed paper isn't proposed again. The topic goes to your AI agent and its search words to OpenAlex and arXiv; nothing from your library is sent. A search costs about one Research question of your AI plan. The count on the button is how many papers are waiting. When a search finishes you're told: a toast with **Review**, and if you're in another app, the Mac app's Dock icon bounces and shows a badge (in a browser, a system notification if you allowed it). A paywalled paper also gets a **free copy** when the open-access indexes have one (OpenAlex repository copies, Unpaywall with your contact email, Semantic Scholar, an arXiv preprint with the same title), with a note on which version it is (published, accepted manuscript or preprint) and what that means for citing; adding the paper puts the note in it and downloads that copy. |
-| Ask your library | **Ask your library**, **Library** tab: Claude reads the most relevant passages of your papers (page by page) and your own notes, and cites them as chips like *Paper title p. 9*. Clicking a page citation opens the PDF at that page in a new tab. The passages it read are listed under each answer. |
-| Ask about topics | In the chat, **Topics…** (or **Ask about this topic** in the Topics drawer): pick one or more topics (**Select all** takes every one) and the agent reads every paper in them (title, your summary or the abstract) plus the passages that best match your question, and nothing outside them. |
-| Ask anything | In the chat, **General**: ask the agent anything, without your library. **Attach…** adds papers, notes, open questions or whole topics for it to read and cite; nothing of yours goes along unless you attach it, and private items can't be. |
-| Search the web | Off by default. Allow it in **Settings › Library settings › AI and privacy**, then tick **Search the web** in a General chat; the agent looks things up and links its sources. Attached papers go with their published parts only; your own notes go along only after you confirm once. See [What the AI can and can't do](#what-the-ai-can-and-cant-do). |
-| Conversations | Every conversation (the library, each paper, each set of topics, General) is kept in `state/chats/` and comes back next time. The last 40 messages stay in full; older ones are condensed into a short summary that still goes along with your questions. **New conversation** starts over. |
-| Research mode | In **Ask your library**, switch **Quick** to **Research** (or **Ask with research** in the command palette). Claude then searches your library itself: several searches at once, opening the pages around a hit, following citations, and consulting memory. You see each step as it happens ("Searching: …", "Reading pp. 4–5 of …"), then the answer with `[[note-id]] p. N` citations. The steps fold away when it's done. Most questions take 3–12 s. **Faster model** uses `haiku` for that question. |
-| Memory | **Memory** (chat header, or G then M) shows the library map Research reads first (regions, key notes, recent notes, reading queue, where the PDFs are; generated by the app) and the short findings Claude saved while researching. Findings are labelled *Added via AI*, list their sources, and can be edited or deleted. Files: `vault/memory/`. |
-| Citation links | Papers that cite each other are joined by thin ink lines with an arrowhead at the cited paper (from Semantic Scholar references; only papers already in your library). New imports are linked automatically in the background; for papers you already have, run the backfill below once. Toggle them under **Settings → Show citation links**. |
+| Add a paper | Drag a PDF onto the window, or **Add** › paste a DOI, arXiv id, PMID, ISBN or title (⌘⇧A). |
+| Add on the map | Right-click an empty spot to add a paper, note or question there. |
+| Highlight | Open the PDF (**Open in viewer**) and select text. Each highlight is a *fragment* on its paper. |
+| Summaries | Write your own, then **Critique my summary**. The AI points out errors and gaps; it never rewrites it. |
+| Review | **Review** in the top bar quizzes you on your own summaries and notes, spaced over days and weeks. |
+| Link papers | Use the panel's **Links** box or right-click a dot. Click any line to have the AI explain the link. |
+| Move dots | Drag a dot; it stays there. Right-click › **Let it move freely** to undo. |
+| Regions | Related papers group into named regions. Click a region's name to focus or **Rename** it. |
+| Topics | Add a paper to a topic from its panel; the topic keeps a *Next to read* list. |
+| Read and unread | Mark it in the panel (**Alt+3**) or right-click its dot. |
+| Filter the map | **Filter** (top left) by type, year, tag or region; save it as a view. |
+| Find more papers | **Discover papers** on a paper, or **Find papers** (Shift+P) to have the AI search a topic. |
+| Ask | **Ask** (top right): **Library**, **Topics…** or **General**. Answers cite pages you can click. |
+| Research mode | Switch **Quick** to **Research** for a deeper, multi-step search of your library. |
+| Idea cards | **Ideas** on a paper: claims, equations, values and methods, checked against the paper's text. |
+| Open questions | **Q** writes down a question; matching evidence from your library collects under it. |
+| Cite | **Alt+C**: copy `\cite{}`, BibTeX or a formatted bibliography in any CSL style. |
 
-| Idea cards | **Ideas** on a paper: its key claims, equations, measured quantities (value ± uncertainty, unit, conditions) and methods as small cards. **Suggest ideas** has the AI propose them, each with a quote that must be found word for word in the paper; you **Confirm**, **Edit** or **Reject** each (J/K, Y, E, X). The same idea in other papers is linked, and a value that disagrees is flagged. **G then I** opens every card as a table you can sort, filter and export as CSV. See *Idea cards* below. |
-| Cite and export | **Alt+C** (or **Cite** on a paper): copy `\cite{key}`, the BibTeX entries (*Copy BibTeX*), a formatted citation or a bibliography in APS, IEEE, APA and any CSL style; export BibTeX/BibLaTeX/RIS/CSL-JSON with stable keys; keep a `.bib` file updated automatically. See *Citing and bibliographies* below. |
-
-Math works everywhere: `$...$` inline and `$$...$$` display (KaTeX).
+Math works everywhere: `$...$` inline and `$$...$$` display.
 
 ## Keyboard shortcuts and help
 
@@ -639,35 +558,22 @@ write the summary or notes, **C** critique, **Alt+C** cite papers, **Shift+L** l
 
 ## What the AI can and can't do
 
-Whichever agent you pick, it can only read the text research_brain sends it. It gets no tools: it can't
-browse, click, open files, run code or reach the internet. Agent CLIs run from an empty private folder,
-with their tools, extensions and project instructions switched off wherever the CLI allows it, and are
-stopped if they try to use a tool anyway. For Claude, every call runs your `claude` CLI with no built-in
-tools, no MCP servers from your settings, and Claude in Chrome off. Research mode gets exactly one MCP server, research_brain's own (search, read pages, citations,
-memory; read-only except for appending a short sourced finding). Before Claude does anything,
-research_brain checks the list of tools the session reports and kills the run if anything else is there.
-Private notes are never sent at all (see [Private notes](#private-notes-your-own-ideas-stay-on-your-computer)).
-Details: [SECURITY.md](SECURITY.md).
+- It reads only the text research brain sends it. It can't browse, open files, run code or reach the internet.
+- Private notes are never sent (see [Private notes](#private-notes-your-own-ideas-stay-on-your-computer)).
+- **Web search** is the one exception: off by default, allowed in **Library settings › AI and privacy**, and only
+  in a General chat with Claude Code.
+- **Attach…** in a General chat adds papers, notes, questions or topics for it to read. Nothing else goes along.
+- Conversations are kept in your library and come back next time; **New conversation** starts over.
 
-**One exception you can turn on: web search in General chats.** The chat has three modes: **Library** (your
-papers and notes), **Topics…** (every paper in the topics you pick, plus the passages that best match your
-question) and **General** (ask anything). In General, if you allow it under *Settings › Library settings ›
-AI and privacy › Let the agent search the web*, tick **Search the web** and Claude Code can look things up
-and link its sources. The session gets exactly two tools (web search and fetching a page). It's off by
-default, and works with Claude Code.
+<details>
+<summary>How it's locked down</summary>
 
-**Attach things to a General chat.** **Attach…** adds papers, notes, open questions or whole topics; the agent
-reads them (an overview plus the passages that best match your question) and cites them, alongside its own
-knowledge and, if ticked, the web. Nothing of yours goes along unless you attach it, and private items can't be
-attached. With web search on, attached papers go with their published parts only (title, authors, abstract,
-text); your own writing (notes, questions, highlights, your summaries) goes along with web search only after you
-confirm once, since a web page could try to get the agent to send it somewhere.
-
-**Conversations are remembered.** Each one (the library, each paper, each set of topics, General) is kept in
-your library (`state/chats/`) and comes back next time. To save space, the last 40 messages are kept in full
-and older ones are folded into a short summary, which still goes along with your questions; the least
-recently used conversations are dropped first when they all add up to more than about 3 MB. **New
-conversation** forgets the current one.
+Agent CLIs run from an empty private folder, with their tools, extensions and project instructions switched off
+wherever the CLI allows it, and are stopped if they try to use a tool anyway. Research mode gets exactly one MCP
+server, research brain's own (read-only except for saving a short sourced finding), and the run is killed if any
+other tool shows up. With web search on, your own writing goes along only after you confirm once. Details:
+[SECURITY.md](SECURITY.md).
+</details>
 
 ## Chrome extension (web clipping)
 
@@ -784,491 +690,69 @@ shows a summary and the graph refreshes.
 - The library is found at `~/Zotero`, or at a custom data directory set in Zotero's preferences. If yours lives somewhere else, start the app with `export RB_ZOTERO_DIR=/path/to/Zotero`.
 </details>
 
-## Where things live
-
-Your documents folder (`~/Documents/research brain`; see [Where your things are](#where-your-things-are)):
-
-```
-Papers/*.md            one per paper, named "<title> (<year>).md": YAML frontmatter + your notes
-Highlights/<paper>/    a paper's highlights (fragments), one file each
-Notes/**/*.md          your notes, in any subfolders you make
-Questions/*.md         your open questions
-Topics/*.md            your topics: name, description, ordered members, dismissed and snoozed recommendations
-PDFs/                  the PDFs (or your chosen papers folder)
-```
-
-Each file's `id:` property is what links, topics and citations refer to, so renaming or moving a file
-by hand (inside its type's folder) breaks nothing; a file added without one gets an id from its name.
-Properties that are empty are left out of the file.
-
-The library folder (`research-brain where` prints it; below it's called `vault/`) keeps the app's own data:
-
-```
-vault/text/        extracted text
-vault/state/       your Review schedule and history (review.json), open counts (engagement.json),
-                   UI state (ui.json), open-access results (acquire.json), library format (meta.json),
-                   where the documents folder is (library.json), privacy settings (privacy.json) and
-                   the log of what was sent to AI (ai_log.jsonl), evidence you triaged for your open
-                   questions (questions/<id>.json); included in the nightly backup and the zip export
-vault/.index/      embeddings, chat passage index, search index (meta.sqlite), cached explanations
-                   (derived only; safe to delete, rebuilt automatically)
-vault/memory/      Research memory: core.md (library map, generated), findings.md (Added via AI, editable)
-vault/cards/       idea cards, one JSON file per paper (claims, equations, quantities, methods; your review)
-vault/.trash/      deleted notes (nothing is permanently deleted by the app)
-vault/exports/     read-only HTML sites made with Settings → Export
-vault/backups/     automatic zips made before a library format upgrade (format 2 moved notes/ into the
-                   folders above)
-```
-
-Next to the profiles: `settings.json` (open profile, Unpaywall email) and `storage.log` (moves,
-migrations, imports, exports).
-
-**Bringing in what you already have.** To keep PDFs where they already are (a OneDrive folder, a folder per
-project), use *Add › Add folders of papers*: nothing is copied, each folder becomes a topic, and new PDFs you put
-there later come in by themselves (see [Folders of papers you already have](#folders-of-papers-you-already-have-kept-where-they-are)).
-To copy them into your papers folder instead, *Add › Import a folder of PDFs* opens your computer's folder picker:
-every PDF in the folder (and its subfolders) is copied in, and each subfolder can become a topic, the way bookmark
-folders work. Or **let the AI sort them into topics** (the default for a folder without subfolders): it reads each
-paper's title and opening, groups them by what they're about, and reuses your topics where they fit (private papers
-are never sent; without an AI, the map's similarity regions do the sorting). Or everything in one topic, or none.
-For papers you already have, the command *Sort papers that have no topic into topics* does the same. The same file twice is stored once, and titles, authors and
-DOIs fill in over the next minutes. *Add › Import browser bookmarks* takes the bookmarks file any browser exports
-(Chrome or Edge: Bookmarks › Export bookmarks; Firefox: Bookmarks › Manage › Import and Backup › Export; Safari:
-File › Export Bookmarks): each bookmark folder becomes a topic; links that look like papers are ticked; a DOI
-or arXiv link is added from its record, a PDF link is downloaded. Zotero libraries have their own importer.
-
-**Your PDFs, one copy each.** Every PDF is one file named after its paper (`<paper id>.pdf`) in one folder:
-`PDFs/` in your documents folder until you pick another in **Library settings › Papers folder** (for example
-`~/Documents/Research papers` or a synced folder; *Move here* moves the files, *Open folder* shows them).
-Adding a file the library already has, by any route (drag and drop, the file picker, a URL, the extension),
-opens that paper instead of storing a second copy. After you add a file from Downloads, the app offers to send
-the Downloads copy to the Trash. Deleting a paper asks about its PDF: **Keep the PDF** (it moves to
-*Removed from library* inside the papers folder) or **Delete the PDF too** (it goes to your computer's Trash,
-restorable from there). **Papers already on this computer** checks a folder you pick, only when you ask:
-copies of PDFs you already have can go to the Trash in one click, and the rest can be added, moving them
-into the papers folder (or copying, if you'd rather leave the originals).
-
 ## Private notes (your own ideas stay on your computer)
 
-Everything you write is **private** by default: notes (including notes on a paper), open questions and
-highlights. Papers themselves, being published work, are shareable. If research brain can't tell what's private
-(the library couldn't be read), it sends nothing. Private items are never sent to an AI agent (chat, critique, Research, review checks) and are left
-out of reading-list exports; search, similarity and the graph still work on them, because those run locally.
-Click the lock in a note's header to switch one item, or change the defaults in **Library settings ›
-Privacy**, which also shows *What was sent to AI*: a log of every request (agent, model, purpose, item ids,
-size; never the content). A local model server can be allowed to read private items (off by default). The
-library zip is a full backup and includes private items. Details: [SECURITY.md](SECURITY.md#privacy-of-your-own-ideas-appprivacypy).
+Everything you write is **private** by default: notes, open questions and highlights. Papers themselves are
+shareable.
+
+- Private items never go to an AI and are left out of exports; search and the map still use them.
+- Click the lock in a note's header to switch one item, or change the defaults in **Library settings › Privacy**.
+- **What was sent to AI** in the same place logs every request (never the content).
+
+Details: [SECURITY.md](SECURITY.md#privacy-of-your-own-ideas-appprivacypy).
 
 ## Idea cards
 
-A second brain works at the level of ideas, not files. Each paper's **Ideas** section (under Fragments) holds
-small cards: a **claim** the paper makes, a key **equation** (LaTeX), a **measured quantity** (name, symbol,
-value ± uncertainty, unit, conditions) or a **method** (Langmuir probe, OES, collisional-radiative model, PIC…).
+1. Open a paper's **Ideas** section and click **Suggest ideas**.
+2. **Confirm** (Y), **Edit** (E) or **Reject** (X) each card.
+3. **G then I** opens every card as a table you can sort, filter and export as CSV.
 
-- **Suggest ideas** sends the paper's own text (abstract, results and conclusions first; never your notes,
-  summaries or questions, and never a private paper) to your AI agent, part by part, and asks for at most 25
-  cards per paper as JSON. Every card must come with a quote copied from the paper; the app looks the quote up
-  in the text (ignoring line breaks, hyphenation, ligatures and punctuation) and **drops any card whose quote
-  isn't there**, or whose number isn't in its quote. The stored quote is the paper's own words with its page
-  (PDF) or section (linked article); click it to open the viewer or the article there. Duplicates are skipped.
-  It works with every agent; with none, add cards by hand.
-- **Machine-suggested until you confirm.** Suggested cards are quiet (dashed blue-grey rule). **Confirm** (Y),
-  **Edit** (E) or **Reject** (X); J and K move between cards; **Confirm all** takes them all. Confirmed and edited
-  cards are your knowledge (red rule), and only they are used by chat and Research (`cards_search`). **Add card**
-  writes your own: it is private if your notes are (Library settings › Privacy).
-- **Units.** Values are converted to SI with pint for comparing (temperatures in eV become kelvin, `cm-3`
-  becomes m⁻³, mTorr, sccm and gauss are understood); the original value and unit are kept.
-- **Across papers.** Cards that say the same thing in different papers are linked (local embeddings, same kind;
-  quantities by name or symbol and compatible units). A quantity that disagrees with another paper's under
-  comparable conditions (beyond the combined uncertainty, or by more than 30% when neither gives one) shows
-  **Disagrees with <paper> (p. N)**. Conditions with a clearly different operating point (e.g. 300 V vs 600 V)
-  aren't compared.
-- **Ideas view** (**G then I**, or *Open ideas*): every card in the library. Quantities are a table (value, unit,
-  SI value, conditions, paper key, page, status, conflicts): click a header to sort, filter by text (e.g. "Hall
-  thruster plume") or by quantity ("electron temperature", "T_e"), and **Export CSV**.
-- Files: `vault/cards/<paper-id>.json`, plain JSON you can diff; they are in the backup and the library zip.
-  The links are derived (`vault/.index/card_links.json`). Deleting a paper moves its cards to `.trash/`.
+Each card must quote the paper word for word, or it's dropped. Values are compared across papers, and a
+disagreeing one is flagged.
 
 ## Open questions
 
-A second brain holds your open questions and keeps gathering evidence for them. **Add › New question** (or **Q**)
-and write it down, for example *Could the breathing-mode frequency be predicted from the Kr CRM outputs?*, with a
-sentence or two on what you mean. From then on, whenever a paper, passage, note or idea card bears on it, the
-question collects it, and shows **3 new since you last looked**.
+1. **Add › New question** (or **Q**) and write it down.
+2. As evidence turns up in your library, it collects under the question.
+3. Sort each piece: **S** supports, **A** against, **R** related, **D** dismiss.
 
-- **Your answer.** Each question has its status (open, answered, parked) and *Your answer*: your current
-  thinking, in Markdown with LaTeX and [[links]], like any note. A question is a note (`type: question`, a
-  file in `Questions/`), so it has backlinks, tags, topics, search and a place on the graph.
-- **Triage.** Evidence is grouped as *To triage*, *Supports*, *Against*, *Related* and *Dismissed*, each with the
-  passage, its source and a p. / § link that opens the viewer or the article there. Click a piece and press
-  **S** (supports), **A** (against), **R** (related) or **D** (dismiss); ↑ ↓ move. Add a few words of your own on
-  any piece. **Mark all seen** clears the new count; **Look again** searches right away.
-- **Calm.** At most 10 new pieces per question per day, at most two from one paper at a time, never the same
-  passage twice, and a dismissed passage (or a dismissed note, paper or card) never comes back. Parked and
-  answered questions stop collecting. The **Questions** button in the top bar shows the total new count;
-  **Shift+Q** lists your questions with their counts.
-- **Local only.** Matching runs on this computer: the same hybrid passage search as chat (BM25 + the embedding
-  model, or TF-IDF), whole-note similarity and the idea cards' local search, in a background thread a moment
-  after something changes. Questions are private by default and never go to an AI agent; the optional
-  *Summarise the evidence* says plainly that it is unavailable while the question is private, and even for a
-  shareable question it leaves out evidence from your private notes. Questions themselves are never sources: they
-  aren't in the passage index, chat or Research.
-- **Reach.** Each question says how far it may go, in its header: **Private** (the default: only this
-  computer; no AI agent and no outside service sees it), **Library** (the same local matching, and AI features
-  such as the evidence summary may read it), **Scout** or **Agent**. A scouting question also searches *published*
-  papers about once a day while the app is open: its key words (the title plus the body's main terms, shown
-  under the evidence; never your answer or notes) go to OpenAlex and arXiv, the results are ranked on this
-  computer by the same similarity as library evidence, and close matches arrive under *To triage* as
-  **Published paper**, with author, year, venue, whether it's free to read, and **Add to library** (linked to the
-  question). The first search looks back three years; later ones only at what's new. No AI is involved, so
-  scouting costs nothing from your AI plan. **Agent** adds an AI search about once a week (or **Run agent
-  search**): your AI agent gets the question's title and description, rewords it into the terms papers use,
-  searches OpenAlex and arXiv, reads abstracts, follows reference lists and proposes up to five papers, each
-  with a one-line reason and a suggested stance (supports, against, related) shown on the row. The verdict
-  stays yours. A run is at most the Research step limit plus two turns (7 at *Balanced*, about one Research
-  question of your plan), and the panel shows the last run's searches and tokens. The agent has no tools of
-  its own: it can only ask the app to search, read an abstract, list citations or propose. Don't scout an
-  unpublished idea: its key words leave your computer. Marking a question private with the lock always wins.
-- **Sensitivity.** *Library settings › Open questions* sets the match threshold (default 0.12 for TF-IDF, 0.40 for
-  sentence-transformers) and the daily cap. With TF-IDF a match must also share three of the question's words.
-- Files: your triage decisions are in `vault/state/questions/<question-id>.json` (backed up with the library);
-  deleting a question moves them to `.trash/`.
+Questions are private by default. Set a question to **Scout** to also search published papers, or **Agent** to
+have the AI look too.
 
-## Profiles, backups as a zip, and moving to a new laptop
+## Profiles, backups and moving to a new laptop
 
-- **Settings → Library settings** (or the command palette: *Library settings*, *Switch profile*): the open
-  library and its folder, profiles (create, switch; the app restarts into the new one), the open-access
-  settings, and **Export library (.zip)** / **Import a library zip**. An import always becomes a new
-  profile, so nothing is overwritten.
-- Command line: `research-brain profiles [create NAME | use NAME]`, `research-brain export lib.zip
-  [--no-pdfs]`, `research-brain import lib.zip --profile laptop`, `research-brain serve --profile NAME`
-  or `--vault DIR`.
-- **Open-access PDFs:** adding a paper by DOI, arXiv id or title downloads a free legal copy in the
-  background when there is one (arXiv, Semantic Scholar, and Unpaywall once you enter a contact email in
-  Library settings). Otherwise the paper is kept with its metadata, and you can attach a PDF later.
+- **Library settings** has profiles (separate libraries), **Export library (.zip)** and **Import a library zip**.
+- To move to a new laptop, export the zip, install research brain there, and import it.
+- `research-brain backup --schedule` takes a nightly snapshot of your notes (needs Git).
 
-## Works offline
+## Reading status and topics
 
-Everything the interface needs ships in `static/vendor/`: KaTeX 0.16.11 (woff2 fonts), marked 12.0.2,
-force-graph 1.52.0, PDF.js 4.10.38 (with its CMaps and standard fonts), and the Instrument Sans and
-STIX Two Text fonts. The app makes no CDN or font requests, so the graph, editor, math and PDF viewer
-all work on a plane. Only the things that are online by nature need a connection: Semantic Scholar
-lookups (Add by DOI, Find related papers) and Claude. `tests/test_offline.py` fails if a page ever
-loads a script or stylesheet from the internet again.
+- Set a paper's status above its title: To read, Reading, Read, Later or Not relevant (**Alt+1…5**).
+- **T** opens Topics: each topic shows up to 5 papers to read next, including ones you don't have yet.
+- **L** parks a paper for later.
 
-## Backups and starting at login
+## Sharing a reading list
 
-On any OS, `research-brain backup` snapshots the library into its own local git history, and
-`research-brain backup --schedule` runs it every night: a Task Scheduler task on Windows, a systemd user
-timer on Linux (or a crontab line it prints), and on macOS the launchd agents below. Git must be installed
-(`winget install Git.Git` on Windows). The rest of this section is the macOS-specific setup.
-
-`scripts/vault_backup.sh` snapshots your notes into git repositories inside the vault and your documents
-folder (by default the library the app opens; pass a folder to choose another). The first run
-`git init`s each with a `.gitignore` for `PDFs/`, `pdfs/`, `.index/`, `.trash/`, `exports/` and `backups/`, then each run
-commits whatever changed as `vault snapshot <date>` (author `research_brain <research_brain@localhost>`;
-your own git identity is never used). PDFs are left out to keep the repo small, so back up `PDFs/`
-some other way (Time Machine, iCloud). Nothing is pushed; add a private remote yourself if you want an
-off-machine copy.
-
-```bash
-scripts/vault_backup.sh                 # snapshot now
-git -C ~/Documents/"research brain" log --oneline   # history of your papers, notes and questions
-```
-
-To have the server start at login and the backup run every night, install the launchd agents once:
-
-```bash
-scripts/install_launchd.sh              # installs both; --no-server or --no-backup for just one
-scripts/install_launchd.sh --uninstall  # stop and remove both
-```
-
-| Agent | What it does | Log |
-| --- | --- | --- |
-| `com.research_brain.server` | Runs `./run.sh` at login and restarts it if it crashes. Doesn't open a browser tab; visit http://127.0.0.1:8765. | `~/Library/Logs/research_brain.log` |
-| `com.research_brain.backup` | Runs `vault_backup.sh` at 02:30 (or when the Mac next wakes). | `~/Library/Logs/research_brain-backup.log` |
-
-The installer fills in this folder's absolute path, so re-run it if you move the folder. Run the
-first backup immediately with `launchctl kickstart gui/$UID/com.research_brain.backup`. If you start
-the app with `./run.sh` while the login agent is already running, it just opens the existing app.
-
-## Review (active recall)
-
-Reading a summary you wrote is not the same as remembering it. **Review** asks you to recall it first.
-
-- **What comes up:** every paper or note with a summary (you see its title, authors and year), and every fragment with a note (you see the quoted passage, its paper and location). Nothing is generated; the answers are your own words.
-- **One card:** write what you remember (math and `[[links]]` work as in the panel), then **Reveal** (Space, or ⌘/Ctrl+Enter while typing). Your original appears beside what you wrote, under the red margin rule. Grade yourself with **Again**, **Hard**, **Good** or **Easy** (keys 1 to 4); each button shows when you'll see the card next. Esc closes.
-- **Check my recall** (optional): Claude compares what you wrote with your original and names, in at most three short lines, what you missed or got wrong. It never writes the answer for you.
-- **Schedule:** SM-2 spaced repetition. Cards you know well come back after days, then weeks, then months; **Again** brings a card back tomorrow. At most five new cards are introduced per day, so a large import doesn't bury you. The end screen shows how many you did and your streak (days in a row with at least one review).
-- The schedule is in `vault/state/review.json`. Deleting a note removes its card. Editing a summary keeps its schedule; you'll recall the new version next time.
-
-## Critique history
-
-Every **Critique my summary** is kept. Under the latest critique, **Earlier critiques (n)** lists each earlier one by date and verdict. Open one to read it, and to see how your summary has changed since: words you've added are red, words you've removed are struck through.
-
-## Graph views
-
-- **Filter** (top left of the graph): show papers, notes and/or fragments, a year range, one tag, or one region. Everything else fades rather than disappearing, so you keep your bearings. Fragments follow their paper's year, tags and region. The button shows how many nodes match.
-- **Saved views:** type a name under **Saved views** and press Enter to save the current filter together with the search box text. Pick one to restore both. Views are kept in this browser (localStorage), not in the vault.
-- **Move dots:** drag a dot to place it. It keeps that place (also next time, on this computer) but isn't frozen: it sways with its neighbours and settles back. Dots linked to it follow while you drag. Right-click › **Let it move freely** to undo.
-- **Regions:** click a region's name to focus it; **Rename** in the bar at the top names it. A region with the same papers as a topic shows the topic's name, and renaming it renames the topic too unless you choose to keep them different.
-- **Neighbourhood focus:** double-click a node, or select it and press **F**, to hide everything except the nodes within two links of it (including their fragments) and zoom to them. Press **Esc**, **F** again, or **Close** to return.
-
-## Reading status, topics and what to read next
-
-- **Reading status:** every paper and note has a compact control above its title: To read, Reading, Read,
-  Later, Not relevant (click the active one again to clear it). Papers you add start as **To read**.
-  The graph never colours nodes by status; use **Filter → Status** to fade everything else instead.
-- **Saved because:** one line under the title for why you kept a paper ("the erosion rates, for the wall
-  model"). It sits on a red margin rule, because it is your thinking.
-- **Park for later (L):** sets the status to Later and puts the cursor in "Saved because", for the moment
-  you realise a paper isn't for now but will be.
-- **Topics:** your own groups, many-to-many, independent of the graph's regions. Add a paper under
-  **Topics** just below its title (type to find one, or type a new name to create it; Shift+T jumps there).
-  Each topic is a Markdown file in `vault/topics/`, so it's portable, readable in Obsidian and backed up.
-- **Topics drawer (T, or Topics in the top bar):** "Next to read" across all topics, your topics with
-  counts, and **Suggest topics from regions** (turn a region the graph found into a topic, name editable).
-  A topic shows its queue and its papers grouped by status (Not relevant is collapsed). **Show on graph**
-  fades everything outside the topic.
-- **The queue never shows more than 5.** First the topic's own to-read papers, most relevant first
-  (similar to what you've read or are reading in the topic, and cited by its papers). Then papers you
-  don't have yet, merged from three sources with reciprocal rank fusion: papers cited by two or more of
-  the topic's papers, Semantic Scholar's recommendations for the topic's papers, and similarity to the
-  topic. Each says why it's there. **Accept** imports it as To read in the topic, **Dismiss** removes it
-  for good (and tells Semantic Scholar what you don't want), **Not now** hides it for 14 days.
-  **Show more** reveals five more.
-- Recommendations are computed in the background and cached for a day (or **Refresh recommendations**),
-  so opening a queue is instant. Offline, you see the last ones (or just your to-read papers) with a note.
-
-Keys (shown in the command list when it's available): **T** topics, **N** next to read, **L** park for
-later, **Shift+T** add the open paper to a topic, **Alt+1…5** set status (To read, Reading, Read, Later,
-Not relevant).
-
-## Sharing a reading list (export)
-
-**Settings → Export** writes a self-contained, read-only website to `vault/exports/<date_time>/`. With a
-search active it exports the matching notes; otherwise it asks "Export all N notes?". Each note gets a
-page with its metadata, abstract, your summary, notes and fragments, with math rendered by the bundled
-KaTeX. Links between exported notes work; links to notes you didn't export show as plain text, so
-nothing outside the selection leaks. Claude's critiques are left out. Tick **Include PDFs** to copy the
-papers' PDFs too (only if you're allowed to share them). The folder works opened straight from disk:
-zip it and send it, or drop it on any static host. Everything happens locally. API:
-`POST /api/export {"ids": [...] | null, "include_pdfs": false, "title": "Reading list"}`.
-
-## Reading for what matters, directions and writing
-
-- **Focus** (in the PDF viewer, **F**): pick an open question or topic, or type what you're after, and the
-  passages of this paper that bear on it are listed best first and marked on the pages. Local search only, no
-  AI, so it works for private questions too.
-- **Suggest directions…** (on a question's AI section, and in a topic's drawer): your AI agent reads the evidence
-  you kept (or the topic's papers) and suggests gaps, hypotheses, how to test them and what would change the
-  picture, each cited to the passage it rests on. Before anything is sent you see every source that would go,
-  every one that won't and why (private, no summary yet, over your usage level's limit), and about how many
-  tokens; untick any. Your current answer goes only if you tick it. Results are kept with the question or
-  topic; *Save as a note* makes a private note.
-- **Writing help** (on any note): *Cite papers…* (no AI), and an AI helper that reads only the sources you tick
-  (by default the papers and notes your draft links to). Private sources can't be ticked, and your draft goes
-  only if you tick it *and* it isn't private. *Add below my draft* appends the answer; nothing is replaced.
-- **PDF with my highlights** (paper panel) / **Download with highlights** (viewer): a copy of the PDF with your
-  highlights and notes written in as real PDF annotations, which Preview, Acrobat, Zotero and browsers show. The
-  library's copy is unchanged.
-
-Every AI feature follows the same rules: private notes and papers never go; a question's reach decides whether
-it may; the privacy guard checks the outgoing text; each send is in *What was sent to AI*; your usage level caps
-how much goes.
+**Settings › Export** makes a read-only website of your notes (or the ones matching your search) that you can zip
+and send. Private items are left out.
 
 ## Citing and bibliographies
 
-research brain formats citations itself, offline, with the Citation Style Language (CSL): the same style files
-Zotero, Mendeley and pandoc use (formatted by [citeproc-py](https://github.com/citeproc-py/citeproc-py)).
-
-- **Cite while you write.** Press **Alt+C** (or *Cite papers…* in the command palette), search your library, pick
-  one or more papers (Enter selects, click works too) and copy **`\cite{key1,key2}`** for LaTeX, the **BibTeX
-  entries** themselves (*Copy BibTeX*: `@article{boeuf2018kinetic, …}`, ready to paste into your `.bib` file), an
-  **in-text citation** like (Doe, 2024) or [1], or the **bibliography**. A paper's panel has a **Cite** button with
-  the same choices plus *Download .bib*; a note that links papers with `[[ ]]` gets *Copy BibTeX* / *Copy
-  bibliography* / *Export .bib* for those papers, and so does each topic in the Topics drawer.
-- **Pasting into Word, Google Docs or Pages.** Copies put formatted HTML (italics, bold volume numbers) and plain
-  text on the clipboard together, so a word processor keeps the formatting and a text editor gets clean text.
-  There is **no live-updating Word or Google Docs plugin**: a pasted bibliography doesn't renumber or update when
-  you change a paper; paste it again. If you need live citations inside Word or Docs, Zotero's plugin is the tool
-  for that (you can import your research brain papers into Zotero through a .bib or RIS export).
-- **Styles.** Shipped (offline, in `app/csl/styles/`, CC BY-SA 3.0, see `app/csl/LICENSE.md`): American Physical
-  Society (the default), AIP, IEEE, AIAA, Nature, APA 7th and Chicago author-date. Add any other of the 10,000+
-  styles from [zotero.org/styles](https://www.zotero.org/styles): download its `.csl` file and add it in **Settings ›
-  Library settings › Citations** (it is checked and saved to `<library>/styles/`). Dependent styles (ones that only
-  point to a parent style) aren't supported; add the parent. citeproc-py doesn't implement every corner of CSL, so
-  a few styles format some items imperfectly (e.g. AIP and AIAA leave the arXiv number out of a preprint); if a
-  style can't be used you get a message, and the exports below always work.
-- **Exports.** `.bib` as BibTeX (ASCII, accents written as LaTeX `{\"u}`) or BibLaTeX (UTF-8, for biber), RIS
-  (EndNote, Mendeley, Zotero) and CSL-JSON (pandoc). Titles keep their capitals where it matters (acronyms,
-  `{Hall}` in sentence-case titles, chemical formulas); arXiv preprints get `eprint` / `archivePrefix` (BibLaTeX:
-  `eprinttype`). Command palette: *Export the library as .bib*. API: `/api/export/bibtex|ris|csl-json`.
-- **Citation keys never change.** A paper's key comes from its `citekey` property; papers imported from Zotero keep
-  their Zotero / Better BibTeX key. Otherwise research brain makes one like Better BibTeX: first author's family
-  name + year + first significant title word, lower-case ASCII (`boeuf2018kinetic`), with `a`, `b`, … when two
-  papers would share it. The first time a key is copied or exported it is written into the note (`citekey:` in its
-  properties, without changing the note's "updated" time), so editing the title later never breaks a `\cite`.
-  Change it in the Cite menu's *Key* field, or edit the property in Obsidian.
-- **Auto-updating .bib files.** In **Library settings › Citations › Auto-updating .bib files**, give the full path of
-  a `.bib` file (e.g. inside your thesis folder or a Dropbox/git folder Overleaf syncs), pick the whole library or
-  a topic and BibTeX or BibLaTeX. research brain rewrites that file (atomically) whenever a paper in it changes,
-  including edits made in Obsidian, and on every start. It writes only that file, refuses symbolic links, and never
-  overwrites a `.bib` it didn't create (the file starts with `% Written by research brain`). The list shows when
-  each file was last written.
-- **Browser extension.** The popup has a **Cite** tab: search, pick, copy. On Overleaf the main button is
-  `\cite{…}`; on Google Docs it is the formatted citation.
+- **Alt+C**: pick papers, then copy `\cite{}`, BibTeX, an in-text citation or a bibliography.
+- Pasting into Word or Google Docs keeps the formatting, but doesn't update later; paste again after changes.
+- Styles: APS (default), AIP, IEEE, AIAA, Nature, APA and Chicago. Add others from
+  [zotero.org/styles](https://www.zotero.org/styles) in **Library settings › Citations**.
+- **Auto-updating .bib files** (same place) keep a `.bib` in your thesis folder up to date.
 
 ## On your phone
 
-research brain runs on your computer; a phone or tablet opens it over Tailscale. Under 900px wide the app
-rearranges itself for touch: a bottom tab bar (Library, Graph, Add, Review, Ask), a searchable list of your
-library with status and topic filters and one-tap to-read triage, notes in a sheet you swipe down to close,
-review with big grade buttons, and an Add screen for links, quick notes, photos of a whiteboard and PDFs.
-Add it to the home screen and it becomes an app in the share sheet: share a link from any app to save it to
-read. Desktop-only things (Zotero, exports, auto `.bib` files, profiles) say "Available on your computer".
-
-Every device other than the computer itself must be paired first: Library settings, Phones and tablets,
-Pair a phone shows a QR code. [docs/mobile-capture.md](docs/mobile-capture.md) has the setup (Tailscale,
-`tailscale serve` for https), the iOS Shortcut for clipping selected text, and the security details.
-
-## Search, live updates and streaming
-
-- **Search** (the box at the top, and `/` to focus it) is full-text: it looks through titles, summaries, notes, quotes, abstracts, tags and authors, matches word beginnings (`thrus` finds "thruster"), and ranks title matches first.
-- **Live updates.** Edit a note in Obsidian or any editor and the open page picks it up within a second: the graph refreshes, and the note you have open reloads unless you have unsaved changes in it.
-- **Streaming.** Critiques and **Ask your library** answers appear word by word as Claude writes them (usually within 2–3 seconds), with math typeset as soon as each formula is complete.
+Open research brain on a phone or tablet over Tailscale, after pairing it in **Library settings › Phones and
+tablets**. Setup: [docs/mobile-capture.md](docs/mobile-capture.md).
 
 ## Obsidian
 
-Open **Documents › research brain** as an Obsidian vault and your notes, tags and math work there too.
-Files are named after their titles, so a `[[Title]]` link resolves in Obsidian as well (a paper's file
-also carries its year: `[[Title (1996)]]`); links the app writes as `[[note-id|Title]]` show as unresolved
-there. Editing properties, and renaming or moving files within their folder, are safe: the app finds each
-note by the `id:` inside it. Summary mentions, manual links and highlight nesting are app-only.
-[docs/obsidian.md](docs/obsidian.md) lists what works and what doesn't.
+Open **Documents › research brain** as an Obsidian vault. What works there: [docs/obsidian.md](docs/obsidian.md).
 
-## Settings (environment variables)
+## Works offline
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `RB_VAULT` | — | Use this library folder (pins it: profile switching is off). Default: the open profile in the data folder |
-| `RB_PROFILE` | `default` | Open this profile (overrides the one picked in the app) |
-| `RB_DATA_DIR` | per-user data folder | Move the whole data folder (portable installs, tests) |
-| `RB_MIN_FREE_MB` | `300` | Disk space research brain always leaves free: adding a PDF that would go below it is refused |
-| `RB_LOW_SPACE_MB` | `1024` | Below this much free space, the app warns |
-| `RB_DOCUMENTS_DIR` | `~/Documents/research brain` | Where your papers, notes, questions, highlights, topics and PDFs go (a library records its choice) |
-| `RB_ACQUIRE` | `1` | `0` turns off the background open-access PDF download |
-| `RB_METADATA` | `1` | `0` turns off metadata lookups (Crossref, arXiv, PubMed, Open Library, OSTI, NTRS) |
-| `RB_METADATA_CACHE_DAYS` / `RB_METADATA_WAIT` | `30` / `3` | How long answers are cached; seconds an import waits for its lookup before answering |
-| `RB_TRANSLATION_SERVER_PORT` | `1969` | Port of an optional local Zotero translation-server (always 127.0.0.1); `0` = don't use one |
-| `RB_UNPAYWALL_EMAIL` | — | Contact email for Unpaywall (same as the Library settings field) |
-| `RB_OA_MAX_MB` / `RB_OA_DEADLINE` | `60` / `90` | Size cap (MB) and time budget (s) per open-access download |
-| `RB_UPLOAD_MAX_MB` | `150` | Largest PDF the extension's Save PDF may send |
-| `RB_LINKED_MAX_CHARS` | `5000000` | Longest article text the extension's Save (link + text) may send |
-| `RB_PORT` | `8765` | Port (the Chrome extension assumes 8765; change it in its settings too) |
-| `RB_HOST` | `127.0.0.1` | Interface `run.sh` binds. Only change it to reach the app from your phone over Tailscale (see [docs/mobile-capture.md](docs/mobile-capture.md)); other devices must be paired. |
-| `RB_NO_OPEN` | — | `1` stops `run.sh` opening a browser tab (the login agent sets this) |
-| `RB_AGENT` | saved choice | Use this AI agent id (`claude`, `codex`, `gemini`, `copilot`, `opencode`, `cursor`, `ollama`, `openai-local`) instead of the one picked in the app |
-| `RB_AGENT_TIMEOUT` | `240` | Seconds before a call to a non-Claude agent gives up |
-| `RB_RESEARCH_BUDGET` / `RB_RESEARCH_MAX_STEPS` | `150` / `6` | Time (s) and lookups for the app-driven Research loop (agents other than Claude) |
-| `RB_RESEARCH_LOOP` | — | `universal` makes Claude use the app-driven Research loop too |
-| `RB_OLLAMA_URL`, `RB_OPENAI_LOCAL_URL` | `http://127.0.0.1:11434`, `http://127.0.0.1:1234/v1` | Local model server addresses (loopback only; the settings field does the same) |
-| `RB_CLAUDE_BIN` | auto-detect | Path to the `claude` CLI |
-| `RB_CLAUDE_MODEL` | your CLI default | e.g. `sonnet` for faster critiques, `opus` for deeper ones |
-| `RB_AGENT_MODEL` | your CLI default | Model for Research mode. `sonnet` or `haiku` make it noticeably faster |
-| `RB_AGENT_FAST_MODEL` | `haiku` | Model used when you tick **Faster model** in Research |
-| `RB_AGENT_BUDGET` | `45` | Seconds Research may spend searching before it writes the best answer so far |
-| `RB_AGENT_MAX_TURNS` | `8` | Most tool rounds Research may take |
-| `RB_CLAUDE_TIMEOUT` | `240` | Seconds before a Claude call gives up |
-| `RB_EMBEDDER` | `auto` | `tfidf` to skip the neural embedding model |
-| `RB_EMBED_MODEL` | `all-MiniLM-L6-v2` | Any sentence-transformers model |
-| `RB_ZOTERO_DIR` | `~/Zotero` | Zotero data directory (the folder containing `zotero.sqlite`) |
-| `RB_WATCH` | `1` | `0` turns off watching your documents folder for outside edits (live updates) |
-| `S2_API_KEY` | — | Optional free Semantic Scholar key (avoids occasional rate limiting) |
-| `OPENALEX_API_KEY` | — | Free OpenAlex key (without one, OpenAlex shares a small daily allowance with your whole network). Same as the box in Library settings › Paper lookup |
-| `RB_CITES_ON_IMPORT` | `1` | `0` stops fetching citation links in the background when you import a paper |
-| `RB_ALLOWED_HOSTS` | — | Extra host names the server answers to (e.g. a Tailscale MagicDNS name); see [SECURITY.md](SECURITY.md) |
-| `RB_EXTENSION_IDS` | — | Extra Chrome extension ids allowed to call the app (the bundled extension's id is pinned) |
-| `RB_MAX_JSON_MB`, `RB_MAX_UPLOAD_MB` | `16`, `300` | Largest request body and PDF upload |
-| `RB_PDF_TIMEOUT` | `120` | Seconds a PDF may take to parse (in a separate, limited process) |
-
-## How it works (short version)
-
-- `app/server.py`: FastAPI server bound to `127.0.0.1` (unless you set `RB_HOST`). It rejects requests from other websites' origins, so only this app and your extension can use it.
-- `app/store.py`: one Markdown file per note.
-- `app/paths.py`, `app/profiles.py`, `app/migrate.py`: which library a run opens (data folder, profiles, legacy `./vault`), and the library format version with backed-up migrations.
-- `app/acquire.py`, `app/vaultzip.py`, `app/storage_api.py`: open-access PDF download, whole-library zip export/import, and their endpoints (plus the extension's PDF upload). `app/cli.py` is the `research-brain` command.
-- `app/meta.py`: a SQLite copy of every note's metadata plus a full-text index (`vault/.index/meta.sqlite`), kept in step with the files, so search and the graph stay fast with thousands of notes. Delete it and it's rebuilt.
-- `app/live.py`: watches your documents folder and tells open pages (Server-Sent Events) when a note changes outside the app.
-- `app/embed.py`: each note's text (title, abstract, your summary, notes, quote) is split into chunks, embedded with a local sentence-transformers model, and mean-pooled. Similarity is cosine similarity, and each node shows its top neighbours. A paper's own fragments are excluded from its neighbours.
-- `app/agents/`: the pluggable AI backends. `base.py` is the interface and the shared lockdown helpers (private working folder, clean environment, process-group kill, timeouts); one adapter per agent (`claude.py`, `ollama.py`, `openai_local.py`, and the other CLIs); `__init__.py` is the registry and the saved choice; `research.py` is the app-driven Research loop for agents that aren't Claude.
-- `app/claude_cli.py`: runs `claude -p` with all tools disabled and no saved session, from an empty directory. The paper text goes in on stdin. Critiques and chat answers stream in as Claude writes them (`--output-format stream-json`).
-- `app/agent.py`, `app/agent_mcp.py`: Research mode. The tools and trail live in the app; `agent_mcp.py` is a tiny stdio MCP bridge (standard library only, starts in ~40 ms) that forwards tool calls to the running app.
-- `app/memory.py`: `vault/memory/`: the generated library map (`core.md`), findings (`findings.md`) and their validation.
-- `app/cards.py`, `app/cards_api.py`, `app/units.py`: idea cards (`vault/cards/`): extraction with the quote check, review, unit normalisation (pint), cross-paper links and conflicts, search and CSV.
-- `app/scholar.py`: Semantic Scholar, arXiv, and Crossref lookups.
-- `app/metadata.py`: the citation record (CSL-JSON) from identifiers: Crossref, DOI content negotiation, arXiv, PubMed, Open Library, OSTI, NTRS, a local translation-server, Semantic Scholar; normalisation, merge rules, cache, rate limits, background updates.
-- `app/chunks.py`: the passage index for chat: page-tagged ~800-character chunks of each paper's text and of your notes, embedded and cached per note.
-- `app/citations.py`: citation links from Semantic Scholar references (on import and the backfill job), throttled to about one request per second.
-- `app/export.py`: the static reading-list export.
-- `static/`: the graph UI (force-graph, marked, KaTeX) and the PDF.js viewer; third-party code and fonts are in `static/vendor/`.
-- `scripts/`: vault backup and the launchd installer (`scripts/launchd/` holds the plist templates).
-
-## Citation links for papers you already have
-
-New papers get their citation links on import. To add them for your existing library, run once (the app
-must be running):
-
-```bash
-curl -X POST http://127.0.0.1:8765/api/backfill/citations         # -> {"job_id": "..."}
-curl http://127.0.0.1:8765/api/backfill/citations/<job_id>        # progress: done / total, linked
-```
-
-It asks Semantic Scholar for each paper's references at about one request per second (a few minutes for
-a few hundred papers), backs off when rate-limited, and only adds links, so it's safe to run again after
-importing more papers. Papers need a DOI, arXiv id or Semantic Scholar id. An `S2_API_KEY` helps with
-large libraries.
-
-## Which embedding model? (eval)
-
-`eval/embed_eval.py` compares embedding models (TF-IDF, all-MiniLM-L6-v2, SPECTER2) on pairs of notes
-you label as related or not, and reports recall@5 and mean similarity. See [eval/README.md](eval/README.md):
-
-```bash
-.venv/bin/python eval/embed_eval.py --suggest > eval/pairs.csv   # then fill in the `related` column
-.venv/bin/python eval/embed_eval.py                              # prints a table, writes eval/results.md
-```
-
-## Development and tests
-
-```bash
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m playwright install chromium     # once, for the browser tests
-.venv/bin/python -m pytest -q tests                 # everything
-.venv/bin/python -m pytest -q tests --ignore=tests/e2e   # skip the browser tests (a few seconds)
-```
-
-| Tests | Covers |
-| --- | --- |
-| `tests/test_api.py`, `test_wikilinks.py`, `test_zotero.py` | The API with a fake Claude and mocked Semantic Scholar |
-| `tests/test_cards.py`, `tests/e2e/test_cards_e2e.py` | Idea cards: reply parsing, the quote check that drops made-up cards, dedup and the 25-card cap, only paper text sent (and logged), private papers refused, confirm/edit/reject/add, units and conflicts, cross-paper links, search, CSV, the agent tool and Research action; the panel review with the keyboard and the Ideas table |
-| `tests/test_review.py` | Review: SM-2 intervals, queue order and the 5-new-per-day cap, grading and persistence, streaks, items vanishing with their notes, the recall check; critique history and migration |
-| `tests/test_offline.py` | No page loads scripts or stylesheets from the internet; every vendored file exists |
-| `tests/test_scripts.py` | `vault_backup.sh` run for real on a temp vault, the launchd installer in dry-run mode, plist templates |
-| `tests/test_export.py` | `/api/export`: selection, link handling, self-contained output, PDFs |
-| `tests/test_passages_citations.py` | Chat passage retrieval (a 12-page PDF with a fact on page 9), the passage cache, citation backfill and graph links (mocked Semantic Scholar), the embedding eval harness |
-| `tests/test_agent.py` | Research and memory: the tool guard (unexpected tools abort, missing tool list fails closed), the MCP bridge against a running server, `remember` validation, the map's size cap, findings edit/delete, budget handling, the SSE shape (fake agent) |
-| `tests/test_storage.py` | Data folder and legacy `./vault` (keep, safe move), profiles and the restart supervisor, schema migrations with backup, open-access PDFs (mocked downloads, SSRF guard, sha256 dedupe), PDF bytes from the extension, zip export/import (zip-slip), UI state, the CLI |
-| `tests/test_metadata.py` | Metadata resolvers from fixture answers (Crossref, DataCite, arXiv, PubMed, Open Library, OSTI, NTRS, Semantic Scholar, translation-server), name/title/number normalisation, merge rules, cache, rate limits, the SSRF guard, background updates and Refresh metadata |
-| `tests/test_obsidian.py` | Notes re-saved by Obsidian (block lists, quoting, unquoted dates) parse identically |
-| `tests/e2e/` | Real server + Chromium: empty state, new note + autosave, LaTeX and `[[` autocomplete, backlinks, PDF import + viewer + fragment from a selection, critique and chat (fake Claude), `/` search, export, delete |
-
-Tests that need a real server start it through `tests/rb_testserver.py`: a free port handed straight to
-uvicorn (no port races), and the server is always stopped, even if the test run is killed. Every test has
-a time limit (`RB_TEST_TIMEOUT`, default 240 s, via pytest-timeout), so a stuck test fails with a stack dump
-instead of hanging the run.
-
-The browser tests start their own server on a free port with `RB_FAKE_CLAUDE=1` and `RB_EMBEDDER=tfidf`
-in a temp vault, block every request that isn't to that server, and are skipped (with the reason) if
-Playwright or a browser isn't installed. `RB_E2E_HEADED=1` shows the browser. GitHub Actions runs the
-whole suite on every push (`.github/workflows/tests.yml`).
+Everything works offline except looking papers up and the AI.
