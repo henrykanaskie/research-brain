@@ -195,12 +195,29 @@ def _on_message(header: _Header, body: str) -> None:
         webbrowser.open(url)
     if "attention" in msg:  # a Find papers search finished (static/finder.js): call you back to the app
         _attention(str(msg.get("badge") or "")[:4])
+    if "dictate" in msg:  # the chat's mic button (static/app.js): macOS dictation into the focused field
+        _dictate(bool(msg["dictate"]))
     if "unsaved" in msg:
         header.unsaved = bool(msg["unsaved"])
     if msg.get("close") and header.win is not None:  # the page's dialog said close: now it may
         header.may_close = True
         win = header.win
         threading.Thread(target=win.destroy, daemon=True).start()
+
+
+def _dictate(on: bool) -> None:
+    """Start (or stop) macOS dictation, as Edit › Start Dictation does: it types into the field that has the
+    focus (the page focuses the chat's question first). The speech is handled by macOS (on this Mac, or by
+    Apple's servers, as set in System Settings › Keyboard › Dictation); research brain never records it. If
+    Dictation is off, macOS offers to turn it on."""
+    import AppKit
+    app = AppKit.NSApplication.sharedApplication()
+    sel = "startDictation:" if on else "stopDictation:"
+    try:
+        if app.respondsToSelector_(sel):
+            app.sendAction_to_from_(sel, None, None) or getattr(app, sel.replace(":", "_"))(None)
+    except Exception as e:  # never lose the window over dictation; say why in app.log
+        print(f"[research_brain] dictation: {e!r}", file=sys.stderr)
 
 
 def _attention(badge: str) -> None:

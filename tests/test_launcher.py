@@ -305,6 +305,12 @@ def test_window_messages_from_the_page(monkeypatch):
     macwindow._on_message(h, '{"open": "file:///etc/passwd"}')
     macwindow._on_message(h, "not json")
     assert opened == ["http://127.0.0.1:8765/viewer/x"]
+    # the chat's mic: macOS dictation on and off
+    dict_calls = []
+    monkeypatch.setattr(macwindow, "_dictate", lambda on: dict_calls.append(on))
+    macwindow._on_message(h, '{"dictate": true}')
+    macwindow._on_message(h, '{"dictate": false}')
+    assert dict_calls == [True, False]
     # unsaved edits: the window learns it, and closes only once the page's own dialog says so
     destroyed = []
 

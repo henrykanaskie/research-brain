@@ -368,6 +368,21 @@
     }
   }
 
+  // ---------- wide equations and tables fit the chat's width ----------
+  // A display equation or table wider than the chat is scaled down to fit (equations to 55%, tables to 75% of
+  // their size) and only scrolls past that, so nothing looks cut off at the edge (macOS hides the scrollbar).
+  // Measured again whenever the chat is resized.
+  function fitWide(root) {
+    for (const el of root.querySelectorAll('.msg-body .katex-display, .msg-body .md-table')) {
+      const isTable = el.classList.contains('md-table'), min = isTable ? 0.75 : 0.55;
+      const inner = isTable ? el.querySelector('table') : el.querySelector('.katex');
+      if (!inner) continue;
+      inner.style.fontSize = '';
+      const avail = el.clientWidth, need = inner.scrollWidth;
+      if (avail > 0 && need > avail + 1) inner.style.fontSize = `${Math.max(min, (avail - 2) / need) * 100}%`;
+    }
+  }
+
   // ---------- papers named in an answer open in the library ----------
   // An answer that names one of your papers in plain text (its title, or "Bray 2002", "Bray et al. (2002)") gets
   // that mention linked to the paper, like a citation. Only exact titles, and author + year where exactly one
@@ -4477,6 +4492,15 @@
   // Chat
   // ======================================================================
   const chatLog = $('#chat-log');
+  // wide equations and tables are fitted again when the chat is resized (fitWide)
+  if (window.ResizeObserver) {
+    let fitT = 0, lastW = 0;
+    new ResizeObserver(() => {
+      const w = chatLog.clientWidth;
+      if (w === lastW) return;
+      lastW = w; cancelAnimationFrame(fitT); fitT = requestAnimationFrame(() => fitWide(chatLog));
+    }).observe(chatLog);
+  }
   // Follow the answer as it's written only while you're at the bottom: scroll up and the log stays where you
   // put it (no pull back down with each new line, nor when the answer finishes); scroll back to the bottom to
   // follow again
@@ -4811,8 +4835,11 @@
             s.score != null ? h('span', { class: 's', text: Number(s.score).toFixed(2) }) : null))) : null;
         const copyBtn = h('button', { class: 'btn btn-text btn-sm msg-copy', type: 'button', text: 'Copy', title: 'Copy this answer (as Markdown)',
           onclick: () => copyText(m.content || '').then((ok) => { copyBtn.textContent = ok ? 'Copied' : 'Could not copy'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1600); }) });
+        const V = window.__rbVoice;
+        const readBtn = V && V.canSpeak() ? h('button', { class: 'btn btn-text btn-sm msg-read', type: 'button', text: V.isReading(m) ? 'Stop' : 'Read aloud', title: 'Read this answer aloud (your Mac’s own voice)',
+          onclick: () => V.readAloud(m) }) : null;
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
-          h('div', { class: 'machine-head' }, h('span', { text: ai() }), copyBtn),
+          h('div', { class: 'machine-head' }, h('span', { text: ai() }), readBtn, copyBtn),
           h('div', { class: 'msg-body md', html: renderMD(noMemoryTag(m.content)) }), src, chatPassages(m), chatPapers(m),
           (m.remembered || []).length ? h('div', { class: 'msg-remembered', title: 'Saved to Memory › About you, which every chat uses. Edit or delete it there.' },
             h('span', { class: 'lbl', text: 'Remembered' }), ' ', m.remembered.join(' '), ' ',
@@ -4823,6 +4850,7 @@
     chatLog.replaceChildren(...kids);
     drawVisuals(chatLog);
     linkMentions(chatLog);
+    fitWide(chatLog);
     chatLog.scrollTop = chatFollow ? chatLog.scrollHeight : keepTop;  // scrolled up to read: stay there
     applyClaude($('#chat'));
     const send = $('#btn-chat-send');
@@ -4904,6 +4932,7 @@
         r = await apiStream(url, body, (t) => {
           if (!pending.live) { pending.live = t; renderChat(); }
           live.push(t);
+          if (S.voiceHook) S.voiceHook.live(t);  // t is the answer so far
         });
         live.flush();
       } catch (e) {
@@ -4944,6 +4973,7 @@
       if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat);
       persistChat();
       renderChat();
+      if (S.voiceHook) S.voiceHook.done(pending);  // voice mode (static/voice.js): speak the rest, then listen
     }
   }
   function retryChat(i) {
@@ -4980,6 +5010,40 @@
     if (had) toast('Started a new conversation. The last one is in Past chats.', 'ok', { action: { label: 'Past chats', fn: openPastChats } });
   });
   $('#btn-chat-history').addEventListener('click', () => openPastChats());
+
+  // ---------- Continue on your phone: the conversation as one prompt for any AI app (app/chats.py handoff) ----------
+  // Nothing is sent: you copy it (on a Mac and iPhone with the same Apple ID, paste it on the phone) or share it.
+  // Private notes stay out, as in an export.
+  async function continueOnPhone() {
+    if (S.chatBusy) { toast('Wait for the current answer to finish first.', 'info'); return; }
+    const msgs = keepable(S.chat);
+    if (!msgs.length) { toast('Ask something first: there’s nothing to continue yet.', 'info'); return; }
+    let r;
+    try { r = await api('POST', `/api/chats/${encodeURIComponent(chatKey())}/handoff`, { messages: msgs, title: chatTitle() }); }
+    catch (e) { toastErr(e, 'Could not write out the conversation'); return; }
+    const notes = [];
+    if (r.left_out) notes.push(`${r.left_out === 1 ? 'One message quotes' : `${r.left_out} messages quote`} a private note, so ${r.left_out === 1 ? 'it’s' : 'they’re'} left out.`);
+    if (r.condensed) notes.push(`The oldest ${r.condensed} messages are condensed to fit.`);
+    CMD.panel({ title: 'Continue on your phone', className: 'ho-sheet', render: (body, { close }) => {
+      const ta = h('textarea', { class: 'ho-text', readonly: '', rows: 10, 'aria-label': 'The prompt' });
+      ta.value = r.text;
+      const copy = h('button', { class: 'btn btn-primary', type: 'button', text: 'Copy prompt', onclick: async () => {
+        if (await copyText(r.text)) { copy.textContent = 'Copied'; toast('Copied. Paste it into the AI app on your phone.', 'ok'); setTimeout(close, 700); }
+        else { ta.focus(); ta.select(); toast('Could not copy it. It’s selected: press ⌘C.', 'info'); }
+      } });
+      const share = navigator.share ? h('button', { class: 'btn', type: 'button', text: 'Share…', onclick: () => {
+        navigator.share({ title: 'Conversation from research brain', text: r.text }).catch(() => { /* cancelled */ });
+      } }) : null;
+      body.replaceChildren(
+        h('p', { class: 'ho-lead', text: 'Paste this into the AI app on your phone (Claude, ChatGPT, Gemini…) and keep talking there. It holds the conversation and the papers it drew on. Nothing is sent from here.' }),
+        notes.length ? h('p', { class: 'ho-note', text: notes.join(' ') }) : null,
+        ta,
+        h('div', { class: 'ho-actions' }, copy, share),
+        h('p', { class: 'ho-hint', text: 'On a Mac and an iPhone signed in to the same Apple ID, copy it here and paste on the phone (Universal Clipboard). What you say there doesn’t come back to research brain.' }));
+      setTimeout(() => copy.focus(), 0);
+    } });
+  }
+  $('#btn-chat-handoff').addEventListener('click', () => continueOnPhone());
 
   // ---------- Past chats: a new conversation keeps the last one (as <key>~<stamp>, app/chats.py) ----------
   /** Keep the conversation on screen as an earlier one, so starting another doesn't lose it. */
@@ -5081,7 +5145,74 @@
   const csWeb = $('#cs-web');
   if (csWeb) csWeb.addEventListener('change', (e) => { S.chatWeb = e.target.checked; renderChatScope(); });
   $('#cs-related').addEventListener('change', (e) => { S.chatRelated = e.target.checked; });
-  $('#btn-chat-close').addEventListener('click', closeChat);
+  // ---------- dictation: the mic by the question ----------
+  // In the Mac app: macOS dictation (as Edit › Start Dictation), typed straight into the question; macOS hears it
+  // (on this Mac or Apple's servers, per System Settings), research brain never records anything. In a browser
+  // with speech recognition (Chrome, Edge, Safari): the browser's, with your words appearing as you speak.
+  {
+    const mic = $('#btn-chat-mic'), ta = $('#chat-input');
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    // static/live.js loads after this file and knows whether this is the Mac window: asked when it's needed
+    const live = () => window.__rbLive || null;
+    const isMac = () => { const l = live(); if (l) return l.app === 'mac'; try { return sessionStorage.getItem('rb.appWindow') === 'mac' || new URLSearchParams(location.search).get('app') === 'mac'; } catch { return false; } };
+    let on = false, rec = null, base = '', stopT = 0;
+    const setOn = (v) => { on = v; mic.classList.toggle('on', v); mic.setAttribute('aria-pressed', String(v)); mic.title = v ? 'Stop dictating' : 'Dictate your question'; };
+    const fit = () => ta.dispatchEvent(new Event('input'));
+    function start() {
+      ta.focus();
+      if (isMac()) {
+        if (!live() || !live().native({ dictate: true })) return;
+        setOn(true);
+        toast('Speak now. Click the mic again, or press Esc, when you’re done. (If nothing happens, turn on Dictation in System Settings › Keyboard.)', 'info', { ms: 5000 });
+        // macOS ends dictation on its own (Esc, a pause, clicking away): the button follows the field's focus
+        clearTimeout(stopT);
+        return;
+      }
+      if (!SR) return;
+      rec = new SR();
+      rec.continuous = true; rec.interimResults = true; rec.lang = navigator.language || 'en-US';
+      base = ta.value && !/\s$/.test(ta.value) ? ta.value + ' ' : ta.value;
+      rec.onresult = (e) => {
+        let fin = '', tmp = '';
+        for (let i = 0; i < e.results.length; i++) (e.results[i].isFinal ? (fin += e.results[i][0].transcript) : (tmp += e.results[i][0].transcript));
+        ta.value = base + fin + tmp; fit();
+      };
+      rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Dictation needs the microphone: allow it for this page in your browser.', 'error'); };
+      rec.onend = () => { setOn(false); rec = null; ta.focus(); };
+      try { rec.start(); setOn(true); } catch { setOn(false); }
+    }
+    function stop() {
+      if (isMac()) { if (live()) live().native({ dictate: false }); setOn(false); ta.focus(); return; }
+      if (rec) rec.stop();
+      setOn(false);
+    }
+    if (isMac() || SR) {
+      mic.hidden = false;
+      if (!isMac()) mic.title = 'Dictate your question (your browser’s speech recognition; in Chrome, Google’s service hears it)';
+      mic.addEventListener('mousedown', (e) => e.preventDefault());  // keep the question focused
+      mic.addEventListener('click', () => (on ? stop() : start()));
+      ta.addEventListener('blur', () => { if (isMac() && on) stopT = setTimeout(() => setOn(false), 300); });
+      ta.addEventListener('keydown', (e) => { if (e.key === 'Escape' && on) { e.preventDefault(); e.stopPropagation(); stop(); } });
+      $('#chat-form') && $('#chat-form').addEventListener('submit', () => { if (on) stop(); });
+    }
+  }
+  $('#btn-chat-close').addEventListener('click', closeChat);  $('#btn-chat-close').addEventListener('click', closeChat);
+  // Click off the chat (the map, the note panel) and it closes. A drag (panning the map, selecting text that
+  // started in the chat) doesn't count, nor does the top bar (its menus and search work alongside the chat), nor
+  // the dialogs, menus and messages the chat itself opens.
+  {
+    const KEEP = '#chat, #topbar, #btn-chat, #modal, .modal, [role="dialog"], [role="menu"], .menu, .node-menu, .toast, #toasts, .mm, .rbk-ov, .rbk-sheet, .fp-sheet';
+    let down = null;
+    document.addEventListener('pointerdown', (e) => {
+      down = $('#chat').hidden || e.button !== 0 || (e.target.closest && e.target.closest(KEEP)) ? null : { x: e.clientX, y: e.clientY };
+    }, true);
+    document.addEventListener('pointerup', (e) => {
+      const d = down; down = null;
+      if (!d || $('#chat').hidden || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
+      if (e.target.closest && e.target.closest(KEEP)) return;
+      closeChat();
+    }, true);
+  }
   $('#btn-chat').addEventListener('click', () => {
     if (!$('#chat').hidden) { closeChat(); return; }
     openChat();
@@ -5453,6 +5584,11 @@
       aliases: ['talk about paper', 'chat with paper', 'discuss', 'explain this paper', 'question this paper'],
       description: 'Opens a conversation about the open paper only: the agent reads the paper and your notes on it.',
       run: () => chatAboutPaper(S.cur.id) });
+    CMD.register({ id: 'chat.handoff', title: 'Continue on your phone', group: 'Research',
+      when: () => keepable(S.chat).length > 0,
+      aliases: ['continue on phone', 'hand off', 'handoff', 'take with me', 'export chat', 'copy conversation', 'continue elsewhere'],
+      description: 'This conversation as one prompt to paste into the AI app on your phone, so you can keep going there. Private notes stay out.',
+      run: () => continueOnPhone() });
     CMD.register({ id: 'chat.wholeLibrary', title: 'Ask about the whole library', group: 'Research',
       when: () => !!S.chatPaper, description: 'Switches the chat back from one paper to your whole library.',
       run: () => { if (setChatScope(null) !== false) { renderChat(); openChat(); } } });

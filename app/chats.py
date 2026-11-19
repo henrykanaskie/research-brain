@@ -204,3 +204,122 @@ def _prune(store) -> None:
                 p.unlink()
             except OSError:
                 pass
+
+
+# ---------------------------------------------------------------- continue on your phone
+# A conversation written out as one prompt you paste into any AI app (on your phone, or anywhere), so you can
+# leave and keep talking. Nothing is sent: the page copies it, saves it as a file or hands it to the share
+# sheet. It follows the export rule (app/privacy.py): private items stay out. A message that names or copies a
+# private note is left out with a line saying so, [[links]] to private notes become "a private note", and
+# papers that are private aren't described.
+HANDOFF_CHARS = 60_000      # what most phone apps take in one paste; older turns are condensed past it
+HANDOFF_LEFT_OUT = "(Left out here: this message quoted a private note.)"
+
+
+def _who(n: dict) -> str:
+    a = [str(x) for x in (n.get("authors") or []) if x]
+    who = a[0].split(",")[0].split()[-1] if a and a[0].split() else ""
+    if len(a) > 2:
+        who += " et al."
+    elif len(a) == 2:
+        who += " and " + (a[1].split(",")[0].split() or [""])[-1]
+    return who
+
+
+def _paper_line(n: dict) -> str:
+    bits = [b for b in (_who(n), str(n.get("year") or "")) if b]
+    ident = (f"doi:{n['doi']}" if n.get("doi") else f"arXiv:{n['arxiv']}" if n.get("arxiv") else n.get("url") or "")
+    return f"\"{n.get('title') or 'Untitled'}\"" + (f" ({', '.join(bits)})" if bits else "") + (f", {ident}" if ident else "")
+
+
+def handoff(store, key: str, messages: list, title: str = "") -> dict:
+    """The conversation as a prompt to paste into another AI: {text, messages, left_out, condensed}."""
+    from . import privacy
+    key = valid_key(key)
+    base = key.split("~")[0]
+    msgs = [c for c in (_clean(m) for m in messages or []) if c]
+    summary = load(store, key)["summary"] if msgs else ""
+    if not msgs:
+        saved = load(store, key)
+        msgs, summary = saved["messages"], saved["summary"]
+    if not msgs:
+        raise ChatError("There's nothing in this conversation yet.")
+    summary = "\n".join(ln for ln in (summary or "").splitlines() if ln.strip() and not privacy.copies_private(ln))
+
+    def get(nid):
+        try:
+            return store.get(nid)
+        except (KeyError, OSError, ValueError):
+            return None
+
+    def shareable(n):
+        try:
+            return n is not None and not privacy.is_private(n)
+        except Exception:  # can't tell: treat it as private, as every other send does
+            return False
+
+    def clean_text(t: str) -> str | None:
+        t = privacy.hide_ids(privacy.scrub(t))
+        return None if privacy.copies_private(t) else t  # stricter than a send: 8 copied words are enough
+
+    # what it was about
+    if base == "general":
+        about = "General questions (not about my library)."
+    elif base.startswith("paper-"):
+        n = get(base[6:])
+        about = f"The paper {_paper_line(n)}." if shareable(n) else "One of my papers (its details are private)."
+        if shareable(n) and n.get("abstract"):
+            about += "\n\nIts abstract:\n" + _gist(n["abstract"], 2500)
+        if shareable(n) and n.get("summary") and clean_text(n["summary"]):
+            about += "\n\nMy own summary of it:\n" + clean_text(n["summary"])
+    elif base.startswith("topics-"):
+        about = f"The papers in my topics: {title or base[7:].replace('+', ', ')}."
+    else:
+        about = "The papers and notes in my research library."
+
+    left_out, papers, turns = 0, {}, []
+    for m in msgs:
+        text = clean_text(m["content"])
+        if text is None:
+            left_out += 1
+            text = HANDOFF_LEFT_OUT
+        who = "Me" if m["role"] == "user" else "Assistant"
+        if m.get("sel") and m["sel"].get("text") and clean_text(m["sel"]["text"]):
+            pg = f" (page {m['sel']['page']})" if m["sel"].get("page") else ""
+            text = f"[About this passage{pg}: \"{clean_text(m['sel']['text'])}\"]\n{text}"
+        for s in m.get("sources") or []:
+            n = get(s["id"])
+            if shareable(n) and n.get("type") == "paper":
+                papers.setdefault(s["id"], _paper_line(n))
+        turns.append(f"{who}:\n{text.strip()}")
+
+    head = ("I'm continuing a conversation I started with an AI assistant in research brain, my research library "
+            "app. I had to step away, so please pick up where we left off. You can't see my library, so work from "
+            "what's below and ask me if you need more about a paper.\n\n"
+            f"What we were talking about: {about}")
+    tail = ("Please continue from here as the same assistant. Reply in one or two lines saying where we left off, "
+            "then wait for my next message.")
+    condensed = 0
+
+    def build():
+        parts = [head]
+        if summary:
+            parts.append("Earlier in the conversation (condensed):\n" + summary)
+        parts.append("The conversation so far:\n\n" + "\n\n".join(turns))
+        if papers:
+            parts.append("Papers from my library it drew on:\n" + "\n".join(f"- {p}" for p in papers.values()))
+        parts.append(tail)
+        return "\n\n---\n\n".join(parts)
+
+    text = build()
+    while len(text) > HANDOFF_CHARS and len(turns) > 2:  # condense the oldest turns until it fits
+        drop = 2 if len(turns) > 3 else 1
+        summary = fold(summary, [{"role": "user" if t.startswith("Me:") else "assistant", "content": t.split(":\n", 1)[-1]}
+                                 for t in turns[:drop]])
+        turns, condensed = turns[drop:], condensed + drop
+        text = build()
+    if len(text) > HANDOFF_CHARS:
+        text = text[:HANDOFF_CHARS].rsplit(" ", 1)[0] + " […]\n\n---\n\n" + tail
+    if privacy.find_leaks(text):  # the backstop: never hand over something that copies a private note
+        raise ChatError("This conversation quotes your private notes, so it can't be written out.")
+    return {"text": text, "messages": len(turns), "left_out": left_out, "condensed": condensed}

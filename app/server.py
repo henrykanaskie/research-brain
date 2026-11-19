@@ -11,6 +11,7 @@ import mimetypes
 import os
 import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -2327,6 +2328,17 @@ def api_chat_thread_save(key: str, body: ChatThreadIn):
     return _chat_call(chats_mod.save, store, key, body.messages, body.title)
 
 
+class ChatHandoffIn(BaseModel):
+    messages: list[dict] = []
+    title: str = ""
+
+
+@app.post("/api/chats/{key}/handoff")
+def api_chat_handoff(key: str, body: ChatHandoffIn):
+    """Continue on your phone: the conversation as one prompt to paste into another AI (app/chats.py)."""
+    return _chat_call(chats_mod.handoff, store, key, body.messages, body.title)
+
+
 @app.delete("/api/chats/{key}")
 def api_chat_thread_delete(key: str):
     _chat_call(lambda k: chats_mod.delete(store, chats_mod.valid_key(k)), key)
@@ -4146,6 +4158,57 @@ def api_memory():
         updated = None
     return {"core": memory.read("core.md"), "findings": [_finding_json(e) for e in reversed(entries)],
             "summary": summary, "updated": updated, "label": memory_mod.LABEL}
+
+
+# ---------------------------------------------------------------- voice: answers read aloud (static/voice.js)
+# The page speaks with the browser's own speech synthesis (the system voices). Where that has no voices, on a
+# Mac, it asks the server to speak with macOS `say` instead: one sentence per call, answered when it's been said,
+# so the page knows when to listen again. Nothing is recorded; only text comes here.
+class SayIn(BaseModel):
+    text: str = ""
+
+
+_say_lock = threading.Lock()
+_say_proc: list = [None]
+
+
+def _say_path() -> str:
+    return shutil.which("say") or "" if sys.platform == "darwin" else ""
+
+
+@app.get("/api/voice")
+def api_voice():
+    return {"say": bool(_say_path())}
+
+
+@app.post("/api/voice/say")
+def api_voice_say(body: SayIn):
+    exe = _say_path()
+    if not exe:
+        raise HTTPException(501, "Speaking needs macOS")
+    text = " ".join(str(body.text or "").split())[:2000]
+    if not text:
+        return {"ok": True}
+    import subprocess
+    with _say_lock:
+        if _say_proc[0] is not None and _say_proc[0].poll() is None:
+            _say_proc[0].kill()
+        p = subprocess.Popen([exe, "-r", "190", "--", text], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        _say_proc[0] = p
+    try:
+        p.wait(timeout=120)
+    except subprocess.TimeoutExpired:
+        p.kill()
+    return {"ok": True}
+
+
+@app.post("/api/voice/stop")
+def api_voice_stop():
+    with _say_lock:
+        if _say_proc[0] is not None and _say_proc[0].poll() is None:
+            _say_proc[0].kill()
+    return {"ok": True}
 
 
 class AboutIn(BaseModel):

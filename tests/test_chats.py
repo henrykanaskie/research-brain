@@ -289,3 +289,33 @@ def test_private_papers_are_not_sent_for_sorting(client, server, monkeypatch):
     monkeypatch.setattr(server, "_ask", lambda i, c, *a, **k: seen.setdefault("c", c) and '{"topics": []}')
     client.post("/api/topics/auto-sort", json={"ids": ids})
     assert f"[[{ids[0]}]]" not in seen["c"] and f"[[{ids[1]}]]" in seen["c"]
+
+
+def test_continue_on_phone_writes_the_conversation_as_one_prompt_without_private_notes(client, server):
+    pid = paper(client, "Sheath formation in plasmas", "How ions reach the wall.", authors=["Ada Bray", "Ben Cole"], year=2002, doi="10.1/x")
+    secret = client.post("/api/notes", json={"type": "note", "title": "My secret idea",
+                                             "body": "the wall potential secretly depends on the purple electron mood ring"}).json()["id"]
+    msgs = [{"role": "user", "content": "Why does a sheath form?"},
+            {"role": "assistant", "content": "Because electrons are faster than ions.", "sources": [{"id": pid, "title": "Sheath"}]},
+            {"role": "user", "content": "Compare with the wall potential secretly depends on the purple electron mood ring idea"},
+            {"role": "assistant", "content": f"See [[{secret}]] for that."}]
+    r = client.post(f"/api/chats/paper-{pid}/handoff", json={"messages": msgs, "title": "Sheath"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    t = d["text"]
+    assert "Why does a sheath form?" in t and "electrons are faster" in t
+    assert '"Sheath formation in plasmas" (Bray and Cole, 2002), doi:10.1/x' in t and "How ions reach the wall." in t
+    assert "purple electron" not in t and secret not in t and "My secret idea" not in t
+    assert d["left_out"] == 1 and "a private note" in t
+    # nothing to continue
+    assert client.post("/api/chats/library/handoff", json={"messages": []}).status_code == 400
+
+
+def test_continue_on_phone_condenses_a_long_conversation_to_fit(client, server):
+    from app import chats
+    msgs = []
+    for i in range(40):
+        msgs += [{"role": "user", "content": f"Question {i}?"}, {"role": "assistant", "content": f"Answer {i}. " + "word " * 800}]
+    d = client.post("/api/chats/general/handoff", json={"messages": msgs}).json()
+    assert len(d["text"]) <= chats.HANDOFF_CHARS + 500 and d["condensed"] > 0
+    assert "Answer 39." in d["text"] and "Earlier in the conversation" in d["text"]

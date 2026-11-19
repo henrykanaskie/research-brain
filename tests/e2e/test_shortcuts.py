@@ -607,3 +607,24 @@ def test_bulk_import_a_flat_folder_lets_the_ai_sort_it(ctx, server, tmp_path):
     left = page.evaluate("fetch('/api/topics/auto-sort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({unsorted: true})}).then(r => r.json())")
     assert left["sorted"] == 0, left
     assert not page.errors
+
+
+def test_click_off_the_chat_closes_it(ctx, server):
+    clear_vault(server)
+    api(server, "POST", "/api/notes", {"type": "note", "title": "Click off"})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 1")
+    page.click("#btn-chat")
+    expect(page.locator("#chat")).to_be_visible()
+    page.click("#chat-input")                      # inside: stays
+    expect(page.locator("#chat")).to_be_visible()
+    page.click("#btn-view-menu")                   # the top bar works alongside it
+    expect(page.locator("#chat")).to_be_visible()
+    page.keyboard.press("Escape")
+    box = page.locator("#graph").bounding_box()
+    x, y = box["x"] + 40, box["y"] + box["height"] - 120
+    page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + 80, y - 40, steps=5); page.mouse.up()
+    expect(page.locator("#chat")).to_be_visible()  # a drag (panning the map) isn't a click off
+    page.mouse.click(x, y)                         # a click on the map closes it
+    expect(page.locator("#chat")).to_be_hidden()
+    assert not page.errors

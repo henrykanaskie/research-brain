@@ -196,6 +196,9 @@
       <div class="spacer"></div>
       <button id="btn-chat-history" class="btn btn-text btn-sm" title="Go back to an earlier conversation">Past chats</button>
       <button id="btn-chat-clear" class="btn btn-text btn-sm" title="Start a new conversation (this one is kept in Past chats)">New chat</button>
+      <button id="btn-chat-handoff" class="btn btn-icon" title="Continue on your phone: this conversation as a prompt to paste into any AI app" aria-label="Continue on your phone">
+        <svg width="12" height="14" viewBox="0 0 12 14" aria-hidden="true"><rect x="2" y="0.75" width="8" height="12.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M5 11h2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      </button>
       <button id="btn-chat-close" class="btn btn-icon" title="Close (Esc)" aria-label="Close">
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>
       </button>
@@ -224,6 +227,9 @@
       <div id="chat-preview" class="md live"></div>
       <div class="chat-row">
         <textarea id="chat-input" rows="2" placeholder="Ask about your papers and notes" aria-label="Question"></textarea>
+        <button id="btn-chat-mic" class="btn btn-icon chat-mic" type="button" hidden aria-pressed="false" title="Dictate your question" aria-label="Dictate">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2.5M5.5 15h5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
         <button id="btn-chat-send" class="btn btn-primary needs-claude" type="submit">Ask</button>
       </div>
     </form>
@@ -287,6 +293,7 @@
   <script src="/static/cite.js"></script>
   <script src="/static/questions.js"></script>
   <script src="/static/finder.js"></script>
+  <script src="/static/voice.js"></script>
   <script src="/static/cards.js"></script>
   <script src="/static/shortcuts.js"></script>
   <script src="/static/vendor/qr.js"></script>
