@@ -1021,12 +1021,11 @@
       const run = ay - ax, a = y0 + sy * run * f;
       pts = [x0, y0, x0, a, x1, a + sy * ax, x1, y1];
     }
-    if (route && l.kind !== 'part' && !S.noRoute) {
-      // the route is worked out only while the map is still; while dots move (a hover card easing them aside,
-      // a drag, a glide, the float) the trace keeps that route and just stretches with its two ends, so it moves
-      // simply instead of re-routing every frame
-      if (mapMoving()) { if (l.__route) pts = carryRoute(l.__route, pts); }
-      else { const r = routeAround(pts, l, f); l.__route = r === pts ? null : { base: pts.slice(), pts: r }; pts = r; }
+    if (route && l.kind !== 'part' && !S.noRoute && l.__shape) {
+      // a shape picked when you dropped a dot on this trace (rerouteFor): the same simple shape, from wherever
+      // its ends are now. Nothing changes a trace's shape on its own, so traces never jump
+      const sh = traceShapes(x0, y0, x1, y1, f)[l.__shape];
+      if (sh) pts = sh;
     }
     if (sd) pts.unshift(sd.x, sd.y);
     if (td) pts.push(td.x, td.y);
@@ -1052,21 +1051,6 @@
       for (let cy = Math.floor((y0 - pad) / G.cell); cy <= Math.floor((y1 + pad) / G.cell); cy++) {
         const b = G.map.get(cx + ',' + cy); if (b) out.push(...b);
       }
-    return out;
-  }
-  const mapMoving = () => !!(S.dragging || motion.tween || (S.shifted && S.shifted.length) || cards.some((c) => c.p > 0) || floating());
-  /** A route worked out earlier, moved with its ends: each bend shifts by a blend of how far the two ends moved. */
-  function carryRoute(R, cur) {
-    const b = R.base, bx0 = b[0], by0 = b[1], bx1 = b[b.length - 2], by1 = b[b.length - 1];
-    const d0x = cur[0] - bx0, d0y = cur[1] - by0, d1x = cur[cur.length - 2] - bx1, d1y = cur[cur.length - 1] - by1;
-    const cx = bx1 - bx0, cy = by1 - by0, L2 = cx * cx + cy * cy;
-    const out = new Array(R.pts.length);
-    for (let i = 0; i < R.pts.length; i += 2) {
-      const px = R.pts[i], py = R.pts[i + 1];
-      let t = L2 ? ((px - bx0) * cx + (py - by0) * cy) / L2 : 0;
-      t = t < 0 ? 0 : t > 1 ? 1 : t;
-      out[i] = px + d0x * (1 - t) + d1x * t; out[i + 1] = py + d0y * (1 - t) + d1y * t;
-    }
     return out;
   }
   const segDist2 = (P, x, y) => {
@@ -1098,22 +1082,38 @@
     }
     return out;
   }
-  /** A trace that runs under a dot that isn't one of its own ends takes another of its simple shapes (the
-   *  diagonal moved along, or split around a straight middle: always three straight runs, the same length) that
-   *  misses every dot, keeping the shape it had while that still works so it doesn't flip as dots float. If none
-   *  does, it stays direct: no detours or extra bends. */
-  function routeAround(pts, l, f) {
-    const x0 = pts[0], y0 = pts[1], x1 = pts[pts.length - 2], y1 = pts[pts.length - 1];
+  /** The shape a trace should take: its own (0) when that misses every dot that isn't one of its ends, else the
+   *  nearest of its other simple shapes that does (always three straight runs, the same length), else its own. */
+  function pickShape(l) {
+    const g = linkGeom(l, false);
+    if (!g) return 0;
+    const P0 = g.sd ? g.pts.slice(2) : g.pts.slice(), P = g.td ? P0.slice(0, -2) : P0;
+    const x0 = P[0], y0 = P[1], x1 = P[P.length - 2], y1 = P[P.length - 1];
     const near = dotsNear(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1))
       .filter((d) => d !== l.source && d !== l.target);
-    if (!near.length) { l.__shape = 0; return pts; }
-    const clear = (P, slack) => near.every((d) => segDist2(P, d.x, d.y) >= (nodeRadius(d) + slack) ** 2);
-    if (clear(pts, 1.2)) { l.__shape = 0; return pts; }
-    const shapes = traceShapes(x0, y0, x1, y1, f);
-    if (l.__shape && shapes[l.__shape] && clear(shapes[l.__shape], 1.2)) return shapes[l.__shape];
-    for (let i = 1; i < shapes.length; i++) if (clear(shapes[i], 2.2)) { l.__shape = i; return shapes[i]; }
-    l.__shape = 0;
-    return pts;  // no simple shape misses every dot: the direct one (never extra bends around dots)
+    if (!near.length) return 0;
+    const clear = (Q, slack) => near.every((d) => segDist2(Q, d.x, d.y) >= (nodeRadius(d) + slack) ** 2);
+    if (clear(P, 1.2)) return 0;
+    const shapes = traceShapes(x0, y0, x1, y1, l.__split);
+    for (let i = 1; i < shapes.length; i++) if (clear(shapes[i], 2.2)) return i;
+    return 0;
+  }
+  /** You dropped dot n: the traces that now run under it, and its own, take a shape that misses the dots (once,
+   *  right as you drop it). Every other trace keeps its shape. */
+  function rerouteFor(n) {
+    if (S.noRoute || !n) return;
+    traceGrid.frame = -1;  // where the dots are now
+    const r = nodeRadius(n) + 1.2;
+    for (const l of S.links || []) {
+      if (l.kind === 'part' || !linkShown(l) || typeof l.source !== 'object') continue;
+      const own = l.source === n || l.target === n;
+      if (!own) {
+        const g = linkGeom(l);
+        if (!g || segDist2(g.pts, n.x, n.y) >= r * r) continue;  // doesn't run under it
+      }
+      l.__shape = pickShape(l);
+    }
+    traceGrid.frame = -1;
   }
   function updateCentroids() {
     const sums = new Map(); let ax = 0, ay = 0, an = 0;
@@ -2873,6 +2873,7 @@
       x = cx; y = cy;
     }
     n.__home = [x, y]; n.__userPin = true;
+    { const px = n.x, py = n.y; n.x = x; n.y = y; rerouteFor(n); n.x = px; n.y = py; }  // traces under its new spot
     n.fx = undefined; n.fy = undefined; delete n.__tmpPin;  // the drag held it; now the spring does
     const rf = fg && fg.d3Force('regions'), a = rf && rf.regionAnchorOf ? rf.regionAnchorOf(n) : { x: 0, y: 0 };
     n.__pinRel = [Math.round((x - a.x) * 10) / 10, Math.round((y - a.y) * 10) / 10];
