@@ -4178,7 +4178,64 @@ def _say_path() -> str:
 
 @app.get("/api/voice")
 def api_voice():
-    return {"say": bool(_say_path())}
+    from . import voice as voice_mod
+    return {"say": bool(_say_path()), "neural": voice_mod.status()}
+
+
+@app.post("/api/voice/install", status_code=202)
+def api_voice_install():
+    """Set up the natural voice (app/voice.py): one-time, about 330 MB, in the background."""
+    from . import voice as voice_mod
+    return voice_mod.install()
+
+
+@app.delete("/api/voice")
+def api_voice_remove():
+    """Remove the natural voice (about 480 MB); the computer's built-in voices are used again."""
+    from . import voice as voice_mod
+    try:
+        voice_mod.remove()
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return voice_mod.status()
+
+
+@app.post("/api/voice/warm")
+def api_voice_warm():
+    from . import voice as voice_mod
+    voice_mod.warm()
+    return {"ok": True}
+
+
+class VoiceIn(BaseModel):
+    voice: str = ""
+
+
+@app.put("/api/voice/settings")
+def api_voice_settings(body: VoiceIn):
+    from . import voice as voice_mod
+    try:
+        voice_mod.set_voice(body.voice)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return voice_mod.status()
+
+
+class TtsIn(BaseModel):
+    text: str = ""
+    voice: str = ""
+    speed: float = 1.0
+
+
+@app.post("/api/voice/tts")
+def api_voice_tts(body: TtsIn):
+    """One sentence in the natural voice, as WAV audio (made on this computer)."""
+    from . import voice as voice_mod
+    try:
+        audio = voice_mod.speak(body.text, body.voice or None, body.speed)
+    except RuntimeError as e:
+        raise HTTPException(409 if "isn't set up" in str(e) else 500, str(e))
+    return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/voice/say")

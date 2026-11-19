@@ -49,43 +49,75 @@
       .replace(/\\(le|leq)/g, ' at most ').replace(/\\(ge|geq)/g, ' at least ').replace(/\\[a-zA-Z]+/g, ' ')
       .replace(/[{}\\]/g, ' ').replace(/=/g, ' equals ').replace(/\s+/g, ' ').trim();
   }
+  // the computer's own voices, by name, the most natural first (macOS, Windows, Chrome's)
+  const SYS = {
+    female: ['Ava', 'Zoe', 'Samantha', 'Allison', 'Susan', 'Serena', 'Karen', 'Moira', 'Tessa', 'Microsoft Aria', 'Microsoft Jenny', 'Microsoft Zira', 'Google US English', 'Google UK English Female'],
+    male: ['Evan', 'Nathan', 'Tom', 'Daniel', 'Alex', 'Aaron', 'Arthur', 'Oliver', 'Rishi', 'Fred', 'Microsoft Guy', 'Microsoft David', 'Microsoft Mark', 'Google UK English Male'],
+  };
+  const wantGender = () => { const v = neural.voice || ''; return v === 'system-male' || /^[ab]m_/.test(v) ? 'male' : 'female'; };
   function pickVoice() {
     if (!synth) return null;
     const vs = synth.getVoices();
     if (!vs.length) return null;
     const lang = (navigator.language || 'en-US').toLowerCase();
     const same = vs.filter((v) => v.lang && v.lang.toLowerCase().replace('_', '-').startsWith(lang.slice(0, 2)));
-    const good = ['Ava', 'Samantha', 'Allison', 'Susan', 'Serena', 'Daniel', 'Karen', 'Moira', 'Tessa', 'Alex'];
-    for (const g of good) { const v = same.find((x) => x.name.startsWith(g) && /premium|enhanced/i.test(x.name)); if (v) return v; }
-    for (const g of good) { const v = same.find((x) => x.name.startsWith(g)); if (v) return v; }
-    return same.find((v) => v.localService) || same[0] || vs[0];
+    const pool = same.length ? same : vs;
+    const good = SYS[wantGender()];
+    for (const g of good) { const v = pool.find((x) => x.name.startsWith(g) && /premium|enhanced|natural|neural/i.test(x.name)); if (v) return v; }
+    for (const g of good) { const v = pool.find((x) => x.name.startsWith(g)); if (v) return v; }
+    return pool.find((v) => v.localService) || pool[0];
   }
   if (synth && synth.addEventListener) synth.addEventListener('voiceschanged', () => {});
   let serverSay = null;  // the server can speak with macOS `say` (checked once)
-  async function canServerSay() {
-    if (serverSay !== null) return serverSay;
-    try { serverSay = !!(await api('GET', '/api/voice')).say; } catch { serverSay = false; }
-    return serverSay;
+  let neural = { state: 'missing' };  // the natural voice (app/voice.py): missing | installing | ready | error
+  async function refreshVoice() {
+    try { const v = await api('GET', '/api/voice'); serverSay = !!v.say; neural = v.neural || neural; }
+    catch { if (serverSay === null) serverSay = false; }
+    paintSetup();
+    return neural;
   }
-  canServerSay();
+  async function canServerSay() { if (serverSay === null) await refreshVoice(); return serverSay; }
+  refreshVoice();
+  const useNeural = () => neural.state === 'ready' && !String(neural.voice || '').startsWith('system-');
   const useSynth = () => !!(synth && synth.getVoices().length);
-  const canSpeak = () => useSynth() || serverSay === true;
+  const canSpeak = () => useNeural() || useSynth() || serverSay === true;
 
   /** A queue of sentences, spoken one after another; onIdle runs when it has nothing left to say. */
+  /** One sentence in the natural voice: fetched as soon as it's queued, so the next is ready while one plays. */
+  function fetchNeural(text) {
+    return fetch('/api/voice/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: neural.voice || '' }) })
+      .then((r) => (r.ok ? r.blob() : null)).catch(() => null);
+  }
+  let audioEl = null;
   const speech = {
     queue: [], busy: false, epoch: 0, onIdle: null,
     say(text) {
       const t = String(text || '').trim();
       if (!t || !/[\p{L}\p{N}]/u.test(t)) return;
-      this.queue.push(t);
+      // long sentences in two, so the voice starts sooner and keeps its breath
+      const parts = t.length > 260 ? t.split(/(?<=[,;:])\s+(?=\S)/).reduce((a, x) => { if (a.length && (a[a.length - 1] + ' ' + x).length < 220) a[a.length - 1] += ' ' + x; else a.push(x); return a; }, []) : [t];
+      for (const x of parts) this.queue.push({ text: x, audio: useNeural() ? fetchNeural(x) : null });
       if (!this.busy) this.next();
     },
     async next() {
-      const t = this.queue.shift();
-      if (t == null) { this.busy = false; const f = this.onIdle; if (f) f(); return; }
+      const item = this.queue.shift();
+      if (item == null) { this.busy = false; const f = this.onIdle; if (f) f(); return; }
+      const t = item.text;
       this.busy = true;
       const ep = this.epoch;
       const done = () => { if (ep === this.epoch) this.next(); };
+      if (item.audio) {
+        const blob = await item.audio;
+        if (ep !== this.epoch) return;
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          audioEl = new Audio(url);
+          const end = () => { URL.revokeObjectURL(url); done(); };
+          audioEl.onended = end; audioEl.onerror = end;
+          audioEl.play().catch(end);
+          return;
+        }
+      }
       if (useSynth()) {
         const u = new SpeechSynthesisUtterance(t);
         const v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
@@ -99,6 +131,7 @@
     },
     stop() {
       this.epoch++; this.queue = []; this.busy = false;
+      if (audioEl) { try { audioEl.pause(); } catch { /* gone */ } audioEl = null; }
       if (synth) synth.cancel();
       if (serverSay) api('POST', '/api/voice/stop', {}).catch(() => {});
     },
@@ -150,10 +183,16 @@
 
   // ---- Read aloud (one answer)
   let reading = null;  // the message being read
+  let offeredOnce = false;
   function readAloud(m) {
     if (reading === m) { speech.stop(); reading = null; rb.renderChat(); return; }
     stopVoice(false);
     speech.stop();
+    if (neural.state !== 'ready' && neural.state !== 'installing' && !offeredOnce && !offerOff()) {
+      offeredOnce = true;
+      toast('Want a natural, human-sounding voice? It’s an optional one-time download (about 480 MB) that stays on this computer.', 'info',
+        { ms: 9000, action: { label: 'Download', fn: () => { installVoice(); toast('Setting up the natural voice. It’s used as soon as it’s ready.', 'info'); } } });
+    }
     reading = m;
     speech.onIdle = () => { if (reading === m) { reading = null; rb.renderChat(); } };
     for (const part of speakable(m.content).split(/(?<=[.!?])\s+|\n+/)) speech.say(part);
@@ -219,7 +258,67 @@
   const status = h('div', { class: 'vb-status', 'aria-live': 'polite' });
   const heardEl = h('div', { class: 'vb-heard' });
   const endBtn = h('button', { type: 'button', class: 'btn btn-sm', text: 'End', title: 'Leave voice mode (Esc)' });
-  bar.append(orb, h('div', { class: 'vb-text' }, status, heardEl), endBtn);
+  const pick = h('select', { class: 'vb-voice', 'aria-label': 'Voice', title: 'Which voice answers' });
+  pick.addEventListener('change', async () => {
+    if (pick.value === '__remove') {
+      const ok = rb.confirmDialog ? await rb.confirmDialog('Remove the natural voice?', 'It frees about 480 MB. Answers are read in the computer’s built-in voice instead, and you can download it again any time.', 'Remove') : window.confirm('Remove the natural voice?');
+      if (ok === true || ok === 'ok') {
+        try { const st = await api('DELETE', '/api/voice'); neural = st; toast('Removed the natural voice.', 'ok'); } catch (e) { toast(e.message || 'Could not remove it', 'error'); }
+      }
+      paintSetup();
+      return;
+    }
+    try { const st = await api('PUT', '/api/voice/settings', { voice: pick.value }); neural = { ...neural, ...st }; } catch { /* keep */ }
+    speech.stop(); speech.say('Hi, this is how I sound.');
+  });
+  pick.hidden = false;
+  // the natural voice isn't set up yet: offer it (one-time, on this Mac), with its progress
+  const setup = h('div', { class: 'vb-setup', hidden: true });
+  bar.append(orb, h('div', { class: 'vb-text' }, status, heardEl), pick, endBtn);
+  const NOPE = 'rb.voiceOfferOff';
+  const offerOff = () => { try { return localStorage.getItem(NOPE) === '1'; } catch { return false; } };
+  function paintSetup() {
+    const st = neural.state;
+    // the voices: the natural ones (female, male) once downloaded; the computer's own, female or male, always
+    const names = neural.voices || {}, sys = neural.system_voices || { 'system-female': 'Built-in female', 'system-male': 'Built-in male' };
+    const groups = [];
+    if (st === 'ready') {
+      groups.push(h('optgroup', { label: 'Natural, female' }, (neural.female || []).map((k) => h('option', { value: k, text: names[k] }))));
+      groups.push(h('optgroup', { label: 'Natural, male' }, (neural.male || []).map((k) => h('option', { value: k, text: names[k] }))));
+    }
+    groups.push(h('optgroup', { label: 'Built-in' }, Object.entries(sys).map(([k, v]) => h('option', { value: k, text: v }))));
+    if (st === 'ready') groups.push(h('optgroup', { label: 'Natural voice' }, h('option', { value: '__remove', text: 'Remove the natural voice…' })));
+    pick.replaceChildren(...groups);
+    let v = neural.voice || 'af_heart';
+    if (st !== 'ready' && !v.startsWith('system-')) v = /^[ab]m_/.test(v) ? 'system-male' : 'system-female';
+    pick.value = v;
+    if (st === 'ready' || !(active || setupWanted) || (offerOff() && st !== 'installing' && !setupWanted)) { setup.hidden = true; return; }
+    setup.hidden = false;
+    if (st === 'installing') {
+      setup.replaceChildren(h('span', { text: `${neural.step || 'Setting up the natural voice'}… ${Math.round((neural.progress || 0) * 100)}%` }),
+        h('span', { class: 'vb-bar' }, h('span', { style: `width:${Math.round((neural.progress || 0) * 100)}%` })));
+    } else {
+      setup.replaceChildren(
+        h('span', { text: st === 'error' ? `The natural voice didn’t install: ${neural.error || 'something went wrong'}. ` : 'For a natural, human-sounding voice: ' }),
+        h('button', { type: 'button', class: 'btn btn-text btn-sm', text: st === 'error' ? 'Try again' : `Download it (about ${neural.size_mb || 480} MB, stays on this computer)`, onclick: installVoice }),
+        h('button', { type: 'button', class: 'btn btn-text btn-sm vb-nope', text: 'No thanks', title: 'Keep the built-in voice; you can still download it from the voice menu later',
+          onclick: () => { try { localStorage.setItem(NOPE, '1'); } catch { /* ok */ } setup.hidden = true; } }));
+    }
+  }
+  let setupWanted = false, pollT = 0;
+  async function installVoice() {
+    setupWanted = true;
+    try { neural = await api('POST', '/api/voice/install', {}); } catch (e) { neural = { state: 'error', error: e.message }; }
+    paintSetup();
+    clearInterval(pollT);
+    pollT = setInterval(async () => {
+      await refreshVoice();
+      if (neural.state !== 'installing') {
+        clearInterval(pollT);
+        if (neural.state === 'ready') { toast('The natural voice is ready.', 'ok'); api('POST', '/api/voice/warm', {}).catch(() => {}); rb.renderChat(); }
+      }
+    }, 1000);
+  }
   const LABEL = { listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking', paused: 'Paused' };
   function setState(st, note) {
     state = st;
@@ -274,6 +373,8 @@
     const form = $('#chat-form');
     form.classList.add('voice-on');
     bar.hidden = false;
+    if (useNeural()) api('POST', '/api/voice/warm', {}).catch(() => {});
+    refreshVoice();
     listenNow();
   }
   function stopVoice(render = true) {
@@ -281,6 +382,7 @@
     active = false; feed = null;
     listen.stop(); speech.stop(); speech.onIdle = null;
     bar.hidden = true;
+    if (!setupWanted || neural.state !== 'installing') setup.hidden = true;
     $('#chat-form').classList.remove('voice-on');
     setState('idle');
     if (render) $('#chat-input').focus();
@@ -296,6 +398,7 @@
   const form = $('#chat-form');
   if (form) {
     form.insertBefore(bar, form.firstChild);
+    form.insertBefore(setup, bar.nextSibling);
     const row = $('.chat-row', form), send = $('#btn-chat-send');
     const vbtn = h('button', { id: 'btn-chat-voice', type: 'button', class: 'btn btn-icon chat-voice', title: 'Voice mode: talk, and hear the answer', 'aria-label': 'Voice mode' },
       h('span', { html: '<svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true"><path d="M2 6.5v3M5 4v8M8 1.5v13M11 4v8M14 6v4M16.5 7.2v1.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/></svg>' }));
@@ -309,6 +412,6 @@
   }
   if (synth && synth.getVoices().length === 0 && synth.addEventListener) synth.addEventListener('voiceschanged', () => rb.renderChat());
 
-  window.__rbVoice = { start: startVoice, stop: stopVoice, readAloud, isReading: (m) => reading === m, canSpeak: () => canSpeak() || !!synth,
+  window.__rbVoice = { start: startVoice, stop: stopVoice, readAloud, installVoice, get neural() { return neural; }, isReading: (m) => reading === m, canSpeak: () => canSpeak() || !!synth,
     speakable, get state() { return active ? state : 'off'; }, _speech: speech, _feed: sentenceFeeder };
 })();
