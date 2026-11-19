@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 KEEP = 40
-MSG_CHARS = 6000
+MSG_CHARS = 40_000  # a long answer is kept whole (the agent rereads it when you go on)
 SUMMARY_CHARS = 4000
 TOTAL_CHARS = 3_000_000
 MAX_THREADS = 150

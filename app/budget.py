@@ -33,8 +33,8 @@ TABLE: dict[str, tuple[int, int, int]] = {
     "paper_passages":       (8,      12,      18),       # ...else this many of its best passages
     "related_papers":       (2,      3,       4),        # "also use similar papers"
     "chat_passages":        (8,      12,      12),       # library chat
-    "history_messages":     (4,      6,       8),        # earlier messages a chat resends
-    "history_chars":        (700,    1_500,   4_000),    # per earlier message (answers are trimmed)
+    "history_messages":     (12,     20,      40),       # earlier messages a chat resends
+    "history_chars":        (20_000, 60_000,  160_000),  # all of them together (the latest exchange always in full)
     "critique_full_chars":  (24_000, 48_000,  180_000),  # critique: the whole paper up to this size...
     "critique_passages":    (10,     16,      24),       # ...else its opening, its end and these passages
     "research_steps":       (3,      5,       6),        # research mode: lookups before it must answer
@@ -90,16 +90,38 @@ def small_model(backend_id: str) -> str:
     return LIGHT_MODELS.get(backend_id, "")
 
 
+LAST_EXCHANGE_CHARS = 40_000  # the latest question and answer go in full, up to this each
+
+
+def _cut(text: str, cap: int) -> str:
+    """Text cut to about cap characters, keeping its beginning and its end (an answer's conclusion matters)."""
+    if len(text) <= cap:
+        return text
+    head = max(200, int(cap * 0.6))
+    tail = max(0, cap - head)
+    return text[:head].rsplit(" ", 1)[0] + " […] " + (text[-tail:].split(" ", 1)[-1] if tail else "")
+
+
 def trim_history(history: list[dict]) -> list[dict]:
-    """The last N messages, each cut to the per-message budget (long answers dominate a resent history)."""
-    n, cap = get("history_messages"), get("history_chars")
-    out = []
-    for h in (history or [])[-n:]:
+    """The conversation the agent sees: the latest exchange in full (it must be able to read the end of its own
+    last answer), then earlier messages, newest first, in full while they fit the budget; one that doesn't fit
+    keeps its beginning and end, and older ones are left to the conversation's summary (app/chats.py)."""
+    n, total = get("history_messages"), get("history_chars")
+    msgs = list(history or [])[-n:]
+    out: list[dict] = []
+    room = total
+    for i, h in enumerate(reversed(msgs)):
         c = str(h.get("content", ""))
-        if len(c) > cap:
-            c = c[:cap].rsplit(" ", 1)[0] + " […]"
+        if i < 2:  # the latest question and answer
+            c = _cut(c, LAST_EXCHANGE_CHARS)
+        elif room <= 0:
+            break
+        else:
+            if len(c) > room:
+                c = _cut(c, max(room, 600))
+            room -= len(c)  # the budget is for the earlier messages; the latest exchange comes on top
         out.append({**h, "content": c})
-    return out
+    return list(reversed(out))
 
 
 def tokens(chars: int) -> int:

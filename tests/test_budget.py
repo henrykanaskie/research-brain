@@ -15,9 +15,15 @@ def test_levels_and_history_trim(data_dir):
     assert budget.get("paper_full_chars") == 24_000
     budget.save("light")
     assert budget.level() == "light" and budget.get("paper_full_chars") == 12_000
-    hist = [{"role": "user" if i % 2 == 0 else "assistant", "content": "word " * 600} for i in range(10)]
+    hist = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"start{i} " + "word " * 3000 + f"end{i}"} for i in range(30)]
     out = budget.trim_history(hist)
-    assert len(out) == 4 and all(len(h["content"]) <= 700 + 4 for h in out) and out[-1]["content"].endswith("[…]")
+    # the latest exchange in full: the agent can read the end of its own last answer
+    assert out[-1]["content"] == hist[-1]["content"] and out[-2]["content"] == hist[-2]["content"]
+    assert 2 < len(out) <= 12 and sum(len(h["content"]) for h in out[:-2]) <= 20_000 + 700  # the last one cut keeps at least 600 characters
+    cut = [h for h in out if "[…]" in h["content"]]
+    assert all(h["content"].endswith(h["content"].rsplit(" ", 1)[-1]) and "end" in h["content"][-10:] for h in cut)
+    huge = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "x " * 30_000 + "the very end"}]
+    assert budget.trim_history(huge)[-1]["content"].endswith("the very end")
     with pytest.raises(ValueError):
         budget.save("unlimited")
     budget.save("thorough")
