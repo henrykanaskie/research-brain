@@ -264,8 +264,10 @@ def run(url: str, start) -> int:
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
     header = _Header()
+    # text_select: pywebview otherwise adds "body { user-select: none }" to every page, and nothing in the
+    # window (answers, notes, papers) could be selected and copied
     win = webview.create_window(APP_NAME, html=LOADING.replace("{more}", ""), width=1400, height=900,
-                                min_size=(900, 600), background_color="#EEEFEB")
+                                min_size=(900, 600), background_color="#EEEFEB", text_select=True)
     keep: list = []  # the event monitor lives as long as the window
     # ours: this window's server runs with an idle exit (`open` started it), so closing stops it; one you
     # started yourself (`research-brain serve`) keeps running

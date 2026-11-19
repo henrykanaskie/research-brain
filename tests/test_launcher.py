@@ -407,3 +407,12 @@ def test_open_waits_for_a_stopping_server_to_let_go(monkeypatch, tmp_path):
     monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: order.append("started"))
     launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799")
     assert order == ["started"] and next(busy, "done") == "done"  # started only after the port was free
+
+
+def test_mac_window_lets_you_select_text():
+    """pywebview blocks text selection on the whole page unless the window asks for it."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "app" / "macwindow.py").read_text()
+    call = src[src.index("webview.create_window("):]
+    call = call[:call.index(")\n")]
+    assert "text_select=True" in call
