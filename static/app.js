@@ -1085,7 +1085,8 @@
   function traceShapes(x0, y0, x1, y1, f) {
     const dx = x1 - x0, dy = y1 - y0, ax = Math.abs(dx), ay = Math.abs(dy), sx = Math.sign(dx) || 1, sy = Math.sign(dy) || 1;
     const out = [];
-    const splits = [f, 0, 1, 0.15, 0.85, 0.3, 0.7, 0.5];
+    // the nearest alternatives to its own shape first, so a trace that has to move changes as little as it can
+    const splits = [f, ...[0, 0.15, 0.3, 0.5, 0.7, 0.85, 1].sort((a, b) => Math.abs(a - f) - Math.abs(b - f))];
     if (ax >= ay) {
       const run = ax - ay;
       for (const q of splits) { const a = x0 + sx * run * q; out.push([x0, y0, a, y0, a + sx * ay, y1, x1, y1]); }
@@ -1097,10 +1098,10 @@
     }
     return out;
   }
-  /** A trace that runs under a dot that isn't one of its own ends goes around it. First it tries its other
-   *  shapes (the diagonal moved along, or split around a straight middle) and takes the first that misses every
-   *  dot, keeping the shape it had while that still works so it doesn't flip as dots float. If none do, it steps
-   *  around the dot: a jog out to the side, a straight run past it, and a jog back. */
+  /** A trace that runs under a dot that isn't one of its own ends takes another of its simple shapes (the
+   *  diagonal moved along, or split around a straight middle: always three straight runs, the same length) that
+   *  misses every dot, keeping the shape it had while that still works so it doesn't flip as dots float. If none
+   *  does, it stays direct: no detours or extra bends. */
   function routeAround(pts, l, f) {
     const x0 = pts[0], y0 = pts[1], x1 = pts[pts.length - 2], y1 = pts[pts.length - 1];
     const near = dotsNear(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1))
@@ -1112,69 +1113,7 @@
     if (l.__shape && shapes[l.__shape] && clear(shapes[l.__shape], 1.2)) return shapes[l.__shape];
     for (let i = 1; i < shapes.length; i++) if (clear(shapes[i], 2.2)) { l.__shape = i; return shapes[i]; }
     l.__shape = 0;
-    return jogAround(pts, l, near);
-  }
-  /** Step a trace around the dots on it: dots close together share one jog, the jog clears any dot beside the
-   *  line too, and it takes the side that needs the smaller step. Where there's no room for 45-degree ramps
-   *  (a short run, a dot at a bend) the ramps get steeper. */
-  function jogAround(pts, l, dots) {
-    const out = [pts[0], pts[1]];
-    for (let i = 0; i + 3 < pts.length; i += 2) {
-      const ax = pts[i], ay = pts[i + 1], bx = pts[i + 2], by = pts[i + 3], len = Math.hypot(bx - ax, by - ay);
-      if (len < 1e-6) { out.push(bx, by); continue; }
-      const ux = (bx - ax) / len, uy = (by - ay) / len, nx = -uy, ny = ux;
-      const near = [];
-      for (const d of dots) {
-        const c = nodeRadius(d) + 2.2, rx = d.x - ax, ry = d.y - ay, along = rx * ux + ry * uy, e = rx * nx + ry * ny;
-        if (along < -c || along > len + c) continue;
-        near.push({ d, along, e, c });
-      }
-      // on this run: the dots it passes through (a dot just past a bend counts for the run it overlaps)
-      const hits = near.filter((h) => Math.abs(h.e) < h.c && h.along > -h.c * 0.6 && h.along < len + h.c * 0.6)
-        .sort((p, q) => p.along - q.along);
-      if (!hits.length) { out.push(bx, by); continue; }
-      const groups = [];
-      for (const h of hits) {
-        const g = groups[groups.length - 1];
-        if (g && h.along - h.c < g.hi + 2) { g.hi = Math.max(g.hi, h.along + h.c); g.m.push(h); }
-        else groups.push({ lo: h.along - h.c, hi: h.along + h.c, m: [h] });
-      }
-      if (!l.__side) l.__side = new Map();
-      let at = 0;
-      for (const g of groups) {
-        // how far out the run has to sit on one side to clear every dot beside it
-        const solve = (side) => {
-          let off = side > 0 ? Math.max(...g.m.map((h) => h.e + h.c)) : Math.min(...g.m.map((h) => h.e - h.c));
-          let lo = g.lo, hi = g.hi;
-          for (let it = 0; it < 6; it++) {
-            let moved = false;
-            for (const h of near) {
-              if (h.along + h.c <= lo || h.along - h.c >= hi) continue;
-              const blocks = side > 0 ? h.e - h.c < off && h.e + h.c > off : h.e + h.c > off && h.e - h.c < off;
-              if (blocks) { off = side > 0 ? h.e + h.c : h.e - h.c; lo = Math.min(lo, h.along - h.c); hi = Math.max(hi, h.along + h.c); moved = true; }
-            }
-            if (!moved) break;
-          }
-          return { off, lo, hi };
-        };
-        const Pj = solve(1), Nj = solve(-1), key = g.m[0].d.id;
-        let side = Math.abs(Pj.off) <= Math.abs(Nj.off) ? 1 : -1;
-        const prev = l.__side.get(key);
-        if (prev && prev !== side && Math.abs((prev > 0 ? Pj : Nj).off) < 1.6 * Math.abs((side > 0 ? Pj : Nj).off)) side = prev;
-        l.__side.set(key, side);
-        const { off } = side > 0 ? Pj : Nj, H = Math.abs(off);
-        const lo = Math.max(at, (side > 0 ? Pj : Nj).lo), hi = Math.min(len, (side > 0 ? Pj : Nj).hi);
-        if (hi - lo < 0.5) continue;
-        const s0 = Math.max(at, lo - H), s3 = Math.min(len, hi + H);
-        const P = (u, o) => out.push(ax + ux * u + nx * o, ay + uy * u + ny * o);
-        if (s0 < lo) P(s0, 0);
-        P(lo, off); P(hi, off);
-        if (s3 > hi) P(s3, 0);
-        at = s3;
-      }
-      out.push(bx, by);
-    }
-    return out;
+    return pts;  // no simple shape misses every dot: the direct one (never extra bends around dots)
   }
   function updateCentroids() {
     const sums = new Map(); let ax = 0, ay = 0, an = 0;
