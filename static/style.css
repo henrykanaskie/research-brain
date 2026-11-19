@@ -423,7 +423,10 @@ details.abstract .md { margin-top: 8px; }
 .cite {
   all: unset; cursor: pointer; display: inline; font: 500 12.5px var(--sans); color: var(--ink);
   border-bottom: 1px solid var(--machine); padding: 0 1px; white-space: nowrap;
+  -webkit-user-select: text; user-select: text; -webkit-user-drag: none;  /* a drag selects text, never drags the link */
 }
+.cite:focus-visible { outline: 2px solid var(--machine); outline-offset: 1px; }
+.chat a, .chat .src, .chat .psg { -webkit-user-drag: none; -webkit-user-select: text; user-select: text; }
 .cite::before { content: "["; color: var(--machine); }
 .cite::after { content: "]"; color: var(--machine); }
 .cite:hover { color: var(--red); border-bottom-color: var(--red); }
@@ -448,6 +451,8 @@ body.panel-open .chat { right: var(--panel-w); }
 .chat-empty .ex:hover { color: var(--red); }
 .msg-role { font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
 .msg.user .msg-body { font: 15px/1.5 var(--serif); white-space: pre-wrap; border-left: 2px solid var(--red); padding-left: 12px; }
+.msg.user .msg-body.md { white-space: normal; }  /* rendered Markdown: no stray blank line after the text */
+.msg.user .msg-body.md p { white-space: pre-wrap; }
 .msg.assistant .machine { margin-top: 0; }
 .msg.error .msg-body { color: var(--red); font-size: 13px; }
 .sources { margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
@@ -1146,3 +1151,21 @@ html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-se
 .chat-papers { margin-top: 12px; border-top: 1px solid var(--rule); padding-top: 8px; }
 .chat-papers > .lbl { font: 600 12px var(--sans); color: var(--ink-2); }
 .chat-papers .cp-note { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+
+/* diagrams and figures in answers: fit the width they're in */
+.md-visual { margin: 6px 0 12px; border: 1px solid var(--rule); border-radius: var(--r); background: var(--sheet); padding: 10px 10px 4px; max-width: 100%; box-sizing: border-box; }
+.md-visual-fig { display: flex; justify-content: center; overflow-x: auto; }
+.md-visual-fig svg, .md-visual-fig img { max-width: 100%; height: auto; display: block; }
+.md-visual-svg .md-visual-fig img { background: #fff; border-radius: 2px; }
+.md-visual-tools { display: flex; justify-content: flex-end; gap: 2px; margin-top: 4px; }
+.md-visual-tools .btn { font-size: 12px; color: var(--ink-2); height: auto; min-height: 0; padding: 2px 6px; }
+.md-visual-code { margin: 4px 0 6px; font-size: 12px; max-height: 240px; overflow: auto; }
+.md-visual-err, .md-visual-wait { font-size: 13px; color: var(--ink-2); padding: 10px 0; }
+.msg-remembered { margin-top: 10px; font-size: 12.5px; color: var(--ink-2); }
+.msg-remembered .lbl { font-weight: 600; }
+.msg-remembered .btn { font-size: 12px; height: auto; min-height: 0; padding: 0 4px; }
+
+/* a paper of yours named in an answer: opens it */
+.paper-mention { cursor: pointer; border-bottom: 1px solid var(--machine); -webkit-user-select: text; user-select: text; }
+.paper-mention:hover { color: var(--red); border-bottom-color: var(--red); }
+.paper-mention:focus-visible { outline: 2px solid var(--machine); outline-offset: 1px; }

@@ -52,6 +52,15 @@
   .mm-summary { margin-top: 24px; color: var(--ink-2); font-size: 13px; }
   .mm-summary li { margin: 3px 0; }
   .btn-danger-text { color: var(--red); }
+  .mm-about { margin-top: 32px; max-width: 760px; }
+  .mm-ab-head { display: flex; align-items: baseline; gap: 16px; }
+  .mm-ab-sw { font-size: 12.5px; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+  .mm-ab-list { list-style: none; margin: 0 0 10px; padding: 0; }
+  .mm-ab { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-top: 1px solid var(--rule); }
+  .mm-ab:first-child { border-top: 0; }
+  .mm-ab .t { flex: 1; font: 15px/1.45 var(--serif); }
+  .mm-ab .d { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .mm-ab-in { flex: 1; width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--r, 3px); background: var(--sheet); color: var(--ink); font: 14px var(--sans); }
   `;
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -59,10 +68,46 @@
 
   let view = null, data = null, editing = null;
 
+  let about = { on: true, items: [] }, aboutEdit = null;
   async function load() {
     try { data = await api('GET', '/api/memory'); }
     catch (e) { toastErr(e, "Couldn't load memory"); data = data || { core: '', findings: [], summary: [] }; }
+    try { about = await api('GET', '/api/memory/about'); } catch { /* keep what we have */ }
     paint();
+  }
+
+  // ---- About you: what the AI remembers across chats (app/memory.py about.md)
+  function aboutSection() {
+    const items = about.items || [];
+    const sw = h('input', { type: 'checkbox', 'aria-label': 'Use what it remembers in chats' });
+    sw.checked = !!about.on;
+    sw.onchange = async () => { try { about = await api('PUT', '/api/memory/about-on', { on: sw.checked }); paint(); } catch (e) { toastErr(e, "Couldn't change that"); } };
+    const row = (it) => {
+      if (aboutEdit === it.id) {
+        const inp = h('input', { type: 'text', class: 'mm-ab-in', maxlength: 200 }); inp.value = it.text;
+        const save = async () => { try { await api('PUT', `/api/memory/about/${encodeURIComponent(it.id)}`, { text: inp.value }); aboutEdit = null; load(); } catch (e) { toastErr(e, "Couldn't save"); } };
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); aboutEdit = null; paint(); } });
+        setTimeout(() => inp.focus(), 0);
+        return h('li', { class: 'mm-ab' }, inp, h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Save', onclick: save }),
+          h('button', { type: 'button', class: 'btn btn-text btn-sm', text: 'Cancel', onclick: () => { aboutEdit = null; paint(); } }));
+      }
+      return h('li', { class: 'mm-ab' }, h('span', { class: 't', text: it.text }), h('span', { class: 'd', text: it.date }),
+        h('button', { type: 'button', class: 'btn btn-text btn-sm', text: 'Edit', onclick: () => { aboutEdit = it.id; paint(); } }),
+        h('button', { type: 'button', class: 'btn btn-text btn-sm btn-danger-text', text: 'Delete', onclick: async () => {
+          try { await api('DELETE', `/api/memory/about/${encodeURIComponent(it.id)}`); load(); } catch (e) { toastErr(e, "Couldn't delete"); } } }));
+    };
+    const add = h('input', { type: 'text', class: 'mm-ab-in', maxlength: 200, placeholder: 'Add something for it to remember, e.g. “I study iodine Hall thrusters”' });
+    add.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter' || !add.value.trim()) return;
+      e.preventDefault();
+      try { await api('POST', '/api/memory/about', { text: add.value }); add.value = ''; load(); } catch (err) { toastErr(err, "Couldn't add it"); }
+    });
+    return h('section', { class: 'mm-sec mm-about' },
+      h('div', { class: 'mm-ab-head' }, h('h2', { text: `About you${items.length ? ` (${items.length})` : ''}` }),
+        h('label', { class: 'mm-ab-sw' }, sw, ' Use in chats')),
+      h('p', { class: 'sub', text: `What ${RB.aiName()} remembers about you and your research across conversations. It adds a short line when you tell it something lasting (never private notes or personal details); every chat gets this list, kept to ${20} short lines. Edit, delete or add your own.` }),
+      items.length ? h('ul', { class: 'mm-ab-list' }, items.slice().reverse().map(row)) : h('div', { class: 'mm-empty', text: 'Nothing yet.' }),
+      add);
   }
 
   function open() {
@@ -135,7 +180,7 @@
     const d = data;
     const head = h('div', { class: 'mm-head' }, h('h1', { text: 'Memory' }), h('div', { class: 'spacer' }),
       h('button', { type: 'button', class: 'btn btn-sm', text: 'Close', title: 'Close (Esc)', onclick: close }));
-    const lede = h('p', { class: 'mm-lede', text: `What Research mode reads first, to know where to look. The map is written by the app from your library; findings are short notes ${RB.aiName()} saved while researching, and you can edit or delete any of them. Both live in vault/memory/.` });
+    const lede = h('p', { class: 'mm-lede', text: `What ${RB.aiName()} remembers. About you goes with every chat. Research mode also reads the library map (written by the app from your library) and the findings ${RB.aiName()} saved while researching. You can edit or delete any of it; it all lives in vault/memory/.` });
     if (!d) { view.replaceChildren(h('div', { class: 'mm-col' }, head, lede, h('div', { class: 'mm-empty', text: 'Loading…' }))); return; }
     const when = d.updated ? (ago ? ago(new Date(d.updated * 1000).toISOString()) : '') : '';
     const mapSec = h('section', { class: 'mm-sec' }, h('h2', { text: 'Library map' }),
@@ -148,14 +193,14 @@
       (d.summary || []).length ? h('div', { class: 'mm-summary' }, h('h2', { text: 'Earlier findings, summarised' }),
         h('ul', {}, d.summary.map((s) => h('li', { html: renderMD(s, { inline: true }) })))) : null);
     const top = view.scrollTop;
-    view.replaceChildren(h('div', { class: 'mm-col' }, head, lede, h('div', { class: 'mm-grid' }, mapSec, findSec)));
+    view.replaceChildren(h('div', { class: 'mm-col' }, head, lede, aboutSection(), h('div', { class: 'mm-grid' }, mapSec, findSec)));
     view.scrollTop = top;
   }
 
   // entry points: a "Memory" button in the chat header, Esc to close, and commands
   const chatHead = $('#chat .chat-head');
   if (chatHead) {
-    const b = h('button', { id: 'btn-memory', type: 'button', class: 'btn btn-text btn-sm', text: 'Memory', title: 'The library map and findings Research mode reads', onclick: open });
+    const b = h('button', { id: 'btn-memory', type: 'button', class: 'btn btn-text btn-sm', text: 'Memory', title: 'What the AI remembers about you, the library map and Research findings', onclick: open });
     const clear = $('#btn-chat-clear');
     chatHead.insertBefore(b, clear || null);
   }

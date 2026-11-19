@@ -2333,11 +2333,56 @@ def api_chat_thread_delete(key: str):
     return {"ok": True}
 
 
+# Every chat may draw (diagrams, charts, figures; static/app.js draws them) and may remember a lasting fact
+# about you for later chats (app/memory.py about.md, shown and editable in Memory). Kept to two sentences, and
+# the memory to a short list, so neither inflates what each question sends.
+CHAT_EXTRAS = (
+    " If a diagram or chart would make the answer clearer, include a small ```mermaid block (flowchart, "
+    "sequenceDiagram, timeline, mindmap, pie or xychart-beta) or, for a custom figure, a ```svg block "
+    "(self-contained, no scripts or links). If the user tells you something lasting about themselves or their "
+    "research that will help in later chats (their field, project, level, preferences), end the answer with "
+    "<remember>one short sentence</remember>: rarely, at most one, never personal or sensitive details and "
+    "nothing from private notes.")
+_REMEMBER_RE = re.compile(r"\s*<remember>(.*?)</remember>\s*", re.S | re.I)
+
+
+def _memory_block() -> str:
+    """What the AI remembers about you, as the start of a chat's context ("" when off or empty)."""
+    try:
+        t = memory.about_for_ai()
+    except Exception:
+        t = ""
+    return (f"WHAT YOU REMEMBER ABOUT THE USER (from earlier chats; use only where relevant):\n{t}\n\n---\n"
+            if t else "")
+
+
+def _take_memory(text: str) -> tuple[str, list[str]]:
+    """(the answer without its <remember> tag, what was saved). Nothing is saved when memory is off or when
+    the chat could include private notes (a local model allowed to read them)."""
+    found = [f.strip() for f in _REMEMBER_RE.findall(text or "") if f.strip()]
+    clean = re.sub(r"\s*<remember>[\s\S]*$", "", _REMEMBER_RE.sub("\n\n", text or "")).strip()
+    saved: list[str] = []
+    if found:
+        try:
+            if memory.about()["on"] and not privacy.local_exception(_ai_agent()):
+                saved.append(memory.add_about(found[0])["text"])
+        except memory_mod.MemoryError:
+            pass
+        except Exception as e:
+            print(f"[research_brain] couldn't remember that: {e!r}")
+    return clean, saved
+
+
+def _chat_out(text: str, extra: dict) -> dict:
+    clean, saved = _take_memory(text)
+    return {"answer": clean, **extra, **({"remembered": saved} if saved else {})}
+
+
 @app.post("/api/chat")
 def api_chat(body: ChatIn):
     instruction, context, extra = _chat_prompt(body)
-    answer = _ask(instruction, context, "chat")
-    return {"answer": answer, **extra}
+    answer = _ask(instruction + CHAT_EXTRAS, _memory_block() + context, "chat")
+    return _chat_out(answer, extra)
 
 
 def _chat_prompt(body: ChatIn) -> tuple[str, str, dict]:
@@ -3260,9 +3305,11 @@ def api_general_stream(body: GeneralIn):
         hist = _history_text(body.history, summary)
         context = (f"EARLIER CONVERSATION:\n{hist}\n\n---\n" if hist else "") + f"QUESTION: {q}"
     note = GENERAL_ATTACH_NOTE.format(web=" and from the web (link web sources)" if body.web else "") if attached else ""
+    note += CHAT_EXTRAS
+    context = _memory_block() + context
     if not body.web:
         return StreamingResponse(_claude_sse(GENERAL_INSTRUCTION + note, context,
-                                             lambda text: {"answer": text, "web": False, **extra}, "general"),
+                                             lambda text: _chat_out(text, {"web": False, **extra}), "general"),
                                  media_type="text/event-stream", headers=SSE_HEADERS)
     if not privacy.settings().get("web_search"):
         raise HTTPException(403, "Web search is off. Turn it on in Settings › Library settings › AI and privacy.")
@@ -3285,7 +3332,9 @@ def api_general_stream(body: GeneralIn):
                     yield live.sse("delta", {"text": piece})
                 else:
                     yield ": keep-alive\n\n"
-            answer = "".join(parts).strip()
+            answer, saved = _take_memory("".join(parts).strip())
+            if saved:
+                extra["remembered"] = saved
             papers = None
             try:  # the papers it names, as On deck cards you can add from (app/finder.py)
                 from . import finder as finder_mod
@@ -3304,7 +3353,8 @@ def api_general_stream(body: GeneralIn):
 @app.post("/api/chat/stream")
 def api_chat_stream(body: ChatIn):
     instruction, context, extra = _chat_prompt(body)
-    return StreamingResponse(_claude_sse(instruction, context, lambda text: {"answer": text, **extra}, "chat"),
+    return StreamingResponse(_claude_sse(instruction + CHAT_EXTRAS, _memory_block() + context,
+                                         lambda text: _chat_out(text, extra), "chat"),
                              media_type="text/event-stream", headers=SSE_HEADERS)
 
 
@@ -4096,6 +4146,52 @@ def api_memory():
         updated = None
     return {"core": memory.read("core.md"), "findings": [_finding_json(e) for e in reversed(entries)],
             "summary": summary, "updated": updated, "label": memory_mod.LABEL}
+
+
+class AboutIn(BaseModel):
+    text: str = ""
+
+
+class AboutOn(BaseModel):
+    on: bool = True
+
+
+@app.get("/api/memory/about")
+def api_memory_about():
+    return memory.about()
+
+
+@app.post("/api/memory/about", status_code=201)
+def api_memory_about_add(body: AboutIn):
+    try:
+        return memory.add_about(body.text)
+    except memory_mod.MemoryError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/memory/about/{item_id}")
+def api_memory_about_edit(item_id: str, body: AboutIn):
+    try:
+        return memory.edit_about(item_id, body.text)
+    except KeyError:
+        raise HTTPException(404, "Nothing remembered with that id")
+    except memory_mod.MemoryError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/memory/about/{item_id}")
+def api_memory_about_delete(item_id: str):
+    try:
+        memory.delete_about(item_id)
+    except KeyError:
+        raise HTTPException(404, "Nothing remembered with that id")
+    return {"ok": True}
+
+
+@app.put("/api/memory/about-on")
+def api_memory_about_on(body: AboutOn):
+    memory.set_about_on(body.on)
+    return memory.about()
 
 
 @app.put("/api/memory/findings/{entry_id}")

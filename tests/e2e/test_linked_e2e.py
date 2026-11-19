@@ -283,7 +283,7 @@ def test_linked_paper_panel_and_citations(browser, server):
     assert links.nth(1).get_attribute("href") == url + "#:~:text=Introduction"
     assert links.nth(2).get_attribute("href") == url + "#page=2"
     assert all(links.nth(i).get_attribute("rel") == "noopener noreferrer" for i in range(3))
-    assert page.locator("#t button.cite").count() == 1  # the bare [[id]] still opens the note
+    assert page.locator("#t span.cite[role=button]").count() == 1  # the bare [[id]] still opens the note
     assert "§3.2." not in page.locator("#t").inner_text().replace("§3.2,", "")  # the section isn't left as loose text
 
     # a chat passage of a linked article links to the article

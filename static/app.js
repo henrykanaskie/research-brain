@@ -276,6 +276,165 @@
   new MutationObserver(() => { if (!scanTimer) scanTimer = setTimeout(() => { scanTimer = 0; pinCitations(); }, 120); })
     .observe(document.body, { childList: true, subtree: true });
 
+  /** An answer without its <remember>…</remember> tag (the server saves it to Memory and strips it; this hides
+   *  it while the answer is still being written). */
+  const noMemoryTag = (t) => String(t || '').replace(/\s*<remember>[\s\S]*?<\/remember>\s*/gi, '\n\n')
+    .replace(/\s*<remember>[\s\S]*$/i, '').replace(/\s*<(r(e(m(e(m(b(e(r)?)?)?)?)?)?)?)?$/i, '');
+
+  // ---------- diagrams and figures in answers ----------
+  // ```mermaid blocks become diagrams and charts (static/vendor/mermaid.min.js, loaded the first time one shows);
+  // ```svg blocks become figures, drawn as an image so nothing in them can run. Both fit the width they're in,
+  // with Show code and Save image under them. Drawn diagrams are cached by their source, so re-showing the chat
+  // doesn't redraw them.
+  const visualCache = new Map();
+  let mermaidReady = null;
+  const darkTheme = () => document.documentElement.dataset.theme === 'dark'
+    || (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+  function loadMermaid() {
+    if (mermaidReady) return mermaidReady;
+    mermaidReady = new Promise((resolve, reject) => {
+      if (window.mermaid) { resolve(window.mermaid); return; }
+      const sc = document.createElement('script');
+      sc.src = '/static/vendor/mermaid.min.js';
+      sc.onload = () => (window.mermaid ? resolve(window.mermaid) : reject(new Error('mermaid did not load')));
+      sc.onerror = () => { mermaidReady = null; reject(new Error('mermaid did not load')); };
+      document.head.appendChild(sc);
+    });
+    return mermaidReady;
+  }
+  let mermaidSeq = 0, mermaidTheme = '';
+  async function mermaidSvg(src) {
+    const mm = await loadMermaid();
+    const theme = darkTheme() ? 'dark' : 'light';
+    if (theme !== mermaidTheme) {
+      // the app's own colours; a plain system font, which mermaid measures and draws the same (a web font it
+      // measured before it loaded cut labels short)
+      const v = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+      const ink = v('--ink'), ink2 = v('--ink-2'), sheet = v('--sheet'), ground = v('--ground'), rule = v('--rule'), machine = v('--machine');
+      const font = 'Helvetica, Arial, sans-serif';
+      mm.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', fontFamily: font,
+        themeVariables: { fontFamily: font, fontSize: '14px', darkMode: theme === 'dark', background: sheet,
+          primaryColor: ground, primaryTextColor: ink, primaryBorderColor: machine, lineColor: ink2, secondaryColor: sheet,
+          tertiaryColor: sheet, textColor: ink, mainBkg: ground, nodeBorder: machine, clusterBkg: sheet, clusterBorder: rule,
+          titleColor: ink, edgeLabelBackground: sheet, noteBkgColor: sheet, noteTextColor: ink, noteBorderColor: rule,
+          actorBkg: ground, actorBorder: machine, actorTextColor: ink, signalColor: ink2, signalTextColor: ink,
+          pie1: machine, pie2: v('--red'), pie3: v('--ochre'), pie4: v('--moss'), pie5: v('--violet'), pie6: ink2, pieStrokeColor: sheet,
+          pieTitleTextColor: ink, pieSectionTextColor: sheet, pieLegendTextColor: ink,
+          xyChart: { backgroundColor: sheet, titleColor: ink, xAxisLabelColor: ink2, yAxisLabelColor: ink2, xAxisTitleColor: ink2,
+            yAxisTitleColor: ink2, xAxisLineColor: rule, yAxisLineColor: rule, xAxisTickColor: rule, yAxisTickColor: rule,
+            plotColorPalette: [machine, v('--red'), v('--ochre'), v('--moss'), v('--violet')].join(',') } },
+        flowchart: { useMaxWidth: true, htmlLabels: false, padding: 12 }, sequence: { useMaxWidth: true }, gantt: { useMaxWidth: true },
+        xyChart: { useMaxWidth: true, height: 320 } });
+      mermaidTheme = theme;
+    }
+    const { svg } = await mm.render('rb-mm-' + (++mermaidSeq), src);
+    return svg;
+  }
+  function visualBox(kind, src, makeFigure) {
+    const fig = h('div', { class: 'md-visual-fig' });
+    const code = h('pre', { class: 'md-visual-code', hidden: true }, h('code', { text: src }));
+    const show = h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Show code',
+      onclick: () => { code.hidden = !code.hidden; show.textContent = code.hidden ? 'Show code' : 'Hide code'; } });
+    const save = h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Save image', onclick: () => {
+      const svg = fig.querySelector('svg') ? fig.querySelector('svg').outerHTML : kind === 'svg' ? src : '';
+      if (!svg) return;
+      const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+      const a = h('a', { href: url, download: kind === 'svg' ? 'figure.svg' : 'diagram.svg' });
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } });
+    const box = h('div', { class: 'md-visual md-visual-' + kind }, fig, h('div', { class: 'md-visual-tools' }, show, save), code);
+    makeFigure(fig, code, show);
+    return box;
+  }
+  function drawVisuals(root) {
+    for (const code of root.querySelectorAll('.msg-body:not(.chat-live) pre > code.language-mermaid, .msg-body:not(.chat-live) pre > code.language-svg')) {
+      const pre = code.parentElement, src = code.textContent.trim();
+      if (!src) continue;
+      if (code.classList.contains('language-svg')) {
+        if (!/^(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(src)) continue;
+        pre.replaceWith(visualBox('svg', src, (fig) => {
+          fig.appendChild(h('img', { src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(src), alt: 'Figure' }));
+        }));
+        continue;
+      }
+      const key = (darkTheme() ? 'd' : 'l') + src;
+      pre.replaceWith(visualBox('mermaid', src, (fig, codeEl, show) => {
+        const fail = (e) => { fig.replaceChildren(h('div', { class: 'md-visual-err', text: 'Couldn’t draw this diagram' + (e && e.message ? `: ${truncate(String(e.message).split('\n')[0], 120)}` : '') })); codeEl.hidden = false; show.textContent = 'Hide code'; };
+        if (visualCache.has(key)) { const v = visualCache.get(key); if (v.err) fail(v.err); else fig.innerHTML = v.svg; return; }
+        fig.appendChild(h('div', { class: 'md-visual-wait', text: 'Drawing the diagram' }));
+        mermaidSvg(src).then((svg) => { visualCache.set(key, { svg }); if (fig.isConnected || true) fig.innerHTML = svg; })
+          .catch((e) => { visualCache.set(key, { err: e }); fail(e); });
+      }));
+    }
+  }
+
+  // ---------- papers named in an answer open in the library ----------
+  // An answer that names one of your papers in plain text (its title, or "Bray 2002", "Bray et al. (2002)") gets
+  // that mention linked to the paper, like a citation. Only exact titles, and author + year where exactly one
+  // paper of yours matches, so a mention is never linked to the wrong paper.
+  let mentionIdx = null, mentionSig = '';
+  const normT = (t) => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  function mentionIndex() {
+    const papers = [...S.nodes.values()].filter((n) => n.type === 'paper' && n.title);
+    const sig = papers.length + ':' + (papers[0] ? papers[0].id : '');
+    if (mentionIdx && sig === mentionSig) return mentionIdx;
+    const titles = [], ay = new Map();
+    for (const n of papers) {
+      const t = normT(n.title);
+      if (t.length >= 18 && t.split(' ').length >= 3) titles.push([t, n]);
+      const first = (n.authors || [])[0];
+      if (first && n.year) {
+        const sur = normT(String(first).split(/[ ,]+/).filter(Boolean).pop() || '');
+        if (sur.length >= 2) { const k = sur + ' ' + n.year; ay.set(k, ay.has(k) ? null : n); }
+      }
+    }
+    titles.sort((a, b) => b[0].length - a[0].length);
+    mentionIdx = { titles, ay }; mentionSig = sig;
+    return mentionIdx;
+  }
+  function linkMentions(root) {
+    const idx = mentionIndex();
+    if (!idx.titles.length && !idx.ay.size) return;
+    const AY = /\b([A-Z][\p{L}'’-]+)(?:\s+et\s+al\.?|\s+(?:and|&)\s+[A-Z][\p{L}'’-]+)?,?\s*\(?((?:19|20)\d{2})\)?/gu;
+    for (const body of root.querySelectorAll('.msg.assistant .msg-body:not(.chat-live)')) {
+      if (body.dataset.mentions) continue;
+      body.dataset.mentions = '1';
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, { acceptNode: (t) =>
+        t.parentElement.closest('a, code, pre, .cite, .katex, .md-visual, button, .paper-mention') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+      const texts = []; while (walker.nextNode()) texts.push(walker.currentNode);
+      for (const tn of texts) {
+        const s = tn.nodeValue;
+        if (!s || s.length < 6) continue;
+        const hits = [];  // [start, end, node]
+        const low = s.toLowerCase();
+        for (const [t, n] of idx.titles) {
+          // a title: matched on its words, so punctuation and case don't matter
+          const re = new RegExp(t.split(' ').map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^\\p{L}\\p{N}]+'), 'iu');
+          const m = re.exec(s);
+          if (m && !hits.some((x) => m.index < x[1] && m.index + m[0].length > x[0])) hits.push([m.index, m.index + m[0].length, n]);
+          if (low.length < t.length) continue;
+        }
+        AY.lastIndex = 0;
+        let m;
+        while ((m = AY.exec(s))) {
+          const n = idx.ay.get(normT(m[1]) + ' ' + m[2]);
+          if (n && !hits.some((x) => m.index < x[1] && m.index + m[0].length > x[0])) hits.push([m.index, m.index + m[0].length, n]);
+        }
+        if (!hits.length) continue;
+        hits.sort((a, b) => a[0] - b[0]);
+        const frag = document.createDocumentFragment();
+        let at = 0;
+        for (const [a, b, n] of hits) {
+          if (a > at) frag.appendChild(document.createTextNode(s.slice(at, a)));
+          frag.appendChild(h('span', { class: 'paper-mention', role: 'button', tabindex: '0', 'data-open': n.id, title: `${n.title}${n.year ? ` (${n.year})` : ''}: open it in your library`, text: s.slice(a, b) }));
+          at = b;
+        }
+        if (at < s.length) frag.appendChild(document.createTextNode(s.slice(at)));
+        tn.replaceWith(frag);
+      }
+    }
+  }
+
   /** Markdown for a half-written answer: hold back an unclosed trailing $…$, $$…$$, \(…\) or \[…\] so
    *  KaTeX only ever sees balanced math (the open segment shows as plain text until it closes). */
   function partialMD(src) {
@@ -473,10 +632,12 @@
     }
     if (n && page) alias = `${alias || n.title}, p. ${page}`;
     const label = alias || (n ? n.title : id);
-    const open = n ? `<button type="button" class="cite" data-open="${esc(n.id)}" title="${esc(n.title)}">`
-      : `<button type="button" class="cite unresolved" data-create="${esc(id)}" title="${esc(`No note called “${id}” yet. Click to create it.`)}">`;
-    if (put && /(LEPH|KXPH)\d+X[LK]/.test(label)) return put(open) + label + put('</button>');
-    const html = open + esc(truncate(label, 48)) + '</button>';
+    // a span, not a button: WebKit won't start a text selection on a button, so you couldn't select (and copy)
+    // a sentence that begins at a citation. Clicks are handled for the whole page (below), Enter and Space too
+    const open = n ? `<span role="button" tabindex="0" class="cite" data-open="${esc(n.id)}" title="${esc(n.title)}">`
+      : `<span role="button" tabindex="0" class="cite unresolved" data-create="${esc(id)}" title="${esc(`No note called “${id}” yet. Click to create it.`)}">`;
+    if (put && /(LEPH|KXPH)\d+X[LK]/.test(label)) return put(open) + label + put('</span>');
+    const html = open + esc(truncate(label, 48)) + '</span>';
     return put ? put(html) : html;
   }
 
@@ -4637,7 +4798,7 @@
       } else if (m.pending && m.live) { // streaming: the answer so far (re-rendered by sendChat)
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine streaming', 'aria-live': 'polite' },
           h('div', { class: 'machine-head' }, h('span', { text: `${ai()}, writing…` })),
-          h('div', { class: 'msg-body md chat-live', html: partialMD(m.live) }))));
+          h('div', { class: 'msg-body md chat-live', html: partialMD(noMemoryTag(m.live)) }))));
       } else if (m.pending) {
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatGeneral ? (m.web ? `${ai()} is searching the web` : `${ai()} is thinking`) : S.chatPaper ? `${ai()} is reading the paper` : S.chatTopics ? `${ai()} is reading the papers in your topics` : `${ai()} is reading your library`, m.start))));
       } else if (m.error) {
@@ -4652,11 +4813,16 @@
           onclick: () => copyText(m.content || '').then((ok) => { copyBtn.textContent = ok ? 'Copied' : 'Could not copy'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1600); }) });
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
           h('div', { class: 'machine-head' }, h('span', { text: ai() }), copyBtn),
-          h('div', { class: 'msg-body md', html: renderMD(m.content) }), src, chatPassages(m), chatPapers(m))));
+          h('div', { class: 'msg-body md', html: renderMD(noMemoryTag(m.content)) }), src, chatPassages(m), chatPapers(m),
+          (m.remembered || []).length ? h('div', { class: 'msg-remembered', title: 'Saved to Memory › About you, which every chat uses. Edit or delete it there.' },
+            h('span', { class: 'lbl', text: 'Remembered' }), ' ', m.remembered.join(' '), ' ',
+            h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Memory', onclick: () => { const mm = window.__rbMemory; if (mm && mm.open) mm.open(); } })) : null)));
       }
     });
     const keepTop = chatLog.scrollTop;
     chatLog.replaceChildren(...kids);
+    drawVisuals(chatLog);
+    linkMentions(chatLog);
     chatLog.scrollTop = chatFollow ? chatLog.scrollHeight : keepTop;  // scrolled up to read: stay there
     applyClaude($('#chat'));
     const send = $('#btn-chat-send');
@@ -4725,7 +4891,7 @@
       pending.live = text;
       const el = $$('.chat-live', chatLog).pop();
       if (!el) { renderChat(); return; }
-      el.innerHTML = partialMD(text);
+      el.innerHTML = partialMD(noMemoryTag(text));
       if (chatFollow) chatLog.scrollTop = chatLog.scrollHeight;
     });
     try {
@@ -4750,6 +4916,7 @@
       }
       delete pending.live;
       Object.assign(pending, { pending: false, content: r.answer || '', sources: r.sources || [], passages: r.passages || [],
+        ...((r.remembered || []).length ? { remembered: r.remembered } : {}),
         ...(r.papers && (r.papers.items || []).length ? { papers: r.papers.items } : {}) });
       if (r.papers && r.papers.search && window.__rbFinder) window.__rbFinder.refresh();  // they're On deck too
     } catch (e) {
@@ -5215,7 +5382,14 @@
   $('#ambient-toggle').addEventListener('change', (e) => { S.ambient = e.target.checked; LS.set('ambient', S.ambient); runMotion(); });
 
   // global citation chips ([[id]]) anywhere
+  // a click that ends a text selection is a selection (to copy), not a click on the citation under it
+  const selecting = (el) => { const sel = window.getSelection(); return !!(sel && !sel.isCollapsed && String(sel).trim() && el && sel.containsNode(el, true) && String(sel).trim() !== el.textContent.trim()); };
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('span.cite[role="button"], span.paper-mention')) { e.preventDefault(); e.target.click(); }
+  });
   document.addEventListener('click', (e) => {
+    const pick = e.target.closest && e.target.closest('.cite, .paper-mention');
+    if (pick && selecting(pick)) return;
     const c = e.target.closest('[data-open]');
     if (c && !c.classList.contains('missing')) { e.preventDefault(); openNote(c.dataset.open, { center: true }); }
     const u = !c && e.target.closest('[data-create]');

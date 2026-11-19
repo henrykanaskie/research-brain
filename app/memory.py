@@ -38,7 +38,18 @@ SUMMARY_MAX_LINES = 30
 TEXT_MAX = 400
 MAX_SOURCES = 6
 LABEL = "Added via AI"
-WRITABLE = ("core.md", "findings.md", "agents/README.md")
+WRITABLE = ("core.md", "findings.md", "about.md", "agents/README.md")
+
+# about.md: what the AI remembers about you across conversations (your research, background, preferences),
+# like Claude's own memory. The AI adds a line by ending an answer with <remember>...</remember> (stripped
+# before you see the answer); you see, edit and delete them in Memory, and can turn their use off.
+ABOUT_MAX = 20      # short on purpose: it goes along with every chat
+ABOUT_TEXT_MAX = 200
+ABOUT_HEAD = ("# About you\n\n"
+              "What the AI remembers about you across conversations. Edit or delete lines in the app (Memory) or here; "
+              "keep the `- [a-...]` prefixes.\n")
+_ABOUT_LINE_RE = re.compile(r"^- \[(a-[0-9a-z]{8,16})\] (\d{4}-\d{2}-\d{2}) (.+)$")
+_ABOUT_ID_RE = re.compile(r"a-[0-9a-z]{8,16}")
 
 FINDINGS_HEAD = ("# Findings\n\n"
                  "Short findings recorded while researching your library. Each entry lists its sources. "
@@ -333,6 +344,76 @@ class Memory:
             if len(keep) == len(entries):
                 raise KeyError(entry_id)
             self._write("findings.md", dump_findings(keep, summary))
+
+    # ---- about you (memory across chats)
+    def about(self) -> dict:
+        """{"on": bool, "items": [{id, date, text}]} (oldest first)."""
+        raw = self.read("about.md")
+        items = []
+        for line in raw.splitlines():
+            m = _ABOUT_LINE_RE.match(line.strip())
+            if m:
+                items.append({"id": m.group(1), "date": m.group(2), "text": m.group(3).strip()})
+        return {"on": "<!-- off -->" not in raw, "items": items}
+
+    def _write_about(self, on: bool, items: list[dict]) -> None:
+        body = ABOUT_HEAD + ("" if on else "<!-- off -->\n") + "\n" + "".join(
+            f"- [{i['id']}] {i['date']} {i['text']}\n" for i in items)
+        self._write("about.md", body)
+
+    def add_about(self, text: str) -> dict:
+        clean = " ".join(check_text(text).split())
+        if len(clean) > ABOUT_TEXT_MAX:
+            clean = clean[:ABOUT_TEXT_MAX].rsplit(" ", 1)[0] + "…"
+        try:  # nothing copied from a private note goes into memory, which goes to the AI
+            from . import privacy
+            if privacy.private_ids() and privacy.copies_private(clean):
+                raise MemoryError("that comes from a private note; private notes stay out of memory")
+        except MemoryError:
+            raise
+        except Exception:
+            pass
+        with self._locked():
+            a = self.about()
+            if any(_norm(i["text"]) == _norm(clean) for i in a["items"]):
+                raise MemoryError("already remembered")
+            item = {"id": "a-" + secrets.token_hex(5), "date": dt.date.today().isoformat(), "text": clean}
+            items = (a["items"] + [item])[-ABOUT_MAX:]
+            self._write_about(a["on"], items)
+        return item
+
+    def edit_about(self, item_id: str, text: str) -> dict:
+        if not _ABOUT_ID_RE.fullmatch(item_id or ""):
+            raise KeyError(item_id)
+        clean = " ".join(check_text(text).split())
+        with self._locked():
+            a = self.about()
+            it = next((i for i in a["items"] if i["id"] == item_id), None)
+            if it is None:
+                raise KeyError(item_id)
+            it["text"] = clean
+            self._write_about(a["on"], a["items"])
+            return it
+
+    def delete_about(self, item_id: str) -> None:
+        with self._locked():
+            a = self.about()
+            keep = [i for i in a["items"] if i["id"] != item_id]
+            if len(keep) == len(a["items"]):
+                raise KeyError(item_id)
+            self._write_about(a["on"], keep)
+
+    def set_about_on(self, on: bool) -> None:
+        with self._locked():
+            a = self.about()
+            self._write_about(bool(on), a["items"])
+
+    def about_for_ai(self) -> str:
+        """The lines a chat sends along ("" when off or empty)."""
+        a = self.about()
+        if not a["on"] or not a["items"]:
+            return ""
+        return "\n".join(f"- {i['text']}" for i in a["items"])
 
     # ---- search (read-only tool)
     def search(self, query: str, limit: int = 10) -> list[dict]:

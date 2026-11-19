@@ -65,6 +65,8 @@ def _clean(m: dict) -> dict | None:
                           for s in m["sources"][:12] if isinstance(s, dict) and s.get("id")]
     if isinstance(m.get("sel"), dict):
         out["sel"] = {"page": m["sel"].get("page"), "text": str(m["sel"].get("text", ""))[:500]}
+    if isinstance(m.get("remembered"), list):  # what the answer saved to Memory › About you
+        out["remembered"] = [str(x)[:200] for x in m["remembered"][:2] if isinstance(x, str)]
     if isinstance(m.get("papers"), list):  # a web answer's paper cards (app/finder.py from_answer)
         keep = []
         for it in m["papers"][:12]:
