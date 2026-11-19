@@ -651,6 +651,26 @@
 
   // ---------- redraw control: only animate while something is moving ----------
   let animUntil = 0;
+  /** After the layout has stopped: any dot still sitting on a line it isn't part of (and any still gliding to a
+   *  clear spot) moves there in a short ease-out animation, drawn frame by frame, instead of jumping. */
+  function easeOffLines() {
+    const ec = fg && fg.d3Force('edgeClear');
+    if (!ec || !ec.plan || S.dragging) return;
+    ec.plan();
+    const moves = [];
+    for (const n of S.nodes.values()) if (n.__clearTo) { moves.push([n, n.x, n.y, n.__clearTo[0], n.__clearTo[1]]); delete n.__clearTo; }
+    if (!moves.length) return;
+    const dur = Math.max(1, T(700)), t0 = performance.now();
+    kick(dur + 100);
+    const step = (now) => {
+      if (S.dragging) return;
+      const t = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - t, 3);
+      for (const [n, x0, y0, x1, y1] of moves) { n.x = x0 + (x1 - x0) * e; n.y = y0 + (y1 - y0) * e; n.vx = 0; n.vy = 0; }
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   function kick(ms = 400) {
     animUntil = Math.max(animUntil, performance.now() + ms);
     if (fg) fg.autoPauseRedraw(false);
@@ -1063,6 +1083,13 @@
   }
 
   // ---------- forces ----------
+  /** How much push the layout still has, 1 when it starts and 0 as it comes to rest, eased so the end is a
+   *  slow glide. Every pull that isn't d3's own (placed dots, region rims, lines, the speed limit) is scaled by
+   *  it, so all motion fades out together and the layout stops on its own instead of on a clock with dots still
+   *  moving (which made them freeze and then jump). */
+  const ALPHA_REST = 0.004;
+  const energy = (alpha) => { const t = Math.min(1, Math.max(0, (alpha - ALPHA_REST) / 0.12)); return t * t * (3 - 2 * t); };
+
   /** pull each region toward its own anchor so regions form lobes; mild centering for the rest */
   function regionForce() {
     // Two-level hierarchy, same rule at both scales: regions are laid out around the centre,
@@ -1083,8 +1110,8 @@
         if (n.__home) {
           // a dot you placed: a firm spring to where you left it (not scaled down as the layout cools, so it
           // always comes back), and extra damping so it sways a little instead of bouncing around
-          const hx = n.__home[0] - n.x, hy = n.__home[1] - n.y;
-          n.vx = n.vx * 0.7 + hx * 0.08; n.vy = n.vy * 0.7 + hy * 0.08;
+          const hx = n.__home[0] - n.x, hy = n.__home[1] - n.y, k = 0.065 * energy(alpha);
+          n.vx = n.vx * 0.7 + hx * k; n.vy = n.vy * 0.7 + hy * k;
           continue;
         }
         const sat = satellites.get(n.id);
@@ -1110,7 +1137,7 @@
           // rim, a gentle, steady pull back (it doesn't fade as the layout cools, but it eases a dot in
           // rather than snapping it)
           const dx = n.x - ra.x, dy = n.y - ra.y, d = Math.hypot(dx, dy);
-          if (d > ra.r && d > 0) { const over = Math.min(1.2, (d - ra.r) * 0.03) / d; n.vx -= dx * over; n.vy -= dy * over; }
+          if (d > ra.r && d > 0) { const over = (Math.min(1.2, (d - ra.r) * 0.03) * energy(alpha)) / d; n.vx -= dx * over; n.vy -= dy * over; }
         }
       }
     }
@@ -1207,6 +1234,8 @@
       }
     }
     force.relayout = layoutAnchors;
+    /** where a dot is pulled to: its sub-group, region, or spot around the outside */
+    force.anchorOf = (n) => (n.sub >= 0 && subAnchors.get(n.sub)) || anchors.get(n.cluster) || looseAnchor(n);
     return force;
   }
   /** Regions as discs sized by how many papers they hold (area grows with the count), packed around the
@@ -1279,17 +1308,20 @@
     }
     return out;
   }
-  /** A speed limit, applied after every other force: once the map has settled the first time, a change
-   *  (a new link, a paper joining a region) moves dots in a slow glide instead of a jump. Not while you drag. */
+  /** A speed limit, applied after every other force and from the very first frame: dots glide, never get
+   *  flung, and the limit tightens as the layout cools, so they ease to a stop. Not while you drag. */
   function calmForce() {
     let nodes = [];
-    const VMAX = 1.1;
-    function force() {
-      if (!S.settledOnce || S.dragging) return;
+    function force(alpha) {
+      if (S.dragging) return;
+      // and extra damping that grows as it cools, so speed fades smoothly to nothing instead of a slow drift
+      // that the stop then cuts off
+      const e = energy(alpha), vmax = (S.settledOnce ? 0.9 : 1.6) * (0.02 + 0.98 * e), damp = 0.8 + 0.2 * e;
       for (const n of nodes) {
-        if (n.fx !== undefined) continue;
+        if (n.fx !== undefined || n.__clearTo) continue;
+        n.vx *= damp; n.vy *= damp;
         const v = Math.hypot(n.vx, n.vy);
-        if (v > VMAX) { n.vx *= VMAX / v; n.vy *= VMAX / v; }
+        if (v > vmax) { n.vx *= vmax / v; n.vy *= vmax / v; }
       }
     }
     force.initialize = (ns) => { nodes = ns; };
@@ -1338,9 +1370,23 @@
       && nearest(g.P, x, y)[0] < c * c;
     const placed = (n) => !!n.__home || n.fx !== undefined;
 
-    function force() {
+    // Near the end of each layout, plan once where every dot still sitting on a line should go (settle, below),
+    // then ease each one there over the last seconds (an exponential glide, so it slows as it arrives).
+    let planned = false;
+    const glide = () => {
+      for (const n of nodes) {
+        if (!n.__clearTo) continue;
+        const dx = n.__clearTo[0] - n.x, dy = n.__clearTo[1] - n.y;
+        if (Math.hypot(dx, dy) < 0.02 || n.__home || n.fx !== undefined) { delete n.__clearTo; continue; }
+        n.vx = dx * 0.06; n.vy = dy * 0.06;
+      }
+    };
+    function force(alpha) {
       if (S.dragging || !nodes.length) return;
+      if (alpha > 0.12) { if (planned) { planned = false; for (const n of nodes) delete n.__clearTo; } }
+      else if (!planned && alpha < 0.05) { planned = true; force.plan(); }
       const geoms = shownLines();
+      const gain = 0.3 * energy(alpha);
       if (!geoms.length) return;
       for (const n of nodes) {
         if (n.type === 'fragment' || !Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
@@ -1357,14 +1403,25 @@
           } else { ux /= d; uy /= d; }
           // the dot steps off and the line's ends step back, so a dot held by many links (a hub) and the line
           // both give way; a dot you placed doesn't move, so its share goes to the line
-          const push = (clear - d) * 0.3, mine = placed(n);
+          if (n.__clearTo) continue;  // gliding to a spot already found clear
+          const push = (clear - d) * gain, mine = placed(n);
           const ends = [g.l.source, g.l.target].filter((e) => e && typeof e === 'object' && !placed(e));
           const lineShare = mine ? 1 : ends.length ? 0.4 : 0;
           if (!mine) { n.vx += ux * push * (1 - lineShare); n.vy += uy * push * (1 - lineShare); }
           for (const e of ends) { e.vx -= (ux * push * lineShare) / ends.length; e.vy -= (uy * push * lineShare) / ends.length; }
         }
       }
+      glide();
     }
+    /** settle() run as a plan: find each stuck dot's clear spot, put every dot back, and let glide() take it there */
+    force.plan = () => {
+      const was = new Map(nodes.map((n) => [n, [n.x, n.y, n.vx, n.vy]]));
+      force.settle();
+      for (const [n, [x, y, vx, vy]] of was) {
+        if (n.x !== x || n.y !== y) n.__clearTo = [n.x, n.y];
+        n.x = x; n.y = y; n.vx = vx; n.vy = vy;
+      }
+    };
 
     force.settle = () => {
       if (S.dragging || !nodes.length) return false;
@@ -1537,12 +1594,18 @@
       .onEngineTick(restoreShiftAfterTick)
       .onEngineStop(() => {
         S.settledOnce = true; S.stops = (S.stops || 0) + 1;
-        releaseTmpPins();  // first: a dot held only until the layout cooled is free to step off a line
-        if (fg.d3Force('edgeClear')?.settle?.()) kick();  // a slow computer may stop with a dot still on a line
+        releaseTmpPins();  // a dot held only until the layout cooled is free again (it doesn't move: nothing pushes now)
+        easeOffLines();    // a layout cut short (a slow computer) can stop with a dot on a line: ease it off, no jump
+        // the first time the map comes to rest, frame it as it ended up (the early fit happens mid-glide); a
+        // slow camera move, and not if you have already zoomed, panned or opened something
+        if (!S.restFit) { S.restFit = true; if (!S.userMovedView && !calmView()) smoothFit(T(900), 90); }
       })
-      .cooldownTime(9000)
-      .d3AlphaDecay(0.028)
-      .d3VelocityDecay(0.38)
+      // the layout stops when it has come to rest (alpha below ALPHA_REST), not on a clock: every pull fades
+      // with it (see energy), so the last moments are a slow glide and nothing jumps when it stops
+      .cooldownTime(30000)
+      .d3AlphaMin(ALPHA_REST)
+      .d3AlphaDecay(0.016)
+      .d3VelocityDecay(0.45)
       .minZoom(0.12).maxZoom(1e4)  // zoom in as far as you like, as long as there's something on screen:
       .onZoom(zoomGuard);          // zoomGuard stops a zoom-in that would leave no dot in view
 
@@ -1556,6 +1619,8 @@
       fg.d3Force('hoverLift', liftShiftForce);
       fg.d3Force('link', lf0); fg.d3Force('charge', ch0);
     }
+    // a scroll or drag on the map means you're looking somewhere on purpose: the rest-fit leaves it alone
+    for (const ev of ['wheel', 'pointerdown']) graphEl.addEventListener(ev, () => { S.userMovedView = true; }, { passive: true });
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
     fg.d3Force('edgeClear', edgeClearForce());  // no dot sits on a line that isn't its own
@@ -2382,6 +2447,20 @@
         }, 900);
       }
       const rf = fg.d3Force('regions'); if (rf && rf.relayout) rf.relayout();
+      if (S.firstGraph && rf && rf.anchorOf) {
+        // a fresh map: each dot starts close to its region (a fixed scatter from its id), not in a spiral at the
+        // centre, so the layout is a short glide into place instead of every dot crossing the map
+        for (const n of next.values()) {
+          if (n.__home || n.fx !== undefined || n.type === 'fragment') continue;
+          const a = rf.anchorOf(n), h = strHash(n.id), ang = ((h % 360) / 360) * Math.PI * 2, r = 2 + (h % 7);
+          n.x = a.x + Math.cos(ang) * r; n.y = a.y + Math.sin(ang) * r; n.vx = 0; n.vy = 0;
+        }
+        for (const n of next.values()) {
+          if (n.type !== 'fragment' || n.fx !== undefined) continue;
+          const p = next.get(n.parent);
+          if (p && Number.isFinite(p.x)) { n.x = p.x + (Math.random() - 0.5) * 4; n.y = p.y + (Math.random() - 0.5) * 4; n.vx = 0; n.vy = 0; }
+        }
+      }
       kick(1000);
       if (S.firstGraph && next.size) setTimeout(() => smoothFit(T(700), 90), 1400);
       // the speed limit (calmForce) starts once the first layout has had time to unfold

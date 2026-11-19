@@ -80,6 +80,8 @@ Add a small light/dark/system toggle in the top bar.
 - Selection: 2px `--red` ring around the node, with its neighbours at full opacity and
   everything else dimmed to 25%. No glow, no pulsing.
 - Motion: only physics settling, the panel opening (150ms ease-out), and centring on click.
+  Settling is a slow glide that eases to a stop: every pull fades with the layout, speed is capped from the
+  first frame, and nothing ever jumps (a dot leaving a line slides off).
   Respect `prefers-reduced-motion`.
 
 ## Copy

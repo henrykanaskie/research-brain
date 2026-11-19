@@ -705,7 +705,8 @@ def test_zooming_in_stops_only_when_nothing_would_be_left_on_screen(ctx, server)
         api(server, "POST", "/api/notes", {"type": "paper", "title": t})
     page = open_app(ctx, server)
     page.wait_for_function("window.__rb.S.nodes.size >= 3")
-    page.wait_for_timeout(2500)
+    page.wait_for_function("() => (window.__rb.S.stops || 0) >= 1", timeout=30000)  # the layout has come to rest
+    page.wait_for_timeout(1200)  # and the view has been fitted to it
     box = page.locator("#graph").bounding_box()
     in_view = """() => { const fg = window.__rb.fg, el = document.getElementById('graph');
       return [...window.__rb.S.nodes.values()].some(n => { const p = fg.graph2ScreenCoords(n.x, n.y);
@@ -959,7 +960,9 @@ def test_hover_card_pops_out_and_dots_make_room(ctx, server):
         api(server, "PUT", f"/api/notes/{nid}", {"links": [main]})
     page = open_app(ctx, server)
     page.wait_for_function("window.__rb.S.nodes.size >= 7")
-    page.wait_for_timeout(3000)  # let the layout settle
+    # let the layout come to rest (it eases to a stop over several seconds), then the last ease off a line
+    page.wait_for_function("() => (window.__rb.S.stops || 0) >= 1", timeout=30000)
+    page.wait_for_timeout(1000)
     before = page.evaluate("() => Object.fromEntries([...window.__rb.S.nodes.values()].map(n => [n.id, [n.x, n.y]]))")
     box = page.locator("#graph").bounding_box()
     sx, sy = page.evaluate(f"() => {{ const n = window.__rb.S.nodes.get('{main}'), p = window.__rb.fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }}")
