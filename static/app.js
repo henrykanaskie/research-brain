@@ -1123,7 +1123,9 @@
           // a dot linked to a busier one takes its own slot around it, evenly spaced, so the links fan out
           // all the way round instead of piling up on one side
           const tx = hub.x + Math.cos(sat.angle) * sat.dist, ty = hub.y + Math.sin(sat.angle) * sat.dist;
-          const s = 0.05 * Math.max(alpha, 0.15);
+          // only a faint lean toward its slot (so links fan out instead of piling up on one side); the spacing
+          // itself comes from the dots pushing apart and the links pulling, so the shape is loose, not a ring
+          const s = (S.dragging ? 0.001 : 0.004) * Math.max(alpha, 0.15);
           n.vx += (tx - n.x) * s; n.vy += (ty - n.y) * s;
         } else {
           const sa = n.sub >= 0 ? subAnchors.get(n.sub) : null;
@@ -1221,6 +1223,13 @@
         fixed.set(cid, { x, y, r: Math.max(...c.pts.map((p) => Math.hypot(p[0] - x, p[1] - y))) + 8 });
       }
       anchors = packRegions(ids, sizes, now.size >= Math.max(1, ids.length * 0.6) && S.settledOnce ? now : affinityLayout(ids, sizes), fixed);
+      if (!fixed.size && anchors.size) {
+        // the map's centre of mass (each region weighted by its papers) sits at the middle, however many regions
+        let cx = 0, cy = 0, w = 0;
+        for (const [id, a] of anchors) { const k = sizes.get(id) || 1; cx += a.x * k; cy += a.y * k; w += k; }
+        cx /= w; cy /= w;
+        for (const a of anchors.values()) { a.x -= cx; a.y -= cy; }
+      }
       layoutSatellites();
       outerR = 30;
       for (const a of anchors.values()) outerR = Math.max(outerR, Math.hypot(a.x, a.y) + a.r + 18);
@@ -1264,12 +1273,17 @@
           if (i === j) continue;
           const b = P.get(ids[j]);
           const w = aff.get(ids[i] + ':' + ids[j]) || 0;
-          // related: rest just apart; unrelated: three times further
-          const want = (rad(ids[i]) + rad(ids[j]) + GAP) * (1 + 2 * (1 - Math.min(1, w * 1.6)));
+          // related: rest just apart; unrelated: only a little further, and only pushed apart (never pulled
+          // out to a set distance), so three regions make a triangle around the middle rather than a chain
+          const want = (rad(ids[i]) + rad(ids[j]) + GAP) * (1 + 0.5 * (1 - Math.min(1, w * 1.6)));
           let dx = a.x - b.x, dy = a.y - b.y; const d = Math.hypot(dx, dy) || 0.01;
-          const pull = (d - want) / d * (w > 0 ? 0.5 + w : 0.15);
+          if (w <= 0 && d >= want) continue;
+          const pull = (d - want) / d * (w > 0 ? 0.5 + w : 0.3);
           fx -= dx * pull; fy -= dy * pull;
         }
+        // and every region is drawn toward the middle, bigger ones more, so the map stays round and centred
+        const g = 0.06 * Math.sqrt(sizes.get(ids[i]));
+        fx -= a.x * g; fy -= a.y * g;
         a.x += fx * step / ids.length; a.y += fy * step / ids.length;
       }
     }
@@ -1316,7 +1330,7 @@
       if (S.dragging) return;
       // and extra damping that grows as it cools, so speed fades smoothly to nothing instead of a slow drift
       // that the stop then cuts off
-      const e = energy(alpha), vmax = (S.settledOnce ? 0.9 : 1.6) * (0.02 + 0.98 * e), damp = 0.8 + 0.2 * e;
+      const e = energy(alpha), vmax = (S.settledOnce ? 1.5 : 2.4) * (0.03 + 0.97 * e), damp = 0.88 + 0.12 * e;
       for (const n of nodes) {
         if (n.fx !== undefined || n.__clearTo) continue;
         n.vx *= damp; n.vy *= damp;
@@ -1605,7 +1619,7 @@
       .cooldownTime(30000)
       .d3AlphaMin(ALPHA_REST)
       .d3AlphaDecay(0.016)
-      .d3VelocityDecay(0.45)
+      .d3VelocityDecay(0.4)
       .minZoom(0.12).maxZoom(1e4)  // zoom in as far as you like, as long as there's something on screen:
       .onZoom(zoomGuard);          // zoomGuard stops a zoom-in that would leave no dot in view
 
@@ -2518,9 +2532,11 @@
     const dx = x - dragLast.x, dy = y - dragLast.y;
     dragLast.x = x; dragLast.y = y;
     if (!dx && !dy) return;
+    // a tug, not a carry: the linked dot gets some of the drag as speed and its link's spring does the rest,
+    // so the distance between them stretches while you pull and eases back after
     for (const [m, w] of dragLast.follow) {
       if (m.__home || m.fx !== undefined || !Number.isFinite(m.x)) continue;
-      m.x += dx * w; m.y += dy * w;
+      m.vx += dx * w * 0.25; m.vy += dy * w * 0.25;
     }
   }
   function followersOf(n) {
