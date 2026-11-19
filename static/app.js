@@ -656,7 +656,17 @@
   // drop, a setting), solveLayout() runs the forces to rest without drawing, and every dot glides from where it is
   // to where it ended up in one eased move. At rest a dot only floats: a slow, small drift around its spot, drawn
   // (like a hover card's nudge) without moving the dot itself, so it never wanders, jitters or builds up.
-  const motion = { tween: null, raf: 0, lastKick: 0 };
+  const motion = { tween: null, raf: 0, lastKick: 0, restAt: 0 };
+  // after a glide the float lasts a few seconds, then eases away to nothing and everything is still
+  const FLOAT_HOLD = 5000, FLOAT_FADE = 4000;
+  /** how strong the float is now: grows in with the glide, holds, then fades to 0 (and stays 0) */
+  function floatLevel(now = performance.now()) {
+    const tw = motion.tween;
+    if (tw) return easeInOut(Math.min(1, (now - tw.t0) / tw.ms));
+    if (!motion.restAt) return 0;
+    const t = (now - motion.restAt - FLOAT_HOLD) / FLOAT_FADE;
+    return t <= 0 ? 1 : t >= 1 ? 0 : 1 - easeInOut(t);
+  }
   const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
   /** Run the layout to rest without drawing it: the same forces, ticked here. */
   function solveLayout(startAlpha = 1) {
@@ -698,7 +708,7 @@
     runMotion();
   }
   function runMotion() { if (!motion.raf) motion.raf = requestAnimationFrame(motionFrame); }
-  const floating = () => S.ambient && !reducedMotion() && document.visibilityState === 'visible';
+  const floating = () => S.ambient && !reducedMotion() && document.visibilityState === 'visible' && floatLevel() > 0;
   function motionFrame(now) {
     motion.raf = 0;
     if (!fg) return;
@@ -710,12 +720,13 @@
         const a = tw.from.get(n) || b;
         n.x = a[0] + (b[0] - a[0]) * e; n.y = a[1] + (b[1] - a[1]) * e;
       }
-      if (t >= 1) { motion.tween = null; S.settledOnce = true; S.stops = (S.stops || 0) + 1; }
+      if (t >= 1) { motion.tween = null; motion.restAt = now; S.settledOnce = true; S.stops = (S.stops || 0) + 1; }
       kick(60);
     } else if (floating() && now - motion.lastKick > 33) {
       motion.lastKick = now; kick(20);  // the float is slow: about 30 frames a second is plenty
     }
     if (motion.tween || floating() || S.dragging) runMotion();
+    else kick(40);  // one last frame with the float at exactly 0, so every dot rests on its own spot
   }
   /** The float: where each dot is drawn, a fraction of a dot's width around its spot, on two slow waves with their
    *  own timing per dot (a fragment floats with its paper). Applied only while a frame draws. */
@@ -723,7 +734,7 @@
   const floatShifted = [];
   function applyFloat() {
     if (floatOn || !floating() || !fg) return;
-    const t = performance.now() / 1000, ramp = motion.tween ? easeInOut(Math.min(1, (performance.now() - motion.tween.t0) / motion.tween.ms)) : 1;
+    const t = performance.now() / 1000, ramp = floatLevel();
     floatShifted.length = 0;
     for (const n of S.nodes.values()) {
       if (n === S.dragNode || !Number.isFinite(n.x)) continue;
@@ -779,6 +790,8 @@
   S.ambient = LS.get('ambient', true);
   setInterval(() => {
     if (!fg || !S.ambient || reducedMotion() || document.visibilityState !== 'visible') return;
+    // only while the map is coming to life after a change (the float's lifetime): then it is completely still
+    if (typeof floatLevel === 'function' && floatLevel() < 0.5) return;
     if (pulses.length > 6) return;
     const pool = S.links.filter((l) => l.kind !== 'part' && linkShown(l));
     if (pool.length < 3) return;
