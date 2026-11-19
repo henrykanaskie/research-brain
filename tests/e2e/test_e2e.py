@@ -1170,6 +1170,7 @@ def test_continue_on_phone(ctx, server):
     page.locator("#chat-input").fill("What causes the breathing mode?")
     page.keyboard.press("Enter")
     expect(page.locator("#chat-log")).to_contain_text("fake Claude", timeout=15000)
+    page.wait_for_function("() => !window.__rb.S.chatBusy", timeout=15000)  # the answer has finished, not just started
     page.click("#btn-chat-handoff")
     sheet = page.locator(".ho-sheet")
     expect(sheet).to_be_visible()
