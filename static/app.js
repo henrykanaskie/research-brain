@@ -5034,12 +5034,12 @@
       const share = navigator.share ? h('button', { class: 'btn', type: 'button', text: 'Share…', onclick: () => {
         navigator.share({ title: 'Conversation from research brain', text: r.text }).catch(() => { /* cancelled */ });
       } }) : null;
-      body.replaceChildren(
+      body.replaceChildren(...[
         h('p', { class: 'ho-lead', text: 'Paste this into the AI app on your phone (Claude, ChatGPT, Gemini…) and keep talking there. It holds the conversation and the papers it drew on. Nothing is sent from here.' }),
         notes.length ? h('p', { class: 'ho-note', text: notes.join(' ') }) : null,
         ta,
         h('div', { class: 'ho-actions' }, copy, share),
-        h('p', { class: 'ho-hint', text: 'On a Mac and an iPhone signed in to the same Apple ID, copy it here and paste on the phone (Universal Clipboard). What you say there doesn’t come back to research brain.' }));
+        h('p', { class: 'ho-hint', text: 'On a Mac and an iPhone signed in to the same Apple ID, copy it here and paste on the phone (Universal Clipboard). What you say there doesn’t come back to research brain.' })].filter(Boolean));
       setTimeout(() => copy.focus(), 0);
     } });
   }

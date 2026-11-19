@@ -884,3 +884,16 @@ Any request that isn't from this computer needs a paired device's token (cookie 
 Paired devices get `403 Available on your computer` from: `/api/pair/*`, `/api/devices*`, `/api/cite/auto-exports*`,
 `/api/vault/export|import`, `/api/library/move-legacy`, `/api/zotero/*`, `/api/export`, `/api/backfill/*`, and
 writes to `/api/profiles*`, `/api/settings`, `/api/agents/active`, `/api/privacy/settings`.
+
+## ADDED: Continue on your phone (app/chats.py handoff)
+- `POST /api/chats/{key}/handoff` body `{"messages": [...], "title"}` (the chat's messages, as `PUT /api/chats/{key}`
+  takes them; empty = the saved conversation) → `{"text", "messages", "left_out", "condensed"}`: the conversation
+  written out as one prompt to paste into any AI app (what it was about, the paper's abstract and your summary for
+  a paper chat, the earlier part condensed, the messages, the library papers it drew on, and a line asking the AI
+  to pick up from there). Nothing is sent anywhere; the page copies it or hands it to the share sheet.
+- Private items stay out, as in an export: a message that names or copies 8 or more words of a private item is
+  replaced by a line saying so (`left_out` counts them), `[[links]]` to private notes become "a private note",
+  private papers aren't described. Past `HANDOFF_CHARS` (60,000) the oldest messages are folded into the condensed
+  part (`condensed`). 400 when there's nothing to continue, or if a private note would still be copied.
+- Frontend: the phone button in the chat header and the command "Continue on your phone" (static/app.js
+  `continueOnPhone`).

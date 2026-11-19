@@ -1159,3 +1159,23 @@ def test_with_no_ai_set_up_the_top_bar_says_so(ctx, server):
     assert "Claude" not in page.locator("#status").get_attribute("aria-label")
     assert page.evaluate("window.RB_AI") == "your AI"
     assert not page.errors
+
+
+def test_continue_on_phone(ctx, server):
+    """The chat's phone button writes the conversation out as one prompt to copy into another AI."""
+    clear_vault(server)
+    api(server, "POST", "/api/notes", {"type": "paper", "title": "Breathing mode in Hall thrusters", "abstract": "Ionization oscillations."})
+    page = open_app(ctx, server)
+    page.click("#btn-chat")
+    page.locator("#chat-input").fill("What causes the breathing mode?")
+    page.keyboard.press("Enter")
+    expect(page.locator("#chat-log")).to_contain_text("fake Claude", timeout=15000)
+    page.click("#btn-chat-handoff")
+    sheet = page.locator(".ho-sheet")
+    expect(sheet).to_be_visible()
+    text = sheet.locator(".ho-text").input_value()
+    assert "What causes the breathing mode?" in text and "pick up where we left off" in text
+    if os.environ.get("RB_SHOT_DIR"):
+        page.screenshot(path=os.path.join(os.environ["RB_SHOT_DIR"], "handoff.png"))
+    sheet.get_by_role("button", name="Copy prompt").click()
+    expect(page.locator(".ho-sheet")).to_be_hidden()
