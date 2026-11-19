@@ -327,8 +327,25 @@
         xyChart: { useMaxWidth: true, height: 320 } });
       mermaidTheme = theme;
     }
-    const { svg } = await mm.render('rb-mm-' + (++mermaidSeq), src);
+    // mermaid reads each label as Markdown and can't show a list or heading there: a label that starts like
+    // "1. Fit", "- check" or "# Step" came out as "Unsupported markdown: list". Escape those starts so they
+    // read as plain text; if that error still shows in the drawing, draw it again with the markers left out.
+    let { svg } = await mm.render('rb-mm-' + (++mermaidSeq), mermaidSafe(src, false));
+    if (/Unsupported markdown/i.test(svg)) ({ svg } = await mm.render('rb-mm-' + (++mermaidSeq), mermaidSafe(src, true)));
     return svg;
+  }
+  function mermaidSafe(src, strip) {
+    const START = String.raw`(^|[\[("'|{]|\n|<br\s*/?>)([ \t]*)`;
+    const num = new RegExp(START + String.raw`(\d+)\.(?=[ \t])`, 'g');
+    const mark = new RegExp(START + String.raw`([-*+#>])(?=[ \t])`, 'g');
+    return String(src).split('\n').map((line, i) => {
+      if (i === 0 || /^\s*(%%|classDef|style|linkStyle|click|class\s)/.test(line)) return line;  // the diagram type and styling lines
+      // a no-break space after the marker: looks the same, but Markdown no longer reads it as a list or heading
+      return strip ? line.replace(num, '$1$2$3)').replace(mark, '$1$2')
+        : line.replace(new RegExp(num.source + String.raw`[ \t]`, 'g'), '$1$2$3.\u00a0')
+          .replace(new RegExp(START + String.raw`([-*+])[ \t]`, 'g'), '$1$2$3\u00a0')
+          .replace(new RegExp(START + String.raw`([#>])(?=[ \t])`, 'g'), '$1$2\\$3');  // mermaid's own syntax uses # and >: escaped
+    }).join('\n');
   }
   function visualBox(kind, src, makeFigure) {
     const fig = h('div', { class: 'md-visual-fig' });
