@@ -651,24 +651,94 @@
 
   // ---------- redraw control: only animate while something is moving ----------
   let animUntil = 0;
-  /** After the layout has stopped: any dot still sitting on a line it isn't part of (and any still gliding to a
-   *  clear spot) moves there in a short ease-out animation, drawn frame by frame, instead of jumping. */
-  function easeOffLines() {
-    const ec = fg && fg.d3Force('edgeClear');
-    if (!ec || !ec.plan || S.dragging) return;
-    ec.plan();
-    const moves = [];
-    for (const n of S.nodes.values()) if (n.__clearTo) { moves.push([n, n.x, n.y, n.__clearTo[0], n.__clearTo[1]]); delete n.__clearTo; }
-    if (!moves.length) return;
-    const dur = Math.max(1, T(1400)), t0 = performance.now();
-    kick(dur + 100);
-    const step = (now) => {
-      if (S.dragging) return;
-      const t = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - t, 3);
-      for (const [n, x0, y0, x1, y1] of moves) { n.x = x0 + (x1 - x0) * e; n.y = y0 + (y1 - y0) * e; n.vx = 0; n.vy = 0; }
-      if (t < 1) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
+  // ---------- motion: the layout is worked out out of sight, then shown as one smooth glide ----------
+  // The live physics engine never runs (cooldownTicks 0). Whatever changes (the first load, a new paper, a dot you
+  // drop, a setting), solveLayout() runs the forces to rest without drawing, and every dot glides from where it is
+  // to where it ended up in one eased move. At rest a dot only floats: a slow, small drift around its spot, drawn
+  // (like a hover card's nudge) without moving the dot itself, so it never wanders, jitters or builds up.
+  const motion = { tween: null, raf: 0, lastKick: 0 };
+  const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  /** Run the layout to rest without drawing it: the same forces, ticked here. */
+  function solveLayout(startAlpha = 1) {
+    const nodes = fg.graphData().nodes;
+    const forces = ['link', 'charge', 'regions', 'collide'].map((k) => fg.d3Force(k)).filter(Boolean);
+    const decay = 1 - Math.pow(0.001, 1 / 300), keep = 0.6, t0 = performance.now();
+    let alpha = startAlpha;
+    for (let i = 0; i < 500 && alpha > 0.002; i++) {
+      alpha += (0 - alpha) * decay;
+      for (const f of forces) f(alpha);
+      for (const n of nodes) {
+        if (n.fx != null) { n.x = n.fx; n.vx = 0; } else { n.vx *= keep; n.x += n.vx; }
+        if (n.fy != null) { n.y = n.fy; n.vy = 0; } else { n.vy *= keep; n.y += n.vy; }
+      }
+      if (performance.now() - t0 > 700) break;  // a very large library on a slow computer: show what we have
+    }
+    const ec = fg.d3Force('edgeClear');
+    if (ec && ec.settle) ec.settle();  // no dot left on a line that isn't its own (out of sight, so no jump)
+    for (const n of nodes) { n.vx = 0; n.vy = 0; }
+  }
+  /** Work out the new layout from where the dots are resting now, and glide every dot there. */
+  function relayout({ alpha = 0.4, ms = 1400, fit = false } = {}) {
+    if (!fg) return;
+    const nodes = fg.graphData().nodes;
+    const from = new Map();
+    for (const n of nodes) {
+      if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
+      from.set(n, [n.x, n.y]);
+    }
+    const rf = fg.d3Force('regions');
+    if (rf && rf.relayout) rf.relayout();
+    solveLayout(alpha);
+    const to = new Map();
+    for (const n of nodes) if (Number.isFinite(n.x) && Number.isFinite(n.y)) to.set(n, [n.x, n.y]);
+    for (const [n, p] of from) { n.x = p[0]; n.y = p[1]; }
+    for (const [n, p] of to) if (!from.has(n)) { n.x = p[0]; n.y = p[1]; }
+    motion.tween = { from, to, t0: performance.now(), ms: Math.max(1, T(ms)) };
+    if (fit) smoothFit(T(ms), 90, null, (n) => to.get(n));
+    runMotion();
+  }
+  function runMotion() { if (!motion.raf) motion.raf = requestAnimationFrame(motionFrame); }
+  const floating = () => S.ambient && !reducedMotion() && document.visibilityState === 'visible';
+  function motionFrame(now) {
+    motion.raf = 0;
+    if (!fg) return;
+    const tw = motion.tween;
+    if (tw) {
+      const t = Math.min(1, (now - tw.t0) / tw.ms), e = easeInOut(t);
+      for (const [n, b] of tw.to) {
+        if (n === S.dragNode) continue;
+        const a = tw.from.get(n) || b;
+        n.x = a[0] + (b[0] - a[0]) * e; n.y = a[1] + (b[1] - a[1]) * e;
+      }
+      if (t >= 1) { motion.tween = null; S.settledOnce = true; S.stops = (S.stops || 0) + 1; }
+      kick(60);
+    } else if (floating() && now - motion.lastKick > 33) {
+      motion.lastKick = now; kick(20);  // the float is slow: about 30 frames a second is plenty
+    }
+    if (motion.tween || floating() || S.dragging) runMotion();
+  }
+  /** The float: where each dot is drawn, a fraction of a dot's width around its spot, on two slow waves with their
+   *  own timing per dot (a fragment floats with its paper). Applied only while a frame draws. */
+  let floatOn = false;
+  const floatShifted = [];
+  function applyFloat() {
+    if (floatOn || !floating() || !fg) return;
+    const t = performance.now() / 1000, ramp = motion.tween ? easeInOut(Math.min(1, (performance.now() - motion.tween.t0) / motion.tween.ms)) : 1;
+    floatShifted.length = 0;
+    for (const n of S.nodes.values()) {
+      if (n === S.dragNode || !Number.isFinite(n.x)) continue;
+      const h = strHash(n.type === 'fragment' && n.parent ? n.parent : n.id);
+      const p1 = 9 + (h % 5), p2 = 13 + ((h >> 3) % 6), ph = (h % 628) / 100, A = 0.32 * ramp;
+      const dx = A * (0.7 * Math.sin((2 * Math.PI * t) / p1 + ph) + 0.3 * Math.sin((2 * Math.PI * t) / p2 + 2 * ph));
+      const dy = A * (0.7 * Math.cos((2 * Math.PI * t) / p2 + ph) + 0.3 * Math.sin((2 * Math.PI * t) / p1 + 3 * ph));
+      n.x += dx; n.y += dy; n.__flx = dx; n.__fly = dy; floatShifted.push(n);
+    }
+    floatOn = true;
+  }
+  function removeFloat() {
+    if (!floatOn) return;
+    for (const n of floatShifted) { n.x -= n.__flx; n.y -= n.__fly; }
+    floatShifted.length = 0; floatOn = false;
   }
 
   function kick(ms = 400) {
@@ -1296,25 +1366,6 @@
     }
     return out;
   }
-  /** A speed limit, applied after every other force and from the very first frame: dots glide, never get
-   *  flung, and the limit tightens as the layout cools, so they ease to a stop. Not while you drag. */
-  function calmForce() {
-    let nodes = [];
-    function force(alpha) {
-      if (S.dragging) return;
-      // and extra damping that grows as it cools, so speed fades smoothly to nothing instead of a slow drift
-      // that the stop then cuts off
-      const e = energy(alpha), vmax = (S.settledOnce ? 1.5 : 2.4) * (0.03 + 0.97 * e), damp = 0.88 + 0.12 * e;
-      for (const n of nodes) {
-        if (n.fx !== undefined || n.__clearTo) continue;
-        n.vx *= damp; n.vy *= damp;
-        const v = Math.hypot(n.vx, n.vy);
-        if (v > vmax) { n.vx *= vmax / v; n.vy *= vmax / v; }
-      }
-    }
-    force.initialize = (ns) => { nodes = ns; };
-    return force;
-  }
   /** Every dot in its own space: a line passing over a dot it doesn't connect to pushes that dot sideways, off the
    *  line (the lines are the traces linkGeom draws, so the clearance is measured against what you see). A dot you
    *  placed stays where it is: the line's own ends move a little instead. Not while you drag.
@@ -1520,8 +1571,8 @@
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
-      .onNodeDrag((n) => { S.dragging = true; dragNeighbours(n); })
-      .onNodeDragEnd((n) => { S.dragging = false; dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
+      .onNodeDrag((n) => { S.dragging = true; S.dragNode = n; motion.tween = null; dragNeighbours(n); runMotion(); })
+      .onNodeDragEnd((n) => { S.dragging = false; S.dragNode = null; dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
       .onLinkRightClick((l, e) => linkMenu(l, e))
       .onBackgroundClick((e) => {
         if (regionTagClick(e)) return;
@@ -1541,6 +1592,7 @@
         S.labelBoxes = []; S.labelJobs = []; S.dots = [];
         const moving = stepAlphas();
         if (stepCards(ctx, k) || moving) kick(60);
+        applyFloat();
         updateCentroids();
         drawDots(ctx, k);
         drawRegions(ctx, k);
@@ -1553,25 +1605,14 @@
           drawPulses(ctx, k);
           drawCards(ctx, k);
         } finally {
+          removeFloat();
           removeShift(); shiftLifted = false;  // dots moved aside for a card are back where they really are
         }
         if (performance.now() > animUntil && !pulses.length) fg.autoPauseRedraw(true);
       })
       .onEngineTick(restoreShiftAfterTick)
-      .onEngineStop(() => {
-        S.settledOnce = true; S.stops = (S.stops || 0) + 1;
-        releaseTmpPins();  // a dot held only until the layout cooled is free again (it doesn't move: nothing pushes now)
-        easeOffLines();    // a layout cut short (a slow computer) can stop with a dot on a line: ease it off, no jump
-        // the first time the map comes to rest, frame it as it ended up (the early fit happens mid-glide); a
-        // slow camera move, and not if you have already zoomed, panned or opened something
-        if (!S.restFit) { S.restFit = true; if (!S.userMovedView && !calmView() && !allInView(40)) smoothFit(T(1400), 90); }
-      })
-      // the layout stops when it has come to rest (alpha below ALPHA_REST), not on a clock: every pull fades
-      // with it (see energy), so the last moments are a slow glide and nothing jumps when it stops
-      .cooldownTime(30000)
-      .d3AlphaMin(ALPHA_REST)
-      .d3AlphaDecay(0.016)
-      .d3VelocityDecay(0.4)
+      // the live engine never runs: layouts are solved out of sight and shown as one glide (see relayout)
+      .cooldownTicks(0)
       .minZoom(0.12).maxZoom(1e4)  // zoom in as far as you like, as long as there's something on screen:
       .onZoom(zoomGuard);          // zoomGuard stops a zoom-in that would leave no dot in view
 
@@ -1590,7 +1631,6 @@
     fg.d3Force('regions', regionForce());
     fg.d3Force('collide', collideForce());
     fg.d3Force('edgeClear', edgeClearForce());  // no dot sits on a line that isn't its own
-    fg.d3Force('calm', calmForce());
     configureLinkForce();
     // Resizing the window (maximise, full screen, dragging an edge): keep the same spot of the map in the
     // middle while it changes, then refit once it stops, to the whole map or the region you're focused on.
@@ -1993,7 +2033,9 @@
   const cardsOpen = () => cards.some((c) => c.p > 0) || !!(S.shifted && S.shifted.length);
   function cardP(id) { const c = cards.find((x) => x.id === id); return c ? ease3(c.p) : 0; }
   function viewBounds(k) {
-    const panel = $('#panel'), panelW = panel && !panel.hidden ? panel.offsetWidth : 0;
+    // the visible map: not under the note panel or the chat on the right
+    const open = (el) => (el && !el.hidden ? el.offsetWidth : 0);
+    const panelW = open($('#panel')) + open($('#chat'));
     const a = fg.screen2GraphCoords(0, 0), b = fg.screen2GraphCoords(Math.max(40, graphEl.clientWidth - panelW), graphEl.clientHeight);
     return { x0: a.x, y0: a.y, x1: b.x, y1: b.y, k };
   }
@@ -2030,7 +2072,10 @@
   };
   /** The card's text, measured in screen pixels (cached: it only changes with the dot's details). */
   function cardText(ctx, n) {
-    const key = [n.title, n.year, n.type, (n.authors || []).join('|'), markCount(n)].join('\u0001');
+    // measured again once the card's fonts have loaded: sized for a fallback font, the real (wider) text spilled
+    // over the card's edge
+    const fontsIn = !document.fonts || (document.fonts.check(CARD_FONT.title) && document.fonts.check(CARD_FONT.by));
+    const key = [n.title, n.year, n.type, (n.authors || []).join('|'), markCount(n), fontsIn].join('\u0001');
     if (n.__card && n.__card.key === key) return n.__card;
     ctx.save();
     const kind = n.type === 'paper' ? 'Paper' : n.type === 'fragment' ? 'Fragment' : n.type === 'question' ? 'Question' : 'Note';
@@ -2056,7 +2101,8 @@
     const w = T.w * px, h = T.h * px, gap = 9 * px, edge = 10 * px;
     const outer = (n.__outer || drawnRadius(n, k)) + (S.selected === n.id ? 12 * px : 0);
     let below = n.y + outer + gap + h <= V.y1 - edge || n.y - outer - gap - h < V.y0 + edge;
-    const y0 = below ? n.y + outer + gap : n.y - outer - gap - h;
+    let y0 = below ? n.y + outer + gap : n.y - outer - gap - h;
+    y0 = Math.max(V.y0 + edge, Math.min(y0, V.y1 - edge - h));  // never past the top or bottom of the map
     let x0 = n.x - w / 2;
     x0 = Math.max(V.x0 + edge, Math.min(x0, V.x1 - edge - w));
     // the notch points at the dot, as long as the dot is over the card
@@ -2393,25 +2439,9 @@
 
     if (!fg) return;
     if (structural) {
-      // pin already-placed nodes briefly so only new/changed nodes move into place
-      const pinned = [];
-      if (!S.firstGraph && added.length < next.size) {
-        for (const n of next.values()) {
-          if (added.includes(n) || n.x === undefined || n.fx !== undefined) continue;
-          n.fx = n.x; n.fy = n.y; n.__tmpPin = true; pinned.push(n);
-        }
-      }
       S.links = newLinks;
       fg.graphData({ nodes: Array.from(next.values()), links: newLinks });
       configureLinkForce();
-      // A new graph restarts the layout at full heat. With the note panel or chat open you're reading, so the
-      // dots already on screen stay where they are until the layout has cooled (onEngineStop releases them):
-      // letting go of them early is what made the graph slingshot. With nothing open they settle after 900 ms.
-      if (pinned.length && !calmView()) {
-        setTimeout(() => {
-          for (const n of pinned) if (n.__tmpPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
-        }, 900);
-      }
       const rf = fg.d3Force('regions'); if (rf && rf.relayout) rf.relayout();
       if (S.firstGraph && rf && rf.anchorOf) {
         // a fresh map: each dot starts close to its region (a fixed scatter from its id), not in a spiral at the
@@ -2433,10 +2463,9 @@
           if (p && Number.isFinite(p.x)) { n.x = p.x + (Math.random() - 0.5) * 4; n.y = p.y + (Math.random() - 0.5) * 4; n.vx = 0; n.vy = 0; }
         }
       }
-      kick(1000);
-      if (S.firstGraph && next.size) setTimeout(() => smoothFit(T(700), 90), 1400);
-      // the speed limit (calmForce) starts once the first layout has had time to unfold
-      if (S.firstGraph) setTimeout(() => { S.settledOnce = true; }, 5000);
+      // the first map glides in as the view frames where it will end up; later changes (a new paper, a link) are
+      // a shorter, gentler glide from where everything is now
+      relayout(S.firstGraph ? { alpha: 1, ms: 2400, fit: !S.userMovedView } : { alpha: 0.35, ms: 1400 });
     }
     S.firstGraph = false;
   }
@@ -2464,7 +2493,8 @@
     const rf = fg && fg.d3Force('regions'), a = rf && rf.regionAnchorOf ? rf.regionAnchorOf(n) : { x: 0, y: 0 };
     n.__pinRel = [Math.round((x - a.x) * 10) / 10, Math.round((y - a.y) * 10) / 10];
     pins[n.id] = n.__pinRel;
-    savePins(); kick(200);
+    savePins();
+    relayout({ alpha: 0.12, ms: 1300 });  // a gentle settle around where you dropped it, not a new layout
   }
   /** Re-place the region anchors (a region you mostly placed by hand is anchored where you put it). */
   function reanchor() {
@@ -2475,14 +2505,12 @@
     delete pins[n.id]; savePins();
     if (!n) return;
     n.__userPin = false; delete n.__home; delete n.__pinRel;
-    reanchor();
-    if (fg) fg.d3ReheatSimulation();
+    relayout();
   }
   function unpinAll() {
     pins = {}; savePins();
     for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; delete n.__home; delete n.__pinRel; }
-    reanchor();
-    if (fg) fg.d3ReheatSimulation();
+    relayout();
     toast('Every dot moves freely again', 'ok');
   }
   /** While you drag a dot, the dots connected to it come along: your links and question evidence closely,
@@ -2500,7 +2528,7 @@
     // so the distance between them stretches while you pull and eases back after
     for (const [m, w] of dragLast.follow) {
       if (m.__home || m.fx !== undefined || !Number.isFinite(m.x)) continue;
-      m.vx += dx * w * 0.25; m.vy += dy * w * 0.25;
+      m.x += dx * w * 0.8; m.y += dy * w * 0.8;  // most of the way: the link stretches a little
     }
   }
   function followersOf(n) {
@@ -2578,25 +2606,15 @@
   // screen, in step with the zoom.
   let fitAnim = null;
   function stopFit() { if (fitAnim) { cancelAnimationFrame(fitAnim.raf); fitAnim = null; } }
-  /** whether every dot is on screen with this much margin (pixels) */
-  function allInView(margin = 0) {
-    if (!fg) return true;
-    const W = graphEl.clientWidth, H = graphEl.clientHeight;
-    for (const n of S.nodes.values()) {
-      if (!Number.isFinite(n.x) || nodeHidden(n.id)) continue;
-      const p = fg.graph2ScreenCoords(n.x, n.y);
-      if (p.x < margin || p.y < margin || p.x > W - margin || p.y > H - margin) return false;
-    }
-    return true;
-  }
-  function smoothFit(ms = 600, pad = 70, filter = null) {
+  function smoothFit(ms = 600, pad = 70, filter = null, posOf = null) {
     if (!fg) return;
     const W = graphEl.clientWidth, H = graphEl.clientHeight;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of S.nodes.values()) {
-      if (!Number.isFinite(n.x) || !Number.isFinite(n.y) || nodeHidden(n.id)) continue;
+      const p = posOf ? posOf(n) : [n.x, n.y];  // posOf: fit where the dots are going, not where they are
+      if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1]) || nodeHidden(n.id)) continue;
       if (filter && !filter(n)) continue;
-      x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y);
+      x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]);
     }
     if (!Number.isFinite(x0) || !W || !H) return;
     const bw = Math.max(x1 - x0, 1e-6), bh = Math.max(y1 - y0, 1e-6);
@@ -2634,10 +2652,6 @@
 
   /** The note panel or chat is open: the graph still pans, zooms and drags, but doesn't move on its own. */
   function calmView() { return !$('#panel').hidden || !$('#chat').hidden; }
-  /** Let go of dots held in place during a graph update (the layout has stopped, so nothing moves). */
-  function releaseTmpPins() {
-    for (const n of S.nodes.values()) if (n.__tmpPin) { delete n.__tmpPin; n.fx = undefined; n.fy = undefined; }
-  }
   // when you last panned, zoomed or dragged the graph: an automatic re-centre never undoes that
   let userMovedAt = 0;
   for (const ev of ['pointerdown', 'wheel']) graphEl.addEventListener(ev, () => { userMovedAt = performance.now(); }, { passive: true });
@@ -2724,13 +2738,13 @@
     $('#sim-threshold-val').textContent = v.toFixed(2);
     if (persist) LS.set('threshold.' + (S.embedder.split(':')[0] || 'x'), v);
     configureLinkForce();
-    if (fg) fg.d3ReheatSimulation && simNudge();
+    if (fg) simNudge();
   }
   let nudgeT = null;
   function simNudge() {
     // re-applying the link force is enough; a mild reheat lets the layout respond
     clearTimeout(nudgeT);
-    nudgeT = setTimeout(() => { if (fg) fg.d3ReheatSimulation(); }, 350);
+    nudgeT = setTimeout(() => relayout({ alpha: 0.3, ms: 900 }), 350);
   }
   function setShowSim(v) {
     S.showSim = !!v;
@@ -4784,7 +4798,7 @@
   $('#label-mode').value = S.labelMode;
   $('#label-mode').addEventListener('change', (e) => { S.labelMode = e.target.value; LS.set('labelMode', S.labelMode); kick(300); });
   $('#ambient-toggle').checked = S.ambient;
-  $('#ambient-toggle').addEventListener('change', (e) => { S.ambient = e.target.checked; LS.set('ambient', S.ambient); });
+  $('#ambient-toggle').addEventListener('change', (e) => { S.ambient = e.target.checked; LS.set('ambient', S.ambient); runMotion(); });
 
   // global citation chips ([[id]]) anywhere
   document.addEventListener('click', (e) => {
@@ -4971,7 +4985,7 @@
     });
   }
   // expose for debugging/tests
-  window.__rb = { S, renderMD, refreshGraph, openNote, linkGeom, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); } };
+  window.__rb = { S, renderMD, refreshGraph, openNote, linkGeom, relayout, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); } };
   // hooks for static/review.js and static/views.js (review mode, critique history, graph views)
   Object.assign(window.__rb, {
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,

@@ -479,7 +479,7 @@ def test_a_dragged_dot_stays_where_you_drop_it(ctx, server):
     assert nid in saved
     home = page.evaluate("(id) => window.__rb.S.nodes.get(id).__home", nid)
     # not frozen (no fixed position), but it settles where you dropped it
-    page.evaluate("() => { window.__stops0 = window.__rb.S.stops || 0; window.__rb.fg.d3ReheatSimulation(); }")
+    page.evaluate("() => { window.__stops0 = window.__rb.S.stops || 0; window.__rb.relayout(); }")
     page.wait_for_function("() => (window.__rb.S.stops || 0) > window.__stops0", timeout=30000)
     n = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, n.fx === undefined, !!n.__userPin]; }", nid)
     assert n[2] and n[3]
@@ -1037,9 +1037,8 @@ def test_no_dot_sits_on_a_line_that_isnt_its_own(ctx, server):
         const g = rb.linkGeom(lines[i++ % lines.length]); if (!g) continue;
         n.x = (g.pts[0] + g.pts[g.pts.length - 2]) / 2; n.y = (g.pts[1] + g.pts[g.pts.length - 1]) / 2; n.vx = 0; n.vy = 0;
       }
-      // a very short layout clock, like a slow computer gets (it fails without the final settle): the map must
-      // still end with every dot clear
-      window.__stops0 = S.stops || 0; rb.fg.cooldownTime(150); rb.fg.d3ReheatSimulation(); }""")
+      // lay the map out again from there: however it got there, it must end with every dot clear
+      window.__stops0 = S.stops || 0; rb.relayout(); }""")
     page.wait_for_function("() => (window.__rb.S.stops || 0) > window.__stops0", timeout=15000)
     # and still: the layout can start again (new data arrives) and stop again, each time ending with settle
     page.wait_for_function("""() => { const S = window.__rb.S, now = JSON.stringify([...S.nodes.values()].map(n => [n.x, n.y]));
