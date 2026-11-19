@@ -845,7 +845,13 @@
       const run = ay - ax, a = y0 + sy * run * f;
       pts = [x0, y0, x0, a, x1, a + sy * ax, x1, y1];
     }
-    if (route && l.kind !== 'part' && !S.noRoute) pts = routeAround(pts, l, f);
+    if (route && l.kind !== 'part' && !S.noRoute) {
+      // the route is worked out only while the map is still; while dots move (a hover card easing them aside,
+      // a drag, a glide, the float) the trace keeps that route and just stretches with its two ends, so it moves
+      // simply instead of re-routing every frame
+      if (mapMoving()) { if (l.__route) pts = carryRoute(l.__route, pts); }
+      else { const r = routeAround(pts, l, f); l.__route = r === pts ? null : { base: pts.slice(), pts: r }; pts = r; }
+    }
     if (sd) pts.unshift(sd.x, sd.y);
     if (td) pts.push(td.x, td.y);
     const seg = [];
@@ -870,6 +876,21 @@
       for (let cy = Math.floor((y0 - pad) / G.cell); cy <= Math.floor((y1 + pad) / G.cell); cy++) {
         const b = G.map.get(cx + ',' + cy); if (b) out.push(...b);
       }
+    return out;
+  }
+  const mapMoving = () => !!(S.dragging || motion.tween || (S.shifted && S.shifted.length) || cards.some((c) => c.p > 0) || floating());
+  /** A route worked out earlier, moved with its ends: each bend shifts by a blend of how far the two ends moved. */
+  function carryRoute(R, cur) {
+    const b = R.base, bx0 = b[0], by0 = b[1], bx1 = b[b.length - 2], by1 = b[b.length - 1];
+    const d0x = cur[0] - bx0, d0y = cur[1] - by0, d1x = cur[cur.length - 2] - bx1, d1y = cur[cur.length - 1] - by1;
+    const cx = bx1 - bx0, cy = by1 - by0, L2 = cx * cx + cy * cy;
+    const out = new Array(R.pts.length);
+    for (let i = 0; i < R.pts.length; i += 2) {
+      const px = R.pts[i], py = R.pts[i + 1];
+      let t = L2 ? ((px - bx0) * cx + (py - by0) * cy) / L2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      out[i] = px + d0x * (1 - t) + d1x * t; out[i + 1] = py + d0y * (1 - t) + d1y * t;
+    }
     return out;
   }
   const segDist2 = (P, x, y) => {
@@ -1054,6 +1075,7 @@
   function drawLink(l, ctx, k) {
     const g = linkGeom(l);
     if (!g) return;
+    if (S.probeLink) S.probeLink(l, g);  // tests: what each trace looks like as it's drawn
     const st = linkStyle(l);
     if (st.a <= 0.01) return;
     // traces end exactly on the edge of the drawn dot (same radius drawNode uses at this zoom), so

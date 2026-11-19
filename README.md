@@ -476,7 +476,7 @@ own documentation says how to remove them. `uv cache clean` frees the installer'
 
 The zip keeps the Mac installer double-clickable, which single files downloaded in a browser don't. It holds the
 installers, the app, the Chrome extension, this README and *READ ME FIRST.txt*. With the GitHub command line:
-`gh release download v1.0.25 --pattern "research-brain-installer-*"`.
+`gh release download v1.0.26 --pattern "research-brain-installer-*"`.
 
 A message you can send: *"In the shared folder, download research-brain-installer-….zip. Unzip it (Windows:
 right-click › Extract All; Mac: double-click it), open the folder it makes, and double-click
