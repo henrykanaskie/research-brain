@@ -26,7 +26,9 @@ MSG_CHARS = 6000
 SUMMARY_CHARS = 4000
 TOTAL_CHARS = 3_000_000
 MAX_THREADS = 150
-KEY_RE = re.compile(r"library|general|paper-[a-z0-9][a-z0-9-]{0,160}|topics-[a-z0-9][a-z0-9-]{0,80}(\+[a-z0-9][a-z0-9-]{0,80}){0,7}")
+# a key may end in ~<stamp>: an earlier conversation, kept when you start a new one (Past chats)
+KEY_RE = re.compile(r"(?:library|general|paper-[a-z0-9][a-z0-9-]{0,160}|topics-[a-z0-9][a-z0-9-]{0,80}(\+[a-z0-9][a-z0-9-]{0,80}){0,7})"
+                    r"(?:~[a-z0-9]{4,20})?")
 _lock = threading.Lock()
 
 
@@ -63,6 +65,20 @@ def _clean(m: dict) -> dict | None:
                           for s in m["sources"][:12] if isinstance(s, dict) and s.get("id")]
     if isinstance(m.get("sel"), dict):
         out["sel"] = {"page": m["sel"].get("page"), "text": str(m["sel"].get("text", ""))[:500]}
+    if isinstance(m.get("papers"), list):  # a web answer's paper cards (app/finder.py from_answer)
+        keep = []
+        for it in m["papers"][:12]:
+            if not isinstance(it, dict) or not it.get("id"):
+                continue
+            p = it.get("paper") if isinstance(it.get("paper"), dict) else {}
+            keep.append({"id": str(it["id"])[:80], "key": str(it.get("key", ""))[:300], "search": str(it.get("search", ""))[:80],
+                         "title": str(it.get("title", ""))[:400], "why": str(it.get("why", ""))[:300],
+                         "status": "dismissed" if it.get("status") == "dismissed" else "deck",
+                         "library_id": str(it.get("library_id", ""))[:200],
+                         "paper": {k: (str(p.get(k))[:1500] if k == "abstract" else p.get(k)) for k in
+                                   ("year", "authors", "venue", "access", "doi", "arxiv", "url", "abstract") if p.get(k) is not None}})
+        if keep:
+            out["papers"] = keep
     return out
 
 

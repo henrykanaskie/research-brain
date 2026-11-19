@@ -106,6 +106,7 @@
       }
       setBadge();
       if (F.body && F.body.isConnected) drawDeck();
+      window.dispatchEvent(new Event('rb:finder-changed'));  // the chat's paper cards follow (static/app.js)
       schedulePoll();
     } catch { /* offline: keep what we have */ }
   }
@@ -340,5 +341,5 @@
     CMD.tooltip(topBtn, 'papers.find', 'Find papers on a topic; review them On deck');
   }
 
-  window.__rbFinder = { open: openPanel, refresh, get data() { return F.data; } };
+  window.__rbFinder = { open: openPanel, refresh, paperRow, get data() { return F.data; } };
 })();

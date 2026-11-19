@@ -300,7 +300,7 @@
       ['Ask: Topics', 'Pick one or more topics: the agent reads every paper in them and the passages that best match. Also Ask about this topic in the Topics drawer.', ['chat.aboutTopics']],
       ['Ask: General', 'Ask anything, without your library. Attach… adds papers, notes, questions or topics for it to read. Nothing of yours goes along unless you attach it.', ['chat.general']],
       ['Web search', 'Off until you allow it in Settings › Library settings › AI and privacy. Then tick Search the web in a General chat. Attached papers go with their published parts only; your own notes go along only after you confirm once.', []],
-      ['Conversations', 'Every conversation (library, each paper, each set of topics, General) is kept and comes back next time. Older messages are condensed into a short summary to save space. New conversation starts over.', []],
+      ['Conversations', 'Every conversation (library, each paper, each set of topics, General) is kept and comes back next time. Older messages are condensed into a short summary to save space. New chat starts over and keeps the last one in Past chats, where you can go back to any earlier conversation.', []],
       ['Review', 'Your own summaries come back for recall. Write what you remember, reveal, grade yourself 1 to 4.', ['library.review']],
       ['Topics', 'Group papers under topics and keep a queue of what to read next.', ['topics.toggle', 'note.park']],
     ]],

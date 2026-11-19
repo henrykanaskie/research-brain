@@ -1127,3 +1127,22 @@ html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-se
 /* Settings menu › View › Labels */
 .menu-select { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 12px; font: 13px var(--sans); color: var(--ink); }
 .menu-select select { font: 12.5px var(--sans); max-width: 60%; }
+
+/* Past chats (chat header) */
+.pc-list { display: flex; flex-direction: column; }
+.pc-row { padding: 10px 4px; border-top: 1px solid var(--rule); cursor: pointer; }
+.pc-row:first-child { border-top: 0; }
+.pc-row:hover, .pc-row:focus-visible { background: color-mix(in srgb, var(--ink) 4%, transparent); outline: none; }
+.pc-row.now .pc-scope::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--red); margin-left: 6px; vertical-align: middle; }
+.pc-top { display: flex; align-items: baseline; gap: 10px; }
+.pc-scope { font: 600 12px var(--sans); color: var(--ink-2); }
+.pc-when { font-size: 12px; color: var(--ink-3); margin-left: auto; }
+.pc-del { height: auto; min-height: 0; padding: 0 2px; font-size: 12px; color: var(--ink-3); }
+.pc-del:hover { color: var(--red); }
+.pc-first { font: 15px/1.4 var(--serif); color: var(--ink); margin-top: 3px; }
+.pc-n { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.pc-empty { color: var(--ink-2); padding: 12px 0; }
+/* a web answer's papers, as Find papers cards */
+.chat-papers { margin-top: 12px; border-top: 1px solid var(--rule); padding-top: 8px; }
+.chat-papers > .lbl { font: 600 12px var(--sans); color: var(--ink-2); }
+.chat-papers .cp-note { font-size: 12px; color: var(--ink-3); margin-top: 6px; }

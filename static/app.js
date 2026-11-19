@@ -4630,7 +4630,7 @@
           onclick: () => copyText(m.content || '').then((ok) => { copyBtn.textContent = ok ? 'Copied' : 'Could not copy'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1600); }) });
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
           h('div', { class: 'machine-head' }, h('span', { text: ai() }), copyBtn),
-          h('div', { class: 'msg-body md', html: renderMD(m.content) }), src, chatPassages(m))));
+          h('div', { class: 'msg-body md', html: renderMD(m.content) }), src, chatPassages(m), chatPapers(m))));
       }
     });
     const keepTop = chatLog.scrollTop;
@@ -4642,6 +4642,19 @@
     applyClaude($('#chat'));
   }
 
+  /** The papers a web-search answer names, as the same cards Find papers shows On deck (static/finder.js):
+   *  Add to library, Open, PDF, a free copy, Dismiss. Each card follows the paper's current state On deck. */
+  function chatPapers(m) {
+    const items = m.papers || [];
+    const F = window.__rbFinder;
+    if (!items.length || !F || !F.paperRow) return null;
+    const live = new Map(((F.data && F.data.items) || []).map((i) => [i.id, i]));
+    const rows = items.map((it) => F.paperRow(live.get(it.id) || it));
+    return h('div', { class: 'chat-papers' },
+      h('span', { class: 'lbl', text: `Papers in this answer (${items.length})` }), rows,
+      h('div', { class: 'cp-note', text: 'They’re also On deck in Find papers, to review later.' }));
+  }
+  window.addEventListener('rb:finder-changed', () => { if (S.chat.some((m) => m.papers)) renderChat(); });
   /** The passages chat retrieved: page + one-line excerpt; a paper page opens the PDF viewer there. */
   function chatPassages(m) {
     const ps = m.passages || [];
@@ -4714,7 +4727,9 @@
         r = await api('POST', '/api/chat', { question, history, ...scope });
       }
       delete pending.live;
-      Object.assign(pending, { pending: false, content: r.answer || '', sources: r.sources || [], passages: r.passages || [] });
+      Object.assign(pending, { pending: false, content: r.answer || '', sources: r.sources || [], passages: r.passages || [],
+        ...(r.papers && (r.papers.items || []).length ? { papers: r.papers.items } : {}) });
+      if (r.papers && r.papers.search && window.__rbFinder) window.__rbFinder.refresh();  // they're On deck too
     } catch (e) {
       if (e.status === 409 && S.chatGeneral) {  // your own writing + web search: confirm once (Settings keep it)
         S.chat.splice(S.chat.indexOf(userMsg), 2);
@@ -4768,7 +4783,102 @@
   });
   void chatLE;
   $('#chat-input').addEventListener('input', (e) => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight + 2) + 'px'; });
-  $('#btn-chat-clear').addEventListener('click', () => { if (S.chatBusy) { toast('Wait for the current answer to finish first.', 'info'); return; } S.chat = []; S.chatSummarised = false; if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat); persistChat(); renderChat(); });
+  $('#btn-chat-clear').addEventListener('click', async () => {
+    if (S.chatBusy) { toast('Wait for the current answer to finish first.', 'info'); return; }
+    const had = keepable(S.chat).length;
+    await archiveChat();
+    S.chat = []; S.chatSummarised = false; if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat); persistChat(); renderChat();
+    if (had) toast('Started a new conversation. The last one is in Past chats.', 'ok', { action: { label: 'Past chats', fn: openPastChats } });
+  });
+  $('#btn-chat-history').addEventListener('click', () => openPastChats());
+
+  // ---------- Past chats: a new conversation keeps the last one (as <key>~<stamp>, app/chats.py) ----------
+  /** Keep the conversation on screen as an earlier one, so starting another doesn't lose it. */
+  async function archiveChat(key = chatKey(), thread = S.chat, title = chatTitle()) {
+    const msgs = keepable(thread);
+    if (!msgs.length) return;
+    try { await api('PUT', `/api/chats/${encodeURIComponent(key + '~' + Date.now().toString(36))}`, { messages: msgs, title }); }
+    catch (e) { console.warn('could not keep the conversation', e); }
+  }
+  function chatScopeName(base, title) {
+    if (base === 'library') return 'Library';
+    if (base === 'general') return 'General';
+    if (base.startsWith('paper-')) return 'Paper: ' + truncate(nodeTitle(base.slice(6)) || title || base.slice(6), 60);
+    if (base.startsWith('topics-')) return 'Topics: ' + truncate(title || base.slice(7).split('+').join(', '), 60);
+    return title || base;
+  }
+  const whenText = (t) => {
+    if (!t) return '';
+    const d = new Date(t * 1000), mins = (Date.now() - d) / 60000;
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${Math.round(mins)} min ago`;
+    if (mins < 60 * 24) return `${Math.round(mins / 60)} h ago`;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+  };
+  function openPastChats() {
+    const CMD = window.RB && window.RB.commands;
+    if (!CMD || !CMD.panel) return;
+    CMD.panel({ title: 'Past chats', className: 'pc-sheet', render: async (body) => {
+      body.replaceChildren(h('div', { class: 'pc-empty', text: 'Loading' }));
+      let rows = [];
+      try { const r = await api('GET', '/api/chats'); rows = Array.isArray(r) ? r : (r && r.threads) || []; } catch (e) { body.replaceChildren(h('div', { class: 'pc-empty', text: 'Could not load your conversations.' })); return; }
+      rows = rows.filter((t) => t.count > 0);
+      if (!rows.length) { body.replaceChildren(h('div', { class: 'pc-empty', text: 'No conversations yet. They’re kept here as you talk with ' + ai() + '.' })); return; }
+      const cur = chatKey();
+      body.replaceChildren(h('div', { class: 'pc-list' }, rows.map((t) => {
+        const [base, stamp] = t.key.split('~');
+        const now = !stamp && base === cur;
+        const del = h('button', { class: 'btn btn-text btn-sm pc-del', type: 'button', text: 'Delete', title: 'Delete this conversation',
+          onclick: async (e) => {
+            e.stopPropagation();
+            try { await api('DELETE', `/api/chats/${encodeURIComponent(t.key)}`); } catch (err) { toastErr(err, 'Could not delete it'); return; }
+            if (now || (!stamp && S.chatThreads[base])) { S.chatThreads[base] = []; if (now) { S.chat = []; renderChat(); } }
+            if (!stamp && base.startsWith('paper-')) savePaperThread(base.slice(6), []);
+            row.remove();
+          } });
+        const row = h('div', { class: 'pc-row' + (now ? ' now' : ''), role: 'button', tabindex: '0', title: now ? 'The conversation you’re in' : 'Open this conversation',
+          onclick: () => { if (now) { CMD.close(false); openChat(); return; } CMD.close(false); openPastChat(t); },
+          onkeydown: (e) => { if (e.key === 'Enter') row.click(); } },
+          h('div', { class: 'pc-top' }, h('span', { class: 'pc-scope', text: chatScopeName(base, t.title) }),
+            h('span', { class: 'pc-when', text: (now ? 'Open now · ' : !stamp ? 'Current · ' : '') + whenText(t.updated) }), del),
+          h('div', { class: 'pc-first', text: t.first || '(no question)' }),
+          h('div', { class: 'pc-n', text: `${Math.ceil(t.count / 2)} question${t.count > 2 ? 's' : ''}` + (t.summarised ? ', older part summarised' : '') }));
+        return row;
+      })));
+    } });
+  }
+  /** Open a conversation from Past chats in its own scope. An earlier one becomes the current conversation
+   *  there again (and the one that was current there is kept in Past chats). */
+  async function openPastChat(t) {
+    const [base, stamp] = t.key.split('~');
+    let ok;
+    if (base === 'general') { ok = setChatScope(null, null, true); if (ok !== false) { try { const d = await api('GET', '/api/privacy'); S.webAllowed = !!(d && d.settings && d.settings.web_search); } catch { S.webAllowed = false; } } }
+    else if (base === 'library') ok = setChatScope(null);
+    else if (base.startsWith('paper-')) ok = setChatScope(base.slice(6));
+    else if (base.startsWith('topics-')) {
+      const names = (t.title || '').split(', ');
+      ok = setChatScope(null, base.slice(7).split('+').map((slug, i) => ({ slug, name: names[i] || slug })));
+    }
+    if (ok === false) return;
+    openChat();
+    if (stamp) {
+      let d;
+      try { d = await api('GET', `/api/chats/${encodeURIComponent(t.key)}`); } catch (e) { toastErr(e, 'Could not open that conversation'); return; }
+      await restoreChat(base);
+      await archiveChat(base, S.chat, chatTitle());
+      S.chat = (d.messages || []).map((m) => ({ ...m, passages: [] }));
+      S.chatSummarised = !!d.summary;
+      S.chatThreads[base] = S.chat;
+      if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat);
+      persistChat(base, S.chat, d.title || chatTitle());
+      try { await api('DELETE', `/api/chats/${encodeURIComponent(t.key)}`); } catch { /* it stays listed; harmless */ }
+    } else {
+      await restoreChat(base);
+    }
+    chatFollow = true;
+    renderChatScope();
+    renderChat();
+  }
   $('#cs-clear').addEventListener('click', () => { if (setChatScope(null) !== false) { renderChat(); $('#chat-input').focus(); } });
   $('#cs-open').addEventListener('click', () => { if (S.chatPaper) openNote(S.chatPaper.id, { center: true }); else if (S.chatTopics) chooseChatTopics(); });
   for (const b of document.querySelectorAll('.chat-modes button')) b.addEventListener('click', () => {

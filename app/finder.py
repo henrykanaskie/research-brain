@@ -31,6 +31,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -273,6 +274,102 @@ def _trim(data: dict) -> None:
     ids = {s["id"] for s in keep}
     data["searches"] = keep
     data["items"] = [i for i in data["items"] if i["search"] in ids or i["status"] == "deck"]
+
+
+# ---------------------------------------------------------------- papers named in a web-search answer
+MAX_FROM_ANSWER = 12
+_DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>\]\[(){}|\\^`]+)", re.I)
+_ARXIV_RE = re.compile(r"(?:arxiv\.org/(?:abs|pdf)/|arxiv:\s*)(\d{4}\.\d{4,5})(?:v\d+)?", re.I)
+
+
+def ids_in(text: str) -> list[tuple[str, str]]:
+    """The papers a text names by DOI or arXiv id (in links or plain), in order, without repeats: [(kind, id)]."""
+    out, seen = [], set()
+    for m in re.finditer(f"{_ARXIV_RE.pattern}|{_DOI_RE.pattern}", text or "", re.I):
+        if m.group(1):
+            kind, val = "arxiv", m.group(1)
+        else:
+            kind, val = "doi", re.sub(r"[.,;:)\]]+$", "", m.group(2)).rstrip("/")
+            val = re.sub(r"(?i)(\.pdf|/pdf|/full|/abstract|/meta|/epdf|/html|/fulltext)$", "", val)
+            if val.lower().startswith("10.48550/arxiv."):
+                kind, val = "arxiv", val.split(".", 2)[-1]
+        key = (kind, val.lower())
+        if key not in seen:
+            seen.add(key)
+            out.append((kind, val))
+    return out[:MAX_FROM_ANSWER]
+
+
+def from_answer(store, question: str, text: str, *, lookup=None, copies=None, wait: bool = False) -> dict | None:
+    """The papers a web-search answer names (by DOI or arXiv id), as On deck cards: a search of their own
+    ("From a web search: ..."), so you can triage them like Find papers' results: Add to library, Open, PDF, a
+    free copy, Dismiss. Papers already in your library come back marked so (not put on deck again); dismissed
+    ones are left out. lookup(kind, id) -> paper row (default: OpenAlex). None when the answer names no paper."""
+    ids = ids_in(text)
+    if not ids:
+        return None
+    if lookup is None:
+        from . import metadata
+        if not metadata.enabled():
+            return None
+        lookup = lambda kind, val: scout.lookup_work(**{kind: val})  # noqa: E731
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(kv):
+        try:
+            return lookup(*kv)
+        except Exception as e:
+            print(f"[research_brain] finder: couldn't look up {kv[0]} {kv[1]}: {e!r}")
+            return None
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        papers = [p for p in ex.map(one, ids) if p and p.get("title")]
+    if not papers:
+        return None
+    topic = " ".join((question or "").split())[:200] or "a web search"
+    sid = _id("web" + topic + now_iso())
+    notes = store.all()
+    shown, added = [], []
+    with _lock:
+        data = load(store)
+        by_key = {i["key"]: i for i in data["items"]}
+        for p in papers:
+            key = scout.ev_key(p)
+            if not key:
+                continue
+            old = by_key.get(key)
+            if old is not None and old.get("status") == "dismissed":
+                continue
+            fields = {"paper": {k: p.get(k) for k in ("year", "date", "authors", "venue", "access", "doi", "arxiv",
+                                                         "url", "abstract", "found_via")}}
+            probe = {"title": p.get("title") or "", **fields}
+            lib = in_library(probe, notes)
+            if lib:
+                shown.append({"id": _id(key), "key": key, "search": sid, "title": probe["title"], **fields, "why": "",
+                              "status": "deck", "library_id": lib})
+                continue
+            if old is not None:  # already on deck from another search: show that card
+                shown.append({**old, "library_id": ""})
+                continue
+            item = {"id": _id(key), "key": key, "search": sid, "title": probe["title"], **fields,
+                    "why": "Named in the answer to your web search", "found_at": now_iso(), "status": "deck"}
+            data["items"].append(item)
+            by_key[key] = item
+            added.append(item)
+            shown.append({**item, "library_id": ""})
+        if added:
+            data["searches"].insert(0, {"id": sid, "topic": "From a web search: " + topic, "detail": "", "since": "any",
+                                        "started_at": now_iso(), "finished_at": now_iso(), "question": None,
+                                        "status": "done", "error": "", "turns": 0, "lookups": len(ids), "chars_sent": 0,
+                                        "proposed": len(papers), "added": len(added), "note": "", "web": True})
+            _trim(data)
+        _save(store, data)
+    if added:
+        work = lambda: look_for_free_copies(store, [i["id"] for i in added], copies)  # noqa: E731
+        if wait:
+            work()
+        else:
+            threading.Thread(target=work, daemon=True, name="rb-finder-web-copies").start()
+    return {"search": sid if added else "", "items": shown} if shown else None
 
 
 # ---------------------------------------------------------------- reviewing

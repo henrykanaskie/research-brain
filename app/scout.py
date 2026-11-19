@@ -81,31 +81,59 @@ def _abstract(inv: dict | None) -> str:
     return " ".join(w for _, w in pos)
 
 
+OA_SELECT = ("id,display_name,publication_year,publication_date,authorships,doi,ids,abstract_inverted_index,"
+             "primary_location,open_access")
+
+
+def _oa_row(w: dict) -> dict:
+    """An OpenAlex work as a paper row (what a scout result and an On deck card show)."""
+    doi = (w.get("doi") or "").replace("https://doi.org/", "")
+    arxiv = doi.split("arxiv.", 1)[-1] if doi.lower().startswith("10.48550/arxiv.") else ""
+    src = ((w.get("primary_location") or {}).get("source") or {}).get("display_name") or ""
+    oa = w.get("open_access") or {}
+    st = (oa.get("oa_status") or "").lower()
+    return {"title": (w.get("display_name") or "").strip(), "abstract": _abstract(w.get("abstract_inverted_index")),
+            "year": w.get("publication_year"), "date": w.get("publication_date") or "",
+            "authors": [((a.get("author") or {}).get("display_name") or "") for a in (w.get("authorships") or [])][:6],
+            "doi": doi, "arxiv": arxiv, "venue": src, "url": f"https://doi.org/{doi}" if doi else (w.get("id") or ""),
+            "access": "open" if arxiv or st in ("gold", "green", "hybrid", "diamond") else ("free" if st == "bronze" else ("closed" if st == "closed" else "")),
+            "found_via": "OpenAlex"}
+
+
+def lookup_work(doi: str = "", arxiv: str = "") -> dict | None:
+    """One paper by its DOI or arXiv id, from OpenAlex (None when OpenAlex doesn't know it)."""
+    from . import apikeys
+    if doi:
+        path = "doi:" + quote(doi, safe="/.")
+    elif arxiv:
+        path = "doi:10.48550/arXiv." + quote(re.sub(r"v\d+$", "", arxiv), safe="/.")
+    else:
+        return None
+    params = {"select": OA_SELECT}
+    key = apikeys.get("openalex")
+    if key:
+        params["api_key"] = key
+    r = requests.get(f"https://api.openalex.org/works/{path}", params=params, headers=UA, timeout=TIMEOUT)
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    row = _oa_row(r.json())
+    if arxiv and not row["arxiv"]:
+        row["arxiv"] = re.sub(r"v\d+$", "", arxiv)
+    return row if row["title"] else None
+
+
 def search_openalex(query: str, since: dt.date) -> list[dict]:
     from . import apikeys
     params = {"search": query, "per-page": FETCH,
               "filter": f"from_publication_date:{since.isoformat()},type:article|preprint|review",
-              "select": "id,display_name,publication_year,publication_date,authorships,doi,ids,"
-                        "abstract_inverted_index,primary_location,open_access"}
+              "select": OA_SELECT}
     key = apikeys.get("openalex")
     if key:
         params["api_key"] = key
     r = requests.get("https://api.openalex.org/works", params=params, headers=UA, timeout=TIMEOUT)
     r.raise_for_status()
-    out = []
-    for w in r.json().get("results") or []:
-        doi = (w.get("doi") or "").replace("https://doi.org/", "")
-        arxiv = doi.split("arxiv.", 1)[-1] if doi.lower().startswith("10.48550/arxiv.") else ""
-        src = ((w.get("primary_location") or {}).get("source") or {}).get("display_name") or ""
-        oa = w.get("open_access") or {}
-        st = (oa.get("oa_status") or "").lower()
-        out.append({"title": (w.get("display_name") or "").strip(), "abstract": _abstract(w.get("abstract_inverted_index")),
-                    "year": w.get("publication_year"), "date": w.get("publication_date") or "",
-                    "authors": [((a.get("author") or {}).get("display_name") or "") for a in (w.get("authorships") or [])][:6],
-                    "doi": doi, "arxiv": arxiv, "venue": src, "url": f"https://doi.org/{doi}" if doi else (w.get("id") or ""),
-                    "access": "open" if arxiv or st in ("gold", "green", "hybrid", "diamond") else ("free" if st == "bronze" else ("closed" if st == "closed" else "")),
-                    "found_via": "OpenAlex"})
-    return out
+    return [_oa_row(w) for w in r.json().get("results") or []]
 
 
 def search_arxiv(query: str, since: dt.date) -> list[dict]:
