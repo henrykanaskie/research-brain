@@ -260,6 +260,10 @@ def test_touch_targets_and_no_keyboard_ui(browser, pw, server, device):
     page.locator(".m-tab[data-tab=library]").tap()
     page.locator(".m-row-main").first.tap()
     expect(page.locator("#panel")).to_be_visible()
+    # the panel opens with a short animation: measure the button once it has reached its full size (a slow
+    # machine could otherwise catch it mid-animation)
+    page.wait_for_function("""() => { const r = document.querySelector('#btn-panel-close').getBoundingClientRect();
+      return r.width >= 44 && r.height >= 44; }""", timeout=5000)
     assert small("#btn-panel-close") == 0
     page.locator("#btn-panel-close").tap()
     # no keyboard hints anywhere; the View menu offers gesture tips instead of shortcuts
