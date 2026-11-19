@@ -474,27 +474,30 @@ def test_a_dragged_dot_stays_where_you_drop_it(ctx, server):
         page.mouse.move(box["x"] + sx + 12 * i, box["y"] + sy + 8 * i)
     page.mouse.up()
     page.wait_for_timeout(1500)
-    saved = page.evaluate("JSON.parse(localStorage.getItem('rb.pins'))")
+    # saved as where it sits within its region (regions move as the library grows; the dot moves with its region)
+    saved = page.evaluate("JSON.parse(localStorage.getItem('rb.pinsRel'))")
     assert nid in saved
+    home = page.evaluate("(id) => window.__rb.S.nodes.get(id).__home", nid)
     # not frozen (no fixed position), but it settles where you dropped it
-    page.evaluate("() => { window.__rb.fg.d3ReheatSimulation(); }")
-    page.wait_for_timeout(2500)
+    page.evaluate("() => { window.__stops0 = window.__rb.S.stops || 0; window.__rb.fg.d3ReheatSimulation(); }")
+    page.wait_for_function("() => (window.__rb.S.stops || 0) > window.__stops0", timeout=30000)
     n = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, n.fx === undefined, !!n.__userPin]; }", nid)
     assert n[2] and n[3]
-    assert abs(n[0] - saved[nid][0]) < 15 and abs(n[1] - saved[nid][1]) < 15, (n, saved[nid])
+    assert abs(n[0] - home[0]) < 15 and abs(n[1] - home[1]) < 15, (n, home)
     page.reload()
     page.wait_for_function("(id) => window.__rb && window.__rb.S.nodes.has(id)", arg=nid)
-    page.wait_for_timeout(1500)
+    page.wait_for_function("() => (window.__rb.S.stops || 0) >= 1", timeout=30000)
     after = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y, !!n.__userPin]; }", nid)
-    assert after[2] and abs(after[0] - saved[nid][0]) < 15 and abs(after[1] - saved[nid][1]) < 15, (after, saved[nid])
+    assert after[2] and abs(after[0] - home[0]) < 15 and abs(after[1] - home[1]) < 15, (after, home)
     page.evaluate("RB.commands.run('graph.unpinAll')")
     assert page.evaluate("(id) => !window.__rb.S.nodes.get(id).__home", nid)
     assert not page.errors
 
 
-def test_a_new_paper_joins_a_region_you_placed_by_hand(ctx, server):
-    """Most of a region's dots pinned where you dropped them: a paper of that region you never moved (added
-    later) settles with them, not at an anchor computed without your pins."""
+def test_a_new_paper_joins_the_dots_you_placed_and_old_pins_dont_bend_the_map(ctx, server):
+    """Dots you placed are kept relative to their region, so they can't pin the map into a chain: a paper of that
+    region you never moved (added later) settles among them, and positions saved the old way (map coordinates
+    under 'rb.pins', which froze regions into lines) are dropped."""
     clear_vault(server)
     group = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Cross section paper {i}"})["id"]
              for i in range(4)]
@@ -511,19 +514,27 @@ def test_a_new_paper_joins_a_region_you_placed_by_hand(ctx, server):
         g["clusters"] = [{"id": 0, "label": "Cross sections", "size": 5, "topic": None, "near": []},
                          {"id": 1, "label": "Line ratios", "size": 4, "topic": None, "near": []}]
         route.fulfill(response=resp, json=g)
-    pins = {nid: [-160 + 6 * i, 40 - 5 * i] for i, nid in enumerate(group)}  # far from where packing puts it
+    rel = {nid: [-9 + 6 * i, 6 - 4 * i] for i, nid in enumerate(group)}  # around the middle of their region
+    legacy = {other[0]: [-400, 900]}  # an old map-coordinate pin, far away
     page = ctx.new_page()
     page.errors = []
     page.on("pageerror", lambda e: page.errors.append(str(e)))
-    page.add_init_script(f"localStorage.setItem('rb.pins', {json.dumps(json.dumps(pins))})")
+    page.add_init_script(f"localStorage.setItem('rb.pinsRel', {json.dumps(json.dumps(rel))});"
+                         f"if (!sessionStorage.getItem('seeded')) {{ localStorage.setItem('rb.pins', {json.dumps(json.dumps(legacy))}); sessionStorage.setItem('seeded', '1'); }}")
     page.route("**/api/graph", two_regions)
     page.goto(server["base"] + "/")
     page.wait_for_function("(n) => window.__rb && window.__rb.fg && window.__rb.S.nodes.size >= n", arg=9)
-    page.wait_for_timeout(5000)
-    x, y = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y]; }", late)
-    cx = sum(p[0] for p in pins.values()) / 4
-    cy = sum(p[1] for p in pins.values()) / 4
-    assert ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 < 40, ((x, y), (cx, cy))
+    page.wait_for_function("() => (window.__rb.S.stops || 0) >= 1", timeout=30000)
+    pos = lambda i: page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y]; }", i)
+    placed = [pos(i) for i in group]
+    cx, cy = sum(p[0] for p in placed) / 4, sum(p[1] for p in placed) / 4
+    x, y = pos(late)
+    assert ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 < 30, ((x, y), (cx, cy))
+    # the old-style pin is gone and didn't drag its dot (or its region) across the map
+    assert page.evaluate("localStorage.getItem('rb.pins')") is None
+    ox, oy = pos(other[0])
+    assert abs(ox) < 150 and abs(oy) < 150, (ox, oy)
+    assert not page.evaluate("(id) => !!window.__rb.S.nodes.get(id).__userPin", other[0])
     page.evaluate("RB.commands.run('graph.unpinAll')")
     assert not page.errors
 

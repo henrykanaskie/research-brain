@@ -660,7 +660,7 @@
     const moves = [];
     for (const n of S.nodes.values()) if (n.__clearTo) { moves.push([n, n.x, n.y, n.__clearTo[0], n.__clearTo[1]]); delete n.__clearTo; }
     if (!moves.length) return;
-    const dur = Math.max(1, T(700)), t0 = performance.now();
+    const dur = Math.max(1, T(1400)), t0 = performance.now();
     kick(dur + 100);
     const step = (now) => {
       if (S.dragging) return;
@@ -1198,38 +1198,19 @@
         if (n.sub >= 0) { subSizes.set(n.sub, (subSizes.get(n.sub) || 0) + 1); subOf.set(n.sub, n.cluster); }
       }
       const ids = [...sizes.keys()].sort((a, b) => sizes.get(b) - sizes.get(a));
-      // where each region is now (the middle of its dots), so a change repacks regions around where they
-      // already are instead of reshuffling the whole map
-      const now = new Map();
-      for (const n of top) {
-        if (n.cluster < 0 || !Number.isFinite(n.x)) continue;
-        const c = now.get(n.cluster) || { x: 0, y: 0, k: 0 };
-        c.x += n.x; c.y += n.y; c.k++; now.set(n.cluster, c);
-      }
-      for (const c of now.values()) { c.x /= c.k; c.y /= c.k; }
-      // A region whose dots you mostly placed yourself is where you put it: its anchor is the middle of those
-      // dots, and its disc reaches all of them. Otherwise a dot of that region you never moved (a paper added
-      // later) was pulled to an anchor computed without your pins, far from the rest of its own group.
-      const pinnedIn = new Map();
-      for (const n of top) {
-        if (n.cluster < 0 || !n.__home) continue;
-        const c = pinnedIn.get(n.cluster) || { pts: [] };
-        c.pts.push(n.__home); pinnedIn.set(n.cluster, c);
-      }
-      const fixed = new Map();
-      for (const [cid, c] of pinnedIn) {
-        if (c.pts.length < Math.max(2, 0.5 * (sizes.get(cid) || 0))) continue;
-        const x = c.pts.reduce((a, p) => a + p[0], 0) / c.pts.length, y = c.pts.reduce((a, p) => a + p[1], 0) / c.pts.length;
-        fixed.set(cid, { x, y, r: Math.max(...c.pts.map((p) => Math.hypot(p[0] - x, p[1] - y))) + 8 });
-      }
-      anchors = packRegions(ids, sizes, now.size >= Math.max(1, ids.length * 0.6) && S.settledOnce ? now : affinityLayout(ids, sizes), fixed);
-      if (!fixed.size && anchors.size) {
+      // Where regions sit comes from the region layout alone (sizes and how related they are), never from where
+      // dots happen to be: it gives the same balanced arrangement around the middle every time, so a dot you
+      // placed, or a layout that went lopsided once, can't drag the map into a chain that then sticks.
+      anchors = packRegions(ids, sizes, affinityLayout(ids, sizes));
+      if (anchors.size) {
         // the map's centre of mass (each region weighted by its papers) sits at the middle, however many regions
         let cx = 0, cy = 0, w = 0;
         for (const [id, a] of anchors) { const k = sizes.get(id) || 1; cx += a.x * k; cy += a.y * k; w += k; }
         cx /= w; cy /= w;
         for (const a of anchors.values()) { a.x -= cx; a.y -= cy; }
       }
+      // a dot you placed keeps its spot within its region, wherever the region now sits
+      for (const n of nodes) if (n.__pinRel) { const a = anchors.get(n.cluster) || looseAnchor(n); n.__home = [a.x + n.__pinRel[0], a.y + n.__pinRel[1]]; }
       layoutSatellites();
       outerR = 30;
       for (const a of anchors.values()) outerR = Math.max(outerR, Math.hypot(a.x, a.y) + a.r + 18);
@@ -1245,6 +1226,7 @@
     force.relayout = layoutAnchors;
     /** where a dot is pulled to: its sub-group, region, or spot around the outside */
     force.anchorOf = (n) => (n.sub >= 0 && subAnchors.get(n.sub)) || anchors.get(n.cluster) || looseAnchor(n);
+    force.regionAnchorOf = (n) => anchors.get(n.cluster) || looseAnchor(n);
     return force;
   }
   /** Regions as discs sized by how many papers they hold (area grows with the count), packed around the
@@ -1294,19 +1276,11 @@
     for (const p of P.values()) { p.x -= cx; p.y -= cy; }
     return P;
   }
-  function packRegions(ids, sizes, now = new Map(), fixed = new Map()) {
+  function packRegions(ids, sizes, now = new Map()) {
     const GAP = 14;
     const out = new Map(), placed = [];
     const settled = now.size >= Math.max(1, ids.length * 0.6);  // a layout to keep (or the related-regions one)
-    // regions you placed by hand (most of their dots pinned) stay exactly there; the rest pack around them
-    const order = [...ids.filter((id) => fixed.has(id)), ...ids.filter((id) => !fixed.has(id))];
-    for (const id of order) {
-      const f = fixed.get(id);
-      if (f) {
-        const d = { x: f.x, y: f.y, r: Math.max(6.2 * Math.sqrt(sizes.get(id)) + 7, f.r) };
-        placed.push(d); out.set(id, d);
-        continue;
-      }
+    for (const id of ids) {
       const r = 6.2 * Math.sqrt(sizes.get(id)) + 7;
       const o = settled && now.get(id) ? now.get(id) : { x: 0, y: 0 };
       let spot = null;
@@ -1386,45 +1360,23 @@
 
     // Near the end of each layout, plan once where every dot still sitting on a line should go (settle, below),
     // then ease each one there over the last seconds (an exponential glide, so it slows as it arrives).
-    let planned = false;
+    let planned = 0;  // how many of the two planning passes have run in this layout
     const glide = () => {
       for (const n of nodes) {
         if (!n.__clearTo) continue;
         const dx = n.__clearTo[0] - n.x, dy = n.__clearTo[1] - n.y;
         if (Math.hypot(dx, dy) < 0.02 || n.__home || n.fx !== undefined) { delete n.__clearTo; continue; }
-        n.vx = dx * 0.06; n.vy = dy * 0.06;
+        // blended into the dot's own motion, so it curves smoothly toward the spot instead of changing course at once
+        n.vx = n.vx * 0.75 + dx * 0.03; n.vy = n.vy * 0.75 + dy * 0.03;
       }
     };
     function force(alpha) {
       if (S.dragging || !nodes.length) return;
-      if (alpha > 0.12) { if (planned) { planned = false; for (const n of nodes) delete n.__clearTo; } }
-      else if (!planned && alpha < 0.05) { planned = true; force.plan(); }
-      const geoms = shownLines();
-      const gain = 0.3 * energy(alpha);
-      if (!geoms.length) return;
-      for (const n of nodes) {
-        if (n.type === 'fragment' || !Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
-        const clear = nodeRadius(n) + MARGIN;
-        for (const g of geoms) {
-          if (g.a === n.id || g.b === n.id) continue;
-          if (n.x < g.minx - clear || n.x > g.maxx + clear || n.y < g.miny - clear || n.y > g.maxy + clear) continue;
-          const [best, bx, by, sdx, sdy] = nearest(g.P, n.x, n.y);
-          if (best >= clear * clear) continue;
-          let d = Math.sqrt(best), ux = n.x - bx, uy = n.y - by;
-          if (d < 1e-6) {  // right on the line: step off it square to the line, to a side fixed by the dot's id
-            const L = Math.hypot(sdx, sdy) || 1, side = strHash(n.id) % 2 ? 1 : -1;
-            ux = (-sdy / L) * side; uy = (sdx / L) * side; d = 0;
-          } else { ux /= d; uy /= d; }
-          // the dot steps off and the line's ends step back, so a dot held by many links (a hub) and the line
-          // both give way; a dot you placed doesn't move, so its share goes to the line
-          if (n.__clearTo) continue;  // gliding to a spot already found clear
-          const push = (clear - d) * gain, mine = placed(n);
-          const ends = [g.l.source, g.l.target].filter((e) => e && typeof e === 'object' && !placed(e));
-          const lineShare = mine ? 1 : ends.length ? 0.4 : 0;
-          if (!mine) { n.vx += ux * push * (1 - lineShare); n.vy += uy * push * (1 - lineShare); }
-          for (const e of ends) { e.vx -= (ux * push * lineShare) / ends.length; e.vy -= (uy * push * lineShare) / ends.length; }
-        }
-      }
+      // two passes while the layout is still cooling, so every slide happens inside its ease-out: one as it
+      // slows, and one for anything a line has drifted onto since
+      if (alpha > 0.15) { if (planned) { planned = 0; for (const n of nodes) delete n.__clearTo; } }
+      else if (planned === 0 && alpha < 0.1) { planned = 1; force.plan(); }
+      else if (planned === 1 && alpha < 0.035) { planned = 2; force.plan(); }
       glide();
     }
     /** settle() run as a plan: find each stuck dot's clear spot, put every dot back, and let glide() take it there */
@@ -1612,7 +1564,7 @@
         easeOffLines();    // a layout cut short (a slow computer) can stop with a dot on a line: ease it off, no jump
         // the first time the map comes to rest, frame it as it ended up (the early fit happens mid-glide); a
         // slow camera move, and not if you have already zoomed, panned or opened something
-        if (!S.restFit) { S.restFit = true; if (!S.userMovedView && !calmView()) smoothFit(T(900), 90); }
+        if (!S.restFit) { S.restFit = true; if (!S.userMovedView && !calmView() && !allInView(40)) smoothFit(T(1400), 90); }
       })
       // the layout stops when it has come to rest (alpha below ALPHA_REST), not on a clock: every pull fades
       // with it (see energy), so the last moments are a slow glide and nothing jumps when it stops
@@ -2464,9 +2416,15 @@
       if (S.firstGraph && rf && rf.anchorOf) {
         // a fresh map: each dot starts close to its region (a fixed scatter from its id), not in a spiral at the
         // centre, so the layout is a short glide into place instead of every dot crossing the map
-        for (const n of next.values()) {
-          if (n.__home || n.fx !== undefined || n.type === 'fragment') continue;
-          const a = rf.anchorOf(n), h = strHash(n.id), ang = ((h % 360) / 360) * Math.PI * 2, r = 2 + (h % 7);
+        const seen = new Map();
+        for (const n of [...next.values()].sort((p, q) => (p.id < q.id ? -1 : 1))) {
+          if (n.__home && n.type !== 'fragment') { n.x = n.__home[0]; n.y = n.__home[1]; n.vx = 0; n.vy = 0; continue; }
+          if (n.fx !== undefined || n.type === 'fragment') continue;
+          // an even sunflower spiral around its region's middle (order fixed by id), spaced wider than a dot,
+          // so no two dots start on top of each other and bounce apart
+          const a = rf.anchorOf(n), key = a.x.toFixed(2) + ',' + a.y.toFixed(2), i = (seen.get(key) || 0);
+          seen.set(key, i + 1);
+          const ang = i * 2.39996 + (strHash(key) % 360) * (Math.PI / 180), r = 7 * Math.sqrt(i + 0.5);
           n.x = a.x + Math.cos(ang) * r; n.y = a.y + Math.sin(ang) * r; n.vx = 0; n.vy = 0;
         }
         for (const n of next.values()) {
@@ -2492,15 +2450,21 @@
   }
 
   // ---------- dots you placed yourself: pinned where you dropped them, kept on this computer ----------
-  let pins = LS.get('pins', {}) || {};
-  const savePins = () => LS.set('pins', pins);
+  // Placed dots, as an offset from their region's middle (regions move as the library grows; a placed dot moves
+  // with its region). Older versions saved map coordinates under 'pins', which pinned regions into odd shapes:
+  // those are dropped.
+  let pins = LS.get('pinsRel', {}) || {};
+  const savePins = () => LS.set('pinsRel', pins);
+  try { localStorage.removeItem('rb.pins'); } catch { /* ignore */ }
   // A placed dot isn't frozen: it gets a home where you dropped it and a spring back to it (regionForce), so
   // it still sways with its neighbours and links when the layout moves, but settles where you put it.
   function pinNode(n, x, y) {
     n.__home = [x, y]; n.__userPin = true;
     n.fx = undefined; n.fy = undefined; delete n.__tmpPin;  // the drag held it; now the spring does
-    pins[n.id] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
-    savePins(); reanchor(); kick(200);
+    const rf = fg && fg.d3Force('regions'), a = rf && rf.regionAnchorOf ? rf.regionAnchorOf(n) : { x: 0, y: 0 };
+    n.__pinRel = [Math.round((x - a.x) * 10) / 10, Math.round((y - a.y) * 10) / 10];
+    pins[n.id] = n.__pinRel;
+    savePins(); kick(200);
   }
   /** Re-place the region anchors (a region you mostly placed by hand is anchored where you put it). */
   function reanchor() {
@@ -2510,13 +2474,13 @@
   function unpinNode(n) {
     delete pins[n.id]; savePins();
     if (!n) return;
-    n.__userPin = false; delete n.__home;
+    n.__userPin = false; delete n.__home; delete n.__pinRel;
     reanchor();
     if (fg) fg.d3ReheatSimulation();
   }
   function unpinAll() {
     pins = {}; savePins();
-    for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; delete n.__home; }
+    for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; delete n.__home; delete n.__pinRel; }
     reanchor();
     if (fg) fg.d3ReheatSimulation();
     toast('Every dot moves freely again', 'ok');
@@ -2555,7 +2519,10 @@
   function restoreNodePin(n) {
     const p = pins[n.id];
     if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
-    n.x = p[0]; n.y = p[1]; n.vx = 0; n.vy = 0; n.__home = [p[0], p[1]]; n.__userPin = true;
+    // its home is set from its region's middle when the regions are laid out (regionForce)
+    n.__pinRel = [p[0], p[1]]; n.__userPin = true; n.vx = 0; n.vy = 0;
+    const rf = fg && fg.d3Force('regions'), a = rf && rf.regionAnchorOf ? rf.regionAnchorOf(n) : null;
+    if (a) { n.__home = [a.x + p[0], a.y + p[1]]; n.x = n.__home[0]; n.y = n.__home[1]; }
   }
 
   // ---------- zoom limit: you can zoom in until there would be nothing left on screen ----------
@@ -2611,6 +2578,17 @@
   // screen, in step with the zoom.
   let fitAnim = null;
   function stopFit() { if (fitAnim) { cancelAnimationFrame(fitAnim.raf); fitAnim = null; } }
+  /** whether every dot is on screen with this much margin (pixels) */
+  function allInView(margin = 0) {
+    if (!fg) return true;
+    const W = graphEl.clientWidth, H = graphEl.clientHeight;
+    for (const n of S.nodes.values()) {
+      if (!Number.isFinite(n.x) || nodeHidden(n.id)) continue;
+      const p = fg.graph2ScreenCoords(n.x, n.y);
+      if (p.x < margin || p.y < margin || p.x > W - margin || p.y > H - margin) return false;
+    }
+    return true;
+  }
   function smoothFit(ms = 600, pad = 70, filter = null) {
     if (!fg) return;
     const W = graphEl.clientWidth, H = graphEl.clientHeight;
