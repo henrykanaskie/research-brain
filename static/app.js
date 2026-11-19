@@ -2507,7 +2507,8 @@
     n.__pinRel = [Math.round((x - a.x) * 10) / 10, Math.round((y - a.y) * 10) / 10];
     pins[n.id] = n.__pinRel;
     savePins();
-    relayout({ alpha: 0.12, ms: 1300 });  // a gentle settle around where you dropped it, not a new layout
+    // nothing moves after you drop a dot: it, and the dots that trailed it, stay exactly where they are
+    kick(60);
   }
   /** Re-place the region anchors (a region you mostly placed by hand is anchored where you put it). */
   function reanchor() {
