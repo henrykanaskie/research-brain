@@ -332,6 +332,8 @@ details.abstract .md { margin-top: 8px; }
 .machine { background: var(--ground); border-left: 2px solid var(--machine); padding: 10px 14px 12px; margin-top: 12px; }
 .machine-head { display: flex; align-items: baseline; gap: 10px; color: var(--ink-2); font-size: 12px; margin-bottom: 6px; }
 .machine-head .stale { color: var(--red); }
+.machine-head .msg-copy { margin-left: auto; font-size: 12px; color: var(--ink-2); padding: 0 2px; min-height: 0; height: auto; }
+.machine-head .msg-copy:hover { color: var(--ink); }
 
 .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; }
 .seg button { all: unset; cursor: pointer; font: 12px var(--sans); color: var(--ink-2); padding: 0 9px; height: 24px; display: flex; align-items: center; }
@@ -402,8 +404,17 @@ details.abstract .md { margin-top: 8px; }
 .md pre { background: var(--ground); padding: 8px 10px; overflow-x: auto; border-radius: var(--r); }
 .md pre code { background: none; padding: 0; }
 .md blockquote { margin: 0 0 .65em; border-left: 2px solid var(--rule); padding-left: 12px; color: var(--ink-2); }
-.md table { border-collapse: collapse; margin: 0 0 .65em; font-size: 14px; }
-.md th, .md td { border: 1px solid var(--rule); padding: 3px 8px; }
+.md .md-table { max-width: 100%; overflow-x: auto; overflow-y: hidden; margin: 0 0 .65em; -webkit-overflow-scrolling: touch; }
+.md table { border-collapse: collapse; margin: 0 0 .65em; font-size: 14px; line-height: 1.4; }
+.md .md-table table { width: max-content; margin: 0; }  /* its natural width; the box around it scrolls sideways */
+.md th, .md td { border: 1px solid var(--rule); padding: 4px 9px; vertical-align: top; text-align: left;
+  overflow-wrap: normal; word-break: normal; min-width: 3.5em; max-width: 26em; }  /* whole words, never "Metho/d" */
+.md th { font: 600 12.5px/1.35 var(--sans); color: var(--ink-2); background: color-mix(in srgb, var(--ink) 4%, transparent); vertical-align: bottom; }
+.md th[align="center"], .md td[align="center"] { text-align: center; }
+.md th[align="right"], .md td[align="right"] { text-align: right; }
+.md td .katex, .md td code { white-space: nowrap; }
+.md del { color: var(--ink-2); }
+.md hr { border: 0; border-top: 1px solid var(--rule); margin: 1em 0; }
 .md hr { border: none; border-top: 1px solid var(--rule); }
 .md .katex { font-size: 1.04em; }
 .md .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; margin: .5em 0; }

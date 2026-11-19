@@ -2541,6 +2541,80 @@ def api_focus(nid: str, body: FocusIn):
     return {"label": label, "passages": rows, "pdf": root}
 
 
+_KIND_NAME = {"paper": "paper", "question": "research question", "note": "note", "fragment": "highlight"}
+
+
+def _connections(idx: dict, nid: str, by_id: dict) -> tuple[list[tuple[str, list[str]]], list[str]]:
+    """How a note is connected on the student's map: ([(other id, [how])], the research questions among them).
+    Links the student made (either direction), [[mentions]], citations, and open questions whose kept evidence
+    comes from it. `by_id` is what the AI may see, so private notes never appear."""
+    n = by_id.get(nid)
+    if not n:
+        return [], []
+    how: dict[str, list[str]] = {}
+
+    def add(oid: str, why: str) -> None:
+        o = by_id.get(oid)
+        if not o or oid == nid or (o["type"] == "fragment" and o.get("parent") == nid):
+            return
+        if o["type"] == "fragment" and o.get("parent") in by_id:  # a highlight stands for its paper here
+            oid = o["parent"]
+            if oid == nid:
+                return
+        if why not in how.setdefault(oid, []):
+            how[oid].append(why)
+    mine = {nid} | {o["id"] for o in by_id.values() if o["type"] == "fragment" and o.get("parent") == nid}
+    for o in by_id.values():
+        if o["id"] in mine:
+            for t in o.get("links") or []:
+                add(t, "linked by the student")
+            for t in o.get("cites") or []:
+                add(t, "this paper cites it")
+        else:
+            if mine & set(o.get("links") or []):
+                add(o["id"], "linked by the student")
+            if mine & set(o.get("cites") or []):
+                add(o["id"], "it cites this paper")
+    try:
+        mentions = _wiki(idx)["mentions"]
+    except Exception:
+        mentions = {}
+    for src, targets in mentions.items():
+        if src in mine:
+            for t in targets:
+                add(t, "mentioned in the student's notes on it")
+        elif mine & set(targets):
+            add(src, "mentions it")
+    for qid, q in by_id.items():
+        if not questions_mod.is_question(q):
+            continue
+        try:
+            data = questions_mod.load(store, qid)
+        except Exception:
+            continue
+        for i in data.get("items") or []:
+            if i.get("verdict") not in questions_mod.KEPT:
+                continue
+            ref = (i.get("ref") or {}).get("note") or ""
+            if ref in mine:
+                quote = " ".join(str(i.get("text") or "").split())[:300]
+                add(qid, f"evidence the student kept for this question ({i['verdict']})" + (f': "{quote}"' if quote else ""))
+    rows = sorted(how.items(), key=lambda kv: (by_id[kv[0]]["type"] != "question", by_id[kv[0]]["title"].lower()))
+    return rows[:40], [oid for oid, _ in rows if by_id[oid]["type"] == "question"]
+
+
+def _connections_text(idx: dict, nid: str, by_id: dict, questions_in_full: bool = True) -> str:
+    rows, qs = _connections(idx, nid, by_id)
+    if not rows:
+        return ""
+    lines = [f"- [[{oid}]] {by_id[oid]['title']} ({_KIND_NAME.get(by_id[oid]['type'], by_id[oid]['type'])}): "
+             + "; ".join(why) for oid, why in rows]
+    out = "\n".join(lines)
+    if questions_in_full and qs:
+        out += "\n\nTHE RESEARCH QUESTIONS IT IS LINKED TO:\n\n" + "\n\n".join(_describe(by_id[q], with_text=False) for q in qs[:6])
+    return out
+
+
 def _chat_context(idx: dict, q: str, history: list[dict], summary: str = "", allowed: set | None = None,
                   overview: str = "", public_only: bool = False) -> tuple[str, list[dict], list[dict]]:
     """(context for Claude, sources [{id,title,score}], passages [{id,title,page,text,score}]).
@@ -2590,12 +2664,25 @@ def _chat_context(idx: dict, q: str, history: list[dict], summary: str = "", all
             break
         room -= len(block)
         nblocks.append(block)
+    # how the top notes are connected on the map (links, mentions, citations, research questions), so "how does
+    # X relate to Y" can be answered from what the student linked, not only from similar text
+    crow = []
+    if not public_only:
+        vis = _ai_visible(idx["by_id"])  # connections reach past an attached scope (a linked question you didn't attach)
+        for nid in list(dict.fromkeys([nid for nid, _ in notes] + [p["id"] for p in hits]))[:6]:
+            t = _connections_text(idx, nid, vis, questions_in_full=allowed is not None)
+            if t and room - len(t) > 0:
+                room -= len(t)
+                crow.append(f"[[{nid}]] {by_id[nid]['title']} is connected to:\n{t}")
     hist = _history_text(history, summary)
     parts = [overview] if overview else []
     if pblocks:
         parts.append("RELEVANT PASSAGES (most relevant first; each heading is how to cite it):\n\n" + "\n\n".join(pblocks))
     if nblocks:
         parts.append("RELEVANT NOTES (whole-note overview):\n\n" + "\n\n".join(nblocks))
+    if crow:
+        parts.append("HOW THESE ARE CONNECTED ON THE STUDENT'S MAP (links they made, mentions, citations, research "
+                     "questions; use these when asked how things relate):\n\n" + "\n\n".join(crow))
     try:  # idea cards the user confirmed (app/cards.py), privacy-filtered
         if public_only:
             raise LookupError  # cards are the student's own picks: not in a public-only context
@@ -2637,6 +2724,8 @@ PAPER_CHAT_INSTRUCTION = (
     "about that paper: explain, critique, derive, compare with what they wrote, or help them think it through. Cite "
     "the paper's text inline exactly as the headings show ([[note-id]] p. N, [[note-id]] §3.2, or [[note-id]]); never "
     "invent pages. If RELATED PAPERS are included, cite them the same way and keep clear which paper says what. "
+    "When asked how the paper relates to a research question or another note, use its connections on the map "
+    "(the HOW THE FOCUS PAPER IS CONNECTED section) and explain the link from the paper's content. "
     "Label your own general knowledge as such, and say plainly when the paper doesn't address something. Be concise "
     "unless asked to go deep.")
 
@@ -2673,6 +2762,12 @@ def _paper_chat_context(idx: dict, pid: str, q: str, history: list[dict], includ
     full_cap = budget.get("paper_full_chars")
     head = _describe(paper, with_text=False)
     parts.append("FOCUS PAPER:\n\n" + head)
+    conn = _connections_text(idx, pid, by_id)
+    if conn:
+        parts.append("HOW THE FOCUS PAPER IS CONNECTED ON THE STUDENT'S MAP (links they made, mentions, citations, "
+                     "and research questions it is evidence for; use these when asked how it relates to something):\n\n"
+                     + conn)
+        room -= len(conn)
     text = _fulltext_needed(pid)
     hits: list[dict] = []
     if text and len(text) <= full_cap:

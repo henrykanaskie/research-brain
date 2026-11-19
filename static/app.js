@@ -485,7 +485,9 @@
    * are swapped for inert placeholders before marked runs, then restored afterwards.
    */
   function renderMD(src, { inline = false } = {}) {
-    if (window.LatexEditor) return window.LatexEditor.render(src, { inline, transform: citeSub });
+    // a table sits in its own box that scrolls sideways, so it keeps its natural width in a narrow panel
+    if (window.LatexEditor) return window.LatexEditor.render(src, { inline, transform: citeSub })
+      .replace(/<table>/g, '<div class="md-table"><table>').replace(/<\/table>/g, '</table></div>');
     // only if latex-editor.js failed to load: the text itself, escaped, so nothing is lost or unsafe
     const out = esc(String(src ?? '')).replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>');
     return inline ? out : `<p>${out}</p>`;
@@ -495,7 +497,9 @@
   function latex(ta, preview, mode = 'markdown') {
     try { if (window.Wikilinks) window.Wikilinks.attach(ta, { nodes: () => S.nodes.values(), self: () => (S.cur && ta.closest('#panel') ? S.cur.id : null) }); } catch (e) { console.warn('Wikilinks.attach failed', e); }
     if (!window.LatexEditor) return null;
-    try { return window.LatexEditor.attach(ta, { preview, mode, render: (src) => renderMD(src) }); }
+    // the preview shows only while what you type has math in it: plain writing reads fine as it is
+    const hasMath = (src) => mode === 'math' ? !!String(src || '').trim() : /\$|\\\(|\\\[|\\begin\{/.test(String(src || ''));
+    try { return window.LatexEditor.attach(ta, { preview, mode, render: (src) => (hasMath(src) ? renderMD(src) : '') }); }
     catch (e) { console.warn('LatexEditor.attach failed', e); return null; }
   }
 
@@ -662,7 +666,7 @@
   /** how strong the float is now: grows in with the glide, holds, then fades to 0 (and stays 0) */
   function floatLevel(now = performance.now()) {
     const tw = motion.tween;
-    if (tw) return easeInOut(Math.min(1, (now - tw.t0) / tw.ms));
+    if (tw && !tw.quiet) return easeInOut(Math.min(1, (now - tw.t0) / tw.ms));
     if (!motion.restAt) return 0;
     const t = (now - motion.restAt - FLOAT_HOLD) / FLOAT_FADE;
     return t <= 0 ? 1 : t >= 1 ? 0 : 1 - easeInOut(t);
@@ -720,7 +724,10 @@
         const a = tw.from.get(n) || b;
         n.x = a[0] + (b[0] - a[0]) * e; n.y = a[1] + (b[1] - a[1]) * e;
       }
-      if (t >= 1) { motion.tween = null; motion.restAt = now; S.settledOnce = true; S.stops = (S.stops || 0) + 1; }
+      if (t >= 1) {
+        motion.tween = null;
+        if (!tw.quiet) { motion.restAt = now; S.settledOnce = true; S.stops = (S.stops || 0) + 1; }
+      }
       kick(60);
     } else if (floating() && now - motion.lastKick > 33) {
       motion.lastKick = now; kick(20);  // the float is slow: about 30 frames a second is plenty
@@ -808,7 +815,7 @@
   /** quadratic Bézier point; control point comes from force-graph's own curvature calc */
   /** Fibre-tract geometry: links inside a region bow toward the region's centre, links between
    *  regions sweep through the middle of the brain, so connections bundle like white-matter tracts. */
-  function linkGeom(l) {
+  function linkGeom(l, route = true) {
     // Circuit traces: every link is routed octilinearly (straight runs joined by one 45-degree
     // diagonal), like a trace on a circuit board. Where the straight run splits varies per link so
     // parallel traces separate instead of sitting on top of each other.
@@ -838,12 +845,139 @@
       const run = ay - ax, a = y0 + sy * run * f;
       pts = [x0, y0, x0, a, x1, a + sy * ax, x1, y1];
     }
+    if (route && l.kind !== 'part' && !S.noRoute) pts = routeAround(pts, l, f);
     if (sd) pts.unshift(sd.x, sd.y);
     if (td) pts.push(td.x, td.y);
     const seg = [];
     let total = 0;
     for (let i = 0; i + 3 < pts.length; i += 2) { const d = Math.hypot(pts[i + 2] - pts[i], pts[i + 3] - pts[i + 1]); seg.push(d); total += d; }
     return { x0: pts[0], y0: pts[1], x1: pts[pts.length - 2], y1: pts[pts.length - 1], pts, seg, total: total || 1, sd, td };
+  }
+  /** The dots on the map this frame, in a coarse grid, so a trace can find the dots near it quickly. */
+  const traceGrid = { frame: -1, cell: 40, map: new Map() };
+  function dotsNear(x0, y0, x1, y1) {
+    const G = traceGrid;
+    if (G.frame !== S.frame) {
+      G.frame = S.frame; G.map.clear();
+      for (const n of S.nodes.values()) {
+        if (n.type === 'fragment' || !Number.isFinite(n.x) || !Number.isFinite(n.y) || nodeHidden(n.id)) continue;
+        const key = Math.floor(n.x / G.cell) + ',' + Math.floor(n.y / G.cell);
+        (G.map.get(key) || G.map.set(key, []).get(key)).push(n);
+      }
+    }
+    const out = [], pad = 12;
+    for (let cx = Math.floor((x0 - pad) / G.cell); cx <= Math.floor((x1 + pad) / G.cell); cx++)
+      for (let cy = Math.floor((y0 - pad) / G.cell); cy <= Math.floor((y1 + pad) / G.cell); cy++) {
+        const b = G.map.get(cx + ',' + cy); if (b) out.push(...b);
+      }
+    return out;
+  }
+  const segDist2 = (P, x, y) => {
+    let best = Infinity;
+    for (let i = 0; i + 3 < P.length; i += 2) {
+      const ax = P[i], ay = P[i + 1], vx = P[i + 2] - ax, vy = P[i + 3] - ay, L2 = vx * vx + vy * vy;
+      let t = L2 ? ((x - ax) * vx + (y - ay) * vy) / L2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = x - ax - vx * t, dy = y - ay - vy * t, d2 = dx * dx + dy * dy;
+      if (d2 < best) best = d2;
+    }
+    return best;
+  };
+  /** The trace's other octilinear shapes between the same two ends: the diagonal earlier or later along it, or
+   *  split in two around a straight middle. */
+  function traceShapes(x0, y0, x1, y1, f) {
+    const dx = x1 - x0, dy = y1 - y0, ax = Math.abs(dx), ay = Math.abs(dy), sx = Math.sign(dx) || 1, sy = Math.sign(dy) || 1;
+    const out = [];
+    const splits = [f, 0, 1, 0.15, 0.85, 0.3, 0.7, 0.5];
+    if (ax >= ay) {
+      const run = ax - ay;
+      for (const q of splits) { const a = x0 + sx * run * q; out.push([x0, y0, a, y0, a + sx * ay, y1, x1, y1]); }
+      for (const q of [0.5, 0.25, 0.75]) { const d = ay * q; out.push([x0, y0, x0 + sx * d, y0 + sy * d, x0 + sx * (d + run), y0 + sy * d, x1, y1]); }
+    } else {
+      const run = ay - ax;
+      for (const q of splits) { const a = y0 + sy * run * q; out.push([x0, y0, x0, a, x1, a + sy * ax, x1, y1]); }
+      for (const q of [0.5, 0.25, 0.75]) { const d = ax * q; out.push([x0, y0, x0 + sx * d, y0 + sy * d, x0 + sx * d, y0 + sy * (d + run), x1, y1]); }
+    }
+    return out;
+  }
+  /** A trace that runs under a dot that isn't one of its own ends goes around it. First it tries its other
+   *  shapes (the diagonal moved along, or split around a straight middle) and takes the first that misses every
+   *  dot, keeping the shape it had while that still works so it doesn't flip as dots float. If none do, it steps
+   *  around the dot: a jog out to the side, a straight run past it, and a jog back. */
+  function routeAround(pts, l, f) {
+    const x0 = pts[0], y0 = pts[1], x1 = pts[pts.length - 2], y1 = pts[pts.length - 1];
+    const near = dotsNear(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1))
+      .filter((d) => d !== l.source && d !== l.target);
+    if (!near.length) { l.__shape = 0; return pts; }
+    const clear = (P, slack) => near.every((d) => segDist2(P, d.x, d.y) >= (nodeRadius(d) + slack) ** 2);
+    if (clear(pts, 1.2)) { l.__shape = 0; return pts; }
+    const shapes = traceShapes(x0, y0, x1, y1, f);
+    if (l.__shape && shapes[l.__shape] && clear(shapes[l.__shape], 1.2)) return shapes[l.__shape];
+    for (let i = 1; i < shapes.length; i++) if (clear(shapes[i], 2.2)) { l.__shape = i; return shapes[i]; }
+    l.__shape = 0;
+    return jogAround(pts, l, near);
+  }
+  /** Step a trace around the dots on it: dots close together share one jog, the jog clears any dot beside the
+   *  line too, and it takes the side that needs the smaller step. Where there's no room for 45-degree ramps
+   *  (a short run, a dot at a bend) the ramps get steeper. */
+  function jogAround(pts, l, dots) {
+    const out = [pts[0], pts[1]];
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const ax = pts[i], ay = pts[i + 1], bx = pts[i + 2], by = pts[i + 3], len = Math.hypot(bx - ax, by - ay);
+      if (len < 1e-6) { out.push(bx, by); continue; }
+      const ux = (bx - ax) / len, uy = (by - ay) / len, nx = -uy, ny = ux;
+      const near = [];
+      for (const d of dots) {
+        const c = nodeRadius(d) + 2.2, rx = d.x - ax, ry = d.y - ay, along = rx * ux + ry * uy, e = rx * nx + ry * ny;
+        if (along < -c || along > len + c) continue;
+        near.push({ d, along, e, c });
+      }
+      // on this run: the dots it passes through (a dot just past a bend counts for the run it overlaps)
+      const hits = near.filter((h) => Math.abs(h.e) < h.c && h.along > -h.c * 0.6 && h.along < len + h.c * 0.6)
+        .sort((p, q) => p.along - q.along);
+      if (!hits.length) { out.push(bx, by); continue; }
+      const groups = [];
+      for (const h of hits) {
+        const g = groups[groups.length - 1];
+        if (g && h.along - h.c < g.hi + 2) { g.hi = Math.max(g.hi, h.along + h.c); g.m.push(h); }
+        else groups.push({ lo: h.along - h.c, hi: h.along + h.c, m: [h] });
+      }
+      if (!l.__side) l.__side = new Map();
+      let at = 0;
+      for (const g of groups) {
+        // how far out the run has to sit on one side to clear every dot beside it
+        const solve = (side) => {
+          let off = side > 0 ? Math.max(...g.m.map((h) => h.e + h.c)) : Math.min(...g.m.map((h) => h.e - h.c));
+          let lo = g.lo, hi = g.hi;
+          for (let it = 0; it < 6; it++) {
+            let moved = false;
+            for (const h of near) {
+              if (h.along + h.c <= lo || h.along - h.c >= hi) continue;
+              const blocks = side > 0 ? h.e - h.c < off && h.e + h.c > off : h.e + h.c > off && h.e - h.c < off;
+              if (blocks) { off = side > 0 ? h.e + h.c : h.e - h.c; lo = Math.min(lo, h.along - h.c); hi = Math.max(hi, h.along + h.c); moved = true; }
+            }
+            if (!moved) break;
+          }
+          return { off, lo, hi };
+        };
+        const Pj = solve(1), Nj = solve(-1), key = g.m[0].d.id;
+        let side = Math.abs(Pj.off) <= Math.abs(Nj.off) ? 1 : -1;
+        const prev = l.__side.get(key);
+        if (prev && prev !== side && Math.abs((prev > 0 ? Pj : Nj).off) < 1.6 * Math.abs((side > 0 ? Pj : Nj).off)) side = prev;
+        l.__side.set(key, side);
+        const { off } = side > 0 ? Pj : Nj, H = Math.abs(off);
+        const lo = Math.max(at, (side > 0 ? Pj : Nj).lo), hi = Math.min(len, (side > 0 ? Pj : Nj).hi);
+        if (hi - lo < 0.5) continue;
+        const s0 = Math.max(at, lo - H), s3 = Math.min(len, hi + H);
+        const P = (u, o) => out.push(ax + ux * u + nx * o, ay + uy * u + ny * o);
+        if (s0 < lo) P(s0, 0);
+        P(lo, off); P(hi, off);
+        if (s3 > hi) P(s3, 0);
+        at = s3;
+      }
+      out.push(bx, by);
+    }
+    return out;
   }
   function updateCentroids() {
     const sums = new Map(); let ax = 0, ay = 0, an = 0;
@@ -1394,7 +1528,7 @@
       const geoms = [];
       for (const l of S.links || []) {
         if (l.kind === 'part' || !linkShown(l)) continue;
-        const g = linkGeom(l);
+        const g = linkGeom(l, false);
         if (!g) continue;
         const P = g.pts;
         let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
@@ -1480,7 +1614,7 @@
             n.x = x; n.y = y;
             let k = 0;
             for (const l of own.get(n.id) || []) {
-              const g = linkGeom(l);
+              const g = linkGeom(l, false);
               if (!g) continue;
               const a = lid(l.source), b = lid(l.target);
               for (const m of dots) if (m.id !== a && m.id !== b && nearest(g.pts, m.x, m.y)[0] < (nodeRadius(m) + 0.5) ** 2) k++;
@@ -1601,7 +1735,7 @@
       // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
       .onRenderFramePre((ctx, k) => {
-        S.k = k; S.partLayout = new Map();
+        S.k = k; S.partLayout = new Map(); S.frame = (S.frame || 0) + 1;
         S.labelBoxes = []; S.labelJobs = []; S.dots = [];
         const moving = stepAlphas();
         if (stepCards(ctx, k) || moving) kick(60);
@@ -2049,7 +2183,11 @@
     // the visible map: not under the note panel or the chat on the right
     const open = (el) => (el && !el.hidden ? el.offsetWidth : 0);
     const panelW = open($('#panel')) + open($('#chat'));
-    const a = fg.screen2GraphCoords(0, 0), b = fg.screen2GraphCoords(Math.max(40, graphEl.clientWidth - panelW), graphEl.clientHeight);
+    // and not under the legend along the bottom
+    const lg = $('#legend'), gr = graphEl.getBoundingClientRect();
+    let bottom = graphEl.clientHeight;
+    if (lg && lg.offsetParent && lg.offsetHeight) bottom = Math.max(80, Math.min(bottom, lg.getBoundingClientRect().top - gr.top));
+    const a = fg.screen2GraphCoords(0, 0), b = fg.screen2GraphCoords(Math.max(40, graphEl.clientWidth - panelW), bottom);
     return { x0: a.x, y0: a.y, x1: b.x, y1: b.y, k };
   }
   function wrapLines(ctx, text, maxW, maxLines) {
@@ -2135,6 +2273,76 @@
     if (mn === t) return [0, -(t + c)];
     return [0, b + c];
   }
+  /** Where the open cards send the dots under them (offsets, graph units): out past the card's edge, and then
+   *  apart from each other, so a dot moved aside never lands on another dot (a dot it would land on makes room
+   *  too). Dots the cards don't touch keep their place. */
+  function cardTargets(open, owners, k) {
+    const out = new Map(), pushed = [];
+    for (const m of S.nodes.values()) {
+      if (!Number.isFinite(m.x) || !Number.isFinite(m.y) || owners.has(m.id) || nodeHidden(m.id)) continue;
+      let tx = 0, ty = 0;
+      for (const c of open) {
+        const d = cardPush(m, c.L, k);
+        if (d) { const e = ease3(c.p); tx += d[0] * e; ty += d[1] * e; }
+      }
+      if (tx || ty) { out.set(m, [tx, ty]); if (m.type !== 'fragment') pushed.push(m); }
+    }
+    if (!pushed.length) return out;
+    // the dots near the pushed ones (a pushed dot can only land among these)
+    let reach = 0;
+    for (const m of pushed) { const t = out.get(m); reach = Math.max(reach, Math.hypot(t[0], t[1])); }
+    reach += 30 / k;
+    const near = [];
+    for (const m of S.nodes.values()) {
+      if (m.type === 'fragment' || owners.has(m.id) || nodeHidden(m.id) || !Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
+      if (pushed.some((p) => Math.abs(p.x - m.x) < reach && Math.abs(p.y - m.y) < reach)) near.push(m);
+    }
+    const ownerDots = [...owners].map((id) => S.nodes.get(id)).filter(Boolean);
+    const gap = 3 / k, rad = (m) => (m.__outer || drawnRadius(m, k));
+    const pos = (m) => { const t = out.get(m); return t ? [m.x + t[0], m.y + t[1]] : [m.x, m.y]; };
+    const nudge = (m, dx, dy) => { const t = out.get(m) || [0, 0]; out.set(m, [t[0] + dx, t[1] + dy]); };
+    for (let it = 0; it < 8; it++) {
+      let any = false;
+      for (let i = 0; i < near.length; i++) {
+        const a = near[i];
+        for (let j = i + 1; j < near.length; j++) {
+          const b = near[j];
+          if (!out.has(a) && !out.has(b)) continue;  // neither moved: the layout already keeps them apart
+          const [ax, ay] = pos(a), [bx, by] = pos(b), min = rad(a) + rad(b) + gap;
+          let dx = bx - ax, dy = by - ay;
+          if (Math.abs(dx) >= min || Math.abs(dy) >= min) continue;
+          let d = Math.hypot(dx, dy);
+          if (d >= min) continue;
+          if (d < 1e-6) { dx = 1; dy = 0; d = 1; }
+          const push = (min - d) / d;
+          // the dot that was pushed gives way less than the one it landed on, which makes room
+          const wa = out.has(a) && out.has(b) ? 0.5 : out.has(a) ? 0.35 : 0.65;
+          nudge(a, -dx * push * wa, -dy * push * wa);
+          nudge(b, dx * push * (1 - wa), dy * push * (1 - wa));
+          any = true;
+        }
+        // and nobody goes back under a card, or onto the hovered dot itself
+        const [px, py] = pos(a);
+        for (const c of open) {
+          const at = Object.create(a); at.x = px; at.y = py;  // the dot, where it's headed
+          const d = cardPush(at, c.L, k);
+          if (d) { nudge(a, d[0], d[1]); any = true; }
+        }
+        for (const o of ownerDots) {
+          const [qx, qy] = pos(a), dx = qx - o.x, dy = qy - o.y, d = Math.hypot(dx, dy) || 1, min = rad(a) + rad(o) + gap;
+          if (d < min) { nudge(a, dx / d * (min - d), dy / d * (min - d)); any = true; }
+        }
+      }
+      if (!any) break;
+    }
+    // a highlight dot moves with its paper
+    for (const m of S.nodes.values()) {
+      if (m.type !== 'fragment' || !m.parent) continue;
+      const p = S.nodes.get(m.parent), t = p && out.get(p);
+      if (t) out.set(m, t);
+    }
+    return out;
+  }
   /** Once per frame (onRenderFramePre): open and close cards, and ease the dots under them aside. */
   function stepCards(ctx, k) {
     const now = performance.now();
@@ -2164,15 +2372,10 @@
     const owners = new Set(open.map((c) => c.id));
     const kn = rm ? 1 : 1 - Math.exp(-dt / 45);  // the dots follow the card's own curve, a touch behind
     const shifted = [];
+    const tgt = open.length ? cardTargets(open, owners, k) : null;
     for (const m of S.nodes.values()) {
       if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
-      let tx = 0, ty = 0;
-      if (open.length && !owners.has(m.id) && !nodeHidden(m.id)) {
-        for (const c of open) {
-          const d = cardPush(m, c.L, k);
-          if (d) { const e = ease3(c.p); tx += d[0] * e; ty += d[1] * e; }
-        }
-      }
+      const t = tgt && tgt.get(m), tx = t ? t[0] : 0, ty = t ? t[1] : 0;
       const ox = m.__dx || 0, oy = m.__dy || 0;
       if (!tx && !ty && !ox && !oy) continue;
       let nx = ox + (tx - ox) * kn, ny = oy + (ty - oy) * kn;
@@ -2247,23 +2450,24 @@
       const x1 = L.x0 + L.w, fold = 11 * px;
       ctx.beginPath(); ctx.moveTo(x1 - fold, L.y0); ctx.lineTo(x1 - fold, L.y0 + fold); ctx.lineTo(x1, L.y0 + fold); ctx.closePath();
       ctx.fillStyle = rgba(C.ink, 0.07); ctx.fill(); ctx.stroke();
-      // kind · year · notes, the title, the authors
-      const x = L.x0 + T.pad * px;
-      let y = L.y0 + T.pad * px;
+      // kind · year · notes, the title, the authors. Drawn at the size they were measured at, with the canvas
+      // scaled instead: Newsreader picks wider letter shapes at small font sizes, so a title set at 15px/zoom
+      // ran past the card's edge
+      ctx.translate(L.x0 + T.pad * px, L.y0 + T.pad * px); ctx.scale(px, px);
+      let y = 0;
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      const scaled = (f) => f.replace(/([\d.]+)px/, (_, v) => `${v * px}px`);
-      ctx.font = scaled(CARD_FONT.kick);
-      if ('letterSpacing' in ctx) ctx.letterSpacing = `${0.8 * px}px`;
-      ctx.fillStyle = C.ink3; ctx.fillText(T.kick, x, y);
+      ctx.font = CARD_FONT.kick;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0.8px';
+      ctx.fillStyle = C.ink3; ctx.fillText(T.kick, 0, y);
       if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
-      ctx.fillStyle = C.red; ctx.fillRect(x, y + 13 * px, 16 * px, 1.1 * px);
-      y += 17 * px;
-      ctx.font = scaled(CARD_FONT.title); ctx.fillStyle = C.ink;
-      for (const line of T.lines) { ctx.fillText(line, x, y); y += 18.5 * px; }
+      ctx.fillStyle = C.red; ctx.fillRect(0, y + 13, 16, 1.1);
+      y += 17;
+      ctx.font = CARD_FONT.title; ctx.fillStyle = C.ink;
+      for (const line of T.lines) { ctx.fillText(line, 0, y); y += 18.5; }
       if (T.by) {
-        y += 5 * px;
-        ctx.font = scaled(CARD_FONT.by); ctx.fillStyle = C.ink2;
-        ctx.fillText(T.by, x, y);
+        y += 5;
+        ctx.font = CARD_FONT.by; ctx.fillStyle = C.ink2;
+        ctx.fillText(T.by, 0, y);
       }
       ctx.restore();
     }
@@ -2500,7 +2704,37 @@
   try { localStorage.removeItem('rb.pins'); } catch { /* ignore */ }
   // A placed dot isn't frozen: it gets a home where you dropped it and a spring back to it (regionForce), so
   // it still sways with its neighbours and links when the layout moves, but settles where you put it.
+  /** The nearest spot to (x, y) where dot n doesn't overlap any other dot: (x, y) itself when it's clear. */
+  function clearSpot(n, x, y) {
+    const r = nodeRadius(n), others = [];
+    for (const m of S.nodes.values()) {
+      if (m === n || m.type === 'fragment' || !Number.isFinite(m.x) || !Number.isFinite(m.y) || nodeHidden(m.id)) continue;
+      others.push([m.x, m.y, r + nodeRadius(m) + 2]);
+    }
+    const free = (px, py) => others.every(([mx, my, d]) => (px - mx) ** 2 + (py - my) ** 2 >= d * d);
+    if (free(x, y)) return [x, y];
+    for (let ring = 1; ring <= 120; ring++) {
+      const rad = ring * 1.5, steps = Math.max(12, Math.round(rad * 1.2));
+      let best = null;
+      for (let i = 0; i < steps; i++) {
+        const a = (i / steps) * 2 * Math.PI, px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
+        if (free(px, py)) { best = [px, py]; break; }
+      }
+      if (best) return best;
+    }
+    return [x, y];
+  }
   function pinNode(n, x, y) {
+    // dropped on another dot: it slides the short way to the nearest clear spot (a quiet glide: nothing else moves)
+    const [cx, cy] = clearSpot(n, x, y);
+    if (cx !== x || cy !== y) {
+      const ms = T(240);
+      if (ms > 1) {
+        motion.tween = { from: new Map([[n, [n.x, n.y]]]), to: new Map([[n, [cx, cy]]]), t0: performance.now(), ms, quiet: true };
+        runMotion();
+      } else { n.x = cx; n.y = cy; }
+      x = cx; y = cy;
+    }
     n.__home = [x, y]; n.__userPin = true;
     n.fx = undefined; n.fy = undefined; delete n.__tmpPin;  // the drag held it; now the spring does
     const rf = fg && fg.d3Force('regions'), a = rf && rf.regionAnchorOf ? rf.regionAnchorOf(n) : { x: 0, y: 0 };
@@ -3771,6 +4005,26 @@
     else if (S.linkFrom) endLinkMode();
   });
   window.addEventListener('wheel', closeNodeMenu, { passive: true });
+  /** Copy text to the clipboard: the async clipboard where it's allowed, else a hidden field and the copy command. */
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* below */ }
+    const ta = h('textarea', { 'aria-hidden': 'true', style: 'position:fixed;left:-9999px;top:0;opacity:0' });
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  // Right-click on selected text: Copy. The Mac window's own right-click menu is empty (pywebview clears it),
+  // so without this there was no way to copy with the mouse
+  document.addEventListener('contextmenu', (e) => {
+    if (e.defaultPrevented || graphEl.contains(e.target)) return;
+    const f = e.target.closest && e.target.closest('textarea, input');
+    const text = f && typeof f.selectionStart === 'number' ? f.value.slice(f.selectionStart, f.selectionEnd) : String(window.getSelection() || '');
+    if (!text.trim()) return;
+    e.preventDefault();
+    closeNodeMenu();
+    showMenu('', [menuItem('Copy', null, () => { copyText(text).then((ok) => toast(ok ? 'Copied' : 'Could not copy: press Cmd+C (Ctrl+C) instead', ok ? 'ok' : 'info')); })], e);
+  });
 
   // "Link to…": the next dot you click is linked to this one
   let linkModeEl = null;
@@ -4040,6 +4294,17 @@
   // Chat
   // ======================================================================
   const chatLog = $('#chat-log');
+  // Follow the answer as it's written only while you're at the bottom: scroll up and the log stays where you
+  // put it (no pull back down with each new line, nor when the answer finishes); scroll back to the bottom to
+  // follow again
+  let chatFollow = true, chatTop = 0;
+  chatLog.addEventListener('wheel', (e) => { if (e.deltaY < 0) chatFollow = false; }, { passive: true });
+  chatLog.addEventListener('scroll', () => {
+    const gap = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight;
+    if (gap < 24) chatFollow = true;
+    else if (chatLog.scrollTop < chatTop - 1) chatFollow = false;
+    chatTop = chatLog.scrollTop;
+  }, { passive: true });
   function openChat() {
     $('#chat').hidden = false;
     document.body.classList.add('chat-open');
@@ -4361,13 +4626,16 @@
           m.sources.map((s) => h('button', { type: 'button', class: 'src', title: s.title, onclick: () => openNote(s.id, { center: true }) },
             h('span', { class: 'tdot ' + nodeType(s.id) }), h('span', { class: 't', text: s.title || s.id }),
             s.score != null ? h('span', { class: 's', text: Number(s.score).toFixed(2) }) : null))) : null;
+        const copyBtn = h('button', { class: 'btn btn-text btn-sm msg-copy', type: 'button', text: 'Copy', title: 'Copy this answer (as Markdown)',
+          onclick: () => copyText(m.content || '').then((ok) => { copyBtn.textContent = ok ? 'Copied' : 'Could not copy'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1600); }) });
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
-          h('div', { class: 'machine-head' }, h('span', { text: ai() })),
+          h('div', { class: 'machine-head' }, h('span', { text: ai() }), copyBtn),
           h('div', { class: 'msg-body md', html: renderMD(m.content) }), src, chatPassages(m))));
       }
     });
+    const keepTop = chatLog.scrollTop;
     chatLog.replaceChildren(...kids);
-    chatLog.scrollTop = chatLog.scrollHeight;
+    chatLog.scrollTop = chatFollow ? chatLog.scrollHeight : keepTop;  // scrolled up to read: stay there
     applyClaude($('#chat'));
     const send = $('#btn-chat-send');
     send.classList.toggle('busy', S.chatBusy);
@@ -4415,15 +4683,15 @@
     const pending = { role: 'assistant', pending: true, start: Date.now(), web: !!(S.chatGeneral && S.chatWeb && S.webAllowed) };
     S.chat.push(userMsg, pending);
     S.chatBusy = true;
+    chatFollow = true;  // a new question: follow its answer (scroll up at any time to stay where you are)
     renderChat();
     // paint only the live bubble while streaming, and keep the log pinned to the bottom unless scrolled up
     const live = streamRenderer((text) => {
       pending.live = text;
       const el = $$('.chat-live', chatLog).pop();
       if (!el) { renderChat(); return; }
-      const atEnd = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 40;
       el.innerHTML = partialMD(text);
-      if (atEnd) chatLog.scrollTop = chatLog.scrollHeight;
+      if (chatFollow) chatLog.scrollTop = chatLog.scrollHeight;
     });
     try {
       let r;
@@ -4999,7 +5267,7 @@
     });
   }
   // expose for debugging/tests
-  window.__rb = { S, renderMD, refreshGraph, openNote, linkGeom, relayout, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); } };
+  window.__rb = { S, renderMD, refreshGraph, openNote, linkGeom, relayout, nodeRadius, kick, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); } };
   // hooks for static/review.js and static/views.js (review mode, critique history, graph views)
   Object.assign(window.__rb, {
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
