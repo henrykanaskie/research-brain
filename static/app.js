@@ -4456,6 +4456,7 @@
     $('#chat').hidden = false;
     document.body.classList.add('chat-open');
     restoreChat(chatKey());
+    renderChatScope();  // the scope switch shows where you are as soon as it opens
     renderChat();
     setTimeout(() => $('#chat-input').focus(), 0);
   }
@@ -4773,10 +4774,18 @@
           m.sources.map((s) => h('button', { type: 'button', class: 'src', title: s.title, onclick: () => openNote(s.id, { center: true }) },
             h('span', { class: 'tdot ' + nodeType(s.id) }), h('span', { class: 't', text: s.title || s.id }),
             s.score != null ? h('span', { class: 's', text: Number(s.score).toFixed(2) }) : null))) : null;
-        const copyBtn = h('button', { class: 'btn btn-text btn-sm msg-copy', type: 'button', text: 'Copy', title: 'Copy this answer (as Markdown)',
-          onclick: () => copyText(m.content || '').then((ok) => { copyBtn.textContent = ok ? 'Copied' : 'Could not copy'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1600); }) });
+        const ICO_COPY = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg>';
+        const ICO_OK = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg>';
+        const copyBtn = h('button', { class: 'btn btn-icon msg-act msg-copy', type: 'button', html: ICO_COPY, title: 'Copy this answer (as Markdown)', 'aria-label': 'Copy',
+          onclick: () => copyText(m.content || '').then((ok) => {
+            copyBtn.innerHTML = ok ? ICO_OK : ICO_COPY; copyBtn.title = ok ? 'Copied' : 'Could not copy'; copyBtn.classList.toggle('done', ok);
+            setTimeout(() => { copyBtn.innerHTML = ICO_COPY; copyBtn.title = 'Copy this answer (as Markdown)'; copyBtn.classList.remove('done'); }, 1600);
+          }) });
         const V = window.__rbVoice;
-        const readBtn = V && V.canSpeak() ? h('button', { class: 'btn btn-text btn-sm msg-read', type: 'button', text: V.isReading(m) ? 'Stop' : 'Read aloud', title: 'Read this answer aloud (your Mac’s own voice)',
+        const reading = V && V.isReading(m);
+        const readBtn = V && V.canSpeak() ? h('button', { class: 'btn btn-icon msg-act msg-read' + (reading ? ' on' : ''), type: 'button', title: reading ? 'Stop reading' : 'Read aloud', 'aria-label': reading ? 'Stop reading' : 'Read aloud',
+          html: reading ? '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg>'
+            : '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8v4h3l4 3.5v-11l-4 3.5z"/><path d="M13.5 7.5a3.5 3.5 0 0 1 0 5M15.5 5a7 7 0 0 1 0 10"/></svg>',
           onclick: () => V.readAloud(m) }) : null;
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
           h('div', { class: 'machine-head' }, h('span', { text: ai() }), readBtn, copyBtn),
