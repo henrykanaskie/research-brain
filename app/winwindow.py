@@ -384,6 +384,9 @@ def _measure(win, page, closed) -> None:
     seconds, into app.log, so a click that lands in the wrong place can be explained."""
     import ctypes
     from ctypes import wintypes
+    win.evaluate_js("""document.addEventListener('pointerdown', (e) => { try { chrome.webview.postMessage({ rb: {
+      log: `press at ${e.clientX},${e.clientY} screen ${e.screenX},${e.screenY} on ${e.target.getAttribute('aria-label') ||
+        e.target.id || e.target.className || e.target.tagName}` } }); } catch {} }, true); 1""")
     while not closed.wait(4):
         try:
             hwnd = page.chrome.hwnd or int(_form(win).Handle.ToInt64())
