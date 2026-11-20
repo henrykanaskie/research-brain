@@ -376,7 +376,7 @@ def prepare(info: dict) -> dict:
     wheel = info.get("wheel") or ""
     if not wheel:
         raise UpdateError("This release has no installable file. Run the newer installer instead.")
-    name = wheel.rsplit("/", 1)[-1]
+    name = wheel.rsplit("/", 1)[-1] if "://" in wheel else Path(wheel).name  # a Windows path has backslashes
     if not re.fullmatch(r"research_brain-[\w.+-]+\.whl", name):
         raise UpdateError(f"Unexpected file name in latest.json: {name}")
     for old in d.glob("*.whl"):
@@ -387,9 +387,10 @@ def prepare(info: dict) -> dict:
     else:
         shutil.copyfile(wheel, local)
     with open(local, "rb") as f:
-        if f.read(2) != b"PK":
-            local.unlink(missing_ok=True)
-            raise UpdateError("The downloaded update is damaged. Try again later.")
+        magic = f.read(2)
+    if magic != b"PK":  # closed first: Windows can't delete an open file
+        local.unlink(missing_ok=True)
+        raise UpdateError("The downloaded update is damaged. Try again later.")
     cons = d / "constraints.txt"
     cons.unlink(missing_ok=True)
     src = info.get("constraints") or ""
