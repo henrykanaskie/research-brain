@@ -379,39 +379,11 @@ def _controller(c: _Chrome):
     return c.controller
 
 
-def _reseat(c: _Chrome) -> None:
-    """Put the WebView2 control (and its own window) back exactly over the client area below the resize strip:
-    after a maximize and restore through the header its window can be left shifted, and clicks land beside
-    what you click."""
-    import ctypes
-    from ctypes import wintypes
-    wv = c.form.browser.webview
-    cr = wintypes.RECT()
-    ctypes.windll.user32.GetClientRect(c.hwnd, ctypes.byref(cr))
-    top = c.strip if not ctypes.windll.user32.IsZoomed(c.hwnd) else 0
-    w, h = cr.right, max(0, cr.bottom - top)
-    if (wv.Left, wv.Top, wv.Width, wv.Height) != (0, top, w, h):
-        from System.Drawing import Rectangle
-        wv.Bounds = Rectangle(0, top, w, h)
-    child = int(wv.Handle.ToInt64())
-    r = wintypes.RECT()
-    ctypes.windll.user32.GetWindowRect(child, ctypes.byref(r))
-    p = wintypes.POINT(0, 0)
-    ctypes.windll.user32.ClientToScreen(c.hwnd, ctypes.byref(p))
-    if (r.left, r.top) != (p.x, p.y + top):
-        ctypes.windll.user32.SetWindowPos(child, None, 0, top, w, h, 0x0004 | 0x0010)  # NOZORDER | NOACTIVATE
-        if os.environ.get("RB_WIN_DEBUG") == "1":
-            print(f"[research_brain] reseated the page: was at {r.left},{r.top}, client {p.x},{p.y + top}",
-                  file=sys.stderr, flush=True)
-
-
 def _moved(c: _Chrome) -> None:
-    """The window moved (a drag by the header, snap, restore): tell WebView2, or it keeps placing clicks by
-    where the window was, and a click on maximize lands on minimize (WebView2 only notices on its own when its
-    control moves, and with the header as the title bar the window is moved for it)."""
+    """The window moved (a drag by the header, snap, restore): tell WebView2, as Microsoft asks of a host whose
+    window moves, so what it places on the screen (menus, tooltips, the IME) follows the window."""
     c.moved_pending = False
     try:
-        _reseat(c)
         ctl = _controller(c)
         if ctl is not None:
             ctl.NotifyParentWindowPositionChanged()
