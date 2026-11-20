@@ -192,6 +192,50 @@ def test_windows_script_waits_for_each_process(upd):
     assert "timeout /t" not in text  # timeout fails without a console window
 
 
+def test_windows_script_reopens_the_window_after_the_update(upd):
+    reopen = ["C:\\py\\pythonw.exe", "-m", "research_brain.cli", "open", "--port", "8765"]
+    kw = dict(port=8765, windows=True, relaunch=["C:\\py\\python.exe", "-m", "research_brain.cli", "serve"], cwd="C:\\app")
+    install = ["C:\\uv.exe", "tool", "install", "x.whl"]
+    text = upd.script(install, pids=[11, 33], reopen=reopen, **kw)
+    lines = text.split("\r\n")
+    marker = next(i for i, l in enumerate(lines) if l.startswith("del /q "))
+    assert 'tasklist /FI "PID eq 33"' in text
+    assert lines[marker + 1].startswith('start "" /B ') and "research_brain.cli open --port 8765" in lines[marker + 1]
+    assert "cli open" not in upd.script(install, pids=[11], **kw)  # no window: the same script as before
+
+
+def test_window_pid_only_for_a_running_window(upd):
+    f = upd.paths.user_data_dir() / "window.json"
+    assert upd.window_pid() is None  # no window open
+    f.write_text("not json", encoding="utf-8")
+    assert upd.window_pid() is None
+    import subprocess
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    f.write_text(json.dumps({"pid": p.pid, "port": 8765}), encoding="utf-8")
+    assert upd.window_pid() is None  # it has ended
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        f.write_text(json.dumps({"pid": live.pid, "port": 8765}), encoding="utf-8")
+        assert upd.window_pid() == live.pid
+    finally:
+        live.kill()
+        live.wait()
+
+
+def test_start_install_waits_for_the_window_and_reopens_it(upd, monkeypatch):
+    monkeypatch.setattr(upd, "how_installed", lambda: "venv")
+    monkeypatch.setattr(upd.subprocess, "Popen", lambda *a, **k: None)
+    monkeypatch.setattr(upd, "window_pid", lambda: 4321)
+    monkeypatch.setattr(upd, "_windows", lambda: True)
+    d = upd.update_dir()
+    d.mkdir(parents=True)
+    info = {"version": "9.0.0", "wheel": str(d / "w.whl"), "source": str(d)}
+    upd.start_install(info, port=8765, pids=[123])
+    text = (d / "run-update.cmd").read_text(encoding="utf-8")
+    assert 'tasklist /FI "PID eq 4321"' in text and "cli open --port 8765" in text
+
+
 def test_start_install_marks_it_running_and_reports_once(upd, monkeypatch):
     started = []
     monkeypatch.setattr(upd, "how_installed", lambda: "venv")

@@ -3485,19 +3485,26 @@
   /** research brain's own Mac window asks before it closes while something is unsaved (app/macwindow.py):
    *  it learns that from here, over the page's message channel. */
   let toldUnsaved = null;
-  function tellWindow() {
-    const ch = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
-    const now = unsaved();
-    if (!ch || now === toldUnsaved) return;
-    toldUnsaved = now;
-    try { ch.postMessage(JSON.stringify({ unsaved: now })); } catch { /* not that window */ }
-  }
-  /** Asked by the Mac window when you close it with unsaved edits: the app's own dialog, then close or stay. */
-  async function askBeforeClose() {
-    const close = () => {
+  /** A message to research brain's own window (Mac or Windows, through static/live.js); true if one was sent.
+   *  Before live.js has loaded, the Mac window's channel directly. */
+  function toWindow(msg) {
+    try {
+      const l = window.__rbLive;
+      if (l && l.native(msg)) return true;
       const ch = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
-      if (ch) ch.postMessage(JSON.stringify({ close: true }));
-    };
+      if (!ch) return false;
+      ch.postMessage(JSON.stringify(msg));
+      return true;
+    } catch { return false; }  // not that window
+  }
+  function tellWindow() {
+    const now = unsaved();
+    if (now === toldUnsaved) return;
+    if (toWindow({ unsaved: now })) toldUnsaved = now;
+  }
+  /** Asked by the app's own window when you close it with unsaved edits: the app's own dialog, then close or stay. */
+  async function askBeforeClose() {
+    const close = () => { toWindow({ close: true }); };
     if (!unsaved()) { close(); return; }
     const title = (S.cur && S.cur.title) || 'This note';
     const choice = await confirmDialog(`Save “${truncate(title, 50)}” before closing?`,
@@ -5377,7 +5384,10 @@
       if (rec) rec.stop();
       setOn(false);
     }
-    if (isMac() || SR) {
+    // the Windows window (WebView2) has SpeechRecognition but no service behind it, so it would fail silently:
+    // no button there (Windows' own dictation, Win+H, types into the question, and voice mode works)
+    const isWin = () => { const l = live(); if (l) return l.app === 'win'; try { return sessionStorage.getItem('rb.appWindow') === 'win' || new URLSearchParams(location.search).get('app') === 'win'; } catch { return false; } };
+    if (isMac() || (SR && !isWin())) {
       mic.hidden = false;
       if (!isMac()) mic.title = 'Dictate your question (your browser’s speech recognition; in Chrome, Google’s service hears it)';
       mic.addEventListener('mousedown', (e) => e.preventDefault());  // keep the question focused
