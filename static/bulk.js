@@ -288,6 +288,7 @@
       let job;
       try { job = (await api('POST', '/api/linked-folders', { path: pv.path, names })).job; }
       catch (e) { status.textContent = e.message; go.disabled = false; suggest.disabled = false; inputs.forEach((i) => { i.disabled = false; }); return; }
+      document.dispatchEvent(new CustomEvent('rb:linked-changed'));  // Library settings lists it now
       cancel.textContent = 'Close (keeps going)';
       cancel.onclick = () => { d.close(); watchImports(); };
       while (job && (job.state === 'running' || job.state === 'paused')) {

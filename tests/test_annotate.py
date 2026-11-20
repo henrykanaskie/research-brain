@@ -366,9 +366,10 @@ def test_extension_says_no_ai():
     assert "Alt+Shift+A" in readme and "| " in readme  # shortcuts table
     # background.js only fetches the local server (and its own bundled files)
     bg = (EXT / "background.js").read_text(encoding="utf-8")
-    # (base = server(): 127.0.0.1 or localhost only; the third is the opt-in PDF hand-off to that server)
+    # (base = server(): 127.0.0.1 or localhost only; the third is the PDF hand-off to that server, the fourth the
+    # right-click "Add this PDF" JSON calls to it)
     targets = re.findall(r"fetch\((base \+ path|chrome\.runtime\.getURL\(`vendor/fonts/\$\{file\}`\)|`\$\{base\}/api/import/pdf-bytes\?\$\{q\}`)", bg)
-    assert len(targets) == len(re.findall(r"\bfetch\(", bg)) == 3, re.findall(r"fetch\([^\n]{0,40}", bg)
+    assert len(targets) == len(re.findall(r"\bfetch\(", bg)) == 4, re.findall(r"fetch\([^\n]{0,40}", bg)
     # annotate.js / note.js / clip.js never fetch directly except clip.js to st.server
     for name in ("annotate.js", "note.js"):
         assert "fetch(" not in (EXT / name).read_text(encoding="utf-8"), name

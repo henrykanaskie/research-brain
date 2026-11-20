@@ -48,13 +48,31 @@ async function callServer(path, method = "GET", body = null) {
 }
 
 /* ── context menu quick clip (unchanged flow) ─────── */
-chrome.runtime.onInstalled.addListener(() => {
+// Right-click a PDF (Chrome's PDF viewer, a PDF opened from your computer, or a link to one) to add it.
+const MENU_PDF_PAGE = "rb-add-pdf";
+const MENU_PDF_LINK = "rb-add-pdf-link";
+const PDF_PATTERNS = [
+  "*://*/*.pdf", "*://*/*.pdf?*", "*://*/*.pdf#*", "*://*/*.PDF", "*://*/*.PDF?*",
+  "*://*/*/pdf/*", "*://*/*/epdf/*", "*://*/*/pdfdirect/*", "*://*/*/pdfft*",  // publishers' PDF routes
+  "file:///*.pdf", "file:///*.PDF",
+];
+function createMenus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({ id: MENU_ID, title: "Add to research_brain…", contexts: ["selection"] });
+    chrome.contextMenus.create({ id: MENU_PDF_PAGE, title: "Add this PDF to research brain", contexts: ["page", "frame"],
+      documentUrlPatterns: PDF_PATTERNS });
+    chrome.contextMenus.create({ id: MENU_PDF_LINK, title: "Add linked PDF to research brain", contexts: ["link"],
+      targetUrlPatterns: PDF_PATTERNS });
   });
-});
+}
+chrome.runtime.onInstalled.addListener(createMenus);
+chrome.runtime.onStartup.addListener(createMenus);
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === MENU_PDF_PAGE || info.menuItemId === MENU_PDF_LINK) {
+    await addPdf(info.menuItemId === MENU_PDF_LINK ? info.linkUrl : (info.frameUrl || info.pageUrl || (tab && tab.url) || ""), tab);
+    return;
+  }
   if (info.menuItemId !== MENU_ID) return;
   const pending = {
     quote: info.selectionText || "",
@@ -226,6 +244,15 @@ async function autoOn() {
   } catch { return false; }
 }
 
+/** The PDF's bytes to research brain on this computer (base = server(): 127.0.0.1 or localhost only). */
+async function postPdfBytes(base, got) {
+  const q = new URLSearchParams({ source_url: got.finalUrl, doi: "", title: "" });
+  const r = await fetch(`${base}/api/import/pdf-bytes?${q}`, { method: "POST", body: got.bytes, headers: { "Content-Type": "application/pdf" } });
+  const n = await r.json().catch(() => null);
+  if (!r.ok || !n) throw new Error((n && n.detail) || `HTTP ${r.status}`);
+  return n;
+}
+
 async function grabInTab(tabId, url) {
   await chrome.scripting.executeScript({ target: { tabId }, files: ["grab_pdf.js"] });
   const run = async (func, args) => (await chrome.scripting.executeScript({ target: { tabId }, func, args: args || [] }))[0].result;
@@ -262,10 +289,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   autoDone.set(tabId, seen);
   try {
     const got = await grabInTab(tabId, tab.url);
-    const q = new URLSearchParams({ source_url: got.finalUrl, doi: "", title: "" });
-    const r = await fetch(`${base}/api/import/pdf-bytes?${q}`, { method: "POST", body: got.bytes, headers: { "Content-Type": "application/pdf" } });
-    const n = await r.json().catch(() => null);
-    if (!r.ok || !n) throw new Error((n && n.detail) || `HTTP ${r.status}`);
+    const n = await postPdfBytes(base, got);
     const target = base + (n.viewer || `/viewer/${encodeURIComponent(n.id)}`);
     await chrome.tabs.update(tabId, { url: target });
   } catch (e) {
@@ -274,3 +298,68 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   }
 });
 chrome.tabs.onRemoved.addListener((tabId) => autoDone.delete(tabId));
+
+/* ── "Add this PDF to research brain" (right-click) ───────────────────────────────────────────────────
+   A PDF on this computer (file:///…, e.g. opened from Downloads) is read by research brain from its path:
+   the extension never reads the file, so it needs no "Allow access to file URLs". A web PDF is downloaded in
+   the tab, with your own access (as "Save PDF"); if the site won't allow that (a link to another site),
+   research brain downloads it itself, which works for open-access PDFs. Then the paper opens in its viewer. */
+function fileUrlToPath(url) {
+  const u = new URL(url);
+  let p = decodeURIComponent(u.pathname);
+  if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1).replace(/\//g, "\\");  // Windows: /C:/Users/… -> C:\Users\…
+  else if (u.host) p = `\\\\${u.host}${p.replace(/\//g, "\\")}`;   // a network share: file://server/share/…
+  return p;
+}
+async function flag(tab, ok, msg) {
+  const tabId = tab && tab.id;
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: ok ? "#4a6b3a" : "#b23a33", tabId });
+    await chrome.action.setBadgeText({ text: ok ? "✓" : "!", tabId });
+    await chrome.action.setTitle({ title: `research_brain: ${msg}`, tabId });
+    setTimeout(() => chrome.action.setBadgeText({ text: "", tabId }).catch(() => {}), ok ? 4000 : 15000);
+  } catch { }
+}
+async function postJson(base, path, body) {
+  const r = await fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => null);
+  if (!r.ok) throw new Error((d && d.detail && (d.detail.message || d.detail)) || `HTTP ${r.status}`);
+  return d;
+}
+async function addPdf(url, tab) {
+  const base = await server();
+  try {
+    if (!url) throw new Error("No PDF here.");
+    let id = "", viewer = "";
+    if (/^file:/i.test(url)) {
+      const r = await postJson(base, "/api/papers/import-files", { paths: [fileUrlToPath(url)] });
+      const hit = (r.added || [])[0] || (r.duplicates || [])[0];
+      if (!hit) {
+        if ((r.followed || []).length) throw new Error("That PDF is in a folder you follow, so it's already in your library.");
+        const err = ((r.failed || [])[0] || {}).error || "";
+        throw new Error(/home folder/.test(err)
+          ? "research brain only reads PDFs inside your user folder by itself. Drag this file onto the research brain window instead."
+          : err || "research brain couldn't add that file.");
+      }
+      id = hit.note;
+    } else if (/^https?:/i.test(url)) {
+      let n = null, got = null;
+      // in the tab first: your own access. A link to another site usually refuses that; then the server tries.
+      if (tab && tab.id != null) { try { got = await grabInTab(tab.id, url); } catch { got = null; } }
+      if (got) {
+        n = await postPdfBytes(base, got);
+      }
+      if (!n) n = await postJson(base, "/api/import/url", { url });  // the server downloads it (open access)
+      id = n.id; viewer = n.viewer || "";
+    } else {
+      throw new Error("Only web PDFs and PDFs on this computer can be added.");
+    }
+    await chrome.tabs.create({ url: base + (viewer || `/viewer/${encodeURIComponent(id)}`), index: tab ? tab.index + 1 : undefined });
+    flag(tab, true, "added to your library");
+  } catch (e) {
+    const offline = e instanceof TypeError;
+    const msg = offline ? "research brain isn't open. Open it, then try again." : String((e && e.message) || e);
+    console.warn("[research_brain] couldn't add this PDF:", msg);
+    flag(tab, false, msg);
+  }
+}
