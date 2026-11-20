@@ -6,6 +6,7 @@ Set RB_SHOT_DIR=/some/dir to save screenshots of the sheet, the palette and a co
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from test_e2e import (  # noqa: E402,F401  (fixtures are used by name)
     api, body_editor, browser, clear_vault, ctx, new_note, open_app, server,
 )
 
-MOD = "Meta" if os.uname().sysname == "Darwin" else "Control"
+MOD = "Meta" if sys.platform == "darwin" else "Control"
 
 
 def shot(page, name):
