@@ -281,13 +281,19 @@ def _allow_microphone(view, keep: list) -> None:
         except Exception:
             pass
     if _mic_delegate_class is None:
-        class RBUIDelegate(Foundation.NSObject, protocols=[objc.protocolNamed("WKUIDelegate")]):
+        class RBUIDelegate(Foundation.NSObject):  # (no protocol declaration: WebKit asks per method, and the block shape below differs from the plain one)
+            # the decision handler is a block, void (^)(WKPermissionDecision): its shape is spelled out (<v@?q>),
+            # or PyObjC can't call it ("cannot call block without a signature") and the app quit
+            @objc.typedSelector(b"v@:@@@q@?<v@?q>")
             def webView_requestMediaCapturePermissionForOrigin_initiatedByFrame_type_decisionHandler_(
                     self, webview, origin, frame, kind, handler):
                 host = str(origin.host() or "")
                 ok = host in ("127.0.0.1", "localhost") and int(kind) == 1  # 1: the microphone (no camera)
                 print(f"[research_brain] voice: microphone asked by {host} -> {'yes' if ok else 'no'}", file=sys.stderr)
-                handler(1 if ok else 2)  # WKPermissionDecisionGrant / Deny
+                try:
+                    handler(1 if ok else 2)  # WKPermissionDecisionGrant / Deny
+                except Exception as e:  # never let it quit the app: the page falls back to dictation
+                    print(f"[research_brain] voice: couldn't answer the microphone question: {e!r}", file=sys.stderr)
 
             def respondsToSelector_(self, sel):
                 if objc.super(RBUIDelegate, self).respondsToSelector_(sel):
