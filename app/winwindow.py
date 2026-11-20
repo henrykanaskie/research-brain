@@ -333,16 +333,16 @@ def _wndproc(c: _Chrome, hwnd, msg, wp, lp):
             if wp in (1, 2):  # SIZE_MINIMIZED, SIZE_MAXIMIZED: the next "restored" comes back from it
                 c.from_state = True
             if wp == 0:  # SIZE_RESTORED
-                if c.from_state:
+                if c.from_state:  # back from minimized or maximized (never while it's first made)
                     c.from_state = False
-                    _later(c, lambda: _back_to_size(c))
+                    _later(c, lambda: (_back_to_size(c), _show_page(c)))
                 else:  # a resize by you: the size to come back to
                     wr = wintypes.RECT()
                     u.GetWindowRect(hwnd, ctypes.byref(wr))
                     c.normal = (wr.right - wr.left, wr.bottom - wr.top)
             if wp in (0, 2):  # SIZE_RESTORED, SIZE_MAXIMIZED
                 _tell_state(c)
-                _later(c, lambda: (_layout(c), _show_page(c)))
+                _later(c, lambda: _layout(c))
             return r
         if msg == WM_NCACTIVATE:
             active = bool(wp)
@@ -385,7 +385,8 @@ def _controller(c: _Chrome):
                     if c.controller is not None:
                         break
             t = t.BaseType if t.Name != "Control" else None
-        if c.controller is None and os.environ.get("RB_WIN_DEBUG") == "1":
+        if c.controller is None and os.environ.get("RB_WIN_DEBUG") == "1" and not getattr(c, "_told_members", False):
+            c._told_members = True
             print(f"[research_brain] WebView2 members: {[x for x in seen if 'ebView' in x or 'ontroller' in x][:40]}",
                   file=sys.stderr, flush=True)
     return c.controller
@@ -396,16 +397,19 @@ def _back_to_size(c: _Chrome) -> None:
     a title bar it thinks is there, so without this the window comes back taller each time."""
     import ctypes
     from ctypes import wintypes
-    u = _user32()
-    if not c.normal or u.IsZoomed(c.hwnd) or u.IsIconic(c.hwnd):
-        return
-    wr = wintypes.RECT()
-    u.GetWindowRect(c.hwnd, ctypes.byref(wr))
-    if (wr.right - wr.left, wr.bottom - wr.top) != c.normal:
-        if os.environ.get("RB_WIN_DEBUG") == "1":
-            print(f"[research_brain] restored at {wr.right - wr.left}x{wr.bottom - wr.top}, back to "
-                  f"{c.normal[0]}x{c.normal[1]}", file=sys.stderr, flush=True)
-        u.SetWindowPos(c.hwnd, None, 0, 0, c.normal[0], c.normal[1], 0x0002 | 0x0004 | 0x0010)  # NOMOVE|NOZORDER|NOACTIVATE
+    try:
+        u = ctypes.windll.user32
+        if not c.normal or u.IsZoomed(c.hwnd) or u.IsIconic(c.hwnd):
+            return
+        wr = wintypes.RECT()
+        u.GetWindowRect(c.hwnd, ctypes.byref(wr))
+        if (wr.right - wr.left, wr.bottom - wr.top) != c.normal:
+            if os.environ.get("RB_WIN_DEBUG") == "1":
+                print(f"[research_brain] restored at {wr.right - wr.left}x{wr.bottom - wr.top}, back to "
+                      f"{c.normal[0]}x{c.normal[1]}", file=sys.stderr, flush=True)
+            u.SetWindowPos(c.hwnd, 0, 0, 0, c.normal[0], c.normal[1], 0x0002 | 0x0004 | 0x0010)  # NOMOVE|NOZORDER|NOACTIVATE
+    except Exception as e:
+        print(f"[research_brain] restored size: {e!r}", file=sys.stderr)
 
 
 def _show_page(c: _Chrome) -> None:
