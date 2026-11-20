@@ -188,6 +188,8 @@ class _Chrome:
         self.active = True
         self.failed_once = False
         self.controller = None    # CoreWebView2Controller, told when the window moves (_moved)
+        self.normal = None        # the window's size when last restored by you (outer, pixels)
+        self.from_state = False   # minimized or maximized since: the next restore comes back to `normal`
         self.moved_pending = False
 
 
@@ -328,9 +330,19 @@ def _wndproc(c: _Chrome, hwnd, msg, wp, lp):
             return u.CallWindowProcW(c.old, hwnd, msg, wp, lp)  # the side and bottom borders: Windows' own
         if msg == WM_SIZE:
             r = u.CallWindowProcW(c.old, hwnd, msg, wp, lp)
+            if wp in (1, 2):  # SIZE_MINIMIZED, SIZE_MAXIMIZED: the next "restored" comes back from it
+                c.from_state = True
+            if wp == 0:  # SIZE_RESTORED
+                if c.from_state:
+                    c.from_state = False
+                    _later(c, lambda: _back_to_size(c))
+                else:  # a resize by you: the size to come back to
+                    wr = wintypes.RECT()
+                    u.GetWindowRect(hwnd, ctypes.byref(wr))
+                    c.normal = (wr.right - wr.left, wr.bottom - wr.top)
             if wp in (0, 2):  # SIZE_RESTORED, SIZE_MAXIMIZED
                 _tell_state(c)
-                _later(c, lambda: _layout(c))
+                _later(c, lambda: (_layout(c), _show_page(c)))
             return r
         if msg == WM_NCACTIVATE:
             active = bool(wp)
@@ -377,6 +389,38 @@ def _controller(c: _Chrome):
             print(f"[research_brain] WebView2 members: {[x for x in seen if 'ebView' in x or 'ontroller' in x][:40]}",
                   file=sys.stderr, flush=True)
     return c.controller
+
+
+def _back_to_size(c: _Chrome) -> None:
+    """Back from minimized or maximized at the size it had. Windows Forms works the restored size out from
+    a title bar it thinks is there, so without this the window comes back taller each time."""
+    import ctypes
+    from ctypes import wintypes
+    u = _user32()
+    if not c.normal or u.IsZoomed(c.hwnd) or u.IsIconic(c.hwnd):
+        return
+    wr = wintypes.RECT()
+    u.GetWindowRect(c.hwnd, ctypes.byref(wr))
+    if (wr.right - wr.left, wr.bottom - wr.top) != c.normal:
+        if os.environ.get("RB_WIN_DEBUG") == "1":
+            print(f"[research_brain] restored at {wr.right - wr.left}x{wr.bottom - wr.top}, back to "
+                  f"{c.normal[0]}x{c.normal[1]}", file=sys.stderr, flush=True)
+        u.SetWindowPos(c.hwnd, None, 0, 0, c.normal[0], c.normal[1], 0x0002 | 0x0004 | 0x0010)  # NOMOVE|NOZORDER|NOACTIVATE
+
+
+def _show_page(c: _Chrome) -> None:
+    """The page is drawn again after the window comes back from minimized: WebView2 stops drawing a hidden
+    window and, with the header as the title bar, isn't always told it's back."""
+    try:
+        ctl = _controller(c)
+        if ctl is not None:
+            if not ctl.IsVisible:
+                if os.environ.get("RB_WIN_DEBUG") == "1":
+                    print("[research_brain] page was hidden after a restore: shown", file=sys.stderr, flush=True)
+                ctl.IsVisible = True
+            ctl.NotifyParentWindowPositionChanged()
+    except Exception as e:
+        print(f"[research_brain] showing the page: {e!r}", file=sys.stderr)
 
 
 def _moved(c: _Chrome) -> None:

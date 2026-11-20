@@ -388,6 +388,12 @@ def steps(proc, rep: Report, out: Path):
     time.sleep(1)
     front(hwnd)
     rep.check("restored after minimize", not user32.IsIconic(hwnd))
+    time.sleep(1.5)
+    shot(out, "08-after-restore-full.png", None, rep)
+    rep.info("frame after minimize and restore", frame_bounds(hwnd))
+    rep.check("same size after minimize and restore", (frame_bounds(hwnd)[2] - frame_bounds(hwnd)[0],
+              frame_bounds(hwnd)[3] - frame_bounds(hwnd)[1]) == (before[2] - before[0], before[3] - before[1]),
+              {"before": before, "after": frame_bounds(hwnd)})
 
     # 8. dark mode, through the command palette (Ctrl+K, "Appearance: dark")
     try:
