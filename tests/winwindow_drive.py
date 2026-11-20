@@ -143,6 +143,7 @@ def up():
 
 
 def click(x, y, wait=0.6):
+    print(f"{time.strftime('%H:%M:%S')} click at {x},{y}", flush=True)
     move(x, y)
     down()
     time.sleep(0.05)
@@ -250,7 +251,7 @@ def drive(out: Path, rep: Report):
             from app import winwindow
             sys.exit(winwindow.run({srv.base!r}, lambda: True) or 0)
         """)
-        env = {**os.environ, "RB_DATA_DIR": str(data), "RB_APP_WINDOW": "1"}
+        env = {**os.environ, "RB_DATA_DIR": str(data), "RB_APP_WINDOW": "1", "RB_WIN_DEBUG": "1"}
         win_log = out / "window-output.txt"
         with open(win_log, "w", encoding="utf-8") as f:
             proc = subprocess.Popen([sys.executable, "-c", script], env=env, stdout=f, stderr=subprocess.STDOUT)

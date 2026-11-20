@@ -374,8 +374,35 @@ def _hook(c: _Chrome, win) -> None:
         c.custom, c.old = False, None
 
 
+_MEASURE_JS = """JSON.stringify({w: innerWidth, h: innerHeight, dpr: devicePixelRatio, sx: screenX, sy: screenY,
+  cap: [...document.querySelectorAll('.win-caption button')].map((b) => { const r = b.getBoundingClientRect();
+    return [b.getAttribute('aria-label'), Math.round(r.left), Math.round(r.right)]; })})"""
+
+
+def _measure(win, page, closed) -> None:
+    """RB_WIN_DEBUG=1 (tests/winwindow_drive.py): where the page and the window think things are, every few
+    seconds, into app.log, so a click that lands in the wrong place can be explained."""
+    import ctypes
+    from ctypes import wintypes
+    while not closed.wait(4):
+        try:
+            hwnd = page.chrome.hwnd or int(_form(win).Handle.ToInt64())
+            cr = wintypes.RECT()
+            _user32().GetClientRect(hwnd, ctypes.byref(cr))
+            form = _form(win)
+            wv = getattr(getattr(form, "browser", None), "webview", None)
+            print(f"[research_brain] measure: page={win.evaluate_js(_MEASURE_JS)} client={cr.right}x{cr.bottom} "
+                  f"form.client={form.ClientSize.Width}x{form.ClientSize.Height} padding={form.Padding.Top} "
+                  f"webview={wv.Bounds if wv is not None else None} zoomed={bool(_user32().IsZoomed(hwnd))}",
+                  file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"[research_brain] measure: {e!r}", file=sys.stderr, flush=True)
+
+
 def _caption(page, what: str) -> None:
     """The header's own minimize, maximize and close buttons (static/live.js)."""
+    if os.environ.get("RB_WIN_DEBUG") == "1":
+        print(f"[research_brain] caption button: {what}", file=sys.stderr, flush=True)
     c = page.chrome
     try:
         u = _user32()
@@ -663,6 +690,8 @@ def run(url: str, start) -> int | None:
         win.load_url(app_url())
         state["loaded"] = True
         state["ours"] = bool((_status(url, "/api/heartbeat") or {}).get("idle_exit"))
+        if os.environ.get("RB_WIN_DEBUG") == "1":
+            threading.Thread(target=_measure, args=(win, page, closed), daemon=True).start()
         misses = 0
         while not closed.wait(3):
             if updates.in_progress():  # the update replaces the files this window runs from; it reopens it
