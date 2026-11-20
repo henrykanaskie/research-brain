@@ -306,6 +306,19 @@ def steps(proc, rep: Report, out: Path):
     rep.check("top strip resizes (HTTOP)", h_top in ("HTTOP", "HTTOPLEFT", "HTTOPRIGHT"), h_top)
     rep.check("left edge resizes (HTLEFT)", h_left == "HTLEFT", h_left)
 
+    # 3b. the maximize button before anything has moved the window (then restore it the same way)
+    l0, t0, r0, b0 = frame_bounds(hwnd)
+    click(r0 - int(BUTTON_W * 1.5 * s), t0 + int(HEADER / 2 * s), 1.5)
+    rep.check("maximize button maximizes (before any drag)", bool(user32.IsZoomed(hwnd)))
+    if user32.IsZoomed(hwnd):
+        l1, t1, r1, b1 = frame_bounds(hwnd)
+        click(r1 - int(BUTTON_W * 1.5 * s), t1 + int(HEADER / 2 * s), 1.5)
+        rep.check("restore button restores (before any drag)", not user32.IsZoomed(hwnd))
+    if user32.IsZoomed(hwnd) or user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        time.sleep(1)
+    l, t, r, b = frame_bounds(hwnd)
+
     # 4. drag by the header
     before = frame_bounds(hwnd)
     gx, gy = l + int((r - l) * 0.4), t + int(EMPTY_Y * s)
