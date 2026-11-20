@@ -67,6 +67,8 @@ def _clean(m: dict) -> dict | None:
         out["sel"] = {"page": m["sel"].get("page"), "text": str(m["sel"].get("text", ""))[:500]}
     if isinstance(m.get("novelty"), str) and re.fullmatch(r"[0-9a-f]{6,40}", m["novelty"]):  # a novelty check's run (app/novelty.py)
         out["novelty"] = m["novelty"]
+    if m.get("cut") is True:  # voice mode: you talked over it, so the answer stops there
+        out["cut"] = True
     if isinstance(m.get("remembered"), list):  # what the answer saved to Memory › About you
         out["remembered"] = [str(x)[:200] for x in m["remembered"][:2] if isinstance(x, str)]
     if isinstance(m.get("papers"), list):  # a web answer's paper cards (app/finder.py from_answer)

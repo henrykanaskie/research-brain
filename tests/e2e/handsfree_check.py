@@ -18,7 +18,7 @@ with run_server(vault, env={"RB_EMBEDDER": "tfidf", "RB_VOICE_DIR": os.environ["
     with sync_playwright() as p:
         b = p.chromium.launch(args=["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
                                     f"--use-file-for-fake-audio-capture={os.environ['RB_VOICE_TEST_TURN']}", "--autoplay-policy=no-user-gesture-required"])
-        # in a browser tab (you can talk over it), then as the Mac window (it lets the microphone go while it talks)
+        # in a browser tab, then as the Mac window: the microphone stays open while it talks (you can talk over it)
         for url, mac in ((srv.base, False), (srv.base + "/?app=mac", True)):
             page = b.new_page()
             page.add_init_script("localStorage.setItem('rb.tour.done','true'); window.__sent = [];" + (
@@ -37,7 +37,7 @@ with run_server(vault, env={"RB_EMBEDDER": "tfidf", "RB_VOICE_DIR": os.environ["
             assert page.evaluate("() => window.__said.length") > 0, "it didn't answer out loud"
             held = page.evaluate("() => window.__heldWhileSpeaking")
             assert held, "it never spoke"
-            assert (not any(held)) if mac else all(held), (url, held)
+            assert all(held), (url, held)
             logs = [m.get("log") for m in page.evaluate("() => window.__sent") if m.get("log")]
             assert not [x for x in logs if "didn’t play" in x or "didn’t answer" in x], logs
             page.close()

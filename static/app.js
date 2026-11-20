@@ -158,9 +158,9 @@
    * missing, the connection dropping before `done`) is a transport failure, and the caller falls back
    * to the plain endpoint.
    */
-  async function apiStream(path, body, onDelta) {
+  async function apiStream(path, body, onDelta, signal) {
     if (!window.ReadableStream || !window.TextDecoder) throw new Error('streaming not supported');
-    const opt = { method: 'POST', headers: { Accept: 'text/event-stream' } };
+    const opt = { method: 'POST', headers: { Accept: 'text/event-stream' }, ...(signal ? { signal } : {}) };
     if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
     const res = await fetch(path, opt);
     if (!res.ok) {
@@ -5013,7 +5013,7 @@
           }) });
         const V = window.__rbVoice;
         const reading = V && V.isReading(m);
-        const readBtn = V && V.canSpeak() ? h('button', { class: 'btn btn-icon msg-act msg-read' + (reading ? ' on' : ''), type: 'button', title: reading ? 'Stop reading' : 'Read aloud', 'aria-label': reading ? 'Stop reading' : 'Read aloud',
+        const readBtn = V && V.canSpeak() ? h('button', { class: 'btn btn-icon msg-act msg-read' + (reading ? ' on' : ''), type: 'button', title: reading ? 'Stop reading' : 'Read aloud (beta)', 'aria-label': reading ? 'Stop reading' : 'Read aloud (beta)',
           html: reading ? '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg>'
             : '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8v4h3l4 3.5v-11l-4 3.5z"/><path d="M13.5 7.5a3.5 3.5 0 0 1 0 5M15.5 5a7 7 0 0 1 0 10"/></svg>',
           onclick: () => V.readAloud(m) }) : null;
@@ -5080,19 +5080,24 @@
     question = question.trim();
     if (!question) return;
     // Novelty mode: what you typed is an idea to check against the literature (static/novelty.js), in any scope
-    if (window.__rbNovelty && window.__rbNovelty.wants(opts)) return window.__rbNovelty.send(question);
+    if (!opts.voice && window.__rbNovelty && window.__rbNovelty.wants(opts)) return window.__rbNovelty.send(question);
     // Research mode searches the whole library; a chat about one paper always answers from that paper
-    if (!S.chatGeneral && !S.chatPaper && !S.chatTopics && window.__rbResearch && window.__rbResearch.wants(opts)) return window.__rbResearch.send(question);
+    if (!opts.voice && !S.chatGeneral && !S.chatPaper && !S.chatTopics && window.__rbResearch && window.__rbResearch.wants(opts)) return window.__rbResearch.send(question);
     const scope = S.chatPaper ? { paper: S.chatPaper.id, include_related: !!S.chatRelated }
       : S.chatTopics ? { topics: S.chatTopics.map((t) => t.slug) } : {};
     scope.thread = chatKey();
     if (S.chatPaper) S.chat = loadPaperThread(S.chatPaper.id); // pick up what was asked in the viewer meanwhile
     const history = S.chat.filter((m) => !m.pending && !m.error && !m.failed)
-      .map((m) => ({ role: m.role, content: m.sel ? `[about the passage on p. ${m.sel.page}: "${String(m.sel.text).slice(0, 300)}"]\n${m.content}` : m.content }));
+      .map((m) => ({ role: m.role, content: m.sel ? `[about the passage on p. ${m.sel.page}: "${String(m.sel.text).slice(0, 300)}"]\n${m.content}`
+        : m.cut ? `${m.content} [the user interrupted here]` : m.content }));
     const userMsg = { role: 'user', content: question };
     const pending = { role: 'assistant', pending: true, start: Date.now(), web: !!(S.chatGeneral && S.chatWeb && S.webAllowed) };
     S.chat.push(userMsg, pending);
     S.chatBusy = true;
+    // voice mode cuts in when you talk over the answer (static/voice.js): what was written so far is kept
+    const ctl = window.AbortController ? new AbortController() : null;
+    let soFar = '';
+    S.chatStop = () => { if (ctl) ctl.abort(); };
     chatFollow = true;  // a new question: follow its answer (scroll up at any time to stay where you are)
     renderChat();
     // paint only the live bubble while streaming, and keep the log pinned to the bottom unless scrolled up
@@ -5110,23 +5115,28 @@
         const body = S.chatGeneral ? { question, history, web: pending.web,
           attach: S.chatAttach.filter((a) => a.kind !== 'topic').map((a) => a.key),
           topics: S.chatAttach.filter((a) => a.kind === 'topic').map((a) => a.key) } : { question, history, ...scope };
+        if (opts.voice) body.voice = true;  // asked out loud (static/voice.js): answered as spoken conversation
         r = await apiStream(url, body, (t) => {
+          soFar = t;
           if (!pending.live) { pending.live = t; renderChat(); }
           live.push(t);
           if (S.voiceHook) S.voiceHook.live(t);  // t is the answer so far
-        });
+        }, ctl && ctl.signal);
         live.flush();
       } catch (e) {
         live.cancel();
-        if (e.claude || S.chatGeneral) throw e;
-        console.warn('chat streaming failed, retrying without streaming:', e);
-        pending.live = '';
-        renderChat();
-        r = await api('POST', '/api/chat', { question, history, ...scope });
+        if (ctl && ctl.signal.aborted) r = { answer: noMemoryTag(soFar).trim(), cut: true };
+        else if (e.claude || S.chatGeneral) throw e;
+        else {
+          console.warn('chat streaming failed, retrying without streaming:', e);
+          pending.live = '';
+          renderChat();
+          r = await api('POST', '/api/chat', { question, history, ...scope });
+        }
       }
       delete pending.live;
       Object.assign(pending, { pending: false, content: r.answer || '', sources: r.sources || [], passages: r.passages || [],
-        ...((r.remembered || []).length ? { remembered: r.remembered } : {}),
+        ...((r.remembered || []).length ? { remembered: r.remembered } : {}), ...(r.cut ? { cut: true } : {}),
         ...(r.papers && (r.papers.items || []).length ? { papers: r.papers.items } : {}) });
       if (r.papers && r.papers.search && window.__rbFinder) window.__rbFinder.refresh();  // they're On deck too
     } catch (e) {
@@ -5150,7 +5160,7 @@
       Object.assign(pending, { pending: false, error: true, content: e.message, question });
       toastErr(e, `${ai()} couldn't answer`);
     } finally {
-      S.chatBusy = false;
+      S.chatBusy = false; S.chatStop = null;
       if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat);
       persistChat();
       renderChat();

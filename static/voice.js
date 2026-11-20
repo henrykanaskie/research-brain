@@ -1,17 +1,18 @@
-/* research_brain — talking with the AI: voice mode and Read aloud.
+/* research_brain: talking with the AI: voice mode and Read aloud. Both are in beta (tagged so in the UI).
  *
- * Voice mode (the waveform button by the question): you talk, it answers out loud, and then it listens again,
- * like Claude's voice mode.
- *   Listening   in the Mac app, macOS dictation types what you say into the question (app/macwindow.py); in a
- *               browser, its speech recognition. A pause of about 1.5 s after you speak sends the question.
- *   Thinking    the question goes to the chat as if you typed it (same scope, history, memory).
- *   Speaking    the answer is read out sentence by sentence while it's being written, in your Mac's own voice
- *               (the browser's speech synthesis, which uses the system voices; on a Mac without it, the server's
- *               `say`). Code, tables, diagrams and citations are skipped; math is read plainly.
- *   Tap the orb to interrupt it (it stops talking and listens), or to pause listening. End leaves voice mode.
- * Read aloud (on every answer): the same voice, for one answer.
- * Nothing is recorded or kept: speech goes to macOS dictation (or the browser's recognizer), and what you said
- * stays as the typed question in the chat. Needs window.__rb (static/app.js) and window.__rbLive (live.js).
+ * Voice mode (the waveform button by the question): a spoken conversation, like Claude's voice mode.
+ *   Listening   the microphone stays open; the page notices when you start talking and when you've finished,
+ *               and Whisper on this computer writes down what you said (POST /api/voice/stt). Without the
+ *               hearing download: macOS dictation in the Mac app, the browser's recognizer elsewhere.
+ *   Thinking    the question goes to the chat as if you typed it (same scope, history, memory), marked as
+ *               spoken, so the answer comes back as conversation (app/server.py VOICE_EXTRAS), not a document.
+ *   Speaking    the answer is spoken while it's written, starting with its first clause, in the natural voice
+ *               (app/voice.py) or the computer's own. Code, tables, diagrams and citations are skipped.
+ *   Talk over it to interrupt: its voice drops at once, and once your words are heard it stops (the rest of
+ *   the answer isn't written) and answers you; its own voice coming back through the speakers is told apart.
+ *   Tapping the orb interrupts too. End (or Esc) leaves voice mode.
+ * Nothing is recorded or kept: what you said stays as the question in the chat.
+ * Needs window.__rb (static/app.js) and window.__rbLive (live.js).
  */
 (() => {
   'use strict';
@@ -102,15 +103,54 @@
   const useSynth = () => !!(synth && synth.getVoices().length);
   const canSpeak = () => useNeural() || useSynth() || serverSay === true;
 
-  /** A queue of sentences, spoken one after another; onIdle runs when it has nothing left to say. */
-  /** One sentence in the natural voice: fetched as soon as it's queued, so the next is ready while one plays. */
+  // The sound out: one audio pipeline, opened by your tap (so it may play later without one), through a volume
+  // that turns the voice down while you start to talk over it, and a level meter the microphone uses to tell
+  // its own voice coming back from you talking.
+  const out = {
+    ctx: null, gain: null, meter: null, buf: null,
+    unlock() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      if (!this.ctx) {
+        try {
+          this.ctx = new AC();
+          this.gain = this.ctx.createGain();
+          this.meter = this.ctx.createAnalyser(); this.meter.fftSize = 1024; this.buf = new Float32Array(1024);
+          this.gain.connect(this.meter); this.meter.connect(this.ctx.destination);
+        } catch { this.ctx = null; return null; }
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+      return this.ctx;
+    },
+    level() {
+      if (!this.meter) return 0;
+      this.meter.getFloatTimeDomainData(this.buf);
+      let sum = 0; for (let i = 0; i < this.buf.length; i++) sum += this.buf[i] * this.buf[i];
+      return Math.sqrt(sum / this.buf.length);
+    },
+    duck(on) { if (this.gain) this.gain.gain.setTargetAtTime(on ? 0.2 : 1, this.ctx.currentTime, on ? 0.04 : 0.12); },
+  };
+
+  /** One sentence in the natural voice: fetched (and decoded) as soon as it's queued, so the next is ready
+   *  while one plays. Resolves to { buffer } (played through `out`), { blob } (an audio element) or null. */
   function fetchNeural(text) {
     return fetch('/api/voice/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: neural.voice || '' }) })
-      .then((r) => (r.ok ? r.blob() : null)).catch(() => null);
+      .then((r) => (r.ok ? r.arrayBuffer() : null))
+      .then((ab) => {
+        if (!ab) return null;
+        const blob = () => ({ blob: new Blob([ab], { type: 'audio/wav' }) });
+        const ctx = out.ctx;
+        if (!ctx) return blob();
+        return new Promise((res) => {
+          try { ctx.decodeAudioData(ab.slice(0), (b) => res({ buffer: b }), () => res(blob())); } catch { res(blob()); }
+        });
+      })
+      .catch(() => null);
   }
   let audioEl = null;
+  /** A queue of sentences, spoken one after another; onIdle runs when it has nothing left to say. */
   const speech = {
-    queue: [], busy: false, epoch: 0, onIdle: null,
+    queue: [], busy: false, epoch: 0, onIdle: null, src: null, said: '',
     say(text) {
       const t = String(text || '').trim();
       if (!t || !/[\p{L}\p{N}]/u.test(t)) return;
@@ -126,15 +166,24 @@
       this.busy = true;
       const ep = this.epoch;
       const done = () => { if (ep === this.epoch) this.next(); };
+      this.said = (this.said + ' ' + t).slice(-1500);  // what it's been saying (to tell its echo from you)
       if (item.audio) {
-        const blob = await item.audio;
+        const got = await item.audio;
         if (ep !== this.epoch) return;
-        if (blob) {
-          const url = URL.createObjectURL(blob);
+        if (got && got.buffer && out.ctx) {
+          const src = out.ctx.createBufferSource();
+          src.buffer = got.buffer;
+          src.connect(out.gain);
+          this.src = src;
+          src.onended = () => { if (this.src === src) this.src = null; done(); };
+          src.start();
+          return;
+        }
+        if (got && got.blob) {
+          const url = URL.createObjectURL(got.blob);
           audioEl = new Audio(url);
-          let played = false;
+          let played = false, failed = false;
           const end = () => { URL.revokeObjectURL(url); done(); };
-          let failed = false;
           const fail = (why) => { if (failed || played) return; failed = true; URL.revokeObjectURL(url); vlog('speech: a clip didn’t play (' + why + '), using the built-in voice'); if (ep === this.epoch) this.plain(t, done); };
           audioEl.onplaying = () => { played = true; };
           audioEl.onended = end;
@@ -160,10 +209,12 @@
       } else done();
     },
     stop() {
-      this.epoch++; this.queue = []; this.busy = false;
+      this.epoch++; this.queue = []; this.busy = false; this.said = '';
+      if (this.src) { try { this.src.onended = null; this.src.stop(); } catch { /* ended */ } this.src = null; }
       if (audioEl) { try { audioEl.pause(); } catch { /* gone */ } audioEl = null; }
       if (synth) synth.cancel();
       if (serverSay) api('POST', '/api/voice/stop', {}).catch(() => {});
+      out.duck(false);
     },
     get speaking() { return this.busy || this.queue.length > 0; },
   };
@@ -192,6 +243,8 @@
         else {
           const re = /[.!?](?=\s)|\n\n/g; let m;
           while ((m = re.exec(rest.slice(0, limit)))) end = m.index + m[0].length;
+          // the very start: its first clause is enough to begin talking (the rest is ready while it plays)
+          if (end <= 0 && from === 0) { const c = /^[\s\S]{24,}?[,;:](?=\s)/.exec(rest.slice(0, limit)); if (c) end = c[0].length; }
         }
         if (end <= 0) {
           if (limit < rest.length) {  // a block starts right here: say what it is, then step over it
@@ -216,6 +269,7 @@
   let offeredOnce = false;
   function readAloud(m) {
     if (reading === m) { speech.stop(); reading = null; rb.renderChat(); return; }
+    out.unlock();
     stopVoice(false);
     speech.stop();
     if (neural.state !== 'ready' && neural.state !== 'installing' && !offeredOnce && !offerOff()) {
@@ -289,7 +343,8 @@
   const mic = {
     stream: null, ctx: null, node: null, src: null, floor: 0.006, mode: 'off',  // off | listen | speaking | hold
     inUtt: false, rec: [], pre: [], preMs: 0, voiced: 0, silent: 0, total: 0, rate: 48000,
-    onStart: null, onUtter: null, level: 0,
+    echo: 0.35, outHist: [], uttBarge: false,  // how much of its own voice the microphone hears (learned)
+    onStart: null, onUtter: null, onNothing: null, level: 0,
     async open() {
       if (this.stream) return null;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return 'unsupported';
@@ -308,23 +363,6 @@
       if (this.ctx.state === 'suspended') await this.ctx.resume().catch(() => {});
       return null;
     },
-    /** lets go of the microphone (WebKit turns other sound right down while it holds it), keeping the rest */
-    release() {
-      if (this.src) { try { this.src.disconnect(); } catch { /* gone */ } }
-      if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
-      this.stream = null; this.src = null; this.inUtt = false; this.rec = []; this.pre = []; this.preMs = 0; this.voiced = 0;
-    },
-    /** takes the microphone back after release() */
-    async reopen() {
-      if (this.stream || !this.ctx || !this.node) return this.stream ? null : 'closed';
-      try {
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-      } catch (e) { this.stream = null; return e && e.name === 'NotAllowedError' ? 'denied' : 'failed'; }
-      this.src = this.ctx.createMediaStreamSource(this.stream);
-      this.src.connect(this.node);
-      if (this.ctx.state === 'suspended') await this.ctx.resume().catch(() => {});
-      return null;
-    },
     close() {
       this.mode = 'off'; this.inUtt = false; this.rec = []; this.pre = [];
       if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
@@ -339,26 +377,37 @@
       this.level = rms;
       const copy = new Float32Array(buf);
       const barge = this.mode === 'speaking';
-      const start = Math.max(this.floor * (barge ? 6 : 3.2), barge ? 0.045 : 0.012);
+      // its own voice comes back through the microphone (less, where echo cancellation works): how much is
+      // learned while it talks and you don't, so only clearly more than that counts as you talking over it
+      const o = out.level();
+      this.outHist.push(o); if (this.outHist.length > 6) this.outHist.shift();
+      const outNow = Math.max(...this.outHist);
+      const echo = barge || this.inUtt ? this.echo * outNow : 0;
+      const start = barge ? Math.max(this.floor * 6, 0.03, echo * 2.6) : Math.max(this.floor * 3.2, 0.012);
       if (!this.inUtt) {
-        if (rms < start) this.floor = this.floor * 0.97 + Math.min(rms, this.floor * 2.5 + 0.001) * 0.03;  // the room's own level
+        if (rms < start) {
+          if (barge && outNow > 0.01) {  // only its own voice is in the room now
+            const r = Math.min(1.5, rms / outNow);
+            this.echo += (r - this.echo) * (r > this.echo ? 0.08 : 0.02);
+          } else if (!barge || outNow < 0.004) this.floor = this.floor * 0.97 + Math.min(rms, this.floor * 2.5 + 0.001) * 0.03;  // the room's own level
+        }
         this.pre.push(copy); this.preMs += ms;
-        while (this.preMs > 350 && this.pre.length > 1) { this.preMs -= (this.pre.shift().length / this.rate) * 1000; }
+        while (this.preMs > 400 && this.pre.length > 1) { this.preMs -= (this.pre.shift().length / this.rate) * 1000; }
         if (rms > start) this.voiced += ms; else this.voiced = Math.max(0, this.voiced - ms * 0.5);
-        if (this.voiced >= (barge ? 260 : 110)) {
-          this.inUtt = true; this.rec = this.pre.slice(); this.pre = []; this.preMs = 0;
+        if (this.voiced >= (barge ? 220 : 110)) {
+          this.inUtt = true; this.uttBarge = barge; this.rec = this.pre.slice(); this.pre = []; this.preMs = 0;
           this.silent = 0; this.total = 0; this.voiced = 0;
           if (this.onStart) this.onStart(barge);
         }
         return;
       }
       this.rec.push(copy); this.total += ms;
-      if (rms < Math.max(this.floor * 2.2, 0.008)) this.silent += ms; else this.silent = 0;
-      if (this.silent >= 900 || this.total > 30000) {
-        const spoken = this.total - this.silent;
-        const rec = this.rec; this.rec = []; this.inUtt = false; this.silent = 0;
-        if (spoken < 300) return;  // a cough or a click, not you talking
-        if (this.onUtter) this.onUtter(toWav16k(rec, this.rate));
+      if (rms < Math.max(this.floor * 2.2, 0.008, echo * 1.6)) this.silent += ms; else this.silent = 0;
+      if (this.silent >= 800 || this.total > 30000) {
+        const spoken = this.total - this.silent, wasBarge = this.uttBarge;
+        const rec = this.rec; this.rec = []; this.inUtt = false; this.silent = 0; this.uttBarge = false;
+        if (spoken < 300) { if (this.onNothing) this.onNothing(wasBarge); return; }  // a cough or a click, not you talking
+        if (this.onUtter) this.onUtter(toWav16k(rec, this.rate), wasBarge);
       }
     },
   };
@@ -414,7 +463,9 @@
   pick.hidden = false;
   // the natural voice isn't set up yet: offer it (one-time, on this Mac), with its progress
   const setup = h('div', { class: 'vb-setup', hidden: true });
-  bar.append(orb, h('div', { class: 'vb-text' }, status, heardEl), pick, endBtn);
+  // voice is still being built: it says so wherever it shows
+  const betaTag = () => h('span', { class: 'beta-tag', text: 'Beta', title: 'Voice is still in development: expect rough edges, and tell us what doesn’t work.' });
+  bar.append(orb, h('div', { class: 'vb-text' }, h('div', { class: 'vb-top' }, status, betaTag()), heardEl), pick, endBtn);
   const NOPE = 'rb.voiceOfferOff';
   const offerOff = () => { try { return localStorage.getItem(NOPE) === '1'; } catch { return false; } };
   function paintSetup() {
@@ -435,11 +486,12 @@
     const complete = st === 'ready' && neural.hear;
     if (complete || !(active || setupWanted) || (offerOff() && st !== 'installing' && !setupWanted)) { setup.hidden = true; return; }
     setup.hidden = false;
+    const tag = betaTag();
     if (st === 'installing') {
-      setup.replaceChildren(h('span', { text: `${neural.step || 'Setting up the natural voice'}… ${Math.round((neural.progress || 0) * 100)}%` }),
+      setup.replaceChildren(tag, h('span', { text: `${neural.step || 'Setting up the natural voice'}… ${Math.round((neural.progress || 0) * 100)}%` }),
         h('span', { class: 'vb-bar' }, h('span', { style: `width:${Math.round((neural.progress || 0) * 100)}%` })));
     } else {
-      setup.replaceChildren(
+      setup.replaceChildren(tag,
         h('span', { text: st === 'error' ? `The natural voice didn’t install: ${neural.error || 'something went wrong'}. `
           : st === 'ready' ? 'To talk hands-free (it hears you and knows when you’ve finished): ' : 'For hands-free talking and a natural, human-sounding voice: ' }),
         h('button', { type: 'button', class: 'btn btn-text btn-sm', text: st === 'error' ? 'Try again'
@@ -485,16 +537,7 @@
     if (!active) return;
     setHeard('');
     setState('listening');
-    if (engine === 'mic') {  // the microphone hands over when you've spoken
-      if (mic.stream) { mic.mode = 'listen'; return; }
-      mic.mode = 'hold';
-      mic.reopen().then((err) => {  // it was let go while the answer was spoken
-        if (!active || state !== 'listening') return;
-        if (err) { vlog('microphone: couldn’t take it back (' + err + ')'); setState('paused', 'The microphone stopped. Tap to talk.'); return; }
-        mic.mode = 'listen';
-      });
-      return;
-    }
+    if (engine === 'mic') { mic.mode = 'listen'; return; }  // the microphone is open; it hands over when you've spoken
     listen.start((q) => {
       if (!active) return;
       if (!q) { setState('paused', 'Didn’t catch anything. Tap to talk.'); return; }
@@ -509,16 +552,25 @@
     feed = sentenceFeeder();
     speech.stop();
     speech.onIdle = () => { if (active && state === 'speaking' && !S.chatBusy) listenNow(); };
-    rb.sendChat(q);
+    rb.sendChat(q, { voice: true });
   }
-  // While it talks: Chrome cancels its own voice out of the microphone well, so you can talk over it there.
-  // Safari and the Mac window (WebKit) turn other sound right down while the microphone is held, and can hear
-  // the answer as you interrupting, so there the microphone is let go until it has finished (tap the orb to cut in).
-  const bargeIn = () => /Chrome\/|Chromium\//.test(navigator.userAgent) && !isMac();
-  function micWhileSpeaking() {
-    if (bargeIn()) { mic.mode = 'speaking'; return; }
-    mic.mode = 'hold';
-    mic.release();
+  // While it talks the microphone stays open, so you can talk over it (static/voice.js mic.frame tells you from
+  // its own voice coming back).
+  function micWhileSpeaking() { mic.mode = 'speaking'; }
+  /** what was heard is just its own voice coming back (the words it has been saying) */
+  function isEcho(q) {
+    const words = (x) => String(x).toLowerCase().match(/[\p{L}\p{N}']{3,}/gu) || [];
+    const heard = words(q);
+    if (!heard.length) return true;
+    const said = new Set(words(speech.said));
+    const same = heard.filter((w) => said.has(w)).length;
+    return heard.length >= 2 ? same / heard.length >= 0.7 : said.has(heard[0]);
+  }
+  /** cut the answer off: stop talking and stop the answer being written; resolves once the chat is free */
+  async function cutIn() {
+    speech.stop(); feed = null;
+    if (S.chatBusy && S.chatStop) S.chatStop();
+    for (let i = 0; i < 60 && S.chatBusy; i++) await new Promise((r) => setTimeout(r, 50));
   }
   // the chat tells us how its answer is going (static/app.js sendChat)
   S.voiceHook = {
@@ -539,6 +591,7 @@
 
   async function startVoice() {
     if (rb.claudeBlocked && rb.claudeBlocked()) return;
+    out.unlock();  // now, while it's your tap: the answers may play later
     rb.openChat();
     reading = null; speech.stop();
     active = true;
@@ -574,19 +627,33 @@
         listenNow();
         return;
       }
+      // talking over it: its voice drops at once; once what you said is heard, it stops (or, if that was only
+      // its own voice coming back, it carries on at full volume)
+      const carryOn = () => {
+        out.duck(false);
+        if (speech.speaking) { mic.mode = 'speaking'; setState('speaking'); } else listenNow();
+      };
       mic.onStart = (barge) => {
         if (!active) return;
-        if (barge) { speech.stop(); feed = null; }  // you talked over it: it stops and listens
+        if (barge) { out.duck(true); setHeard(''); setState('listening', 'Listening…'); return; }
         setHeard(''); setState('listening', 'Listening…');
       };
-      mic.onUtter = async (wav) => {
+      mic.onNothing = (barge) => { if (active && barge) carryOn(); };
+      mic.onUtter = async (wav, barge) => {
         if (!active) return;
         mic.mode = 'hold';
-        setState('thinking', 'Hearing you…');
+        if (!barge) setState('thinking', 'Hearing you…');
         let q = '';
-        try { q = await transcribe(wav); } catch (e) { vlog('transcribe failed: ' + e.message); setState('paused', e.message); mic.mode = 'listen'; return; }
+        try { q = await transcribe(wav); } catch (e) {
+          vlog('transcribe failed: ' + e.message);
+          if (barge) { carryOn(); return; }
+          setState('paused', e.message); mic.mode = 'listen'; return;
+        }
         if (!active) return;
-        if (!q || q.replace(/[^\p{L}\p{N}]/gu, '').length < 2) { listenNow(); return; }  // nothing said: keep listening
+        const nothing = !q || q.replace(/[^\p{L}\p{N}]/gu, '').length < 2;
+        if (barge && (nothing || isEcho(q))) { vlog('heard its own voice, carrying on'); carryOn(); return; }
+        if (nothing) { listenNow(); return; }  // nothing said: keep listening
+        if (barge || speech.speaking || S.chatBusy) { vlog('you cut in'); await cutIn(); if (!active) return; }
         ask(q);
       };
     }
@@ -603,7 +670,7 @@
     if (render) $('#chat-input').focus();
   }
   orb.addEventListener('click', () => {
-    if (state === 'speaking') { speech.stop(); listenNow(); }          // interrupt: it listens
+    if (state === 'speaking') { cutIn().then(() => listenNow()); }      // interrupt: it stops and listens
     else if (state === 'listening' && engine === 'mic') { if (mic.inUtt) { mic.silent = 9999; } }  // done talking
     else if (state === 'listening') { listen.finish(); }                 // done talking: send what it has
     else if (state === 'paused' || state === 'idle') listenNow();
@@ -616,7 +683,7 @@
     form.insertBefore(bar, form.firstChild);
     form.insertBefore(setup, bar.nextSibling);
     const row = $('.chat-row', form), send = $('#btn-chat-send');
-    const vbtn = h('button', { id: 'btn-chat-voice', type: 'button', class: 'btn btn-icon chat-voice', title: 'Voice mode: talk, and hear the answer', 'aria-label': 'Voice mode' },
+    const vbtn = h('button', { id: 'btn-chat-voice', type: 'button', class: 'btn btn-icon chat-voice', title: 'Voice mode (beta, in development): talk, and hear the answer', 'aria-label': 'Voice mode (beta)' },
       h('span', { html: '<svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true"><path d="M2 6.5v3M5 4v8M8 1.5v13M11 4v8M14 6v4M16.5 7.2v1.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/></svg>' }));
     vbtn.addEventListener('click', () => (active ? stopVoice() : startVoice()));
     if (row && send) row.insertBefore(vbtn, send);
@@ -629,5 +696,5 @@
   if (synth && synth.getVoices().length === 0 && synth.addEventListener) synth.addEventListener('voiceschanged', () => rb.renderChat());
 
   window.__rbVoice = { start: startVoice, stop: stopVoice, readAloud, installVoice, get neural() { return neural; }, isReading: (m) => reading === m, canSpeak: () => canSpeak() || !!synth,
-    speakable, get state() { return active ? state : 'off'; }, _speech: speech, _feed: sentenceFeeder, _mic: mic };
+    speakable, get state() { return active ? state : 'off'; }, _speech: speech, _feed: sentenceFeeder, _mic: mic, _out: out };
 })();

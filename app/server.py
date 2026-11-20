@@ -598,6 +598,7 @@ class ChatIn(BaseModel):
     selection: str | None = None      # with `paper`: a passage the student selected on that page
     topics: list[str] | None = None   # talk about the papers in these topics (slugs), not the whole library
     thread: str | None = None         # the remembered conversation (app/chats.py): its summary goes along
+    voice: bool = False               # asked out loud in voice mode: answer as spoken conversation
 
 
 class S2In(BaseModel):
@@ -2368,6 +2369,24 @@ CHAT_EXTRAS = (
     "research that will help in later chats (their field, project, level, preferences), end the answer with "
     "<remember>one short sentence</remember>: rarely, at most one, never personal or sensitive details and "
     "nothing from private notes.")
+# Voice mode (static/voice.js): the answer is heard, not read, so it's written as talk. Replaces CHAT_EXTRAS
+# (nothing to draw); keeps the remember rule.
+VOICE_EXTRAS = (
+    " THIS IS A SPOKEN CONVERSATION: the user is talking to you out loud and hears your answer read by a voice. "
+    "Answer the way a thoughtful colleague talks: natural spoken sentences, usually two to four, getting to the "
+    "point in the first one. No markdown at all: no headings, bullet points, numbered lists, tables, bold, code "
+    "or diagrams, and no [[id]] citations; name a paper in words (its first author or title) when it matters. "
+    "Say equations the way you'd say them aloud. If the question is broad, give the gist and offer to go deeper "
+    "or ask what they'd like to focus on; ask a short question back when it moves the conversation along. "
+    "Go longer only when they ask you to explain something in depth. If the user tells you something lasting "
+    "about themselves or their research, you may end with <remember>one short sentence</remember> (rarely; "
+    "never personal or sensitive details).")
+
+
+def _extras(body) -> str:
+    return VOICE_EXTRAS if getattr(body, "voice", False) else CHAT_EXTRAS
+
+
 _REMEMBER_RE = re.compile(r"\s*<remember>(.*?)</remember>\s*", re.S | re.I)
 
 
@@ -2406,7 +2425,7 @@ def _chat_out(text: str, extra: dict) -> dict:
 @app.post("/api/chat")
 def api_chat(body: ChatIn):
     instruction, context, extra = _chat_prompt(body)
-    answer = _ask(instruction + CHAT_EXTRAS, _memory_block() + context, "chat")
+    answer = _ask(instruction + _extras(body), _memory_block() + context, "chat")
     return _chat_out(answer, extra)
 
 
@@ -3255,6 +3274,7 @@ class GeneralIn(BaseModel):
     web: bool = False
     attach: list[str] = []   # note ids you attached (papers, notes, questions)
     topics: list[str] = []   # topic slugs you attached (every paper in them)
+    voice: bool = False      # asked out loud in voice mode: answer as spoken conversation
 
 
 def _general_attached(idx: dict, ids: list[str], slugs: list[str], public_only: bool = False) -> tuple[set, str, bool]:
@@ -3330,7 +3350,7 @@ def api_general_stream(body: GeneralIn):
         hist = _history_text(body.history, summary)
         context = (f"EARLIER CONVERSATION:\n{hist}\n\n---\n" if hist else "") + f"QUESTION: {q}"
     note = GENERAL_ATTACH_NOTE.format(web=" and from the web (link web sources)" if body.web else "") if attached else ""
-    note += CHAT_EXTRAS
+    note += _extras(body)
     context = _memory_block() + context
     if not body.web:
         return StreamingResponse(_claude_sse(GENERAL_INSTRUCTION + note, context,
@@ -3378,7 +3398,7 @@ def api_general_stream(body: GeneralIn):
 @app.post("/api/chat/stream")
 def api_chat_stream(body: ChatIn):
     instruction, context, extra = _chat_prompt(body)
-    return StreamingResponse(_claude_sse(instruction + CHAT_EXTRAS, _memory_block() + context,
+    return StreamingResponse(_claude_sse(instruction + _extras(body), _memory_block() + context,
                                          lambda text: _chat_out(text, extra), "chat"),
                              media_type="text/event-stream", headers=SSE_HEADERS)
 

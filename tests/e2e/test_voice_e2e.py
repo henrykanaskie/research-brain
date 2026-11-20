@@ -68,3 +68,38 @@ def test_hands_free_turns_with_a_microphone(tmp_path):
     r = subprocess.run([sys.executable, script, str(tmp_path)], capture_output=True, text=True, timeout=240,
                        cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+
+
+def test_talking_over_it_and_its_own_echo(ctx, server):
+    """While it talks, its own voice coming back through the microphone (here a fifth of what it plays) is
+    learned and ignored; you talking clearly over it starts an interruption. Voice is tagged as beta."""
+    page = ctx.new_page()
+    page.add_init_script("localStorage.setItem('rb.tour.done','true');")
+    page.goto(server["base"] + "/")
+    page.wait_for_function("window.__rbVoice")
+    out = page.evaluate("""() => {
+      const mic = window.__rbVoice._mic, o = window.__rbVoice._out;
+      o.level = () => 0.1;  // it's talking
+      const starts = [];
+      mic.onStart = (b) => starts.push(b); mic.onUtter = () => {}; mic.onNothing = () => {};
+      mic.mode = 'speaking'; mic.rate = 48000;
+      const frame = (amp) => { const b = new Float32Array(2048); for (let i = 0; i < b.length; i++) b[i] = amp * Math.sqrt(2) * Math.sin(i / 7); mic.frame(b); };
+      for (let i = 0; i < 80; i++) frame(0.02);      // 3.4 s of only its echo
+      const afterEcho = starts.length;
+      for (let i = 0; i < 10; i++) frame(0.16);      // you, talking over it
+      return { afterEcho, starts, echo: mic.echo };
+    }""")
+    assert out["afterEcho"] == 0, out
+    assert out["starts"] == [True], out
+    assert 0.1 < out["echo"] < 0.35, out
+    page.click("#btn-chat")
+    assert "beta" in (page.get_attribute("#btn-chat-voice", "aria-label") or "").lower()
+    assert page.locator(".voice-bar .beta-tag").count() == 1
+
+
+def test_spoken_questions_ask_for_conversation():
+    from app import server as srv
+    assert srv._extras(srv.ChatIn(question="q", voice=True)) == srv.VOICE_EXTRAS
+    assert srv._extras(srv.ChatIn(question="q")) == srv.CHAT_EXTRAS
+    assert srv._extras(srv.GeneralIn(question="q", voice=True)) == srv.VOICE_EXTRAS
+    assert "markdown" in srv.VOICE_EXTRAS.lower() and "mermaid" not in srv.VOICE_EXTRAS
