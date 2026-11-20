@@ -5345,24 +5345,29 @@
   $('#cs-related').addEventListener('change', (e) => { S.chatRelated = e.target.checked; });
   // ---------- dictation: the mic by the question ----------
   // In the Mac app: macOS dictation (as Edit › Start Dictation), typed straight into the question; macOS hears it
-  // (on this Mac or Apple's servers, per System Settings), research brain never records anything. In a browser
-  // with speech recognition (Chrome, Edge, Safari): the browser's, with your words appearing as you speak.
+  // (on this Mac or Apple's servers, per System Settings), research brain never records anything. In the Windows
+  // app: Windows voice typing (Win+H, pressed by app/winwindow.py), typed into the question the same way. In a
+  // browser with speech recognition (Chrome, Edge, Safari): the browser's, with your words appearing as you speak.
   {
     const mic = $('#btn-chat-mic'), ta = $('#chat-input');
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     // static/live.js loads after this file and knows whether this is the Mac window: asked when it's needed
     const live = () => window.__rbLive || null;
     const isMac = () => { const l = live(); if (l) return l.app === 'mac'; try { return sessionStorage.getItem('rb.appWindow') === 'mac' || new URLSearchParams(location.search).get('app') === 'mac'; } catch { return false; } };
+    // the Windows window (WebView2) has SpeechRecognition but no service behind it: Windows voice typing instead
+    const isWin = () => { const l = live(); if (l) return l.app === 'win'; try { return sessionStorage.getItem('rb.appWindow') === 'win' || new URLSearchParams(location.search).get('app') === 'win'; } catch { return false; } };
+    const native = () => isMac() || isWin();  // the window's own dictation, typing into the focused field
     let on = false, rec = null, base = '', stopT = 0;
     const setOn = (v) => { on = v; mic.classList.toggle('on', v); mic.setAttribute('aria-pressed', String(v)); mic.title = v ? 'Stop dictating' : 'Dictate your question'; };
     const fit = () => ta.dispatchEvent(new Event('input'));
     function start() {
       ta.focus();
-      if (isMac()) {
+      if (native()) {
         if (!live() || !live().native({ dictate: true })) return;
         setOn(true);
-        toast('Speak now. Click the mic again, or press Esc, when you’re done. (If nothing happens, turn on Dictation in System Settings › Keyboard.)', 'info', { ms: 5000 });
-        // macOS ends dictation on its own (Esc, a pause, clicking away): the button follows the field's focus
+        if (isMac()) toast('Speak now. Click the mic again, or press Esc, when you’re done. (If nothing happens, turn on Dictation in System Settings › Keyboard.)', 'info', { ms: 5000 });
+        else toast('Speak now. Click the mic again when you’re done. (Windows voice typing; if nothing happens, press Win+H yourself.)', 'info', { ms: 5000 });
+        // macOS and Windows end dictation on their own (Esc, a pause, clicking away): the button follows the field's focus
         clearTimeout(stopT);
         return;
       }
@@ -5380,19 +5385,18 @@
       try { rec.start(); setOn(true); } catch { setOn(false); }
     }
     function stop() {
-      if (isMac()) { if (live()) live().native({ dictate: false }); setOn(false); ta.focus(); return; }
+      // Windows voice typing (Win+H) is a toggle that also stops on its own: only the Mac is told to stop, so a
+      // stop can never switch Windows' back on
+      if (native()) { if (live() && isMac()) live().native({ dictate: false }); setOn(false); ta.focus(); return; }
       if (rec) rec.stop();
       setOn(false);
     }
-    // the Windows window (WebView2) has SpeechRecognition but no service behind it, so it would fail silently:
-    // no button there (Windows' own dictation, Win+H, types into the question, and voice mode works)
-    const isWin = () => { const l = live(); if (l) return l.app === 'win'; try { return sessionStorage.getItem('rb.appWindow') === 'win' || new URLSearchParams(location.search).get('app') === 'win'; } catch { return false; } };
-    if (isMac() || (SR && !isWin())) {
+    if (native() || SR) {
       mic.hidden = false;
-      if (!isMac()) mic.title = 'Dictate your question (your browser’s speech recognition; in Chrome, Google’s service hears it)';
+      if (!native()) mic.title = 'Dictate your question (your browser’s speech recognition; in Chrome, Google’s service hears it)';
       mic.addEventListener('mousedown', (e) => e.preventDefault());  // keep the question focused
       mic.addEventListener('click', () => (on ? stop() : start()));
-      ta.addEventListener('blur', () => { if (isMac() && on) stopT = setTimeout(() => setOn(false), 300); });
+      ta.addEventListener('blur', () => { if (native() && on) stopT = setTimeout(() => setOn(false), 300); });
       ta.addEventListener('keydown', (e) => { if (e.key === 'Escape' && on) { e.preventDefault(); e.stopPropagation(); stop(); } });
       $('#chat-form') && $('#chat-form').addEventListener('submit', () => { if (on) stop(); });
     }
@@ -5897,8 +5901,62 @@
   window.addEventListener('drop', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault(); dragDepth = 0; $('#drop-overlay').hidden = true;
-    importPdfs(e.dataTransfer.files);
+    const dt = e.dataTransfer;
+    const files = Array.from(dt.files || []);
+    // folders come as entries (read now: the drop's data is gone once this handler returns)
+    const entries = Array.from(dt.items || []).map((it) => (it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null));
+    const dirs = entries.filter((en) => en && en.isDirectory);
+    if (!dirs.length) { importPdfs(files); return; }
+    const live = window.__rbLive;
+    const paths = live && live.droppedPaths ? live.droppedPaths(dt.files, dirs.map((d) => d.name)) : Promise.resolve(null);
+    droppedFolders(dirs, files, paths);
   });
+
+  /** Folders dropped on the window. In research brain's own window (Mac or Windows) it knows where they are, so
+   *  they're added like Add folders of papers: kept where they are, each folder a topic. In a browser, which
+   *  never sees where a folder is, its PDFs are read from the drop and imported (copied) like Import a folder. */
+  async function droppedFolders(dirs, files, pathsP) {
+    const bulk = window.__rbBulk;
+    const dirNames = new Set(dirs.map((d) => d.name));
+    const loose = files.filter((f) => !dirNames.has(f.name) && /\.pdf$/i.test(f.name));
+    if (loose.length) importPdfs(loose);
+    if (dirs.length > 1) toast(`Adding “${dirs[0].name}”. Drop the other folders one at a time.`, 'info');
+    const dir = dirs[0];
+    const paths = await pathsP;
+    const found = paths && paths.find((p) => p.name === dir.name || p.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() === dir.name);
+    if (found && bulk && bulk.linkDialog) { bulk.linkDialog(found.path.replace(/[\\/]+$/, '') || found.path); return; }
+    const t = task(`Reading “${dir.name}”`);
+    let all = [];
+    try { all = await readFolder(dir); } catch (err) { toastErr(err, `Could not read “${dir.name}”`); }
+    finally { t.done(); }
+    if (bulk && bulk.folderDialog) bulk.folderDialog(all.length ? all : [Object.defineProperty(new File([], '.'), 'webkitRelativePath', { value: `${dir.name}/.` })]);
+  }
+
+  /** Every file in a dropped folder and its subfolders (up to 20,000), each with its path from the folder, as
+   *  the browser's own folder picker gives them (webkitRelativePath). */
+  async function readFolder(root, limit = 20000) {
+    const out = [];
+    const readAll = (reader) => new Promise((resolve, reject) => {
+      const acc = [];
+      const next = () => reader.readEntries((batch) => { if (!batch.length) resolve(acc); else { acc.push(...batch); next(); } }, reject);
+      next();
+    });
+    const fileOf = (en) => new Promise((resolve, reject) => en.file(resolve, reject));
+    const walk = async (dir, rel) => {
+      for (const en of await readAll(dir.createReader())) {
+        if (out.length >= limit) return;
+        if (en.name.startsWith('.')) continue;
+        if (en.isDirectory) { await walk(en, `${rel}/${en.name}`); continue; }
+        if (!/\.pdf$/i.test(en.name)) continue;
+        try {
+          const f = await fileOf(en);
+          out.push(Object.defineProperty(f, 'webkitRelativePath', { value: `${rel}/${en.name}`, configurable: true }));
+        } catch { /* unreadable (online only, no permission): skipped */ }
+      }
+    };
+    await walk(root, root.name);
+    return out;
+  }
 
   // ---------- resizing the note panel and the chat: drag the grip on their left edge ----------
   // Either can be as wide as the window less ~240 px of map (with both open, together). Widths are kept.

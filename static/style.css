@@ -1090,6 +1090,48 @@ body.chat-scoped .rs-mode { display: none; }
 .rb-stopped code { font-size: 13px; }
 /* research brain's own Mac window (app/macwindow.py): no title bar, the window buttons sit here */
 html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-select: none; }
+/* research brain's own Windows window with no title bar (app/winwindow.py, ?app=win&titlebar=custom): the
+   header is the title bar (an empty part of it drags the window, a double-click maximizes it), and the
+   minimize, maximize and close buttons sit at its right end (static/live.js) */
+html.win-window {
+  --wc-hover: rgba(0, 0, 0, .06); --wc-press: rgba(0, 0, 0, .1);
+}
+:root.win-window[data-theme="dark"] { --wc-hover: rgba(255, 255, 255, .08); --wc-press: rgba(255, 255, 255, .12); }
+@media (prefers-color-scheme: dark) {
+  :root.win-window:not([data-theme="light"]) { --wc-hover: rgba(255, 255, 255, .08); --wc-press: rgba(255, 255, 255, .12); }
+}
+html.win-window #topbar { padding-right: calc(138px + 8px); -webkit-app-region: drag; app-region: drag;
+  -webkit-user-select: none; user-select: none; }
+html.win-window #topbar :is(button, input, select, textarea, a[href], label, summary, [role="button"], [role="menuitem"],
+  [tabindex]:not([tabindex="-1"]), [contenteditable=""], [contenteditable="true"], .menu) { -webkit-app-region: no-drag; app-region: no-drag; }
+/* what opens over the header (dialogs, sheets, toasts) is clicked, not dragged */
+html.win-window :is(.modal, .drop-overlay, .tasks, .toasts, .rf-chooser, .node-menu, .link-mode, .rb-stopped, .tp-sheet,
+  .ca-sheet, [role="dialog"], [role="menu"], [role="listbox"], [role="tooltip"]) { -webkit-app-region: no-drag; app-region: no-drag; }
+.win-caption { position: fixed; top: 0; right: 0; height: var(--topbar-h); z-index: 31; display: flex;
+  -webkit-app-region: no-drag; app-region: no-drag; }
+.win-caption button { width: 46px; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent;
+  color: var(--ink); cursor: default; display: flex; align-items: center; justify-content: center;
+  font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; -webkit-app-region: no-drag; app-region: no-drag; }
+.win-caption button:hover { background: var(--wc-hover); }
+.win-caption button:active { background: var(--wc-press); }
+.win-caption button.wc-close:hover { background: #C42B1C; color: #fff; }
+.win-caption button.wc-close:active { background: rgba(196, 43, 28, .9); color: #fff; }
+.win-caption button:focus { outline: none; }
+.win-caption button:focus-visible { outline: 1px solid var(--ink-2); outline-offset: -3px; }
+html.win-inactive .win-caption button:not(:hover) { opacity: .45; }
+/* the buttons take 138px of the header: it gives way earlier than in a browser (the 960 and 760 rules above),
+   so nothing of it ever sits under them (tests/e2e/test_win_window_e2e.py checks the widths a laptop opens at) */
+@media (max-width: 1240px) {
+  html.win-window #topbar { gap: 12px; padding-left: 14px; }
+  html.win-window .status-text { display: none; }
+}
+@media (max-width: 1080px) {
+  html.win-window .brand-name { display: none; }
+  html.win-window .tb-sep { margin: 0 2px; }
+}
+@media (max-width: 900px) {
+  html.win-window #topbar { overflow-x: auto; overflow-y: hidden; }
+}
 
 /* Ask about topics (app.js chooseChatTopics): a small sheet of checkboxes */
 .tp-sheet { position: fixed; z-index: 80; top: 96px; right: 24px; width: min(340px, calc(100vw - 32px)); padding: 6px 6px 10px; }

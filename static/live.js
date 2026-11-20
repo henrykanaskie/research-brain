@@ -85,15 +85,19 @@
   // research brain stopped (Quit on the Dock icon, the menu, or no window for a few minutes): the window the
   // app opened (?app=1) closes itself, so no dead window is left behind; any other tab says what happened
   // ?app=mac: research brain's own Mac window (app/macwindow.py), no title bar
-  // ?app=win: research brain's own Windows window (app/winwindow.py), a normal title bar
-  let appKind = '';
+  // ?app=win: research brain's own Windows window (app/winwindow.py); with &titlebar=custom it has no title
+  // bar (the header is one, with the window buttons at its right end), else Windows' own title bar
+  let appKind = '', winTitlebar = '';
   try {
-    const q = new URLSearchParams(location.search).get('app');
+    const params = new URLSearchParams(location.search);
+    const q = params.get('app');
     if (q === '1' || q === 'mac' || q === 'win') {
       sessionStorage.setItem('rb.appWindow', q);
+      if (q === 'win') sessionStorage.setItem('rb.winTitlebar', params.get('titlebar') === 'custom' ? 'custom' : '');
       history.replaceState(null, '', location.pathname + location.hash);
     }
     appKind = sessionStorage.getItem('rb.appWindow') || '';
+    if (appKind === 'win') winTitlebar = sessionStorage.getItem('rb.winTitlebar') || '';
   } catch { /* storage unavailable */ }
   // research brain's own channel to its window: the Mac window (app/macwindow.py, WebKit) or the Windows
   // window (?app=win, app/winwindow.py, WebView2, which reads the message's "rb" key); false anywhere else
@@ -123,7 +127,7 @@
   if (appKind === 'mac') {
     // the window buttons sit at the left of the header, and pressing an empty part of the header drags the
     // window (app/macwindow.py): tell it where the header's buttons and fields are, so those still click
-    // (the Windows window keeps its normal title bar)
+    // (the Windows window does this with app-region in style.css, below)
     document.documentElement.classList.add('mac-window');
     const CLICKABLE = 'button, input, select, textarea, a[href], label, summary, [role="button"], [role="menuitem"], [tabindex]:not([tabindex="-1"]), [contenteditable=""], [contenteditable="true"]';
     let sendT = 0;
@@ -148,6 +152,70 @@
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch); else watch();
   }
+  if (appKind === 'win' && winTitlebar === 'custom') {
+    // no title bar (app/winwindow.py): the header is the title bar (style.css marks it a drag region, so an
+    // empty part of it moves the window and a double-click maximizes it, both done by Windows), and the
+    // minimize, maximize and close buttons are drawn here, at its right end, like a Windows 11 app's
+    const root = document.documentElement;
+    root.classList.add('win-window');
+    const GLYPH = { minimize: '\uE921', maximize: '\uE922', restore: '\uE923', close: '\uE8BB' };
+    const bar = document.createElement('div');
+    bar.className = 'win-caption';
+    const button = (cls, caption, glyph, label) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = cls; b.textContent = glyph;
+      b.title = label; b.setAttribute('aria-label', label); b.tabIndex = -1;
+      b.addEventListener('click', () => post({ caption }));
+      bar.appendChild(b);
+      return b;
+    };
+    button('wc-min', 'minimize', GLYPH.minimize, 'Minimize');
+    const max = button('wc-max', 'maximize', GLYPH.maximize, 'Maximize');
+    button('wc-close', 'close', GLYPH.close, 'Close');
+    const setMaximized = (on) => {
+      const label = on ? 'Restore' : 'Maximize';
+      max.textContent = on ? GLYPH.restore : GLYPH.maximize;
+      max.title = label; max.setAttribute('aria-label', label);
+    };
+    // the header's color, so the window paints the thin edge above the page (where it resizes) to match. The
+    // header is see-through (color(srgb ... / .88)): painted over the page's own background on a 1 px canvas
+    const px = document.createElement('canvas');
+    px.width = px.height = 1;
+    const hex = (under, over) => {
+      const g = px.getContext('2d', { willReadFrequently: true });
+      if (!g) return '';
+      g.clearRect(0, 0, 1, 1);
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, 1, 1);
+      for (const c of [under, over]) { try { g.fillStyle = c; g.fillRect(0, 0, 1, 1); } catch { /* unknown color */ } }
+      const d = g.getImageData(0, 0, 1, 1).data;
+      return '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+    };
+    let lastChrome = '';
+    const sendChrome = () => {
+      const tb = document.getElementById('topbar');
+      if (!tb) return;
+      const c = hex(getComputedStyle(document.body).backgroundColor, getComputedStyle(tb).backgroundColor);
+      if (c && c !== lastChrome) { lastChrome = c; post({ chrome: c }); }
+    };
+    const mount = () => {
+      document.body.appendChild(bar);
+      sendChrome();
+      new MutationObserver(() => requestAnimationFrame(sendChrome))
+        .observe(root, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
+    window.addEventListener('load', sendChrome);
+    try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestAnimationFrame(sendChrome)); } catch { /* old engine */ }
+    // from the window: maximized or not (the middle button's glyph), active or not (dimmed buttons)
+    try {
+      window.chrome.webview.addEventListener('message', (e) => {
+        const m = e && e.data && e.data.rb;
+        if (!m || typeof m !== 'object') return;
+        if ('window' in m) setMaximized(m.window === 'maximized');
+        if ('active' in m) root.classList.toggle('win-inactive', !m.active);
+      });
+    } catch { /* not the Windows window */ }
+  }
   function stopped() {
     if (es) { es.close(); es = null; }
     // stopping to update (static/updates.js): stay open, it says what's happening and reloads when it's back
@@ -165,5 +233,37 @@
 
   window.addEventListener('beforeunload', () => { if (es) es.close(); });
   connect();
-  window.__rbLive = { get source() { return es; }, flush, native: post, get app() { return appKind; } };
+  // Where dropped files and folders are on disk: only research brain's own window knows (a page never sees
+  // paths). The Windows window reads them from the dropped File objects (WebView2), the Mac window from the drag
+  // itself (app/macwindow.py). Resolves to [{name, path}], or null in a browser or if the window doesn't answer.
+  const dropWaits = new Map();
+  let dropSeq = 0;
+  function droppedPaths(files, names) {
+    if (appKind !== 'mac' && appKind !== 'win') return Promise.resolve(null);
+    const id = `d${Date.now()}-${++dropSeq}`;
+    const p = new Promise((resolve) => {
+      dropWaits.set(id, resolve);
+      setTimeout(() => { if (dropWaits.delete(id)) resolve(null); }, 2000);
+    });
+    try {
+      if (appKind === 'win') {
+        const w = window.chrome && window.chrome.webview;
+        if (!w || !w.postMessageWithAdditionalObjects) { dropWaits.get(id)(null); dropWaits.delete(id); return p; }
+        w.postMessageWithAdditionalObjects({ rb: { dropped: id } }, files);
+      } else if (!post({ dropped: id, names })) { dropWaits.get(id)(null); dropWaits.delete(id); }
+    } catch { const r = dropWaits.get(id); dropWaits.delete(id); if (r) r(null); }
+    return p;
+  }
+  function droppedReply(m) {
+    const r = m && dropWaits.get(m.dropped);
+    if (!r) return;
+    dropWaits.delete(m.dropped);
+    r(Array.isArray(m.paths) ? m.paths.filter((x) => x && typeof x.path === 'string') : null);
+  }
+  if (appKind === 'win') {
+    try { window.chrome.webview.addEventListener('message', (e) => { const m = e && e.data && e.data.rb; if (m && m.dropped) droppedReply(m); }); }
+    catch { /* not the Windows window */ }
+  }
+  window.__rbDropped = droppedReply;  // the Mac window answers through this (app/macwindow.py)
+  window.__rbLive = { get source() { return es; }, flush, native: post, get app() { return appKind; }, droppedPaths };
 })();

@@ -112,3 +112,12 @@ def test_a_real_window_opens_loads_and_closes(tmp_path):
         log = err.read_text(encoding="utf-8", errors="replace")
         assert "window setup" not in log and "no window of its own" not in log and "window message" not in log, log
         assert not (data / "window.json").exists()
+
+
+def test_the_window_fits_the_screen():
+    from app import winwindow
+    assert winwindow._fit((1920, 1040, 0, 0)) == ((1400, 900), (900, 600), (260, 70))
+    # a small screen: the whole window, its buttons included, stays on it, centred
+    assert winwindow._fit((1024, 728, 0, 0)) == ((984, 688), (900, 600), (20, 20))
+    assert winwindow._fit((800, 560, 0, 0)) == ((760, 520), (760, 520), (20, 20))
+    assert winwindow._fit((1280, 760, 0, 40))[2] == (20, 60)  # a taskbar at the top
