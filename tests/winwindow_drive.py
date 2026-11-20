@@ -334,6 +334,13 @@ def steps(proc, rep: Report, out: Path):
     rep.check("dragging the header moves the window", moved[0] > 50 and moved[1] > 20, {"moved": moved})
     shot(out, "02-dragged.png", after, rep)
 
+    # back where it was: the drag can push the window's right end (and its buttons) off a small screen, and
+    # the mouse can't go there (a click aimed past the edge lands on the edge, on another button)
+    user32.SetWindowPos(hwnd, None, rect(hwnd)[0] - (frame_bounds(hwnd)[0] - before[0]),
+                        rect(hwnd)[1] - (frame_bounds(hwnd)[1] - before[1]), 0, 0, 0x0001 | 0x0004 | 0x0010)
+    time.sleep(0.8)
+    rep.info("window put back", frame_bounds(hwnd))
+
     # 5. double-click the header
     l, t, r, b = frame_bounds(hwnd)
     double_click(l + int((r - l) * 0.4), t + int(EMPTY_Y * s), 1.5)
