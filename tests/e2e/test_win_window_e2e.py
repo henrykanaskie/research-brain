@@ -22,8 +22,11 @@ window.__sent = [];
 window.chrome = window.chrome || {};
 window.chrome.webview = {
   postMessage: (m) => window.__sent.push(JSON.parse(JSON.stringify(m))),
-  addEventListener: (type, f) => { if (type === 'message') window.__rbMsg = f; },
+  // like WebView2: every 'message' listener hears each message
+  __listeners: [],
+  addEventListener(type, f) { if (type === 'message') this.__listeners.push(f); },
 };
+window.__rbMsg = (e) => window.chrome.webview.__listeners.forEach((f) => f(e));
 """
 
 

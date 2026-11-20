@@ -459,6 +459,9 @@ def _patch(page: _Page) -> None:
             data = None
         if isinstance(data, dict) and "rb" in data:
             try:
+                if isinstance(data["rb"], dict) and data["rb"].get("dropped"):
+                    _dropped(sender, args, str(data["rb"]["dropped"])[:64])
+                    return
                 _on_message(cls._rb_page, data["rb"])
             except Exception as e:  # never lose the window over a message
                 print(f"[research_brain] window message: {e!r}", file=sys.stderr)
@@ -495,6 +498,26 @@ def _prepare(core, page: _Page) -> None:
     core.NavigationCompleted += navigated
 
 
+def _dropped_paths(objects) -> list[dict]:
+    """[{name, path}] for the File objects a drop handed over (WebView2's CoreWebView2File): files and folders."""
+    out = []
+    for o in list(objects or [])[:200]:
+        path = str(getattr(o, "Path", "") or "")
+        if path and os.path.exists(path):
+            out.append({"name": os.path.basename(path.rstrip("\\/")), "path": path})
+    return out
+
+
+def _dropped(sender, args, drop_id: str) -> None:
+    """The page dropped files or folders (static/live.js droppedPaths): tell it where they are on disk."""
+    try:
+        paths = _dropped_paths(args.get_AdditionalObjects())
+    except Exception as e:
+        print(f"[research_brain] dropped files: {e!r}", file=sys.stderr)
+        paths = []
+    sender.CoreWebView2.PostWebMessageAsJson(json.dumps({"rb": {"dropped": drop_id, "paths": paths}}))
+
+
 def _local(uri: str) -> bool:
     from urllib.parse import urlsplit
     try:
@@ -518,8 +541,9 @@ def _tune(core) -> None:
 
 
 # ---------------------------------------------------------------- run
-def _work_area() -> tuple[int, int] | None:
-    """The main screen's size without the taskbar, in logical (96 dpi) pixels, as pywebview sizes windows."""
+def _work_area() -> tuple[int, int, int, int] | None:
+    """The main screen without the taskbar (width, height, left, top), in logical (96 dpi) pixels, as pywebview
+    sizes and places windows."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -530,20 +554,22 @@ def _work_area() -> tuple[int, int] | None:
             dpi = int(ctypes.windll.user32.GetDpiForSystem()) or 96
         except AttributeError:
             dpi = 96
-        return (rect.right - rect.left) * 96 // dpi, (rect.bottom - rect.top) * 96 // dpi
+        return ((rect.right - rect.left) * 96 // dpi, (rect.bottom - rect.top) * 96 // dpi,
+                rect.left * 96 // dpi, rect.top * 96 // dpi)
     except Exception:
         return None
 
 
-def _fit(area: tuple[int, int] | None = None, want=(1400, 900), least=(900, 600)):
-    """The window's first size and its smallest: 1400 x 900 where it fits, else the screen less a margin, so
+def _fit(area=None, want=(1400, 900), least=(900, 600)):
+    """The window's first size, its smallest and where it goes: 1400 x 900 where it fits, else the screen less a margin, so
     a small laptop screen shows the whole window, its buttons included."""
     area = area if area is not None else _work_area()
     if not area:
-        return want, least
-    aw, ah = area
+        return want, least, None
+    aw, ah, ax, ay = (tuple(area) + (0, 0))[:4]
     w, h = min(want[0], max(aw - 40, 480)), min(want[1], max(ah - 40, 360))
-    return (w, h), (min(least[0], w), min(least[1], h))
+    # centred on that screen by us: Windows' own placement can leave its right end, and buttons, off it
+    return (w, h), (min(least[0], w), min(least[1], h)), (ax + (aw - w) // 2, ay + (ah - h) // 2)
 
 
 def _identity() -> None:
@@ -598,8 +624,9 @@ def run(url: str, start) -> int | None:
     loading = LOADING
     if mode == "custom":  # no title bar yet: the loading page drags the window
         loading = LOADING.replace("<style>", "<style>html{app-region:drag;-webkit-app-region:drag}", 1)
-    (w, h), least = _fit()
+    (w, h), least, at = _fit()
     win = webview.create_window(APP_NAME, html=loading.replace("{more}", ""), width=w, height=h,
+                                x=at[0] if at else None, y=at[1] if at else None,
                                 min_size=least, background_color="#EEEFEB", text_select=True)
     page.win = win
     if mode == "custom":

@@ -233,5 +233,37 @@
 
   window.addEventListener('beforeunload', () => { if (es) es.close(); });
   connect();
-  window.__rbLive = { get source() { return es; }, flush, native: post, get app() { return appKind; } };
+  // Where dropped files and folders are on disk: only research brain's own window knows (a page never sees
+  // paths). The Windows window reads them from the dropped File objects (WebView2), the Mac window from the drag
+  // itself (app/macwindow.py). Resolves to [{name, path}], or null in a browser or if the window doesn't answer.
+  const dropWaits = new Map();
+  let dropSeq = 0;
+  function droppedPaths(files, names) {
+    if (appKind !== 'mac' && appKind !== 'win') return Promise.resolve(null);
+    const id = `d${Date.now()}-${++dropSeq}`;
+    const p = new Promise((resolve) => {
+      dropWaits.set(id, resolve);
+      setTimeout(() => { if (dropWaits.delete(id)) resolve(null); }, 2000);
+    });
+    try {
+      if (appKind === 'win') {
+        const w = window.chrome && window.chrome.webview;
+        if (!w || !w.postMessageWithAdditionalObjects) { dropWaits.get(id)(null); dropWaits.delete(id); return p; }
+        w.postMessageWithAdditionalObjects({ rb: { dropped: id } }, files);
+      } else if (!post({ dropped: id, names })) { dropWaits.get(id)(null); dropWaits.delete(id); }
+    } catch { const r = dropWaits.get(id); dropWaits.delete(id); if (r) r(null); }
+    return p;
+  }
+  function droppedReply(m) {
+    const r = m && dropWaits.get(m.dropped);
+    if (!r) return;
+    dropWaits.delete(m.dropped);
+    r(Array.isArray(m.paths) ? m.paths.filter((x) => x && typeof x.path === 'string') : null);
+  }
+  if (appKind === 'win') {
+    try { window.chrome.webview.addEventListener('message', (e) => { const m = e && e.data && e.data.rb; if (m && m.dropped) droppedReply(m); }); }
+    catch { /* not the Windows window */ }
+  }
+  window.__rbDropped = droppedReply;  // the Mac window answers through this (app/macwindow.py)
+  window.__rbLive = { get source() { return es; }, flush, native: post, get app() { return appKind; }, droppedPaths };
 })();
