@@ -422,8 +422,62 @@ def _sh(cmd: list[str]) -> str:
     return " ".join(shlex.quote(c) for c in cmd)
 
 
-def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str], cwd: str, windows: bool) -> str:
-    """The script that waits for research brain to stop, installs, and starts it again."""
+def _windows() -> bool:
+    return os.name == "nt"
+
+
+def _window_file() -> Path:
+    return paths.user_data_dir() / "window.json"
+
+
+def _alive(pid: int) -> bool:
+    """Whether process pid is still running."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def window_pid() -> int | None:
+    """The process of research brain's own Windows window (app/winwindow.py writes window.json while it's
+    open), if it's still running. The update waits for it too: Windows can't replace the install it runs from."""
+    try:
+        pid = int(json.loads(_window_file().read_text(encoding="utf-8")).get("pid") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    return pid if pid != os.getpid() and _alive(pid) else None
+
+
+def reopen_command(port: int) -> list[str]:
+    """How to open the window again after the install: what the Start menu entry runs."""
+    cmd = [sys.executable, "-m", f"{__package__ or 'app'}.cli", "open", "--port", str(port)]
+    if os.environ.get("RB_PROFILE") and not os.environ.get("RB_VAULT"):
+        cmd += ["--profile", os.environ["RB_PROFILE"]]
+    return cmd
+
+
+def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str], cwd: str, windows: bool,
+           reopen: list[str] | None = None) -> str:
+    """The script that waits for research brain to stop, installs, and starts it again. reopen (Windows): the
+    window that closed for the update, opened again once research brain answers."""
     d = update_dir()
     log, code, marker, applog = d / "update.log", d / "exit-code", _marker(), paths.user_data_dir() / "app.log"
     hb = f"http://127.0.0.1:{port}/api/heartbeat"
@@ -436,6 +490,8 @@ def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str
                   f'cd /d "{cwd}"', f'start "" /B {q(relaunch)} >> "{applog}" 2>&1',
                   "set n=0", ":up", f"curl -fs -o NUL {hb} && goto done", "set /a n+=1", "if %n% GEQ 120 goto done",
                   "ping -n 2 127.0.0.1 >nul", "goto up", ":done", f'del /q "{marker}"']
+        if reopen:
+            lines.append(f'start "" /B {q(reopen)} >> "{applog}" 2>&1')
         return "\r\n".join(lines) + "\r\n"
     lines = ["#!/bin/sh", "# research brain update (app/updates.py): wait, install, start again"]
     for pid in pids:
@@ -471,10 +527,15 @@ def start_install(info: dict, *, port: int, pids: list[int]) -> dict:
     state = {"from": __version__, "to": info["version"], "started": now}
     paths.write_json_atomic(d / "pending.json", state)
     paths.write_json_atomic(_marker(), state)
-    windows = os.name == "nt"
+    windows = _windows()
+    reopen = None
+    win = window_pid() if windows else None
+    if win is not None:  # the window closes itself for the update (it watches in_progress()) and comes back after
+        pids = [*pids, win] if win not in pids else pids
+        reopen = reopen_command(port)
     path = d / ("run-update.cmd" if windows else "run-update.sh")
     path.write_text(script(cmd, pids=pids, port=port, relaunch=relaunch_command(port), cwd=str(paths.PKG_DIR.parent),
-                           windows=windows), encoding="utf-8")
+                           windows=windows, reopen=reopen), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k not in ("RB_RESTART_FILE", "RB_PORT")}
     try:
         if windows:

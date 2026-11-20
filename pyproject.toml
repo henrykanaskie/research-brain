@@ -24,7 +24,7 @@ dependencies = [
   "defusedxml>=0.7",
   "pint>=0.24",
   "send2trash>=1.8",
-  "pywebview>=5.0; sys_platform == 'darwin'",  # research brain's own Mac window (app/macwindow.py)
+  "pywebview>=5.0; sys_platform == 'darwin' or sys_platform == 'win32'",  # its own window (app/macwindow.py, app/winwindow.py)
 ]
 
 [project.optional-dependencies]

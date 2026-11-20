@@ -128,7 +128,27 @@ def _start_server(a, url: str) -> bool:
 
 def cmd_open(a) -> int:
     url = f"http://127.0.0.1:{a.port}"
-    from . import macwindow
+    from . import macwindow, winwindow
+    if winwindow.available():  # Windows: research brain's own window on WebView2 (app/winwindow.py)
+        import threading
+        box: dict = {}
+        th = threading.Thread(target=lambda: box.update(ok=_start_server(a, url)), daemon=True)
+        th.start()
+
+        def started_win() -> bool:
+            th.join()
+            if box.pop("ok", False):
+                return True
+            return _start_server(a, url)
+        code = winwindow.run(url, started_win)
+        if code is not None:
+            return code
+        th.join()  # the window didn't come up: the Chrome/Edge window, as before
+        if box.get("ok") or _start_server(a, url):
+            open_window(url + "/?app=1")
+            return 0
+        _tell("research brain didn't start", f"What it said is at the end of {paths.user_data_dir() / 'app.log'}")
+        return 1
     if macwindow.available():  # a Mac: research brain's own window, no title bar (app/macwindow.py)
         # start the server now, while the window is made (about half a second each), not after it
         import threading
