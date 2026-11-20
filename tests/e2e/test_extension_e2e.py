@@ -146,12 +146,13 @@ def env(tmp_path_factory):
         # (the shipped manifest has none; tests/test_annotate.py checks that).
         # (and the two sites whose tab URL picks the Cite tab's main button; their pages are served by a route)
         m["host_permissions"] = [f"{base}/*", f"{site.base}/*", "https://www.overleaf.com/*", "https://docs.google.com/*"]
-        (ext / "manifest.json").write_text(json.dumps(m))
+        (ext / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
         # the shipped UI lives in a closed shadow root (page scripts can't read your notes); Playwright
         # can only look inside open ones
         ann = ext / "annotate.js"
         assert 'attachShadow({ mode: "closed" })' in ann.read_text(encoding="utf-8")
-        ann.write_text(ann.read_text(encoding="utf-8").replace('attachShadow({ mode: "closed" })', 'attachShadow({ mode: "open" })'))
+        ann.write_text(ann.read_text(encoding="utf-8").replace('attachShadow({ mode: "closed" })', 'attachShadow({ mode: "open" })'),
+                       encoding="utf-8")  # it has non-ASCII characters; Windows would write cp1252
 
         pw = sync_playwright().start()
         stack.callback(pw.stop)
