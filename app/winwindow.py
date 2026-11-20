@@ -330,16 +330,12 @@ def _wndproc(c: _Chrome, hwnd, msg, wp, lp):
             return u.CallWindowProcW(c.old, hwnd, msg, wp, lp)  # the side and bottom borders: Windows' own
         if msg == WM_SIZE:
             r = u.CallWindowProcW(c.old, hwnd, msg, wp, lp)
-            if wp in (1, 2):  # SIZE_MINIMIZED, SIZE_MAXIMIZED: the next "restored" comes back from it
+            if wp in (1, 2) and not c.from_state:  # SIZE_MINIMIZED, SIZE_MAXIMIZED: remember the size to come back to
                 c.from_state = True
-            if wp == 0:  # SIZE_RESTORED
-                if c.from_state:  # back from minimized or maximized (never while it's first made)
-                    c.from_state = False
-                    _later(c, lambda: (_back_to_size(c), _show_page(c)))
-                else:  # a resize by you: the size to come back to
-                    wr = wintypes.RECT()
-                    u.GetWindowRect(hwnd, ctypes.byref(wr))
-                    c.normal = (wr.right - wr.left, wr.bottom - wr.top)
+                c.normal = _normal_size(hwnd)
+            if wp == 0 and c.from_state:  # SIZE_RESTORED, back from minimized or maximized
+                c.from_state = False
+                _later(c, lambda: _restored(c))
             if wp in (0, 2):  # SIZE_RESTORED, SIZE_MAXIMIZED
                 _tell_state(c)
                 _later(c, lambda: _layout(c))
@@ -390,6 +386,62 @@ def _controller(c: _Chrome):
             print(f"[research_brain] WebView2 members: {[x for x in seen if 'ebView' in x or 'ontroller' in x][:40]}",
                   file=sys.stderr, flush=True)
     return c.controller
+
+
+def _normal_size(hwnd) -> tuple[int, int] | None:
+    """The window's restored (normal) size, as Windows keeps it (GetWindowPlacement), outer pixels."""
+    import ctypes
+    from ctypes import wintypes
+
+    class WINDOWPLACEMENT(ctypes.Structure):
+        _fields_ = [("length", wintypes.UINT), ("flags", wintypes.UINT), ("showCmd", wintypes.UINT),
+                    ("ptMinPosition", wintypes.POINT), ("ptMaxPosition", wintypes.POINT),
+                    ("rcNormalPosition", wintypes.RECT)]
+    try:
+        wp = WINDOWPLACEMENT()
+        wp.length = ctypes.sizeof(wp)
+        if not ctypes.windll.user32.GetWindowPlacement(hwnd, ctypes.byref(wp)):
+            return None
+        r = wp.rcNormalPosition
+        return (r.right - r.left, r.bottom - r.top) if r.right > r.left and r.bottom > r.top else None
+    except Exception:
+        return None
+
+
+def _restored(c: _Chrome) -> None:
+    """Back from minimized or maximized: the size it had, and the page back over the window (Windows Forms
+    lays the page out while the window is parked off screen, minimized, and leaves it there: a blank window
+    that doesn't answer clicks). Again a moment later, after Windows Forms' own resizing."""
+    _back_to_size(c)
+    _place_page(c)
+    _show_page(c)
+
+    def again():
+        try:
+            from System import Action
+            c.form.BeginInvoke(Action(lambda: (_back_to_size(c), _place_page(c))))
+        except Exception:
+            pass
+    threading.Timer(0.3, again).start()
+
+
+def _place_page(c: _Chrome) -> None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+        wv = c.form.browser.webview
+        cr = wintypes.RECT()
+        ctypes.windll.user32.GetClientRect(c.hwnd, ctypes.byref(cr))
+        top = 0 if ctypes.windll.user32.IsZoomed(c.hwnd) else c.strip
+        want = (0, top, cr.right, max(0, cr.bottom - top))
+        if (wv.Left, wv.Top, wv.Width, wv.Height) != want:
+            if os.environ.get("RB_WIN_DEBUG") == "1":
+                print(f"[research_brain] page was at {wv.Left},{wv.Top} {wv.Width}x{wv.Height}: put back at {want}",
+                      file=sys.stderr, flush=True)
+            from System.Drawing import Rectangle
+            wv.Bounds = Rectangle(*want)
+    except Exception as e:
+        print(f"[research_brain] placing the page: {e!r}", file=sys.stderr)
 
 
 def _back_to_size(c: _Chrome) -> None:
