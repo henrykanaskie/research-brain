@@ -5,6 +5,7 @@ conflict badge, sorting, the CSV link, and Esc. Reuses the server/browser fixtur
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from playwright.sync_api import expect  # noqa: E402
 
 from test_e2e import api, browser, clear_vault, ctx, open_app, server  # noqa: E402,F401
 
-MOD = "Meta" if os.uname().sysname == "Darwin" else "Control"
+MOD = "Meta" if sys.platform == "darwin" else "Control"
 
 TEXT_A = """[[page 1]]
 Magnetic shielding strongly reduces erosion of the discharge channel walls in this thruster.
