@@ -518,6 +518,34 @@ def _tune(core) -> None:
 
 
 # ---------------------------------------------------------------- run
+def _work_area() -> tuple[int, int] | None:
+    """The main screen's size without the taskbar, in logical (96 dpi) pixels, as pywebview sizes windows."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        if not ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+            return None
+        try:
+            dpi = int(ctypes.windll.user32.GetDpiForSystem()) or 96
+        except AttributeError:
+            dpi = 96
+        return (rect.right - rect.left) * 96 // dpi, (rect.bottom - rect.top) * 96 // dpi
+    except Exception:
+        return None
+
+
+def _fit(area: tuple[int, int] | None = None, want=(1400, 900), least=(900, 600)):
+    """The window's first size and its smallest: 1400 x 900 where it fits, else the screen less a margin, so
+    a small laptop screen shows the whole window, its buttons included."""
+    area = area if area is not None else _work_area()
+    if not area:
+        return want, least
+    aw, ah = area
+    w, h = min(want[0], max(aw - 40, 480)), min(want[1], max(ah - 40, 360))
+    return (w, h), (min(least[0], w), min(least[1], h))
+
+
 def _identity() -> None:
     """One taskbar button of its own (not grouped with other Python programs as pythonw), which the Start menu
     entry and a pinned icon share (app/winshell.py); older Start menu entries get the ID here."""
@@ -570,8 +598,9 @@ def run(url: str, start) -> int | None:
     loading = LOADING
     if mode == "custom":  # no title bar yet: the loading page drags the window
         loading = LOADING.replace("<style>", "<style>html{app-region:drag;-webkit-app-region:drag}", 1)
-    win = webview.create_window(APP_NAME, html=loading.replace("{more}", ""), width=1400, height=900,
-                                min_size=(900, 600), background_color="#EEEFEB", text_select=True)
+    (w, h), least = _fit()
+    win = webview.create_window(APP_NAME, html=loading.replace("{more}", ""), width=w, height=h,
+                                min_size=least, background_color="#EEEFEB", text_select=True)
     page.win = win
     if mode == "custom":
         # before the window is shown (pywebview runs before_show on the UI thread), so it never has a caption

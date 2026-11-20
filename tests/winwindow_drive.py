@@ -31,6 +31,7 @@ from rb_testserver import ROOT, run_server  # noqa: E402
 
 TITLE = "research brain"
 HEADER = 52       # CSS px: the page's header, the caption
+EMPTY_Y = 10      # CSS px from the top: header above the search field and buttons, below the resize strip
 BUTTON_W = 46     # CSS px: each caption button
 
 WM_NCHITTEST, WM_CLOSE = 0x0084, 0x0010
@@ -193,7 +194,9 @@ def front(hwnd):
 def shot(out: Path, name: str, box=None, report: Report | None = None):
     try:
         from PIL import ImageGrab
-        img = ImageGrab.grab(bbox=box, all_screens=True) if box else ImageGrab.grab(all_screens=True)
+        img = ImageGrab.grab()  # the whole (primary) screen, cropped here: a bbox grab came out misplaced
+        if box:
+            img = img.crop(tuple(max(0, v) for v in box))
         img.save(out / name)
         if report:
             report.info(f"shot {name}", list(box) if box else "full screen")
@@ -274,7 +277,7 @@ def steps(proc, rep: Report, out: Path):
     if not hwnd:
         return
     front(hwnd)
-    time.sleep(8)  # the app loads
+    time.sleep(20)  # the app loads (a first start builds the search index)
     rep.check("still running after load", proc.poll() is None, proc.poll())
     s = scale_of(hwnd)
     rep.info("scale", s)
@@ -296,7 +299,7 @@ def steps(proc, rep: Report, out: Path):
               {"client_top": cl[1], "frame_top": t})
     mid = (l + r) // 2
     h_top = hit(hwnd, mid, t + 2)
-    h_header = hit(hwnd, l + int((r - l) * 0.4), t + int(HEADER // 2 * s))
+    h_header = hit(hwnd, l + int((r - l) * 0.4), t + int(EMPTY_Y * s))
     h_left = hit(hwnd, rect(hwnd)[0] + 2, (t + b) // 2)
     rep.info("hit test", {"top strip": h_top, "header": h_header, "left edge": h_left})
     rep.check("top strip resizes (HTTOP)", h_top in ("HTTOP", "HTTOPLEFT", "HTTOPRIGHT"), h_top)
@@ -304,7 +307,7 @@ def steps(proc, rep: Report, out: Path):
 
     # 4. drag by the header
     before = frame_bounds(hwnd)
-    gx, gy = l + int((r - l) * 0.4), t + int(HEADER // 2 * s)
+    gx, gy = l + int((r - l) * 0.4), t + int(EMPTY_Y * s)
     move(gx, gy)
     down()
     for i in range(1, 11):
@@ -319,7 +322,7 @@ def steps(proc, rep: Report, out: Path):
 
     # 5. double-click the header
     l, t, r, b = frame_bounds(hwnd)
-    double_click(l + int((r - l) * 0.4), t + int(HEADER // 2 * s), 1.5)
+    double_click(l + int((r - l) * 0.4), t + int(EMPTY_Y * s), 1.5)
     zoomed = bool(user32.IsZoomed(hwnd))
     rep.check("double-clicking the header maximizes", zoomed)
     shot(out, "03-maximized.png", frame_bounds(hwnd), rep)
@@ -327,7 +330,7 @@ def steps(proc, rep: Report, out: Path):
         l, t, r, b = frame_bounds(hwnd)
         rep.info("maximized frame", (l, t, r, b))
         rep.info("maximized client", client_rect(hwnd))
-        double_click(l + int((r - l) * 0.4), t + int(HEADER // 2 * s), 1.5)
+        double_click(l + int((r - l) * 0.4), t + int(EMPTY_Y * s), 1.5)
         rep.check("double-clicking again restores", not user32.IsZoomed(hwnd))
     if user32.IsZoomed(hwnd):
         user32.ShowWindow(hwnd, SW_RESTORE)
