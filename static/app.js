@@ -1467,10 +1467,10 @@
 
   /** pull each region toward its own anchor so regions form lobes; mild centering for the rest */
   // ---------- sections as clouds ----------
-  // Each section is drawn as one smooth cloud around its papers: their outline (convex hull), grown by a margin
-  // and rounded, in a quiet tint of its own with a faint edge, so you see which papers are IN it. Drawn under the
-  // lines and dots. Sections are spaced so their clouds never overlap.
+  // Each section has a cloud around its papers: their outline (convex hull) grown by a margin. It isn't drawn
+  // (SHOW_CLOUDS): it's the area you can press to drag the section, and sections are spaced so these never overlap.
   const CLOUD_PAD = 9;  // graph units of cloud around the outermost papers
+  const SHOW_CLOUDS = false;  // the clouds are for layout and dragging only: you asked for no visible cloud
   const cloudLayer = document.createElement('canvas');
   function cloudMembers() {
     const groups = new Map();
@@ -1521,6 +1521,7 @@
       if (!(S.clusters || []).some((c) => c.id === cid)) continue;
       const sh = cloudShape(mem);
       cloudShapes.set(cid, sh);
+      if (!SHOW_CLOUDS) continue;  // sections organise the map; their area isn't drawn (it still takes a drag)
       const dim = S.focusCluster != null && S.focusCluster !== cid ? 0.35 : 1;
       const hot = S.dragRegion === cid || S.hoverRegion === cid;
       const tint = cloudTint(cid);
