@@ -59,6 +59,12 @@
       try { data = JSON.parse(e.data); } catch { return; }
       window.dispatchEvent(new CustomEvent('rb:finder-done', { detail: data }));
     });
+    // a novelty check finished (app/novelty_api.py): static/novelty.js says so
+    es.addEventListener('novelty-done', (e) => {
+      let data = null;
+      try { data = JSON.parse(e.data); } catch { return; }
+      window.dispatchEvent(new CustomEvent('rb:novelty-done', { detail: data }));
+    });
     es.addEventListener('notes-changed', (e) => {
       let data = null;
       try { data = JSON.parse(e.data); } catch { return; }

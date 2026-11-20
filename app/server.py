@@ -4544,6 +4544,11 @@ def _match_question(text: str) -> dict | None:
 
 finder_api.install(app, store=store, publish=event_bus.publish, match_question=_match_question)
 
+# ---------------------------------------------------------------- novelty check (app/novelty.py, app/novelty_api.py)
+from . import novelty_api  # noqa: E402
+novelty_api.install(app, store=store, publish=event_bus.publish, agent=_ai_agent, embedder=embedder,
+                    chunk_index=_chunk_index, ask=lambda i, c, purpose="novelty check", sources=None: _ask(i, c, purpose, sources))
+
 # ---------------------------------------------------------------- citing: styles, keys, .bib/RIS exports (app/cite_api.py)
 from . import cite_api  # noqa: E402
 cite_api.install(app, store=store, vault=VAULT, watcher=_watcher,

@@ -4178,7 +4178,9 @@
     if (!text.trim()) return;
     e.preventDefault();
     closeNodeMenu();
-    showMenu('', [menuItem('Copy', null, () => { copyText(text).then((ok) => toast(ok ? 'Copied' : 'Could not copy: press Cmd+C (Ctrl+C) instead', ok ? 'ok' : 'info')); })], e);
+    const inNote = S.cur && pbody.contains(e.target) && window.__rbNovelty;  // static/novelty.js
+    showMenu('', [menuItem('Copy', null, () => { copyText(text).then((ok) => toast(ok ? 'Copied' : 'Could not copy: press Cmd+C (Ctrl+C) instead', ok ? 'ok' : 'info')); }),
+      inNote ? menuItem('Check novelty', null, () => window.__rbNovelty.open(S.cur, text)) : null], e);
   });
 
   // "Link to…": the next dot you click is linked to this one
