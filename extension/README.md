@@ -57,7 +57,7 @@ extension's card in `chrome://extensions`.
 | `activeTab` | Lets the extension touch **only the tab you're on, and only after you click its button or press its shortcut**. There are no broad host permissions and no always-on content script. |
 | `scripting` | Injects the annotate script (`annotate.js`) into that tab when you turn annotate mode on, and reads the current selection for a quick clip. |
 | `storage` | Remembers the server address, whether the notes list is open, and an unsaved quick-clip draft. Stored in Chrome on this computer. |
-| `contextMenus` | The right-click "Add to research_brain…" item, the only way to clip from Chrome's PDF viewer. |
+| `contextMenus` | The right-click items: "Add to research_brain…" on a selection (the only way to clip from Chrome's PDF viewer), and "Add this PDF to research brain" / "Add linked PDF to research brain" on a PDF or a link to one. |
 | Host `http://127.0.0.1:8765/*`, `http://localhost:8765/*` | Talk to research_brain on this computer. Nothing else. |
 | Optional: `http://*/*`, `https://*/*` | **Only if you turn on "Open PDFs in research brain"** (Settings), and Chrome asks you first. It lets the extension notice that a tab finished loading a PDF and download that PDF in the tab with your own access. Turning the setting off gives the permission back. |
 
@@ -164,6 +164,22 @@ Theses and books are recognised from `citation_dissertation_institution`, `citat
   articles split over several pages (only the one you are on is saved), MathJax 3 pages whose
   math has neither `data-latex` nor assistive MathML (kept as its spoken label or plain text), and sites without any citation metadata (the title falls back to the page's heading; fill in the rest in the
   app). Tables are left out except their captions.
+
+## Add a PDF with a right-click
+
+Right-click inside a PDF (Chrome's PDF viewer) and choose **Add this PDF to research brain**, or right-click a link
+to a PDF and choose **Add linked PDF to research brain**. The paper opens in research brain's viewer, and the
+toolbar icon shows ✓ (or ! with the reason in its tooltip).
+
+- A PDF on this computer (`file:///…`, e.g. opened from Downloads on Windows) is read by research brain from its
+  path, through `/api/papers/import-files`; the extension never reads the file, so it doesn't need *Allow access
+  to file URLs*. research brain only reads PDFs inside your user folder this way; for one elsewhere (another
+  drive), drag it onto the research brain window.
+- A web PDF is downloaded in the tab with your own access (as **Save PDF**). If that's refused, usually a link to
+  another site, research brain downloads it itself (`/api/import/url`), which works for open-access PDFs.
+
+The items show on URLs that look like PDFs (`.pdf`, `/pdf/`, `/epdf/`, `/pdfdirect/`). For a PDF at any other
+address, use the popup: it detects the PDF from the page itself.
 
 ## Annotate a PDF
 

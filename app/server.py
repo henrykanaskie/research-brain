@@ -508,7 +508,9 @@ def pick_folder_command(prompt: str) -> list[str] | None:
         # "activate" brings the dialog to the front, over research brain's window
         return ["/usr/bin/osascript", "-e", "activate", "-e", f'POSIX path of (choose folder with prompt "{prompt}")']
     if os.name == "nt":
-        ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+        # UTF-8 out, decoded as UTF-8 below: the console's own code page mangles names it can't spell
+        ps = ("[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false;"
+              "Add-Type -AssemblyName System.Windows.Forms;"
               "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
               f'$f.Description = "{prompt}"; $f.ShowNewFolderButton = $false;'
               "if ($f.ShowDialog() -eq 'OK') { [Console]::Out.Write($f.SelectedPath) }")
@@ -529,10 +531,10 @@ def api_pick_folder(body: PickFolderIn):
     if not cmd:
         raise HTTPException(501, "No folder chooser on this computer. Paste the folder's path instead.")
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise HTTPException(500, f"The folder chooser didn't open ({e.__class__.__name__}). Paste the folder's path instead.")
-    path = (r.stdout or "").strip()
+    path = (r.stdout or "").lstrip("\ufeff").strip()
     if r.returncode != 0 or not path:
         return {"path": None}  # cancelled
     path = path.rstrip("/\\") or path
