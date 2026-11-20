@@ -47,6 +47,7 @@ RAW_BODY_PATHS = {
     "/api/import/pdf-bytes": (("application/pdf",), "RB_MAX_UPLOAD_MB", 300),
     "/api/vault/import": (("application/zip", "application/x-zip-compressed"), "RB_MAX_IMPORT_MB", 50 * 1024),
     "/api/capture/photo": (("image/jpeg", "image/png", "image/webp"), "RB_MAX_PHOTO_MB", 25),  # app/mobile_api.py
+    "/api/voice/stt": (("audio/wav", "audio/x-wav", "audio/wave"), "RB_MAX_VOICE_MB", 12),  # voice mode: what you said
 }
 MB = 1 << 20
 

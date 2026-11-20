@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 import sys
 
+import pytest
+
 
 sys.path.insert(0, os.path.dirname(__file__))
 from playwright.sync_api import expect  # noqa: E402
@@ -30,7 +32,7 @@ def test_voice_mode_talks_and_listens_again(ctx, server):
     page.click("#btn-chat")
     page.click("#btn-chat-voice")
     expect(page.locator(".voice-bar")).to_be_visible()
-    assert page.evaluate("() => window.__rbVoice.state") == "listening"
+    page.wait_for_function("() => window.__rbVoice.state === 'listening'")  # it checks the voice's setup first
     assert {"dictate": True} in page.evaluate("() => window.__sent")
     for part in ["What is", "What is a cross section?"]:  # macOS dictation typing
         page.evaluate("(t) => { const ta = document.getElementById('chat-input'); ta.value = t; ta.dispatchEvent(new Event('input')); }", part)
@@ -54,3 +56,15 @@ def test_speakable_skips_what_cant_be_heard(ctx, server):
       "## Result\\nThe rate is $\\\\sigma^2$ [[paper-a]] p. 3, see [the paper](https://x.org).\\n\\n```python\\nprint(1)\\n```\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |\\n<remember>Likes plots.</remember>")""")
     assert "sigma squared" in out and "[[" not in out and "print" not in out and "| a" not in out
     assert "the paper" in out and "https" not in out and "Likes plots" not in out and "##" not in out
+
+
+@pytest.mark.skipif(not os.environ.get("RB_VOICE_TEST_DIR"), reason="needs the voice download (RB_VOICE_TEST_DIR: a set-up voice folder)")
+def test_hands_free_turns_with_a_microphone(tmp_path):
+    """The microphone (a recorded question, played as Chromium's fake microphone), turn-taking, Whisper and the
+    natural voice, end to end: it hears the question, answers out loud, then listens and hears the next one.
+    Runs in its own process (it needs its own Chromium, with a fake microphone)."""
+    import subprocess
+    script = os.path.join(os.path.dirname(__file__), "handsfree_check.py")
+    r = subprocess.run([sys.executable, script, str(tmp_path)], capture_output=True, text=True, timeout=240,
+                       cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]

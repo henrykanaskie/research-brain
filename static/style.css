@@ -1306,3 +1306,5 @@ html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-se
 /* the Add menu's section picker */
 .add-section { display: flex; align-items: center; gap: 8px; margin-top: 8px; font: 12px var(--sans); color: var(--ink-2); }
 .add-section select { flex: 1; min-width: 0; height: 28px; border: 1px solid var(--rule); border-radius: var(--r, 3px); background: var(--sheet); color: var(--ink); font: 12.5px var(--sans); padding: 0 4px; }
+/* voice mode: the orb follows your voice while it listens */
+.voice-bar[data-state="listening"] .vb-orb[style*="--lvl"] .vb-core { animation: none; transform: scale(calc(0.74 + var(--lvl) * 0.5)); transition: transform .08s linear; }

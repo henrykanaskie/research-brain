@@ -271,6 +271,99 @@
     },
   };
 
+  // ====================================================================== hearing you: the microphone
+  // Like Claude's voice mode: the page listens all the time, notices when you start talking and when you've
+  // finished (a pause of about 0.9 s), and hands the recording to Whisper on this computer (POST /api/voice/stt).
+  // Echo cancellation keeps its own voice out; while it speaks, talking over it (clearly louder than the room)
+  // interrupts it. The level of the room is learned as it listens, so a fan or a quiet hum doesn't count as you.
+  const mic = {
+    stream: null, ctx: null, node: null, src: null, floor: 0.006, mode: 'off',  // off | listen | speaking | hold
+    inUtt: false, rec: [], pre: [], preMs: 0, voiced: 0, silent: 0, total: 0, rate: 48000,
+    onStart: null, onUtter: null, level: 0,
+    async open() {
+      if (this.stream) return null;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return 'unsupported';
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+      } catch (e) { this.stream = null; return e && e.name === 'NotAllowedError' ? 'denied' : 'failed'; }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AC();
+      this.rate = this.ctx.sampleRate;
+      this.src = this.ctx.createMediaStreamSource(this.stream);
+      this.node = this.ctx.createScriptProcessor(2048, 1, 1);
+      this.node.onaudioprocess = (e) => this.frame(e.inputBuffer.getChannelData(0));
+      this.src.connect(this.node);
+      const mute = this.ctx.createGain(); mute.gain.value = 0;  // keeps the node running without playing anything
+      this.node.connect(mute); mute.connect(this.ctx.destination);
+      if (this.ctx.state === 'suspended') await this.ctx.resume().catch(() => {});
+      return null;
+    },
+    close() {
+      this.mode = 'off'; this.inUtt = false; this.rec = []; this.pre = [];
+      if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+      if (this.ctx) this.ctx.close().catch(() => {});
+      this.stream = null; this.ctx = null; this.node = null; this.src = null;
+    },
+    frame(buf) {
+      if (this.mode === 'off' || this.mode === 'hold') { this.level = 0; return; }
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length), ms = (buf.length / this.rate) * 1000;
+      this.level = rms;
+      const copy = new Float32Array(buf);
+      const barge = this.mode === 'speaking';
+      const start = Math.max(this.floor * (barge ? 6 : 3.2), barge ? 0.045 : 0.012);
+      if (!this.inUtt) {
+        if (rms < start) this.floor = this.floor * 0.97 + Math.min(rms, this.floor * 2.5 + 0.001) * 0.03;  // the room's own level
+        this.pre.push(copy); this.preMs += ms;
+        while (this.preMs > 350 && this.pre.length > 1) { this.preMs -= (this.pre.shift().length / this.rate) * 1000; }
+        if (rms > start) this.voiced += ms; else this.voiced = Math.max(0, this.voiced - ms * 0.5);
+        if (this.voiced >= (barge ? 260 : 110)) {
+          this.inUtt = true; this.rec = this.pre.slice(); this.pre = []; this.preMs = 0;
+          this.silent = 0; this.total = 0; this.voiced = 0;
+          if (this.onStart) this.onStart(barge);
+        }
+        return;
+      }
+      this.rec.push(copy); this.total += ms;
+      if (rms < Math.max(this.floor * 2.2, 0.008)) this.silent += ms; else this.silent = 0;
+      if (this.silent >= 900 || this.total > 30000) {
+        const spoken = this.total - this.silent;
+        const rec = this.rec; this.rec = []; this.inUtt = false; this.silent = 0;
+        if (spoken < 300) return;  // a cough or a click, not you talking
+        if (this.onUtter) this.onUtter(toWav16k(rec, this.rate));
+      }
+    },
+  };
+  /** The recording as a WAV file: 16 kHz, mono, 16-bit (what Whisper wants). */
+  function toWav16k(chunks, rate) {
+    let n = 0; for (const c of chunks) n += c.length;
+    const all = new Float32Array(n); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+    const ratio = rate / 16000, m = Math.floor(n / ratio);
+    const pcm = new Int16Array(m);
+    for (let i = 0; i < m; i++) {
+      const x = i * ratio, j = Math.floor(x), f = x - j;
+      const v = (all[j] || 0) * (1 - f) + (all[j + 1] || 0) * f;
+      pcm[i] = Math.max(-1, Math.min(1, v)) * 0x7fff;
+    }
+    const buf = new ArrayBuffer(44 + pcm.length * 2), dv = new DataView(buf);
+    const w = (p, str) => { for (let i = 0; i < str.length; i++) dv.setUint8(p + i, str.charCodeAt(i)); };
+    w(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, 16000, true);
+    dv.setUint32(28, 32000, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); w(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
+    new Int16Array(buf, 44).set(pcm);
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+  async function transcribe(wav) {
+    const r = await fetch('/api/voice/stt', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'Couldn’t make out what was said');
+    return ((await r.json()).text || '').trim();
+  }
+  const canHear = () => neural.state === 'ready' && neural.hear === true;
+  /** a line in the app's log (the Mac app: app.log), so a voice problem can be traced */
+  function vlog(msg) { try { const l = window.__rbLive; if (l && l.native) l.native({ log: 'voice: ' + msg }); } catch { /* not the Mac app */ } }
+  let engine = 'mic';  // mic (the microphone and Whisper) | old (the browser's recognizer, or macOS dictation)
+
   // ====================================================================== voice mode
   let active = false, state = 'idle', feed = null;
   const bar = h('div', { class: 'voice-bar', hidden: true, role: 'region', 'aria-label': 'Voice mode' });
@@ -312,15 +405,18 @@
     let v = neural.voice || 'af_heart';
     if (st !== 'ready' && !v.startsWith('system-')) v = /^[ab]m_/.test(v) ? 'system-male' : 'system-female';
     pick.value = v;
-    if (st === 'ready' || !(active || setupWanted) || (offerOff() && st !== 'installing' && !setupWanted)) { setup.hidden = true; return; }
+    const complete = st === 'ready' && neural.hear;
+    if (complete || !(active || setupWanted) || (offerOff() && st !== 'installing' && !setupWanted)) { setup.hidden = true; return; }
     setup.hidden = false;
     if (st === 'installing') {
       setup.replaceChildren(h('span', { text: `${neural.step || 'Setting up the natural voice'}… ${Math.round((neural.progress || 0) * 100)}%` }),
         h('span', { class: 'vb-bar' }, h('span', { style: `width:${Math.round((neural.progress || 0) * 100)}%` })));
     } else {
       setup.replaceChildren(
-        h('span', { text: st === 'error' ? `The natural voice didn’t install: ${neural.error || 'something went wrong'}. ` : 'For a natural, human-sounding voice: ' }),
-        h('button', { type: 'button', class: 'btn btn-text btn-sm', text: st === 'error' ? 'Try again' : `Download it (about ${neural.size_mb || 480} MB, stays on this computer)`, onclick: installVoice }),
+        h('span', { text: st === 'error' ? `The natural voice didn’t install: ${neural.error || 'something went wrong'}. `
+          : st === 'ready' ? 'To talk hands-free (it hears you and knows when you’ve finished): ' : 'For hands-free talking and a natural, human-sounding voice: ' }),
+        h('button', { type: 'button', class: 'btn btn-text btn-sm', text: st === 'error' ? 'Try again'
+          : st === 'ready' ? 'Add hearing (about 220 MB, stays on this computer)' : `Download it (about ${neural.size_mb || 700} MB, stays on this computer)`, onclick: installVoice }),
         h('button', { type: 'button', class: 'btn btn-text btn-sm vb-nope', text: 'No thanks', title: 'Keep the built-in voice; you can still download it from the voice menu later',
           onclick: () => { try { localStorage.setItem(NOPE, '1'); } catch { /* ok */ } setup.hidden = true; } }));
     }
@@ -335,11 +431,21 @@
       await refreshVoice();
       if (neural.state !== 'installing') {
         clearInterval(pollT);
-        if (neural.state === 'ready') { toast('The natural voice is ready.', 'ok'); api('POST', '/api/voice/warm', {}).catch(() => {}); rb.renderChat(); }
+        if (neural.state === 'ready') {
+          toast(neural.hear ? 'Voice mode can hear you now: talk, and it answers out loud.' : 'The natural voice is ready.', 'ok');
+          api('POST', '/api/voice/warm', {}).catch(() => {}); rb.renderChat();
+          if (active && neural.hear) { stopVoice(false); startVoice(); }  // straight into hands-free
+        }
       }
     }, 1000);
   }
   const LABEL = { listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking', paused: 'Paused' };
+  // the orb follows your voice while it listens
+  (function level() {
+    if (active && engine === 'mic' && state === 'listening') orb.style.setProperty('--lvl', String(Math.min(1, mic.level * 14)));
+    else orb.style.removeProperty('--lvl');
+    requestAnimationFrame(level);
+  })();
   function setState(st, note) {
     state = st;
     bar.dataset.state = st;
@@ -352,6 +458,7 @@
     if (!active) return;
     setHeard('');
     setState('listening');
+    if (engine === 'mic') { mic.mode = 'listen'; return; }  // the microphone is already open; it hands over when you've spoken
     listen.start((q) => {
       if (!active) return;
       if (!q) { setState('paused', 'Didn’t catch anything. Tap to talk.'); return; }
@@ -359,6 +466,7 @@
     });
   }
   function ask(q) {
+    if (engine === 'mic') mic.mode = 'hold';  // not while it thinks; it listens for an interruption once it talks
     setState('thinking');
     setHeard(q);
     const ta = $('#chat-input'); ta.value = ''; ta.dispatchEvent(new Event('input'));
@@ -371,7 +479,7 @@
   S.voiceHook = {
     live(text) {
       if (!active || !feed) return;
-      if (state === 'thinking') setState('speaking');
+      if (state === 'thinking') { setState('speaking'); if (engine === 'mic') mic.mode = 'speaking'; }
       feed(text, false);
     },
     done(msg) {
@@ -379,28 +487,70 @@
       if (msg && msg.error) { feed = null; setState('paused', 'That didn’t work. Tap to try again.'); return; }
       if (msg && msg.content) feed(msg.content, true);
       feed = null;
-      if (state === 'thinking') setState('speaking');
+      if (state === 'thinking') { setState('speaking'); if (engine === 'mic') mic.mode = 'speaking'; }
       if (!speech.speaking) listenNow();  // nothing (left) to say
     },
   };
 
-  function startVoice() {
+  async function startVoice() {
     if (rb.claudeBlocked && rb.claudeBlocked()) return;
-    if (!SR && !isMac()) { toast('Voice needs speech recognition, which this browser doesn’t have. The Mac app has it.', 'info'); return; }
     rb.openChat();
     reading = null; speech.stop();
     active = true;
     const form = $('#chat-form');
     form.classList.add('voice-on');
     bar.hidden = false;
-    if (useNeural()) api('POST', '/api/voice/warm', {}).catch(() => {});
-    refreshVoice();
+    await refreshVoice();
+    if (!active) return;
+    if (neural.state === 'ready') api('POST', '/api/voice/warm', {}).catch(() => {});
+    // hands-free with the microphone and Whisper when they're set up; else the browser's own recognizer (or
+    // macOS dictation in the Mac app) as before
+    engine = canHear() ? 'mic' : 'old';
+    if (engine === 'old' && !SR && !isMac()) {
+      setupWanted = true; paintSetup();
+      setState('paused', 'To hear you, voice mode needs its listening model: download it below.');
+      return;
+    }
+    if (engine === 'mic') {
+      setState('paused', 'Starting the microphone…');
+      // macOS asks you the first time; if nothing answers in a while, fall back to dictation rather than hang
+      const err = await Promise.race([mic.open(), new Promise((r) => setTimeout(() => r('timeout'), 12000))]);
+      vlog(`microphone: ${err || 'on'} (mediaDevices: ${typeof navigator.mediaDevices})`);
+      if (!active) { mic.close(); return; }
+      if (err === 'denied') {
+        setState('paused', 'The microphone is off for research brain. Allow it in System Settings › Privacy & Security › Microphone, then try again.');
+        return;
+      }
+      if (err) {
+        mic.close();
+        engine = 'old';
+        if (!SR && !isMac()) { setState('paused', 'Couldn’t start the microphone. Check that one is connected, then try again.'); return; }
+        toast('The microphone didn’t start, so voice mode uses dictation instead (it won’t know when you’ve finished; tap the orb when you have).', 'info', { ms: 7000 });
+        listenNow();
+        return;
+      }
+      mic.onStart = (barge) => {
+        if (!active) return;
+        if (barge) { speech.stop(); feed = null; }  // you talked over it: it stops and listens
+        setHeard(''); setState('listening', 'Listening…');
+      };
+      mic.onUtter = async (wav) => {
+        if (!active) return;
+        mic.mode = 'hold';
+        setState('thinking', 'Hearing you…');
+        let q = '';
+        try { q = await transcribe(wav); } catch (e) { vlog('transcribe failed: ' + e.message); setState('paused', e.message); mic.mode = 'listen'; return; }
+        if (!active) return;
+        if (!q || q.replace(/[^\p{L}\p{N}]/gu, '').length < 2) { listenNow(); return; }  // nothing said: keep listening
+        ask(q);
+      };
+    }
     listenNow();
   }
   function stopVoice(render = true) {
     if (!active) return;
     active = false; feed = null;
-    listen.stop(); speech.stop(); speech.onIdle = null;
+    listen.stop(); mic.close(); speech.stop(); speech.onIdle = null;
     bar.hidden = true;
     if (!setupWanted || neural.state !== 'installing') setup.hidden = true;
     $('#chat-form').classList.remove('voice-on');
@@ -409,6 +559,7 @@
   }
   orb.addEventListener('click', () => {
     if (state === 'speaking') { speech.stop(); listenNow(); }          // interrupt: it listens
+    else if (state === 'listening' && engine === 'mic') { if (mic.inUtt) { mic.silent = 9999; } }  // done talking
     else if (state === 'listening') { listen.finish(); }                 // done talking: send what it has
     else if (state === 'paused' || state === 'idle') listenNow();
   });
@@ -433,5 +584,5 @@
   if (synth && synth.getVoices().length === 0 && synth.addEventListener) synth.addEventListener('voiceschanged', () => rb.renderChat());
 
   window.__rbVoice = { start: startVoice, stop: stopVoice, readAloud, installVoice, get neural() { return neural; }, isReading: (m) => reading === m, canSpeak: () => canSpeak() || !!synth,
-    speakable, get state() { return active ? state : 'off'; }, _speech: speech, _feed: sentenceFeeder };
+    speakable, get state() { return active ? state : 'off'; }, _speech: speech, _feed: sentenceFeeder, _mic: mic };
 })();

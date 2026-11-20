@@ -43,3 +43,14 @@ def test_worker_script_is_standalone():
     from pathlib import Path
     src = (Path(__file__).resolve().parent.parent / "app" / "voice_worker.py").read_text()
     assert "from app" not in src and "research_brain" not in src.split('"""', 2)[-1]
+
+
+def test_hearing_endpoint(server, tmp_path, monkeypatch):  # noqa: F811
+    srv, c, use = server
+    monkeypatch.setenv("RB_VOICE_DIR", str(tmp_path / "voice"))
+    assert c.get("/api/voice").json()["neural"]["hear"] is False
+    wav = b"RIFF" + b"\0" * 2000
+    r = c.post("/api/voice/stt", content=wav, headers={"Content-Type": "audio/wav"})
+    assert r.status_code == 409 and "set up" in r.json()["detail"]
+    # only audio: a form or a plain-text post (what another site could send without asking) is refused
+    assert c.post("/api/voice/stt", content=b"hello", headers={"Content-Type": "text/plain"}).status_code == 415

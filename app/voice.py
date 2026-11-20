@@ -32,6 +32,9 @@ FILES = {  # name: (sha256, size in bytes)
     "voices-v1.0.bin": ("bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d", 28214398),
 }
 PACKAGES = ["kokoro-onnx==0.6.1", "soundfile==0.14.0"]
+# hearing you (Voice mode): Whisper, an open speech-recognition model, run on this computer
+HEAR_PACKAGES = ["faster-whisper==1.1.1", "requests==2.32.3"]
+WHISPER_MODEL = "base.en"  # about 140 MB; transcribes a few seconds of speech in under half a second
 DEFAULT_VOICE = "af_heart"
 VOICES = {  # the English voices offered, with a plain name
     "af_heart": "Heart (US, warm)", "af_bella": "Bella (US)", "af_nicole": "Nicole (US, soft)", "af_sarah": "Sarah (US)",
@@ -62,16 +65,22 @@ def ready() -> bool:
     return (root() / ".ok").exists()
 
 
+def hear_ready() -> bool:
+    """It can hear you too: Whisper and its model are set up."""
+    return ready() and (root() / ".ok-hear").exists() and (root() / "whisper").is_dir()
+
+
 def status() -> dict:
     st = dict(_state)
     if not st["state"]:
         st["state"] = "ready" if ready() else "missing"
+    st["hear"] = hear_ready()
     st["voice"] = chosen_voice()
     st["voices"] = VOICES
     st["female"] = [k for k in VOICES if gender(k) == "female"]
     st["male"] = [k for k in VOICES if gender(k) == "male"]
     st["system_voices"] = SYSTEM_VOICES
-    st["size_mb"] = 480  # on disk: the model and voices (350 MB) and their Python environment
+    st["size_mb"] = 700  # on disk: the voice (350 MB), the listening model (140 MB) and their Python environment
     return st
 
 
@@ -108,7 +117,7 @@ def remove() -> None:
 def install() -> dict:
     """Start setting the voice up in the background (no-op while it runs or once it's ready)."""
     with _lock:
-        if _state["state"] == "installing" or ready():
+        if _state["state"] == "installing" or (ready() and hear_ready()):
             return status()
         _state.update(state="installing", progress=0.0, error="", step="Preparing")
     threading.Thread(target=_install, daemon=True, name="rb-voice-install").start()
@@ -137,6 +146,13 @@ def _install() -> None:
                 _step("Installing the voice’s software", 0.06)
                 subprocess.run([str(_python()), "-m", "pip", "install", "-q", *PACKAGES], check=True,
                                capture_output=True, timeout=1200)
+        # hearing (an older setup could only speak): Whisper's software, added to the same environment
+        if not (d / ".ok-hear").exists():
+            _step("Installing the listening software", 0.08)
+            uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
+            cmd = ([uv, "pip", "install", "-q", "--python", str(_python()), *HEAR_PACKAGES] if Path(uv).exists()
+                   else [str(_python()), "-m", "pip", "install", "-q", *HEAR_PACKAGES])
+            subprocess.run(cmd, check=True, capture_output=True, timeout=1200)
         total = sum(s for _, s in FILES.values())
         done = 0
         for name, (sha, size) in FILES.items():
@@ -162,6 +178,12 @@ def _install() -> None:
                 raise RuntimeError(f"{name} didn't download correctly (its checksum doesn't match). Try again.")
             part.replace(p)
         (d / ".ok").write_text(time.strftime("%Y-%m-%d"), encoding="utf-8")
+        if not (d / ".ok-hear").exists() or not (d / "whisper").is_dir():
+            _step("Downloading the listening model", 0.97)
+            code = ("import sys; from faster_whisper import WhisperModel; "
+                    f"WhisperModel({WHISPER_MODEL!r}, device='cpu', compute_type='int8', download_root=sys.argv[1])")
+            subprocess.run([str(_python()), "-c", code, str(d / "whisper")], check=True, capture_output=True, timeout=1800)
+            (d / ".ok-hear").write_text(time.strftime("%Y-%m-%d"), encoding="utf-8")
         _state.update(state="ready", progress=1.0, step="", error="")
     except subprocess.CalledProcessError as e:
         msg = (e.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1:] or [str(e)]
@@ -213,6 +235,31 @@ class _Worker:
             finally:
                 out.unlink(missing_ok=True)
 
+    def hear(self, wav: bytes) -> str:
+        with self.lock:
+            if self.proc is None or self.proc.poll() is not None:
+                self._start()
+            self.n += 1
+            src = Path(tempfile.gettempdir()) / f"rb-hear-{os.getpid()}-{self.n}.wav"
+            src.write_bytes(wav)
+            try:
+                self.proc.stdin.write(json.dumps({"id": str(self.n), "op": "stt", "wav": str(src),
+                                                  "whisper": str(root() / "whisper"), "model": WHISPER_MODEL}) + "\n")
+                self.proc.stdin.flush()
+                line = self.proc.stdout.readline()
+            except (BrokenPipeError, OSError):
+                self.stop()
+                raise RuntimeError("The voice stopped. Try again.")
+            finally:
+                src.unlink(missing_ok=True)
+            if not line:
+                self.stop()
+                raise RuntimeError("The voice stopped. Try again.")
+            ans = json.loads(line)
+            if not ans.get("ok"):
+                raise RuntimeError(ans.get("error") or "Couldn't make out what was said")
+            return ans.get("text") or ""
+
     def stop(self):
         p, self.proc = self.proc, None
         if p is not None and p.poll() is None:
@@ -220,6 +267,15 @@ class _Worker:
 
 
 worker = _Worker()
+
+
+def hear(wav: bytes) -> str:
+    """What was said in a short recording (WAV, 16 kHz mono from the page), transcribed on this computer."""
+    if not hear_ready():
+        raise RuntimeError("Listening isn't set up yet")
+    if not wav or len(wav) < 1000:
+        return ""
+    return worker.hear(wav)
 
 
 def speak(text: str, voice: str | None = None, speed: float = 1.0) -> bytes:

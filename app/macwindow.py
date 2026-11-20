@@ -26,6 +26,8 @@ import webbrowser
 from . import __version__, paths
 
 APP_NAME = "research brain"
+MIC_REASON = ("research brain listens in voice mode, so you can talk with the AI hands-free. What you say is "
+              "transcribed on this computer.")
 HEADER_H = 52  # static/style.css --topbar-h: the band that drags the window like a title bar
 
 LOADING = """<!doctype html><meta charset="utf-8"><title>research brain</title>
@@ -72,6 +74,8 @@ def _identity() -> None:
     info = NSBundle.mainBundle().localizedInfoDictionary() or NSBundle.mainBundle().infoDictionary()
     try:
         info["CFBundleName"] = APP_NAME
+        # voice mode listens through the page (static/voice.js): macOS needs to know why before it asks you
+        info["NSMicrophoneUsageDescription"] = MIC_REASON
     except (TypeError, AttributeError):
         pass
     icon = paths.app_root() / "static" / "icons" / "icon-mac.png"  # rounded, with the Dock's margin
@@ -195,6 +199,8 @@ def _on_message(header: _Header, body: str) -> None:
         webbrowser.open(url)
     if "attention" in msg:  # a Find papers search finished (static/finder.js): call you back to the app
         _attention(str(msg.get("badge") or "")[:4])
+    if msg.get("log"):  # voice mode's diagnostics (static/voice.js): into app.log
+        print(f"[research_brain] page: {str(msg['log'])[:300]}", file=sys.stderr)
     if "dictate" in msg:  # the chat's mic button (static/app.js): macOS dictation into the focused field
         _dictate(bool(msg["dictate"]))
     if "unsaved" in msg:
@@ -252,6 +258,50 @@ def _listen(win, header: _Header, keep: list) -> None:
     handler.header = header
     view.configuration().userContentController().addScriptMessageHandler_name_(handler, "rb")
     keep.append(handler)
+    try:
+        _allow_microphone(view, keep)
+    except Exception as e:  # voice mode falls back to dictation; never lose the window over it
+        print(f"[research_brain] microphone setup: {e!r}", file=sys.stderr)
+
+
+_mic_delegate_class = None
+
+
+def _allow_microphone(view, keep: list) -> None:
+    """Let voice mode hear you (static/voice.js): WebKit's microphone API switched on for this window (pywebview
+    leaves it off), and its permission question answered yes for research brain's own page on this computer
+    only (macOS still asks you once). Every other question the page's delegate gets goes to pywebview's."""
+    global _mic_delegate_class
+    import objc
+    import Foundation
+    prefs = view.configuration().preferences()
+    for key in ("mediaDevicesEnabled", "mediaStreamEnabled"):
+        try:
+            prefs.setValue_forKey_(True, key)
+        except Exception:
+            pass
+    if _mic_delegate_class is None:
+        class RBUIDelegate(Foundation.NSObject, protocols=[objc.protocolNamed("WKUIDelegate")]):
+            def webView_requestMediaCapturePermissionForOrigin_initiatedByFrame_type_decisionHandler_(
+                    self, webview, origin, frame, kind, handler):
+                host = str(origin.host() or "")
+                ok = host in ("127.0.0.1", "localhost") and int(kind) == 1  # 1: the microphone (no camera)
+                print(f"[research_brain] voice: microphone asked by {host} -> {'yes' if ok else 'no'}", file=sys.stderr)
+                handler(1 if ok else 2)  # WKPermissionDecisionGrant / Deny
+
+            def respondsToSelector_(self, sel):
+                if objc.super(RBUIDelegate, self).respondsToSelector_(sel):
+                    return True
+                o = getattr(self, "orig", None)
+                return bool(o is not None and o.respondsToSelector_(sel))
+
+            def forwardingTargetForSelector_(self, sel):
+                return getattr(self, "orig", None)
+        _mic_delegate_class = RBUIDelegate
+    d = _mic_delegate_class.alloc().init()
+    d.orig = view.UIDelegate()
+    view.setUIDelegate_(d)
+    keep.append(d)
 
 
 def run(url: str, start) -> int:

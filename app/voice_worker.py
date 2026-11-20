@@ -8,6 +8,8 @@ it imports nothing from research brain, only kokoro_onnx and soundfile from the 
 import json
 import sys
 
+_whisper = None  # the listening model, loaded the first time it's needed
+
 
 def main() -> int:
     model, voices = sys.argv[1], sys.argv[2]
@@ -22,6 +24,27 @@ def main() -> int:
         except ValueError:
             continue
         rid = req.get("id", "")
+        if req.get("op") == "stt":  # hearing: a short recording in, its words out
+            try:
+                global _whisper
+                if _whisper is None:
+                    from faster_whisper import WhisperModel
+                    _whisper = WhisperModel(req.get("model") or "base.en", device="cpu", compute_type="int8",
+                                            download_root=req["whisper"], local_files_only=True)
+                audio, rate = sf.read(req["wav"], dtype="float32", always_2d=False)
+                if getattr(audio, "ndim", 1) > 1:
+                    audio = audio.mean(axis=1)
+                if rate != 16000:  # the page sends 16 kHz; anything else is resampled simply
+                    import numpy as np
+                    n = int(len(audio) * 16000 / rate)
+                    audio = np.interp(np.linspace(0, len(audio) - 1, n), np.arange(len(audio)), audio).astype("float32")
+                segs, _ = _whisper.transcribe(audio, beam_size=1, language="en", condition_on_previous_text=False,
+                                              vad_filter=False, no_speech_threshold=0.6)
+                text = " ".join(x.text.strip() for x in segs if x.no_speech_prob < 0.7).strip()
+                print(json.dumps({"id": rid, "ok": True, "text": text}), flush=True)
+            except Exception as e:
+                print(json.dumps({"id": rid, "ok": False, "error": str(e)[:300]}), flush=True)
+            continue
         try:
             voice = req.get("voice") if req.get("voice") in names else "af_heart"
             text = str(req.get("text") or "")[:2000]

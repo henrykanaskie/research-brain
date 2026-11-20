@@ -413,10 +413,11 @@ def _mac_window_app(app: Path) -> str:
   <key>CFBundleIdentifier</key><string>local.research-brain.launcher</string>
   <key>CFBundleExecutable</key><string>research-brain</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>2</string>
-  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleShortVersionString</key><string>3</string>
+  <key>CFBundleVersion</key><string>3</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>research brain listens in voice mode, so you can talk with the AI hands-free. What you say is transcribed on this computer.</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.education</string>
   {'<key>CFBundleIconFile</key><string>rb</string>' if icns else ''}
 </dict></plist>

@@ -4240,6 +4240,21 @@ class TtsIn(BaseModel):
     speed: float = 1.0
 
 
+@app.post("/api/voice/stt")
+async def api_voice_stt(request: Request):
+    """What you said: a short WAV recording from the page (Voice mode), transcribed on this computer."""
+    from . import voice as voice_mod
+    from starlette.concurrency import run_in_threadpool
+    wav = await request.body()
+    if len(wav) > 12_000_000:
+        raise HTTPException(413, "That recording is too long")
+    try:
+        text = await run_in_threadpool(voice_mod.hear, wav)
+    except RuntimeError as e:
+        raise HTTPException(409 if "isn't set up" in str(e) else 500, str(e))
+    return {"text": text}
+
+
 @app.post("/api/voice/tts")
 def api_voice_tts(body: TtsIn):
     """One sentence in the natural voice, as WAV audio (made on this computer)."""
