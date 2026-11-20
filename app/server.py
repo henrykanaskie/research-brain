@@ -4520,6 +4520,10 @@ linked_api.install(app, store=store, import_one=_import_linked, file_in_topic=_f
 from . import privacy_api  # noqa: E402
 privacy_api.install(app, store=store, with_extras=_with_extras, publish=event_bus.publish)
 
+# ---------------------------------------------------------------- updates: check, install from the app (app/updates_api.py)
+from . import updates_api  # noqa: E402
+updates_api.install(app, stop=lambda: api_quit({}))
+
 # ---------------------------------------------------------------- library, profiles, storage (app/storage_api.py)
 from . import storage_api  # noqa: E402
 storage_api.install(app, store=store, resolved=RESOLVED, create_paper=_create_paper, with_extras=_with_extras,

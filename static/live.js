@@ -137,6 +137,8 @@
   }
   function stopped() {
     if (es) { es.close(); es = null; }
+    // stopping to update (static/updates.js): stay open, it says what's happening and reloads when it's back
+    if (window.__rbUpdating) return;
     if (appKind === '1') window.close();  // the Mac window is closed by app/macwindow.py
     setTimeout(() => {  // still here: not the app's window, or the browser kept it open
       if (document.getElementById('rb-stopped')) return;

@@ -32,7 +32,8 @@ LINUX
 AFTERWARDS
 - You can delete this folder and the zip. Your library is in Documents > research brain.
 - AI is optional (Gemini is free). Click the AI name at the top of the window to set one up.
-- Updating: run a newer installer the same way. Your library stays as it is.
+- Updating: when there's a new version, click Update at the top of the window. You don't need a
+  new zip. Your library stays as it is. Your version is in Settings > About.
 - More (adding papers, free lookup keys, a tour) is in README.md in this folder.
 
 REPORTING A PROBLEM

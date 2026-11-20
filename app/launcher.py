@@ -98,6 +98,12 @@ def _port_busy(port: int) -> bool:
 def _start_server(a, url: str) -> bool:
     """Start the server in the background unless it's running; True once it answers (up to two minutes:
     the first start builds the search index)."""
+    from . import updates
+    if updates.wait_while_updating():  # the update script starts the new version itself: wait for it
+        for _ in range(240):
+            if _status_ok(url, 0.5):
+                return True
+            time.sleep(0.25)
     if _status_ok(url):
         return True
     # one that is stopping (just quit) still holds the port and answers 503: let it go first

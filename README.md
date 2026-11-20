@@ -398,13 +398,18 @@ An AI adds summary critiques, explanations of links, and **Ask your library**. E
 
 ## Updating
 
-Download the newer installer zip, unzip it, and run its installer the same way as the first time.
+When there's a new version, an **Update** button appears at the top of the window. Click it to see what's new,
+then **Update now**: research brain downloads it, closes, and opens again by itself, usually within a minute.
+**Later** hides the button until the version after that.
+
+Your version is in Settings › About, with **Check now** and a **Copy** button for problem reports.
 
 <details>
 <summary>More about updating</summary>
 
-It replaces the app and never touches your library. If research brain is open, the installer closes it first.
-research brain doesn't check for updates by itself.
+Updating replaces the app and never touches your library. research brain looks for a new version at most once
+a day, on its GitHub releases page (no account needed). `RB_UPDATE_CHECK=0` turns that off. You can also update
+by running a newer installer the same way as the first time, or with `research-brain update` in a terminal.
 </details>
 
 ## Uninstalling

@@ -53,8 +53,19 @@ profile's `backups/`). Say so in the notes, and don't roll back past it.
 
 ## Updates
 
-The app doesn't check for updates or show an update notice: people install new versions by running the newer
-installer. For admins, `research-brain update` installs the newest release from GitHub (it needs a `GITHUB_TOKEN`
+Once installed, people don't need a new zip. The app reads the latest release's `latest.json` from GitHub (the
+repository is public, so no account is needed) at most once a day, and when there's a newer version an
+**Update** button appears in the top bar. **Update now** downloads the wheel and `constraints.txt` into the
+data folder's `update/`, starts a small script on its own and quits; the script waits for research brain to
+stop, reinstalls with whatever installed it, and starts it again. The window stays open, says what's happening
+and reloads on the new version, which says "Updated to X" (or shows what went wrong, with the end of
+`update/update.log`). Settings › About shows the version, Check now and the same button. Details:
+`app/updates.py`, `app/updates_api.py`, `static/updates.js`. So publishing a release is all it takes:
+the zip is only for first installs.
+
+The browser extension isn't updated this way (it's loaded unpacked): when it changes, say so in the notes.
+
+For admins, `research-brain update` installs the newest release from GitHub (it needs a `GITHUB_TOKEN`
 or the `gh` command signed in while the repository is private), or from a folder of release files with
 `research-brain update --source <folder>`; `--to X.Y.Z` installs a specific version.
 

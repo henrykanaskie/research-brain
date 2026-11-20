@@ -917,3 +917,14 @@ writes to `/api/profiles*`, `/api/settings`, `/api/agents/active`, `/api/privacy
   part (`condensed`). 400 when there's nothing to continue, or if a private note would still be copied.
 - Frontend: the phone button in the chat header and the command "Continue on your phone" (static/app.js
   `continueOnPhone`).
+
+## ADDED: Updates (app/updates.py, app/updates_api.py)
+
+- `GET /api/update?force=false` → `{"current", "latest", "newer", "notes", "url", "published", "checked", "enabled",
+  "system", "can_install", "reason", "installing", "result"}`. Asks the update source (the public GitHub release,
+  or `RB_UPDATE_SOURCE`) at most once a day unless `force`. `result` is how the last update from the app went
+  (`{"ok", "from", "to", "version", "error"?, "log"?}`), until acknowledged.
+- `POST /api/update/install` `{}` → `{"ok", "from", "to"}`: downloads the new version, starts the installer
+  script and stops research brain; the script starts it again. 409 when up to date, already installing, or
+  this copy can't update itself (a source checkout: `reason`); 502 when the download fails.
+- `POST /api/update/ack` `{}` → `{"ok": true}`: the app has shown `result`.

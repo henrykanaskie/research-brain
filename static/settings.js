@@ -164,7 +164,7 @@
     const libSec = el('section', { class: 'ls-sec' },
       el('div', { class: 'ls-h', text: lib.pinned ? 'Library (fixed folder)' : `Library: ${lib.profile}` }),
       el('div', { class: 'ls-path', text: lib.vault }),
-      el('p', { class: 'ls-p', text: `Saved automatically on this computer. research_brain ${lib.version}, library format ${lib.schema ?? '?'}. Your computer account is your login: anyone who can use this account can open this library.` }));
+      el('p', { class: 'ls-p', text: `Saved automatically on this computer (library format ${lib.schema ?? '?'}). Your computer account is your login: anyone who can use this account can open this library.` }));
     if (lib.legacy) {
       const mv = el('button', { class: 'btn', type: 'button', text: lib.move_legacy_pending ? 'Move scheduled' : 'Move it on next start' });
       mv.disabled = !!lib.move_legacy_pending;
@@ -290,6 +290,8 @@
     const qSec = window.__rbQuestions ? window.__rbQuestions.settingsSection(say) : null;
     // Phones and tablets (static/mobile.js): pair a phone with a QR code, paired devices, revoke
     const pairSec = window.__rbPair ? window.__rbPair.settingsSection(say) : null;
+    // Version and updates (static/updates.js): the version, Check now, Update now
+    const aboutSec = window.__rbUpdates ? window.__rbUpdates.settingsSection(say) : null;
 
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
     // Tabs keep each kind of setting together; the search box looks through all of them at once.
@@ -299,9 +301,10 @@
       { id: 'ai', name: 'AI and privacy', secs: [agentSec, privSec, qSec] },
       { id: 'citations', name: 'Citations', secs: [citeSec] },
       { id: 'devices', name: 'Devices', secs: [pairSec] },
+      { id: 'about', name: 'About', secs: [aboutSec] },
     ].map((t) => ({ ...t, secs: t.secs.filter(Boolean) })).filter((t) => t.secs.length);
-    const FOCUS_TAB = { profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', citations: 'citations' };
-    const FOCUS_SEC = { profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, citations: citeSec };
+    const FOCUS_TAB = { about: 'about', profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', citations: 'citations' };
+    const FOCUS_SEC = { about: aboutSec, profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, citations: citeSec };
     let cur = FOCUS_TAB[focus] || (() => { try { return localStorage.getItem('rb.settings-tab'); } catch { return null; } })();
     if (!TABS.some((t) => t.id === cur)) cur = TABS[0].id;
     const tabBtns = TABS.map((t) => el('button', { type: 'button', class: 'ls-tab', role: 'tab', 'data-tab': t.id,
