@@ -187,6 +187,8 @@ class _Chrome:
         self.maximized = None     # last told to the page
         self.active = True
         self.failed_once = False
+        self.controller = None    # CoreWebView2Controller, told when the window moves (_moved)
+        self.moved_pending = False
 
 
 _u32 = None
@@ -338,11 +340,46 @@ def _wndproc(c: _Chrome, hwnd, msg, wp, lp):
         if msg == WM_DPICHANGED:
             c.dpi = (wp >> 16) & 0xFFFF or c.dpi
             _later(c, lambda: _layout(c))
+        if msg in (WM_MOVE, WM_EXITSIZEMOVE, WM_WINDOWPOSCHANGED) and not c.moved_pending:
+            c.moved_pending = True
+            _later(c, lambda: _moved(c))
     except Exception as e:  # never lose a message over the title bar
         if not c.failed_once:
             c.failed_once = True
             print(f"[research_brain] title bar: {e!r}", file=sys.stderr)
     return u.CallWindowProcW(c.old, hwnd, msg, wp, lp)
+
+
+WM_MOVE, WM_EXITSIZEMOVE, WM_WINDOWPOSCHANGED = 0x0003, 0x0232, 0x0047
+
+
+def _controller(c: _Chrome):
+    """The WinForms WebView2 control's CoreWebView2Controller (a private field: the control doesn't expose it)."""
+    if c.controller is None and c.form is not None:
+        from System.Reflection import BindingFlags
+        wv = c.form.browser.webview
+        for f in wv.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance):
+            if f.FieldType.Name == "CoreWebView2Controller":
+                c.controller = f.GetValue(wv)
+                break
+    return c.controller
+
+
+def _moved(c: _Chrome) -> None:
+    """The window moved (a drag by the header, snap, restore): tell WebView2, or it keeps placing clicks by
+    where the window was, and a click on maximize lands on minimize (WebView2 only notices on its own when its
+    control moves, and with the header as the title bar the window is moved for it)."""
+    c.moved_pending = False
+    try:
+        ctl = _controller(c)
+        if ctl is not None:
+            ctl.NotifyParentWindowPositionChanged()
+        elif os.environ.get("RB_WIN_DEBUG") == "1":
+            print("[research_brain] window moved: no WebView2 controller found", file=sys.stderr, flush=True)
+    except Exception as e:
+        if not c.failed_once:
+            c.failed_once = True
+            print(f"[research_brain] window moved: {e!r}", file=sys.stderr)
 
 
 def _hook(c: _Chrome, win) -> None:
