@@ -202,7 +202,10 @@ def test_start_install_marks_it_running_and_reports_once(upd, monkeypatch):
     info = {"version": "9.0.0", "wheel": str(d / "research_brain-9.0.0-py3-none-any.whl"), "source": str(d)}
     upd.start_install(info, port=8765, pids=[123])
     assert started and upd.in_progress()["to"] == "9.0.0" and upd.last_result() is None  # still running
-    assert "kill -0 123" in (d / "run-update.sh").read_text() or os.name == "nt"
+    if os.name == "nt":
+        assert 'tasklist /FI "PID eq 123"' in (d / "run-update.cmd").read_text()
+    else:
+        assert "kill -0 123" in (d / "run-update.sh").read_text()
     # research brain waits for it instead of starting the half-replaced copy
     assert upd.wait_while_updating(limit=0.6) is True
     (d / "updating.json").unlink()
