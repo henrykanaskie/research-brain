@@ -379,12 +379,39 @@ def _controller(c: _Chrome):
     return c.controller
 
 
+def _reseat(c: _Chrome) -> None:
+    """Put the WebView2 control (and its own window) back exactly over the client area below the resize strip:
+    after a maximize and restore through the header its window can be left shifted, and clicks land beside
+    what you click."""
+    import ctypes
+    from ctypes import wintypes
+    wv = c.form.browser.webview
+    cr = wintypes.RECT()
+    ctypes.windll.user32.GetClientRect(c.hwnd, ctypes.byref(cr))
+    top = c.strip if not ctypes.windll.user32.IsZoomed(c.hwnd) else 0
+    w, h = cr.right, max(0, cr.bottom - top)
+    if (wv.Left, wv.Top, wv.Width, wv.Height) != (0, top, w, h):
+        from System.Drawing import Rectangle
+        wv.Bounds = Rectangle(0, top, w, h)
+    child = int(wv.Handle.ToInt64())
+    r = wintypes.RECT()
+    ctypes.windll.user32.GetWindowRect(child, ctypes.byref(r))
+    p = wintypes.POINT(0, 0)
+    ctypes.windll.user32.ClientToScreen(c.hwnd, ctypes.byref(p))
+    if (r.left, r.top) != (p.x, p.y + top):
+        ctypes.windll.user32.SetWindowPos(child, None, 0, top, w, h, 0x0004 | 0x0010)  # NOZORDER | NOACTIVATE
+        if os.environ.get("RB_WIN_DEBUG") == "1":
+            print(f"[research_brain] reseated the page: was at {r.left},{r.top}, client {p.x},{p.y + top}",
+                  file=sys.stderr, flush=True)
+
+
 def _moved(c: _Chrome) -> None:
     """The window moved (a drag by the header, snap, restore): tell WebView2, or it keeps placing clicks by
     where the window was, and a click on maximize lands on minimize (WebView2 only notices on its own when its
     control moves, and with the header as the title bar the window is moved for it)."""
     c.moved_pending = False
     try:
+        _reseat(c)
         ctl = _controller(c)
         if ctl is not None:
             ctl.NotifyParentWindowPositionChanged()
@@ -445,6 +472,21 @@ def _measure(win, page, closed) -> None:
             _user32().GetClientRect(hwnd, ctypes.byref(cr))
             form = _form(win)
             wv = getattr(getattr(form, "browser", None), "webview", None)
+            kids = []
+            cb = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+            def each(h, _l):
+                name = ctypes.create_unicode_buffer(64)
+                ctypes.windll.user32.GetClassNameW(h, name, 64)
+                r = wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(h, ctypes.byref(r))
+                if ctypes.windll.user32.IsWindowVisible(h):
+                    kids.append(f"{name.value}@{r.left},{r.top},{r.right - r.left}x{r.bottom - r.top}")
+                return True
+            ctypes.windll.user32.EnumChildWindows(hwnd, cb(each), 0)
+            p = wintypes.POINT(0, 0)
+            ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(p))
+            print(f"[research_brain] children: client origin {p.x},{p.y}: {kids[:8]}", file=sys.stderr, flush=True)
             print(f"[research_brain] measure: page={win.evaluate_js(_MEASURE_JS)} client={cr.right}x{cr.bottom} "
                   f"form.client={form.ClientSize.Width}x{form.ClientSize.Height} padding={form.Padding.Top} "
                   f"webview={wv.Bounds if wv is not None else None} zoomed={bool(_user32().IsZoomed(hwnd))}",
