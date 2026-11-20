@@ -8,6 +8,7 @@ annotated-types==0.8.0
 anyio==4.15.1
 attrs==26.1.0
 bottle==0.13.4
+clr-loader==0.3.1 ; sys_platform == "win32" and python_version >= "3.11"
 certifi==2026.10.18
 cffi==2.1.1
 charset-normalizer==3.5.1
@@ -47,7 +48,8 @@ pyobjc-framework-webkit==13.0 ; sys_platform == "darwin"
 pypdf==6.17.0
 pypdfium2==5.13.0
 python-multipart==0.0.32
-pywebview==6.2.1 ; sys_platform == "darwin"
+pythonnet==3.2.1 ; sys_platform == "win32" and python_version >= "3.11"
+pywebview==6.2.1 ; sys_platform == "darwin" or sys_platform == "win32"
 pyyaml==6.0.3
 referencing==0.37.0
 requests==2.34.2

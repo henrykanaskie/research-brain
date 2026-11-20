@@ -85,33 +85,46 @@
   // research brain stopped (Quit on the Dock icon, the menu, or no window for a few minutes): the window the
   // app opened (?app=1) closes itself, so no dead window is left behind; any other tab says what happened
   // ?app=mac: research brain's own Mac window (app/macwindow.py), no title bar
+  // ?app=win: research brain's own Windows window (app/winwindow.py), a normal title bar
   let appKind = '';
   try {
     const q = new URLSearchParams(location.search).get('app');
-    if (q === '1' || q === 'mac') {
+    if (q === '1' || q === 'mac' || q === 'win') {
       sessionStorage.setItem('rb.appWindow', q);
       history.replaceState(null, '', location.pathname + location.hash);
     }
     appKind = sessionStorage.getItem('rb.appWindow') || '';
   } catch { /* storage unavailable */ }
-  // research brain's own channel to its Mac window (app/macwindow.py); false anywhere else
+  // research brain's own channel to its window: the Mac window (app/macwindow.py, WebKit) or the Windows
+  // window (?app=win, app/winwindow.py, WebView2, which reads the message's "rb" key); false anywhere else
   const post = (msg) => {
-    if (appKind !== 'mac') return false;
-    const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
-    if (!h) return false;
-    h.postMessage(JSON.stringify(msg));
-    return true;
+    if (appKind === 'mac') {
+      const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.rb;
+      if (!h) return false;
+      h.postMessage(JSON.stringify(msg));
+      return true;
+    }
+    if (appKind === 'win') {
+      const w = window.chrome && window.chrome.webview;
+      if (!w) return false;
+      w.postMessage({ rb: msg });
+      return true;
+    }
+    return false;
   };
-  if (appKind === 'mac') {
-    // the window buttons sit at the left of the header, and pressing an empty part of the header drags the
-    // window (app/macwindow.py): tell it where the header's buttons and fields are, so those still click
-    document.documentElement.classList.add('mac-window');
+  if (appKind === 'mac' || appKind === 'win') {
     const nativeOpen = window.open.bind(window);
     // the window has no tabs: new windows (the PDF viewer, articles) open in your browser
     window.open = (u, ...rest) => {
       if (u && post({ open: new URL(String(u), location.href).href })) return null;
       return nativeOpen(u, ...rest);
     };
+  }
+  if (appKind === 'mac') {
+    // the window buttons sit at the left of the header, and pressing an empty part of the header drags the
+    // window (app/macwindow.py): tell it where the header's buttons and fields are, so those still click
+    // (the Windows window keeps its normal title bar)
+    document.documentElement.classList.add('mac-window');
     const CLICKABLE = 'button, input, select, textarea, a[href], label, summary, [role="button"], [role="menuitem"], [tabindex]:not([tabindex="-1"]), [contenteditable=""], [contenteditable="true"]';
     let sendT = 0;
     const send = () => {
@@ -139,7 +152,7 @@
     if (es) { es.close(); es = null; }
     // stopping to update (static/updates.js): stay open, it says what's happening and reloads when it's back
     if (window.__rbUpdating) return;
-    if (appKind === '1') window.close();  // the Mac window is closed by app/macwindow.py
+    if (appKind === '1') window.close();  // the Mac and Windows windows are closed by app/macwindow.py and app/winwindow.py
     setTimeout(() => {  // still here: not the app's window, or the browser kept it open
       if (document.getElementById('rb-stopped')) return;
       const d = document.createElement('div');
