@@ -68,6 +68,14 @@ async function activeTab() {
   catch { return null; }
 }
 function isPdfUrl(url) { return /\.pdf($|[?#])/i.test(url || "") || /^https?:\/\/(www\.)?arxiv\.org\/pdf\//i.test(url || ""); }
+/** file:///C:/Users/me/x.pdf -> C:\\Users\\me\\x.pdf (Windows), file:///Users/me/x.pdf -> /Users/me/x.pdf */
+function fileUrlToPath(url) {
+  const u = new URL(url);
+  let p = decodeURIComponent(u.pathname);
+  if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1).replace(/\//g, "\\");
+  else if (u.host) p = `\\\\${u.host}${p.replace(/\//g, "\\")}`;
+  return p;
+}
 function isScriptable(url) { return /^(https?|file):/i.test(url || "") && !isPdfUrl(url); }
 
 // Runs in the page: selection text with line breaks + nearest preceding section heading.
@@ -166,8 +174,8 @@ function showHome() {
   if (c.pdf) {
     btn.textContent = "Annotate this PDF in research_brain";
     $("#annotateHint").textContent = "Chrome's PDF viewer can't be annotated by extensions, so the PDF opens in research_brain's viewer, where you can highlight and write notes.";
-    btn.disabled = !/^https?:/i.test(c.url || "");
-    if (btn.disabled) $("#annotateHint").textContent = "Only PDFs from http or https links can be imported. Drop local files on research_brain instead.";
+    btn.disabled = !/^(https?|file):/i.test(c.url || "");
+    if (btn.disabled) $("#annotateHint").textContent = "This PDF can't be imported from here. Drag the file onto research_brain instead.";
   } else {
     btn.textContent = "Annotate this page";
     $("#annotateHint").innerHTML = web ? `Highlight passages and write notes right on the page. <kbd>${/Mac/.test(navigator.platform) ? "⌥⇧A" : "Alt+Shift+A"}</kbd>` : "Chrome doesn't let extensions annotate this page.";
@@ -425,7 +433,18 @@ async function annotatePdf() {
   const btn = $("#annotateBtn");
   btn.disabled = true; btn.textContent = "Importing the PDF";
   try {
-    const n = await api("/api/import/url", { method: "POST", body: JSON.stringify({ url: st.ctx.url }) }, 180000);
+    let n;
+    if (/^file:/i.test(st.ctx.url)) {  // a PDF on this computer: research brain reads it from its path
+      const r = await api("/api/papers/import-files", { method: "POST", body: JSON.stringify({ paths: [fileUrlToPath(st.ctx.url)] }) }, 180000);
+      const hit = (r.added || [])[0] || (r.duplicates || [])[0];
+      if (!hit) {
+        const err = ((r.failed || [])[0] || {}).error || ((r.followed || []).length ? "it's in a folder you follow, so it's already in your library" : "");
+        throw new Error(/home folder/.test(err) ? "research brain only reads PDFs inside your user folder by itself. Drag the file onto its window instead." : err || "unknown error");
+      }
+      n = { id: hit.note };
+    } else {
+      n = await api("/api/import/url", { method: "POST", body: JSON.stringify({ url: st.ctx.url }) }, 180000);
+    }
     await fileInTopic(n.id);
     const url = st.server + (n.viewer || `/viewer/${encodeURIComponent(n.id)}`);
     await chrome.tabs.create({ url, index: undefined });

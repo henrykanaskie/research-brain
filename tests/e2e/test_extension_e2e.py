@@ -121,8 +121,6 @@ def _pdf_bytes(title="Probe theory zqv test document", pages=1) -> bytes:
 
 @pytest.fixture(scope="module")
 def env(tmp_path_factory):
-    if not _chrome():
-        pytest.skip("no Chrome that can load extensions (set RB_E2E_CHROME)")
     tmp = tmp_path_factory.mktemp("ext")
     vault = tmp / "vault"
     with contextlib.ExitStack() as stack:  # everything started here is torn down, whatever happens
@@ -157,10 +155,14 @@ def env(tmp_path_factory):
 
         pw = sync_playwright().start()
         stack.callback(pw.stop)
+        # a system Chrome, else Playwright's own Chromium (Windows CI has no Chrome at the paths above)
+        exe = _chrome() or (pw.chromium.executable_path if Path(pw.chromium.executable_path).exists() else None)
+        if not exe:
+            pytest.skip("no Chrome that can load extensions (set RB_E2E_CHROME, or python -m playwright install chromium)")
         profile = str(tmp / "profile")
         try:
             ctx = pw.chromium.launch_persistent_context(
-                profile, executable_path=_chrome(), headless=False,
+                profile, executable_path=exe, headless=False,
                 ignore_default_args=["--disable-extensions"], viewport={"width": 1280, "height": 860},
                 args=["--headless=new", f"--disable-extensions-except={ext}", f"--load-extension={ext}", "--no-sandbox"])
         except Exception as e:  # pragma: no cover
@@ -514,6 +516,50 @@ def test_pdf_tab_imports_and_opens_viewer(env):
     expect(viewer.locator(".textLayer [data-frag]").first).to_be_attached()
     tab.close()
     viewer.close()
+
+
+def test_right_click_adds_a_web_pdf(env):
+    """"Add this PDF to research brain" on a PDF tab: downloaded in the tab, added, and opened in the viewer."""
+    ctx, site = env["ctx"], env["site"]
+    site.pages["/menu.pdf"] = (_pdf_bytes("Right click zqm web PDF"), "application/pdf")
+    pdf_url = site.base + "/menu.pdf"
+    tab = ctx.new_page()
+    tab.goto(pdf_url)
+    tid = tab_id(env, pdf_url)
+    with ctx.expect_page() as newp:
+        env["sw"].evaluate(f"chrome.tabs.get({tid}).then(t => addPdf({json.dumps(pdf_url)}, t))")
+    viewer = newp.value
+    viewer.wait_for_url(re.compile(re.escape(env["base"]) + r"/viewer/"))
+    nid = viewer.url.rsplit("/", 1)[1]
+    assert "zqm" in json.dumps(api(env, "GET", f"/api/notes/{nid}"))
+    tab.close()
+    viewer.close()
+
+
+def test_right_click_adds_a_pdf_on_this_computer(env, tmp_path):
+    """A file:/// PDF (one opened from Downloads): research brain reads it from its path; the extension never
+    reads the file. The name has a character Windows' code page can't spell, as real paper titles do."""
+    ctx = env["ctx"]
+    home_dir = Path.home() / f"rb-ext-test-{os.getpid()}"
+    home_dir.mkdir(exist_ok=True)
+    try:
+        f = home_dir / "Konopliv T∗e local zqf.pdf"
+        f.write_bytes(_pdf_bytes("Local file zqf electron temperature"))
+        url = f.as_uri()
+        tab = ctx.new_page()
+        tab.goto(env["base"] + "/")  # any tab: the PDF's own tab is the browser's viewer, not needed here
+        tid = tab_id(env, env["base"] + "/")
+        with ctx.expect_page() as newp:
+            env["sw"].evaluate(f"chrome.tabs.get({tid}).then(t => addPdf({json.dumps(url)}, t))")
+        viewer = newp.value
+        viewer.wait_for_url(re.compile(re.escape(env["base"]) + r"/viewer/"))
+        nid = viewer.url.rsplit("/", 1)[1]
+        assert "zqf" in json.dumps(api(env, "GET", f"/api/notes/{nid}"))
+        assert f.exists()  # the original stays where it is
+        tab.close()
+        viewer.close()
+    finally:
+        shutil.rmtree(home_dir, ignore_errors=True)
 
 
 def _note_by_url(env, url):

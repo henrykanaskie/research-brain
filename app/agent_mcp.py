@@ -166,7 +166,7 @@ def serve_stdio(inp=None, out=None) -> None:
             if not replies:
                 continue
             reply = replies if isinstance(msg, list) else replies[0]
-        out.write(json.dumps(reply, ensure_ascii=False) + "\n")
+        out.write(json.dumps(reply) + "\n")  # ASCII: a piped stdout on Windows is cp1252
         out.flush()
 
 
