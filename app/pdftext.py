@@ -250,4 +250,9 @@ if __name__ == "__main__":  # the child process started by extract()
         pass
     _info: dict = {}
     _text, _title = extract_inprocess(Path(sys.argv[1]), int(sys.argv[2]) if len(sys.argv) > 2 else 80, _info)
-    sys.stdout.write(json.dumps({"text": _text, "title": _title, "info": _info}, ensure_ascii=False))
+    # bytes, not sys.stdout: on Windows a piped stdout uses the locale code page (cp1252), which can't encode
+    # characters papers are full of (∗, ≈, Greek letters) and the import failed with UnicodeEncodeError.
+    # extract() decodes UTF-8.
+    sys.stdout.buffer.write(json.dumps({"text": _text, "title": _title, "info": _info},
+                                       ensure_ascii=False).encode("utf-8", "replace"))
+    sys.stdout.buffer.flush()

@@ -932,8 +932,17 @@ def test_choose_folder_and_no_update_ui(ctx, server, tmp_path):
     page.route("**/api/pick-folder", lambda r: r.fulfill(json={"path": str(folder)}))  # the Finder dialog, answered
     page.evaluate("window.__rbSettings.open()")
     page.locator("#library-settings .ls-tab", has_text="Library").first.click()
-    page.locator("#ls-papers").get_by_role("button", name="Choose folder…").first.click()  # the papers folder row
-    expect(page.locator("#ls-papers-dest")).to_have_value(str(folder))
+    # step 1 is where your papers are, step 2 where research brain saves; the rest is under Advanced
+    expect(page.locator("#ls-papers .ls-h")).to_have_text("1. Where your papers are")
+    expect(page.locator("#ls-documents .ls-h")).to_have_text("2. Where research brain saves")
+    expect(page.locator("#ls-advanced details")).not_to_have_attribute("open", "")
+    page.locator("#ls-papers-change").click()  # where PDFs are saved: the computer's chooser, then a move if any
+    if page.locator("#modal").is_visible():
+        page.locator("#modal-ok").click()
+    expect(page.locator("#ls-papers-path")).to_have_text(str(folder))
+    page.locator("#ls-advanced summary").click()
+    page.locator("#ls-advanced").get_by_role("button", name="Choose folder…").click()  # check a folder for duplicates
+    expect(page.locator("#ls-scan-folder")).to_have_value(str(folder))
     expect(page.locator("#library-settings .ls-tab", has_text="Devices")).to_have_text("Devices")
     assert page.locator("#ls-updates").count() == 0
     page.wait_for_timeout(4500)  # the old update check ran after 4 s

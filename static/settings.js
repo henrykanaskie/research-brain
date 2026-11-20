@@ -37,6 +37,7 @@
   .ls-linked-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 8px 0; border-top: 1px solid var(--rule); flex-wrap: wrap; }
   #ls-linked { margin-top: 16px; }
   .ls-p.ls-hint { color: var(--ink-3); margin-top: -4px; }
+  .ls-row + .ls-p.ls-hint { margin-top: 8px; }
   .ls-path { font: 11.5px/1.5 var(--mono); color: var(--ink); background: var(--ground); padding: 6px 9px;
     border-radius: 3px; overflow-wrap: anywhere; user-select: all; }
   .ls-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
@@ -68,6 +69,8 @@
   .ls-code { font: 12.5px/1.4 ui-monospace, Menlo, Consolas, monospace; background: var(--sheet, rgba(0,0,0,.04)); padding: 4px 8px; border-radius: 3px; }
   .ls-notes pre { white-space: pre-wrap; font: 12.5px/1.5 var(--sans); color: var(--ink-2); margin: 6px 0 0; max-height: 160px; overflow: auto; }
   .ls-h2 { font: 600 12.5px var(--sans); color: var(--ink); margin: 14px 0 2px; }
+  .ls-adv > summary { font: 12.5px var(--sans); color: var(--ink-2); cursor: pointer; }
+  .ls-adv[open] > summary { margin-bottom: 4px; }
   .ls-scan-list { list-style: none; margin: 4px 0 6px; padding: 0; max-height: 200px; overflow: auto; font: 12.5px/1.6 var(--sans); }
   .ls-scan-list .m { color: var(--ink-3); }
   .ls-check { display: flex; gap: 6px; align-items: center; }
@@ -162,9 +165,9 @@
 
     // Library
     const libSec = el('section', { class: 'ls-sec' },
-      el('div', { class: 'ls-h', text: lib.pinned ? 'Library (fixed folder)' : `Library: ${lib.profile}` }),
+      el('div', { class: 'ls-h2', text: lib.pinned ? 'App data folder (fixed)' : `App data folder (profile “${lib.profile}”)` }),
       el('div', { class: 'ls-path', text: lib.vault }),
-      el('p', { class: 'ls-p', text: `Saved automatically on this computer (library format ${lib.schema ?? '?'}). Your computer account is your login: anyone who can use this account can open this library.` }));
+      el('p', { class: 'ls-p', text: `research brain’s own bookkeeping: the search index, extracted text, settings and trash (library format ${lib.schema ?? '?'}). You never need to open it. Your computer account is your login: anyone who can use this account can open this library.` }));
     if (lib.legacy) {
       const mv = el('button', { class: 'btn', type: 'button', text: lib.move_legacy_pending ? 'Move scheduled' : 'Move it on next start' });
       mv.disabled = !!lib.move_legacy_pending;
@@ -237,11 +240,17 @@
       el('p', { class: 'ls-p', text: 'Related papers, citations and metadata come from Semantic Scholar, with OpenAlex as a backup when it is busy. Both are free. Without a key, Semantic Scholar shares one allowance among everyone, so it sometimes says “rate limited”; a free personal key fixes that. Keys stay on this computer and are sent only to their own service.' }));
     renderKeys(keySec, say);
 
-    // Papers folder (app/papers.py)
-    const docSec = el('section', { class: 'ls-sec', id: 'ls-documents' }, el('div', { class: 'ls-h', text: 'Your documents' }));
-    renderDocuments(docSec, say);
-    const papSec = el('section', { class: 'ls-sec', id: 'ls-papers' }, el('div', { class: 'ls-h', text: 'Papers folder' }));
-    renderPapers(papSec, say);
+    // Folders, in two steps: 1) where your papers are (read in place), 2) where research brain saves what you
+    // add and write. The rest (the app's own data folder, checking a folder for duplicates) is under Advanced.
+    const papSec = el('section', { class: 'ls-sec', id: 'ls-papers' }, el('div', { class: 'ls-h', text: '1. Where your papers are' }));
+    renderSources(papSec, say);
+    const docSec = el('section', { class: 'ls-sec', id: 'ls-documents' }, el('div', { class: 'ls-h', text: '2. Where research brain saves' }));
+    renderSaveTo(docSec, say);
+    const advBody = el('div', null, ...libSec.childNodes);
+    const adv = el('details', { class: 'ls-adv' }, el('summary', { text: 'Advanced: app data folder, check a folder for duplicates' }), advBody);
+    if (lib.legacy) adv.open = true;  // the "move it out of the app folder" warning must be seen
+    renderScan(advBody, say);
+    const advSec = el('section', { class: 'ls-sec', id: 'ls-advanced' }, adv);
 
     // (No updates section: to update, people run a newer installer. `research-brain update` stays for admins.)
 
@@ -296,7 +305,7 @@
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
     // Tabs keep each kind of setting together; the search box looks through all of them at once.
     const TABS = [
-      { id: 'library', name: 'Library', secs: [libSec, docSec, papSec, profSec, ioSec] },
+      { id: 'library', name: 'Library', secs: [papSec, docSec, profSec, ioSec, advSec] },
       { id: 'papers', name: 'Adding papers', secs: [keySec, modeSec, oaSec] },
       { id: 'ai', name: 'AI and privacy', secs: [agentSec, privSec, qSec] },
       { id: 'citations', name: 'Citations', secs: [citeSec] },
@@ -364,69 +373,122 @@
     }, 0);
   }
 
-  // ---------------------------------------------------------------- your documents (app/layout.py)
-  async function renderDocuments(sec, say) {
-    let d;
-    try { d = await api('/api/documents-folder'); } catch { return; }
-    const n = (k, one, many) => `${d[k]} ${d[k] === 1 ? one : many}`;
+  // ---------------------------------------------------------------- 1. where your papers are (app/linked.py)
+  // Folders you already keep PDFs in, followed where they are: never moved, renamed, copied or deleted.
+  async function renderSources(sec, say) {
+    const box = el('div', { id: 'ls-linked' });
     sec.append(
-      el('div', { class: 'ls-path', id: 'ls-documents-path', text: d.folder }),
-      el('p', { class: 'ls-p', text: `Everything you keep, as files you can open in any app: ${n('papers', 'paper', 'papers')} in Papers, ${n('notes', 'note', 'notes')} in Notes, ${n('questions', 'question', 'questions')} in Questions, ${n('highlights', 'highlight', 'highlights')} in Highlights (a folder per paper), and your topics and PDFs. Each file is named after its title and follows it when you rename. You can file notes into your own subfolders of Notes.` }),
-      el('div', { class: 'ls-row' }, el('button', { class: 'btn', type: 'button', id: 'ls-documents-open', text: 'Open folder',
-        onclick: () => api('/api/documents-folder/reveal', json('POST', {})).catch((e) => say(e.message, true)) })));
+      el('p', { class: 'ls-p', text: 'The folders you already keep PDFs in: Downloads, OneDrive, a lab drive. research brain reads them where they are. It never moves, renames or deletes a file there, and it adds new PDFs you put in them later. Each subfolder becomes a topic.' }),
+      box);
+    async function draw() {
+      let r;
+      try { r = await api('/api/linked-folders'); } catch { return; }
+      const rows = r.folders.map((x) => {
+        const check = el('button', { class: 'btn btn-sm', type: 'button', text: 'Check now', title: 'Add new PDFs, follow moved ones' });
+        check.addEventListener('click', async () => {
+          check.disabled = true;
+          try { await api(`/api/linked-folders/${x.id}/check`, json('POST', {})); say(`Checking ${x.name} for new and moved PDFs.`); setTimeout(draw, 2500); }
+          catch (e) { say(e.message, true); } finally { check.disabled = false; }
+        });
+        const drop = el('button', { class: 'btn btn-sm btn-text', type: 'button', text: 'Stop following' });
+        drop.addEventListener('click', async () => {
+          const R = rb() || {};
+          const ok = R.confirmDialog ? await R.confirmDialog(`Stop following “${x.name}”?`, `Its ${x.papers} paper${x.papers === 1 ? '' : 's'} stay in your library with your notes and highlights, but without their PDFs. Nothing in the folder is touched.`, 'Stop following') : true;
+          if (!ok) return;
+          try { await api(`/api/linked-folders/${x.id}`, json('DELETE')); say(`Stopped following ${x.name}.`); draw(); if (R.refreshGraph) R.refreshGraph(); }
+          catch (e) { say(e.message, true); }
+        });
+        const job = x.job && x.job.state === 'running' ? ` · adding ${x.job.done} of ${x.job.total || '…'}` : '';
+        return el('div', { class: 'ls-linked-row' },
+          el('div', null, el('div', { class: 'ls-path', text: x.path }),
+            el('div', { class: 'ls-p', text: `${x.papers} paper${x.papers === 1 ? '' : 's'}${x.cloud ? ` · in ${x.cloud}` : ''}${x.there ? '' : ' · not connected right now'}${job}` })),
+          el('div', { class: 'ls-row' }, check, drop));
+      });
+      const add = el('button', { class: r.folders.length ? 'btn' : 'btn btn-primary', type: 'button', id: 'ls-linked-add',
+        text: r.folders.length ? 'Add another folder…' : 'Choose a folder…', onclick: () => window.__rbBulk && window.__rbBulk.pickLinkFolder() });
+      box.replaceChildren(...(rows.length ? rows : [el('p', { class: 'ls-p ls-hint', text: 'None yet. You don’t need one: PDFs you drag onto the window are kept in the folder in step 2.' })]),
+        el('div', { class: 'ls-row' }, add));
+    }
+    redrawSources = draw;
+    draw();
   }
+  // a folder is added in bulk.js's dialog, over this one: list it here as soon as it is
+  let redrawSources = null;
+  document.addEventListener('rb:linked-changed', () => { if (redrawSources) redrawSources(); });
 
-  // ---------------------------------------------------------------- papers folder (app/papers.py)
+  // ---------------------------------------------------------------- 2. where research brain saves (app/layout.py, app/papers.py)
   const fmtMB = (b) => (b / 1e6 < 10 ? (b / 1e6).toFixed(1) : Math.round(b / 1e6)) + ' MB';
-  async function renderPapers(sec, say) {
-    let f;
-    try { f = await api('/api/papers-folder'); } catch { return; }
-    const where = el('div', { class: 'ls-path', id: 'ls-papers-path', text: f.folder });
-    const count = el('p', { class: 'ls-p' });
-    const setCount = (x) => { count.textContent = `${x.pdfs} PDF${x.pdfs === 1 ? '' : 's'}, one file per paper, named after it. Every PDF you add lands here, and the same file is never stored twice.${x.removed ? ` ${x.removed} in “Removed from library”.` : ''}`; };
-    setCount(f);
-    const open = el('button', { class: 'btn', type: 'button', text: 'Open folder', onclick: () => api('/api/papers-folder/reveal', json('POST', {})).catch((e) => say(e.message, true)) });
-    const dest = el('input', { type: 'text', id: 'ls-papers-dest', spellcheck: 'false', value: f.default ? f.suggested : f.folder, 'aria-label': 'Papers folder' });
-    const destPick = chooseFolderButton(dest, 'Choose where your papers’ PDFs should live', say);
-    const move = el('button', { class: 'btn', type: 'button', text: 'Move here' });
-    move.addEventListener('click', async () => {
-      const to = dest.value.trim();
-      if (!to || to === f.folder) return;
-      move.disabled = true;
+  const segs = (p) => String(p || '').split(/[\\/]+/).filter(Boolean).map((x) => x.toLowerCase());
+  /** The PDFs folder is the default one inside the documents folder (then one place to show, not two). */
+  const pdfsInside = (pdfs, docs) => { const a = segs(pdfs), b = segs(docs); return a.length === b.length + 1 && a[a.length - 1] === 'pdfs' && b.every((x, i) => x === a[i]); };
+
+  async function renderSaveTo(sec, say) {
+    let d, f;
+    try { [d, f] = await Promise.all([api('/api/documents-folder'), api('/api/papers-folder')]); } catch { return; }
+    const n = (k, one, many) => `${d[k]} ${d[k] === 1 ? one : many}`;
+    const openDocs = el('button', { class: 'btn', type: 'button', id: 'ls-documents-open', text: 'Open folder',
+      onclick: () => api('/api/documents-folder/reveal', json('POST', {})).catch((e) => say(e.message, true)) });
+    const pdfWhere = el('div');
+    const change = el('button', { class: 'btn', type: 'button', id: 'ls-papers-change', text: 'Save PDFs somewhere else…' });
+    const cloudBox = el('div', { id: 'ls-papers-cloud' });
+    function drawPdfs() {
+      const inside = pdfsInside(f.folder, d.folder);
+      const count = `${f.pdfs} PDF${f.pdfs === 1 ? '' : 's'}${f.removed ? ` (and ${f.removed} in “Removed from library”)` : ''}`;
+      pdfWhere.replaceChildren(
+        el('div', { class: 'ls-h2', text: 'PDFs you drag in or add by DOI' }),
+        inside
+          ? el('p', { class: 'ls-p', text: `Copied into the PDFs folder inside the folder above: ${count}. One file per paper, named after it; the same file is never stored twice.` })
+          : el('div', null, el('div', { class: 'ls-path', id: 'ls-papers-path', text: f.folder }),
+            el('p', { class: 'ls-p', text: `${count}, one file per paper, named after it; the same file is never stored twice.` })),
+        el('div', { class: 'ls-row' }, inside ? null : el('button', { class: 'btn', type: 'button', text: 'Open folder',
+          onclick: () => api('/api/papers-folder/reveal', json('POST', {})).catch((e) => say(e.message, true)) }), change),
+        el('p', { class: 'ls-p ls-hint', text: 'PDFs in the folders from step 1 are not copied: they stay where they are.' }));
+      change.textContent = inside ? 'Save PDFs somewhere else…' : 'Change…';
+      cloudBox.replaceChildren(...cloudParts(f));
+    }
+    change.addEventListener('click', async () => {
+      change.disabled = true;
       try {
+        let to = null;
+        try {
+          const r = await api('/api/pick-folder', json('POST', { prompt: 'Choose where research brain should save PDFs' }));
+          to = r && r.path;
+        } catch { to = window.prompt('Paste the folder where research brain should save PDFs:', f.folder); }
+        to = (to || '').trim();
+        if (!to) return;
         // first say what will happen, then do it only on your say-so (app/papers.py plan_move)
         const p = await api('/api/papers-folder/plan', json('POST', { folder: to }));
-        if (p.same) { say('That’s already your papers folder.'); return; }
+        if (p.same) { say('PDFs are already saved there.'); return; }
         if (p.clash.length) { say(`${p.to} already has different files named like yours (e.g. ${p.clash[0]}). Pick an empty folder.`, true); return; }
         if (!p.room) { say(`Not enough room on that disk for the ${p.moves} PDFs (${fmtMB(p.bytes)}). Free some space, or pick a folder on this disk.`, true); return; }
-        const lines = [
-          `Moves the library’s ${p.moves} PDF${p.moves === 1 ? '' : 's'} (${fmtMB(p.bytes)}${p.removed ? `, plus ${p.removed} in “Removed from library”` : ''}) from\n${p.from}\nto\n${p.to}`,
-          p.other_disk ? 'That’s another disk, so each is copied there first, then removed here.' : 'They’re moved, not copied: no extra space is used.',
-          p.stay_behind_count ? `${p.stay_behind_count} other PDF${p.stay_behind_count === 1 ? '' : 's'} in the current folder aren’t the library’s (e.g. ${p.stay_behind[0]}), and stay where they are.` : '',
-          p.already_there_count ? `${p.already_there_count} PDF${p.already_there_count === 1 ? '' : 's'} already in the new folder are left alone.` : '',
-          p.cloud ? `The new folder is in ${p.cloud}: the PDFs sync there.` : '',
-          'Your notes, highlights and links don’t change. New PDFs you add go to the new folder.',
-        ].filter(Boolean);
-        const R = rb() || {};
-        const ok = R.confirmDialog ? await R.confirmDialog('Move your papers folder?', lines.join('\n\n'), `Move ${p.moves} PDF${p.moves === 1 ? '' : 's'}`) : false;
-        if (ok !== true) return;
+        if (p.moves) {
+          const lines = [
+            `Moves the library’s ${p.moves} PDF${p.moves === 1 ? '' : 's'} (${fmtMB(p.bytes)}${p.removed ? `, plus ${p.removed} in “Removed from library”` : ''}) from\n${p.from}\nto\n${p.to}`,
+            p.other_disk ? 'That’s another disk, so each is copied there first, then removed here.' : 'They’re moved, not copied: no extra space is used.',
+            p.stay_behind_count ? `${p.stay_behind_count} other PDF${p.stay_behind_count === 1 ? '' : 's'} in the current folder aren’t the library’s (e.g. ${p.stay_behind[0]}), and stay where they are.` : '',
+            p.already_there_count ? `${p.already_there_count} PDF${p.already_there_count === 1 ? '' : 's'} already in the new folder are left alone.` : '',
+            p.cloud ? `The new folder is in ${p.cloud}: the PDFs sync there.` : '',
+            'Your notes, highlights and links don’t change. New PDFs you add go to the new folder.',
+          ].filter(Boolean);
+          const R = rb() || {};
+          const ok = R.confirmDialog ? await R.confirmDialog('Save PDFs in a new folder?', lines.join('\n\n'), `Move ${p.moves} PDF${p.moves === 1 ? '' : 's'}`) : false;
+          if (ok !== true) return;
+        }
         const r = await api('/api/papers-folder', json('PUT', { folder: to }));
-        f = r; where.textContent = r.folder; setCount(r); cloudBox.replaceChildren(...cloudParts(r));
-        say(`Moved ${r.moved} PDF${r.moved === 1 ? '' : 's'} to ${r.folder}.`);
-      } catch (e) { say(e.message, true); } finally { move.disabled = false; }
+        f = r; drawPdfs();
+        say(r.moved ? `Moved ${r.moved} PDF${r.moved === 1 ? '' : 's'} to ${r.folder}. New PDFs go there too.` : `New PDFs will be saved in ${r.folder}.`);
+      } catch (e) { say(e.message, true); } finally { change.disabled = false; }
     });
-    // a papers folder in OneDrive (iCloud Drive, Dropbox...): new PDFs can stay online only (app/diskspace.py)
+    // a PDFs folder in OneDrive (iCloud Drive, Dropbox...): new PDFs can stay online only (app/diskspace.py)
     function cloudParts(x) {
-      const d = x.disk || {};
-      const space = el('p', { class: 'ls-p' + (d.low ? ' ls-warn' : ''), id: 'ls-papers-space',
-        text: d.free == null ? '' : d.low
-          ? `Only ${d.free_text} free on this disk. research brain stops adding PDFs before the disk is full.`
-          : `${d.free_text} free on this disk.` });
-      if (!x.cloud) {
-        return [space, el('p', { class: 'ls-p', text: 'Short on space? Move this folder into OneDrive (or iCloud Drive, Dropbox) and keep the PDFs online only: they download when you open one.' })];
-      }
+      const dk = x.disk || {};
+      const space = el('p', { class: 'ls-p' + (dk.low ? ' ls-warn' : ''), id: 'ls-papers-space',
+        text: dk.free == null ? '' : dk.low
+          ? `Only ${dk.free_text} free on this disk. research brain stops adding PDFs before the disk is full.`
+          : `${dk.free_text} free on this disk.` });
+      if (!x.cloud) return dk.low ? [space, el('p', { class: 'ls-p', text: 'Short on space? Save PDFs in a OneDrive (or iCloud Drive, Dropbox) folder and keep them online only: they download when you open one.' })] : [];
       if (!x.can_free) {  // macOS: no command for it; the system and Finder do it
-        return [space, el('p', { class: 'ls-p', id: 'ls-online-hint', text: `This folder is in ${x.cloud}. To keep its PDFs online only, right-click it in Finder › Free up space. New PDFs start out on this Mac, and macOS frees them on its own when the disk runs low. research brain never downloads an online-only PDF unless you open it.` })];
+        return [el('p', { class: 'ls-p', id: 'ls-online-hint', text: `This folder is in ${x.cloud}. To keep its PDFs online only, right-click it in Finder › Free up space. research brain never downloads an online-only PDF unless you open it.` })];
       }
       const box = el('input', { type: 'checkbox', id: 'ls-online-only' });
       box.checked = !!x.online_only;
@@ -439,49 +501,21 @@
         } catch (e) { box.checked = !box.checked; say(e.message, true); } finally { box.disabled = false; }
       });
       return [space,
-        el('label', { class: 'ls-p ls-check', for: 'ls-online-only' }, box, ` Keep new PDFs online only (in ${x.cloud}, not on this computer)`),
-        el('p', { class: 'ls-p ls-hint', text: `Each PDF you add is saved into this folder, and ${x.cloud} frees the space on this computer as soon as it has uploaded it. It downloads again when you open it. Turning this on also frees the PDFs already here.` })];
+        el('label', { class: 'ls-p ls-check', for: 'ls-online-only' }, box, ` Keep new PDFs online only (in ${x.cloud}, not on this computer)`)];
     }
-    const cloudBox = el('div', { id: 'ls-papers-cloud' }, ...cloudParts(f));
+    sec.append(
+      el('div', { class: 'ls-h2', text: 'Your notes, highlights and questions' }),
+      el('div', { class: 'ls-path', id: 'ls-documents-path', text: d.folder }),
+      el('p', { class: 'ls-p', text: `Plain files you can open in any app: ${n('papers', 'paper', 'papers')}, ${n('notes', 'note', 'notes')}, ${n('questions', 'question', 'questions')} and ${n('highlights', 'highlight', 'highlights')}, each named after its title.` }),
+      el('div', { class: 'ls-row' }, openDocs),
+      pdfWhere, cloudBox);
+    drawPdfs();
+  }
 
-    // folders of papers kept where they are (app/linked.py): yours, linked, never moved or copied
-    const linkedBox = el('div', { id: 'ls-linked' });
-    async function renderLinked() {
-      let r;
-      try { r = await api('/api/linked-folders'); } catch { return; }
-      const rows = r.folders.map((x) => {
-        const check = el('button', { class: 'btn btn-sm', type: 'button', text: 'Check now', title: 'Add new PDFs, follow moved ones' });
-        check.addEventListener('click', async () => {
-          check.disabled = true;
-          try { await api(`/api/linked-folders/${x.id}/check`, json('POST', {})); say(`Checking ${x.name} for new and moved PDFs.`); setTimeout(renderLinked, 2500); }
-          catch (e) { say(e.message, true); } finally { check.disabled = false; }
-        });
-        const drop = el('button', { class: 'btn btn-sm btn-text', type: 'button', text: 'Stop following' });
-        drop.addEventListener('click', async () => {
-          const R = rb() || {};
-          const ok = R.confirmDialog ? await R.confirmDialog(`Stop following “${x.name}”?`, `Its ${x.papers} paper${x.papers === 1 ? '' : 's'} stay in your library with your notes and highlights, but without their PDFs. Nothing in the folder is touched.`, 'Stop following') : true;
-          if (!ok) return;
-          try { await api(`/api/linked-folders/${x.id}`, json('DELETE')); say(`Stopped following ${x.name}.`); renderLinked(); if (R.refreshGraph) R.refreshGraph(); }
-          catch (e) { say(e.message, true); }
-        });
-        const job = x.job && x.job.state === 'running' ? ` · adding ${x.job.done} of ${x.job.total || '…'}` : '';
-        return el('div', { class: 'ls-linked-row' },
-          el('div', null, el('div', { class: 'ls-path', text: x.path }),
-            el('div', { class: 'ls-p', text: `${x.papers} paper${x.papers === 1 ? '' : 's'}${x.cloud ? ` · in ${x.cloud}` : ''}${x.there ? '' : ' · not connected right now'}${job}` })),
-          el('div', { class: 'ls-row' }, check, drop));
-      });
-      const add = el('button', { class: 'btn', type: 'button', text: r.folders.length ? 'Add another folder…' : 'Add a folder…', onclick: () => window.__rbBulk && window.__rbBulk.pickLinkFolder() });
-      linkedBox.replaceChildren(
-        el('div', { class: 'ls-h', text: 'Folders of papers' }),
-        el('p', { class: 'ls-p', text: 'Folders you already keep PDFs in, such as one in OneDrive. They stay where they are: research brain links to each PDF, never moves, renames or deletes one, and adds new ones you put there. Each subfolder becomes a topic.' }),
-        ...rows, el('div', { class: 'ls-row' }, add));
-    }
-    renderLinked();
-    sec.append(where, count, el('div', { class: 'ls-row' }, open),
-      el('label', { class: 'ls-p', for: 'ls-papers-dest', text: f.default ? 'Keep them somewhere you can find them, like your Documents folder or a synced folder (OneDrive):' : 'Move them somewhere else:' }),
-      el('div', { class: 'ls-row' }, dest, destPick, move), cloudBox, linkedBox);
-
-    // check a folder you pick for papers you already have, or haven't added
+  // ---------------------------------------------------------------- advanced: check a folder for papers you already have
+  async function renderScan(box, say) {
+    let f;
+    try { f = await api('/api/papers-folder'); } catch { return; }
     const scanIn = el('input', { type: 'text', id: 'ls-scan-folder', spellcheck: 'false', value: f.downloads, 'aria-label': 'Folder to check' });
     const scanPick = chooseFolderButton(scanIn, 'Choose a folder to check for papers', say);
     const deep = el('input', { type: 'checkbox', id: 'ls-scan-deep' });
@@ -492,8 +526,8 @@
       try { drawScan(out, await api('/api/papers/scan', json('POST', { folder: scanIn.value.trim(), recursive: deep.checked })), say); }
       catch (e) { out.replaceChildren(); say(e.message, true); } finally { scanBtn.disabled = false; }
     });
-    sec.append(el('div', { class: 'ls-h2', text: 'Papers already on this computer' }),
-      el('p', { class: 'ls-p', text: 'Only when you ask, and only the folder you pick: finds PDFs that are already in your library (the same file) and ones that aren’t yet.' }),
+    box.append(el('div', { class: 'ls-h2', text: 'Check a folder for papers you already have' }),
+      el('p', { class: 'ls-p', text: 'A one-time check, only of the folder you pick: which PDFs are already in your library (the same file) and which aren’t yet. Nothing is added or followed.' }),
       el('div', { class: 'ls-row' }, scanIn, scanPick, scanBtn),
       el('label', { class: 'ls-p ls-check', for: 'ls-scan-deep' }, deep, ' Include folders inside it'), out);
   }
