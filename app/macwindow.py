@@ -201,6 +201,8 @@ def _on_message(header: _Header, body: str) -> None:
         _attention(str(msg.get("badge") or "")[:4])
     if msg.get("log"):  # voice mode's diagnostics (static/voice.js): into app.log
         print(f"[research_brain] page: {str(msg['log'])[:300]}", file=sys.stderr)
+    if msg.get("dropped"):  # files or folders dropped on the page (static/live.js droppedPaths): where they are
+        _dropped(header, str(msg["dropped"])[:64], msg.get("names"))
     if "dictate" in msg:  # the chat's mic button (static/app.js): macOS dictation into the focused field
         _dictate(bool(msg["dictate"]))
     if "unsaved" in msg:
@@ -209,6 +211,37 @@ def _on_message(header: _Header, body: str) -> None:
         header.may_close = True
         win = header.win
         threading.Thread(target=win.destroy, daemon=True).start()
+
+
+def _drop_paths(pending: list, names) -> list[dict]:
+    """[{name, path}] for the dropped items the page asks about, taken from what the drag carried (pywebview
+    records each drop's file URLs before the page sees it); the rest stay for a later drop."""
+    want = {str(n) for n in (names or [])[:200]}
+    out, keep = [], []
+    for item in pending:
+        try:
+            name, path = str(item[0]), str(item[1])
+        except (TypeError, IndexError):
+            continue
+        base = os.path.basename(path.rstrip("/")) or name
+        (out if (base in want or name in want) else keep).append({"name": base, "path": path.rstrip("/") or path})
+    pending[:] = [(k["name"], k["path"]) for k in keep][-50:]
+    return out
+
+
+def _dropped(header: _Header, drop_id: str, names) -> None:
+    try:
+        from webview.dom import _dnd_state
+        paths = _drop_paths(_dnd_state["paths"], names)
+    except Exception as e:
+        print(f"[research_brain] dropped files: {e!r}", file=sys.stderr)
+        paths = []
+    win = header.win
+    if win is None:
+        return
+    reply = json.dumps({"dropped": drop_id, "paths": paths})
+    threading.Thread(target=lambda: win.evaluate_js(f"window.__rbDropped && window.__rbDropped({reply})"),
+                     daemon=True).start()
 
 
 def _dictate(on: bool) -> None:
@@ -319,6 +352,11 @@ def run(url: str, start) -> int:
     _identity()
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+    try:  # pywebview records where dropped files and folders are (WebKitHost.performDragOperation_): see _dropped
+        from webview.dom import _dnd_state
+        _dnd_state["num_listeners"] = max(1, int(_dnd_state.get("num_listeners") or 0))
+    except Exception as e:
+        print(f"[research_brain] drop paths: {e!r}", file=sys.stderr)
     header = _Header()
     # text_select: pywebview otherwise adds "body { user-select: none }" to every page, and nothing in the
     # window (answers, notes, papers) could be selected and copied

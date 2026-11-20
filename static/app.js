@@ -5901,8 +5901,62 @@
   window.addEventListener('drop', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault(); dragDepth = 0; $('#drop-overlay').hidden = true;
-    importPdfs(e.dataTransfer.files);
+    const dt = e.dataTransfer;
+    const files = Array.from(dt.files || []);
+    // folders come as entries (read now: the drop's data is gone once this handler returns)
+    const entries = Array.from(dt.items || []).map((it) => (it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null));
+    const dirs = entries.filter((en) => en && en.isDirectory);
+    if (!dirs.length) { importPdfs(files); return; }
+    const live = window.__rbLive;
+    const paths = live && live.droppedPaths ? live.droppedPaths(dt.files, dirs.map((d) => d.name)) : Promise.resolve(null);
+    droppedFolders(dirs, files, paths);
   });
+
+  /** Folders dropped on the window. In research brain's own window (Mac or Windows) it knows where they are, so
+   *  they're added like Add folders of papers: kept where they are, each folder a topic. In a browser, which
+   *  never sees where a folder is, its PDFs are read from the drop and imported (copied) like Import a folder. */
+  async function droppedFolders(dirs, files, pathsP) {
+    const bulk = window.__rbBulk;
+    const dirNames = new Set(dirs.map((d) => d.name));
+    const loose = files.filter((f) => !dirNames.has(f.name) && /\.pdf$/i.test(f.name));
+    if (loose.length) importPdfs(loose);
+    if (dirs.length > 1) toast(`Adding “${dirs[0].name}”. Drop the other folders one at a time.`, 'info');
+    const dir = dirs[0];
+    const paths = await pathsP;
+    const found = paths && paths.find((p) => p.name === dir.name || p.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() === dir.name);
+    if (found && bulk && bulk.linkDialog) { bulk.linkDialog(found.path.replace(/[\\/]+$/, '') || found.path); return; }
+    const t = task(`Reading “${dir.name}”`);
+    let all = [];
+    try { all = await readFolder(dir); } catch (err) { toastErr(err, `Could not read “${dir.name}”`); }
+    finally { t.done(); }
+    if (bulk && bulk.folderDialog) bulk.folderDialog(all.length ? all : [Object.defineProperty(new File([], '.'), 'webkitRelativePath', { value: `${dir.name}/.` })]);
+  }
+
+  /** Every file in a dropped folder and its subfolders (up to 20,000), each with its path from the folder, as
+   *  the browser's own folder picker gives them (webkitRelativePath). */
+  async function readFolder(root, limit = 20000) {
+    const out = [];
+    const readAll = (reader) => new Promise((resolve, reject) => {
+      const acc = [];
+      const next = () => reader.readEntries((batch) => { if (!batch.length) resolve(acc); else { acc.push(...batch); next(); } }, reject);
+      next();
+    });
+    const fileOf = (en) => new Promise((resolve, reject) => en.file(resolve, reject));
+    const walk = async (dir, rel) => {
+      for (const en of await readAll(dir.createReader())) {
+        if (out.length >= limit) return;
+        if (en.name.startsWith('.')) continue;
+        if (en.isDirectory) { await walk(en, `${rel}/${en.name}`); continue; }
+        if (!/\.pdf$/i.test(en.name)) continue;
+        try {
+          const f = await fileOf(en);
+          out.push(Object.defineProperty(f, 'webkitRelativePath', { value: `${rel}/${en.name}`, configurable: true }));
+        } catch { /* unreadable (online only, no permission): skipped */ }
+      }
+    };
+    await walk(root, root.name);
+    return out;
+  }
 
   // ---------- resizing the note panel and the chat: drag the grip on their left edge ----------
   // Either can be as wide as the window less ~240 px of map (with both open, together). Widths are kept.
