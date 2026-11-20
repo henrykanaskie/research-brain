@@ -18,16 +18,29 @@ with run_server(vault, env={"RB_EMBEDDER": "tfidf", "RB_VOICE_DIR": os.environ["
     with sync_playwright() as p:
         b = p.chromium.launch(args=["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
                                     f"--use-file-for-fake-audio-capture={os.environ['RB_VOICE_TEST_TURN']}", "--autoplay-policy=no-user-gesture-required"])
-        page = b.new_page()
-        page.add_init_script("localStorage.setItem('rb.tour.done','true');")
-        page.goto(srv.base)
-        page.wait_for_function("() => window.__rbVoice && window.__rb.S")
-        page.evaluate("() => { window.__said = []; const sp = window.__rbVoice._speech, say = sp.say.bind(sp); sp.say = (t) => { window.__said.push(t); say(t); }; }")
-        page.click("#btn-chat")
-        page.click("#btn-chat-voice")
-        page.wait_for_function("() => window.__rb.S.chat.filter((m) => m.role === 'user').length >= 2", timeout=120000)
-        asked = page.evaluate("() => window.__rb.S.chat.filter((m) => m.role === 'user').map((m) => m.content)")
-        assert all("cross" in a.lower() and "iodine" in a.lower() for a in asked), asked
-        assert page.evaluate("() => window.__said.length") > 0, "it didn't answer out loud"
+        # in a browser tab (you can talk over it), then as the Mac window (it lets the microphone go while it talks)
+        for url, mac in ((srv.base, False), (srv.base + "/?app=mac", True)):
+            page = b.new_page()
+            page.add_init_script("localStorage.setItem('rb.tour.done','true'); window.__sent = [];" + (
+                "Object.defineProperty(window, 'webkit', { configurable: true, value: { messageHandlers: { rb: {"
+                " postMessage: (m) => window.__sent.push(JSON.parse(m)) } } } });" if mac else ""))
+            page.goto(url)
+            page.wait_for_function("() => window.__rbVoice && window.__rb.S")
+            page.evaluate("""() => { window.__said = []; window.__heldWhileSpeaking = []; const v = window.__rbVoice, sp = v._speech, say = sp.say.bind(sp);
+              sp.say = (t) => { window.__said.push(t); say(t); };
+              setInterval(() => { if (v.state === 'speaking') window.__heldWhileSpeaking.push(!!v._mic.stream); }, 100); }""")
+            page.click("#btn-chat")
+            page.click("#btn-chat-voice")
+            page.wait_for_function("() => window.__rb.S.chat.filter((m) => m.role === 'user').length >= 2", timeout=120000)
+            asked = page.evaluate("() => window.__rb.S.chat.filter((m) => m.role === 'user').map((m) => m.content)")
+            assert all("cross" in a.lower() and "iodine" in a.lower() for a in asked), (url, asked)
+            assert page.evaluate("() => window.__said.length") > 0, "it didn't answer out loud"
+            held = page.evaluate("() => window.__heldWhileSpeaking")
+            assert held, "it never spoke"
+            assert (not any(held)) if mac else all(held), (url, held)
+            logs = [m.get("log") for m in page.evaluate("() => window.__sent") if m.get("log")]
+            assert not [x for x in logs if "didn’t play" in x or "didn’t answer" in x], logs
+            page.close()
+            urllib.request.urlopen(urllib.request.Request(srv.base + "/api/chats/library", method="DELETE", headers={"Origin": srv.base})).read()  # a fresh chat for the next
         b.close()
 print("ok")

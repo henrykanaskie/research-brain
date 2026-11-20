@@ -169,6 +169,7 @@ def test_security_headers_and_csp(live):
     assert "'unsafe-inline'" not in csp["script-src"] and "'unsafe-eval'" not in csp["script-src"]
     assert csp["object-src"] == ["'none'"] and csp["connect-src"] == ["'self'"]
     assert not [s for d in ("img-src", "connect-src", "script-src", "font-src") for s in csp[d] if s.startswith("http")]
+    assert csp["media-src"] == ["'self'", "blob:"]  # spoken answers play from blob: URLs; nothing from outside
     # every inline script of the app's pages is allowed by its hash (and nothing else inline)
     for page in ("index.html", "viewer.html"):
         src = (ROOT / "static" / page).read_text(encoding="utf-8")

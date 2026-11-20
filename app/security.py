@@ -206,6 +206,7 @@ def csp() -> str:
             f"script-src {scripts}; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; "
+            "media-src 'self' blob:; "  # spoken answers play from blob: URLs (static/voice.js)
             "font-src 'self' data:; "
             "connect-src 'self'; "
             "worker-src 'self' blob:; "

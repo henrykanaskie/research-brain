@@ -132,12 +132,22 @@
         if (blob) {
           const url = URL.createObjectURL(blob);
           audioEl = new Audio(url);
+          let played = false;
           const end = () => { URL.revokeObjectURL(url); done(); };
-          audioEl.onended = end; audioEl.onerror = end;
-          audioEl.play().catch(end);
+          let failed = false;
+          const fail = (why) => { if (failed || played) return; failed = true; URL.revokeObjectURL(url); vlog('speech: a clip didn’t play (' + why + '), using the built-in voice'); if (ep === this.epoch) this.plain(t, done); };
+          audioEl.onplaying = () => { played = true; };
+          audioEl.onended = end;
+          audioEl.onerror = () => (played ? end() : fail('error ' + ((audioEl && audioEl.error && audioEl.error.code) || '')));
+          audioEl.play().catch((e) => fail(e && e.name));
           return;
         }
+        vlog('speech: the natural voice didn’t answer, using the built-in voice');
       }
+      this.plain(t, done);
+    },
+    /** one sentence in the browser's or the computer's own voice */
+    async plain(t, done) {
       if (useSynth()) {
         const u = new SpeechSynthesisUtterance(t);
         const v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
@@ -295,6 +305,23 @@
       this.src.connect(this.node);
       const mute = this.ctx.createGain(); mute.gain.value = 0;  // keeps the node running without playing anything
       this.node.connect(mute); mute.connect(this.ctx.destination);
+      if (this.ctx.state === 'suspended') await this.ctx.resume().catch(() => {});
+      return null;
+    },
+    /** lets go of the microphone (WebKit turns other sound right down while it holds it), keeping the rest */
+    release() {
+      if (this.src) { try { this.src.disconnect(); } catch { /* gone */ } }
+      if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null; this.src = null; this.inUtt = false; this.rec = []; this.pre = []; this.preMs = 0; this.voiced = 0;
+    },
+    /** takes the microphone back after release() */
+    async reopen() {
+      if (this.stream || !this.ctx || !this.node) return this.stream ? null : 'closed';
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+      } catch (e) { this.stream = null; return e && e.name === 'NotAllowedError' ? 'denied' : 'failed'; }
+      this.src = this.ctx.createMediaStreamSource(this.stream);
+      this.src.connect(this.node);
       if (this.ctx.state === 'suspended') await this.ctx.resume().catch(() => {});
       return null;
     },
@@ -458,7 +485,16 @@
     if (!active) return;
     setHeard('');
     setState('listening');
-    if (engine === 'mic') { mic.mode = 'listen'; return; }  // the microphone is already open; it hands over when you've spoken
+    if (engine === 'mic') {  // the microphone hands over when you've spoken
+      if (mic.stream) { mic.mode = 'listen'; return; }
+      mic.mode = 'hold';
+      mic.reopen().then((err) => {  // it was let go while the answer was spoken
+        if (!active || state !== 'listening') return;
+        if (err) { vlog('microphone: couldn’t take it back (' + err + ')'); setState('paused', 'The microphone stopped. Tap to talk.'); return; }
+        mic.mode = 'listen';
+      });
+      return;
+    }
     listen.start((q) => {
       if (!active) return;
       if (!q) { setState('paused', 'Didn’t catch anything. Tap to talk.'); return; }
@@ -475,11 +511,20 @@
     speech.onIdle = () => { if (active && state === 'speaking' && !S.chatBusy) listenNow(); };
     rb.sendChat(q);
   }
+  // While it talks: Chrome cancels its own voice out of the microphone well, so you can talk over it there.
+  // Safari and the Mac window (WebKit) turn other sound right down while the microphone is held, and can hear
+  // the answer as you interrupting, so there the microphone is let go until it has finished (tap the orb to cut in).
+  const bargeIn = () => /Chrome\/|Chromium\//.test(navigator.userAgent) && !isMac();
+  function micWhileSpeaking() {
+    if (bargeIn()) { mic.mode = 'speaking'; return; }
+    mic.mode = 'hold';
+    mic.release();
+  }
   // the chat tells us how its answer is going (static/app.js sendChat)
   S.voiceHook = {
     live(text) {
       if (!active || !feed) return;
-      if (state === 'thinking') { setState('speaking'); if (engine === 'mic') mic.mode = 'speaking'; }
+      if (state === 'thinking') { setState('speaking'); if (engine === 'mic') micWhileSpeaking(); }
       feed(text, false);
     },
     done(msg) {
@@ -487,7 +532,7 @@
       if (msg && msg.error) { feed = null; setState('paused', 'That didn’t work. Tap to try again.'); return; }
       if (msg && msg.content) feed(msg.content, true);
       feed = null;
-      if (state === 'thinking') { setState('speaking'); if (engine === 'mic') mic.mode = 'speaking'; }
+      if (state === 'thinking') { setState('speaking'); if (engine === 'mic') micWhileSpeaking(); }
       if (!speech.speaking) listenNow();  // nothing (left) to say
     },
   };
