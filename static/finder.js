@@ -260,7 +260,10 @@
   function addBtn(it) {
     const p = it.paper || {};
     const b = h('button', { class: 'btn btn-primary', type: 'button', text: 'Add to library', title: 'Add it with its metadata (and a free PDF when one exists)' });
-    b.onclick = async () => {
+    b.onclick = async (ev) => {
+      // which section of the map it goes in (or sorted automatically, by similarity)
+      const section = rb.chooseSection ? await rb.chooseSection(ev) : null;
+      if (section === undefined) return;  // closed the menu
       b.disabled = true; b.textContent = 'Adding';
       try {
         const q = p.doi || (p.arxiv ? 'arXiv:' + p.arxiv : it.title);
@@ -271,7 +274,8 @@
         if (it.free_copy && it.free_copy.url) {
           try { free = (await api('POST', `/api/finder/items/${enc(it.id)}/added`, { note_id: note.id })).free_copy; } catch { /* the paper is added either way */ }
         }
-        toast(`Added “${truncate(note.title || it.title, 60)}”${qid ? `, linked to your question` : ''}.${free ? ' The free copy’s note is in it, and its PDF is downloading.' : ''}`, 'ok', { action: { label: 'Open', fn: () => { CMD && CMD.close(false); rb.openNote(note.id, { center: true }); } } });
+        if (section && rb.intoSection) { try { await rb.intoSection(note, section); } catch { /* added either way */ } }
+        toast(`Added “${truncate(note.title || it.title, 60)}”${section ? ` to ${section.label}` : ''}${qid ? `, linked to your question` : ''}.${free ? ' The free copy’s note is in it, and its PDF is downloading.' : ''}`, 'ok', { action: { label: 'Open', fn: () => { CMD && CMD.close(false); rb.openNote(note.id, { center: true }); } } });
         if (rb.refreshGraph) rb.refreshGraph();
         await refresh();
       } catch (e) { b.disabled = false; b.textContent = 'Add to library'; toastErr(e, 'Could not add it'); }

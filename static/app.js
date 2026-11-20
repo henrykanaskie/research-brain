@@ -880,8 +880,12 @@
       }
       if (performance.now() - t0 > 700) break;  // a very large library on a slow computer: show what we have
     }
+    const rf = fg.d3Force('regions');
+    if (rf && rf.contain) rf.contain();  // every dot inside its own section's cloud, and out of the others
     const ec = fg.d3Force('edgeClear');
     if (ec && ec.settle) ec.settle();  // no dot left on a line that isn't its own (out of sight, so no jump)
+    if (rf && rf.contain) rf.contain();
+    if (ec && ec.settle) ec.settle();  // containment can nudge a dot onto a line: clear it once more (a small step)
     for (const n of nodes) { n.vx = 0; n.vy = 0; }
   }
   /** Work out the new layout from where the dots are resting now, and glide every dot there. */
@@ -1462,6 +1466,126 @@
   const energy = (alpha) => { const t = Math.min(1, Math.max(0, (alpha - ALPHA_REST) / 0.12)); return t * t * (3 - 2 * t); };
 
   /** pull each region toward its own anchor so regions form lobes; mild centering for the rest */
+  // ---------- sections as clouds ----------
+  // Each section is drawn as one smooth cloud around its papers: their outline (convex hull), grown by a margin
+  // and rounded, in a quiet tint of its own with a faint edge, so you see which papers are IN it. Drawn under the
+  // lines and dots. Sections are spaced so their clouds never overlap.
+  const CLOUD_PAD = 9;  // graph units of cloud around the outermost papers
+  const cloudLayer = document.createElement('canvas');
+  function cloudMembers() {
+    const groups = new Map();
+    for (const n of S.nodes.values()) {
+      if (n.type === 'fragment' || n.cluster == null || n.cluster < 0 || !Number.isFinite(n.x) || nodeHidden(n.id)) continue;
+      (groups.get(n.cluster) || groups.set(n.cluster, []).get(n.cluster)).push(n);
+    }
+    return groups;
+  }
+  function hull(pts) {
+    const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (p.length < 3) return p;
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for (const q of p) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+    for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+    up.pop(); lo.pop();
+    return lo.concat(up);
+  }
+  /** a section's cloud: the hull of its papers (each paper's dot as a ring of points), and the margin around it */
+  function cloudShape(mem) {
+    const pts = [];
+    for (const n of mem) { const r = nodeRadius(n); for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; pts.push([n.x + Math.cos(a) * r, n.y + Math.sin(a) * r]); } }
+    return { hull: hull(pts), pad: CLOUD_PAD };
+  }
+  function cloudTint(cid) {
+    const pal = [C.machine, C.violet || C.machine, C.ochre || C.machine, C.red, '#4F7A55'];
+    return pal[strHash(regionKey(cid)) % pal.length];
+  }
+  const cloudShapes = new Map();  // cid -> shape, as drawn this frame (for clicks and drags)
+  function traceCloud(c, sh, grow = 0) {
+    const H = sh.hull;
+    c.beginPath();
+    if (H.length === 1) { c.arc(H[0][0], H[0][1], sh.pad + grow, 0, Math.PI * 2); return; }
+    H.forEach((q, i) => (i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1])));
+    c.closePath();
+  }
+  function drawClouds(ctx, k) {
+    cloudShapes.clear();
+    const groups = cloudMembers();
+    if (!groups.size) return;
+    const dark = document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+    const cv = ctx.canvas;
+    if (cloudLayer.width !== cv.width || cloudLayer.height !== cv.height) { cloudLayer.width = cv.width; cloudLayer.height = cv.height; }
+    const lc = cloudLayer.getContext('2d');
+    const tf = ctx.getTransform();
+    for (const [cid, mem] of groups) {
+      if (!(S.clusters || []).some((c) => c.id === cid)) continue;
+      const sh = cloudShape(mem);
+      cloudShapes.set(cid, sh);
+      const dim = S.focusCluster != null && S.focusCluster !== cid ? 0.35 : 1;
+      const hot = S.dragRegion === cid || S.hoverRegion === cid;
+      const tint = cloudTint(cid);
+      // the shape, solid, on its own layer: the hull with a rounded margin (a fat round-jointed outline + fill)
+      lc.setTransform(1, 0, 0, 1, 0, 0); lc.clearRect(0, 0, cloudLayer.width, cloudLayer.height);
+      lc.setTransform(tf);
+      lc.lineJoin = 'round'; lc.lineCap = 'round';
+      // its edge: the same shape a hair larger, in the stronger tint
+      traceCloud(lc, sh, 0.9 / k);
+      lc.lineWidth = 2 * sh.pad + 2.4 / k; lc.strokeStyle = tint; lc.fillStyle = tint;
+      lc.stroke(); lc.fill();
+      // its inside, a paler tint of the same colour
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = (dark ? 0.34 : 0.3) * dim * (hot ? 1.4 : 1);
+      ctx.drawImage(cloudLayer, 0, 0);
+      ctx.restore();
+      lc.setTransform(1, 0, 0, 1, 0, 0); lc.clearRect(0, 0, cloudLayer.width, cloudLayer.height);
+      lc.setTransform(tf);
+      traceCloud(lc, sh);
+      lc.lineWidth = 2 * sh.pad; lc.strokeStyle = C.sheet; lc.fillStyle = C.sheet;
+      lc.stroke(); lc.fill();
+      lc.globalCompositeOperation = 'source-atop';
+      lc.setTransform(1, 0, 0, 1, 0, 0);
+      lc.fillStyle = rgba(tint, dark ? 0.14 : 0.1);
+      lc.fillRect(0, 0, cloudLayer.width, cloudLayer.height);
+      lc.globalCompositeOperation = 'source-over';
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = dim;
+      ctx.drawImage(cloudLayer, 0, 0);
+      ctx.restore();
+    }
+  }
+  /** The section whose cloud is at (gx, gy), or null. */
+  function cloudAt(gx, gy) {
+    for (const [cid, sh] of cloudShapes) {
+      const H = sh.hull;
+      let inside = H.length > 2;
+      if (inside) {
+        let c = false;
+        for (let i = 0, j = H.length - 1; i < H.length; j = i++) {
+          if ((H[i][1] > gy) !== (H[j][1] > gy) && gx < ((H[j][0] - H[i][0]) * (gy - H[i][1])) / (H[j][1] - H[i][1]) + H[i][0]) c = !c;
+        }
+        inside = c;
+      }
+      if (inside) return cid;
+      const P = H.length === 1 ? [H[0][0], H[0][1], H[0][0], H[0][1]] : H.flatMap((q, i) => [q[0], q[1], H[(i + 1) % H.length][0], H[(i + 1) % H.length][1]]);
+      for (let i = 0; i + 3 < P.length; i += 4) {
+        const ax = P[i], ay = P[i + 1], vx = P[i + 2] - ax, vy = P[i + 3] - ay, L2 = vx * vx + vy * vy;
+        let t = L2 ? ((gx - ax) * vx + (gy - ay) * vy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+        if (Math.hypot(gx - ax - vx * t, gy - ay - vy * t) <= sh.pad) return cid;
+      }
+    }
+    return null;
+  }
+
+  // where you dragged each section, kept by its topic (or its name), since a section's number changes as the
+  // library changes
+  let regionPos = LS.get('regionPos', {}) || {};
+  function regionKey(cid) {
+    const c = (S.clusters || []).find((x) => x.id === cid);
+    if (!c) return 'cid:' + cid;
+    return c.topic && c.topic.slug ? 't:' + c.topic.slug : 'l:' + String(c.label || '').toLowerCase();
+  }
   function regionForce() {
     // Two-level hierarchy, same rule at both scales: regions are laid out around the centre,
     // sub-groups are laid out around their region's anchor, and nodes settle around their sub-group.
@@ -1504,13 +1628,20 @@
           const s = (sa ? 0.075 : ra ? 0.06 : 0.04) * alpha;
           n.vx += (a.x - n.x) * s; n.vy += (a.y - n.y) * s;
         }
-        if (ra && !S.dragging) {
+        if (!S.dragging) {
           // (not while you drag a dot: its linked dots follow it, wherever you take it)
-          // each region keeps to its own disc, so neighbouring regions never run into each other: past the
-          // rim, a gentle, steady pull back (it doesn't fade as the layout cools, but it eases a dot in
-          // rather than snapping it)
-          const dx = n.x - ra.x, dy = n.y - ra.y, d = Math.hypot(dx, dy);
-          if (d > ra.r && d > 0) { const over = (Math.min(1.2, (d - ra.r) * 0.03) * energy(alpha)) / d; n.vx -= dx * over; n.vy -= dy * over; }
+          // a paper is IN its section: past its section's rim, a firm pull back inside; and it stays out of every
+          // other section's cloud (a paper of no section stays out of all of them)
+          const own = anchors.get(n.cluster);
+          if (own) {
+            const dx = n.x - own.x, dy = n.y - own.y, d = Math.hypot(dx, dy), lim = own.r - nodeRadius(n);
+            if (d > lim && d > 0) { const over = (Math.min(2.5, (d - lim) * 0.12) * energy(alpha)) / d; n.vx -= dx * over; n.vy -= dy * over; }
+          }
+          for (const [cid, b] of anchors) {
+            if (cid === n.cluster) continue;
+            const dx = n.x - b.x, dy = n.y - b.y, d = Math.hypot(dx, dy) || 0.01, lim = b.r + nodeRadius(n) + 2 * CLOUD_PAD + 4;
+            if (d < lim) { const push = (Math.min(2.5, (lim - d) * 0.15) * energy(alpha)) / d; n.vx += dx * push; n.vy += dy * push; }
+          }
         }
       }
     }
@@ -1580,6 +1711,28 @@
         cx /= w; cy /= w;
         for (const a of anchors.values()) { a.x -= cx; a.y -= cy; }
       }
+      // sections you dragged keep the spot you gave them; any other section that would overlap one moves
+      // aside to the nearest free spot
+      const fixed = [];
+      for (const [id, a] of anchors) {
+        const pos = regionPos[regionKey(id)];
+        if (pos) { a.x = pos[0]; a.y = pos[1]; a.mine = true; fixed.push(a); }
+      }
+      if (fixed.length) {
+        const placed = [...fixed];
+        for (const id of ids) {
+          const a = anchors.get(id);
+          if (a.mine) continue;
+          const free = (x, y) => placed.every((p) => Math.hypot(p.x - x, p.y - y) >= p.r + a.r + 34);
+          if (!free(a.x, a.y)) {
+            for (let t = 1; t < 3000; t++) {
+              const ang = t * 0.35, rad = t * 0.9, x = a.x + Math.cos(ang) * rad, y = a.y + Math.sin(ang) * rad * 0.8;
+              if (free(x, y)) { a.x = x; a.y = y; break; }
+            }
+          }
+          placed.push(a);
+        }
+      }
       // a dot you placed keeps its spot within its region, wherever the region now sits
       for (const n of nodes) if (n.__pinRel) { const a = anchors.get(n.cluster) || looseAnchor(n); n.__home = [a.x + n.__pinRel[0], a.y + n.__pinRel[1]]; }
       layoutSatellites();
@@ -1595,6 +1748,57 @@
       }
     }
     force.relayout = layoutAnchors;
+    /** Drag a whole section: its middle, its sub-groups and every dot in it (placed ones keep their place in it). */
+    force.moveRegion = (cid, dx, dy) => {
+      const a = anchors.get(cid);
+      if (!a) return;
+      a.x += dx; a.y += dy;
+      for (const [sid, sa] of subAnchors) { const m = nodes.find((n) => n.sub === sid); if (m && m.cluster === cid) { sa.x += dx; sa.y += dy; } }
+      for (const n of nodes) {
+        if (n.cluster !== cid) continue;
+        n.x += dx; n.y += dy;
+        if (n.__home) n.__home = [n.__home[0] + dx, n.__home[1] + dy];
+        if (n.fx !== undefined && Number.isFinite(n.fx)) { n.fx += dx; n.fy += dy; }
+      }
+    };
+    force.regionAt = (cid) => anchors.get(cid) || null;
+    /** After a layout: every dot inside its own section and out of the others (dots you placed stay put). */
+    force.contain = () => {
+      const free = (n) => n.type !== 'fragment' && !n.__home && n.fx === undefined && Number.isFinite(n.x);
+      const dots = nodes.filter((n) => n.type !== 'fragment' && Number.isFinite(n.x));
+      for (let it = 0; it < 8; it++) {
+        // dots in the same space never sit on each other: push overlapping pairs apart (a dot you placed stays)
+        for (let i = 0; i < dots.length; i++) {
+          const a = dots[i];
+          for (let j = i + 1; j < dots.length; j++) {
+            const b = dots[j], min = nodeRadius(a) + nodeRadius(b) + 1.5;
+            let dx = b.x - a.x, dy = b.y - a.y;
+            if (Math.abs(dx) >= min || Math.abs(dy) >= min) continue;
+            let d = Math.hypot(dx, dy);
+            if (d >= min) continue;
+            if (d < 1e-6) { dx = 1; dy = 0; d = 1; }
+            const fa = free(a), fb = free(b);
+            if (!fa && !fb) continue;
+            const push = (min - d) / d, wa = fa && fb ? 0.5 : fa ? 1 : 0;
+            a.x -= dx * push * wa; a.y -= dy * push * wa;
+            b.x += dx * push * (1 - wa); b.y += dy * push * (1 - wa);
+          }
+        }
+        for (const n of nodes) {
+          if (n.type === 'fragment' || n.__home || n.fx !== undefined || !Number.isFinite(n.x)) continue;
+          const own = anchors.get(n.cluster), r = nodeRadius(n);
+          if (own) {
+            const dx = n.x - own.x, dy = n.y - own.y, d = Math.hypot(dx, dy), lim = Math.max(1, own.r - r - 1);
+            if (d > lim) { n.x = own.x + (dx / d) * lim; n.y = own.y + (dy / d) * lim; }
+          }
+          for (const [cid, b] of anchors) {
+            if (cid === n.cluster) continue;
+            const dx = n.x - b.x, dy = n.y - b.y, d = Math.hypot(dx, dy) || 0.01, lim = b.r + r + 2 * CLOUD_PAD + 4;
+            if (d < lim) { n.x = b.x + (dx / d) * lim; n.y = b.y + (dy / d) * lim; }
+          }
+        }
+      }
+    };
     /** where a dot is pulled to: its sub-group, region, or spot around the outside */
     force.anchorOf = (n) => (n.sub >= 0 && subAnchors.get(n.sub)) || anchors.get(n.cluster) || looseAnchor(n);
     force.regionAnchorOf = (n) => anchors.get(n.cluster) || looseAnchor(n);
@@ -1648,11 +1852,11 @@
     return P;
   }
   function packRegions(ids, sizes, now = new Map()) {
-    const GAP = 14;
+    const GAP = 2 * 9 + 16;  // two cloud margins (CLOUD_PAD) and clear space between them: clouds never touch
     const out = new Map(), placed = [];
     const settled = now.size >= Math.max(1, ids.length * 0.6);  // a layout to keep (or the related-regions one)
     for (const id of ids) {
-      const r = 6.2 * Math.sqrt(sizes.get(id)) + 7;
+      const r = 7.6 * Math.sqrt(sizes.get(id)) + 8;  // room for its papers without crowding
       const o = settled && now.get(id) ? now.get(id) : { x: 0, y: 0 };
       let spot = null;
       if (!placed.length) spot = settled && now.get(id) ? { x: o.x, y: o.y } : { x: 0, y: 0 };
@@ -1876,6 +2080,7 @@
       .onNodeDragEnd((n) => { S.dragging = false; S.dragNode = null; dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
       .onLinkRightClick((l, e) => linkMenu(l, e))
       .onBackgroundClick((e) => {
+        if (S.swallowClick && performance.now() - S.swallowClick < 400) return;  // the end of a section drag
         if (regionTagClick(e)) return;
         if (S.backgroundClickHook && S.backgroundClickHook(e)) return;  // static/mobile.js handled it
         // a click in free space means you're done with the open note: it closes (the reopen tab brings it
@@ -1896,6 +2101,7 @@
         applyFloat();
         updateCentroids();
         drawDots(ctx, k);
+        drawClouds(ctx, k);
         drawRegions(ctx, k);
       })
       .onRenderFramePost((ctx, k) => {
@@ -2912,6 +3118,7 @@
   }
   function unpinAll() {
     pins = {}; savePins();
+    regionPos = {}; LS.set('regionPos', regionPos);  // sections you dragged go back to the automatic arrangement
     for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; delete n.__home; delete n.__pinRel; }
     relayout();
     toast('Every dot moves freely again', 'ok');
@@ -5189,7 +5396,7 @@
   // ======================================================================
   // Imports
   // ======================================================================
-  async function importPdfs(files) {
+  async function importPdfs(files, section = null) {
     const pdfs = Array.from(files || []).filter((f) => f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)));
     if (!pdfs.length) { toast('Only PDF files can be added. Drop a .pdf file.', 'error'); return; }
     let last = null;
@@ -5199,6 +5406,7 @@
       try {
         const note = await upload('/api/import/pdf', f, (p) => t.progress(p));
         last = note;
+        if (section) { try { await intoSection(note, section); } catch { /* added either way */ } }
         if (note.duplicate) toast(note.same_file ? `You already have this exact file: “${truncate(note.title, 60)}”. No second copy was made.` : `Already in your library: “${truncate(note.title, 60)}”`, 'info');
         else toast(`Added “${truncate(note.title, 70)}”`, 'ok');
         if (note.downloads_copy) offerTrashDownload(note.downloads_copy);
@@ -5338,6 +5546,42 @@
     }
   }
 
+  // ---------- adding a paper straight into a section ----------
+  /** The sections, by name (for the Add menu's picker and the Add to library menus). */
+  const sectionList = () => (S.clusters || []).filter((c) => c.label).sort((a, b) => a.label.localeCompare(b.label));
+  function fillSectionPicker() {
+    const sel = $('#add-section');
+    if (!sel) return;
+    const keep = sel.value;
+    sel.replaceChildren(h('option', { value: '', text: 'Sort automatically, by similarity' }),
+      ...sectionList().map((c) => h('option', { value: String(c.id), text: `${truncate(c.label, 48)} (${c.size})` })));
+    sel.value = [...sel.options].some((o) => o.value === keep) ? keep : '';
+  }
+  /** the section picked in the Add menu, or null */
+  const chosenSection = () => { const v = ($('#add-section') || {}).value; return v ? (S.clusters || []).find((c) => String(c.id) === v) || null : null; };
+  /** After a paper is added: into the chosen section (none chosen: the map sorts it by similarity). */
+  async function intoSection(note, section) {
+    if (!note || !note.id || !section) return;
+    await refreshGraph();
+    await putInSection({ id: note.id, title: note.title || '' }, section);
+  }
+  /** "Add to library" elsewhere (Find papers, the chat's paper cards): pick a section, or let the map sort it.
+   *  Resolves to a section, null for automatic, or undefined if you closed the menu. */
+  function chooseSection(e) {
+    const list = sectionList();
+    if (!list.length) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let done = false;
+      const pick = (v) => { if (!done) { done = true; resolve(v); } };
+      const items = [menuItem('Sort automatically', 'it joins the papers it’s most like', () => pick(null)),
+        h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Into a section' }),
+        ...list.map((c) => menuItem(truncate(c.label, 44), `${c.size} papers`, () => pick(c)))];
+      const r = e && e.currentTarget && e.currentTarget.getBoundingClientRect ? e.currentTarget.getBoundingClientRect() : null;
+      showMenu('Add to library', items, r ? { clientX: r.left, clientY: r.bottom + 4 } : e);
+      const watch = setInterval(() => { if (!nodeMenuEl) { clearInterval(watch); pick(undefined); } }, 200);
+    });
+  }
+
   async function lookup(query, btn, input) {
     query = (query || '').trim();
     if (!query) { input && input.focus(); toast('Type a DOI, arXiv id, URL or title first.', 'info'); return; }
@@ -5347,11 +5591,13 @@
     const seq0 = openSeq;
     t.label('Looking up');
     try {
+      const section = chosenSection();
       const note = await api('POST', '/api/import/lookup', { query });
       if (input) input.value = '';
       if (note.duplicate) { S.placeNext = null; toast(`Already in your library: “${truncate(note.title, 60)}”`, 'info'); }
       else toast(`Added “${truncate(note.title, 70)}”`, 'ok');
       await refreshGraph();
+      if (section) await intoSection(note, section);
       openOrOffer(note, seq0);
     } catch (e) {
       toastErr(e, 'Could not add the paper');
@@ -5394,6 +5640,7 @@
     return closed;
   }
   function openMenu(btnSel, menuSel) {
+    if (menuSel === '#add-menu') fillSectionPicker();  // the sections as they are now
     closeMenus(menuSel);
     $(menuSel).hidden = false; $(btnSel).setAttribute('aria-expanded', 'true');
     const first = $('input:not([type=checkbox]):not([type=range]), .menu-item, input', $(menuSel));
@@ -5409,7 +5656,7 @@
   $('#btn-import-folder').addEventListener('click', () => { closeMenus(); if (window.__rbBulk) window.__rbBulk.pickFolder(); });
   $('#btn-link-folder').addEventListener('click', () => { closeMenus(); if (window.__rbBulk) window.__rbBulk.pickLinkFolder(); });
   $('#btn-import-bookmarks').addEventListener('click', () => { closeMenus(); if (window.__rbBulk) window.__rbBulk.pickBookmarks(); });
-  $('#pdf-input').addEventListener('change', (e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) importPdfs(fs); });
+  $('#pdf-input').addEventListener('change', (e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) importPdfs(fs, chosenSection()); });
   $('#lookup-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const q = $('#lookup-input').value.trim();
@@ -5442,6 +5689,48 @@
     if (id !== (S.hoverRegion ?? null)) { S.hoverRegion = id; graphEl.style.cursor = r ? 'pointer' : (S.hover ? 'pointer' : ''); kick(50); }
   });
   graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
+  // Drag a section: press on its cloud or its name tag (not on a paper) and the whole section comes with you,
+  // its papers keeping their places in it; drop it and it stays there (only that section moves). The map's own
+  // panning is off for that press, so the press can't drag the whole map; a plain click still works as before.
+  {
+    let rd = null;
+    const graphXY = (e) => { const rect = graphEl.getBoundingClientRect(); return fg.screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top); };
+    graphEl.addEventListener('pointerdown', (e) => {
+      if (!fg || e.button !== 0 || S.hover || S.linkFrom || e.pointerType === 'touch') return;
+      const p = graphXY(e);
+      const tag = labelHit(e);
+      const cid = tag ? tag.cid : cloudAt(p.x, p.y);
+      if (cid == null) return;
+      const rf = fg.d3Force('regions');
+      if (!rf || !rf.moveRegion || !rf.regionAt(cid)) return;
+      rd = { cid, x: p.x, y: p.y, sx: e.clientX, sy: e.clientY, moved: false, rf };
+      fg.enablePanInteraction(false);
+    }, true);
+    window.addEventListener('pointermove', (e) => {
+      if (!rd) return;
+      if (!rd.moved && Math.hypot(e.clientX - rd.sx, e.clientY - rd.sy) < 4) return;
+      if (!rd.moved) { rd.moved = true; motion.tween = null; S.dragRegion = rd.cid; graphEl.style.cursor = 'grabbing'; }
+      const p = graphXY(e);
+      rd.rf.moveRegion(rd.cid, p.x - rd.x, p.y - rd.y);
+      rd.x = p.x; rd.y = p.y;
+      kick(60);
+    });
+    const end = () => {
+      if (!rd) return;
+      const d = rd; rd = null;
+      fg.enablePanInteraction(true);
+      if (!d.moved) return;
+      S.dragRegion = null; graphEl.style.cursor = '';
+      const a = d.rf.regionAt(d.cid);
+      if (a) { regionPos[regionKey(d.cid)] = [Math.round(a.x * 10) / 10, Math.round(a.y * 10) / 10]; LS.set('regionPos', regionPos); }
+      // the drag ends a click that force-graph would otherwise see on the map
+      S.swallowClick = performance.now();
+      traceGrid.frame = -1;
+      kick(80);
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  }
   $('#rf-show-all') && $('#rf-show-all').addEventListener('click', () => unfocusRegion());
   $('#rf-rename') && $('#rf-rename').addEventListener('click', () => renameRegion());
   $('#btn-regions') && $('#btn-regions').addEventListener('click', (e) => { e.stopPropagation(); chooseRegion(); });
@@ -5683,7 +5972,7 @@
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
     setNodeFilter(fn) { S.nodeFilter = typeof fn === 'function' ? fn : null; kick(400); },
     setHidden(set) { S.hidden = set && set.size ? set : null; S.focusCache = null; configureLinkForce(); kick(400); },
-    renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose, errText,
+    chooseSection, intoSection, renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose, errText,
     rerenderCritique() { const s = S.cur && $('#summary-sec', pbody); if (s && s.__refresh) s.__refresh(); },
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },

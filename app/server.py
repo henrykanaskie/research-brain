@@ -688,6 +688,19 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
                 changed = True
         if not changed:
             break
+    # a paper you put in a topic (a section, "Put in section") is IN that section, however similar it is to
+    # papers elsewhere: every member of a topic takes the region most of its members are in. The biggest topic
+    # goes last, so where topics overlap the bigger one decides.
+    for t in sorted(tops_of, key=lambda t: len(t["members"])):
+        mem = [m for m in t["members"] if m in label]
+        if len(mem) < 2:
+            continue
+        votes: dict[int, int] = {}
+        for m in mem:
+            votes[label[m]] = votes.get(label[m], 0) + 1
+        home = max(sorted(votes), key=lambda k: votes[k])
+        for m in mem:
+            label[m] = home
     groups: dict[int, list[str]] = {}
     for i in tops:
         groups.setdefault(label[i], []).append(i)

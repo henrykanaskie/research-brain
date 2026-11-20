@@ -40,14 +40,34 @@
     t = t.replace(/(\*\*|__|\*|_|~~|`)/g, '');
     return t.replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
   }
+  /** Math read as speech: each letter its own symbol ("mc" is "m c"), Greek letters and functions by name, and
+   *  powers, fractions and relations in words. */
   function plainMath(m) {
-    return String(m).replace(/\\(?:mathrm|text|mathbf|mathit|operatorname)\{([^}]*)\}/g, '$1')
-      .replace(/\\(alpha|beta|gamma|delta|epsilon|theta|lambda|mu|nu|pi|rho|sigma|tau|phi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Sigma|Phi|Psi|Omega)/g, ' $1 ')
-      .replace(/\\frac\{([^}]*)\}\{([^}]*)\}/g, '$1 over $2').replace(/\\sqrt\{([^}]*)\}/g, 'root of $1')
-      .replace(/\^\{?2\}?/g, ' squared').replace(/\^\{?3\}?/g, ' cubed').replace(/\^\{?([^}\s]+)\}?/g, ' to the $1')
-      .replace(/_\{?([^}\s]+)\}?/g, ' $1').replace(/\\approx/g, ' approximately ').replace(/\\times/g, ' times ')
-      .replace(/\\(le|leq)/g, ' at most ').replace(/\\(ge|geq)/g, ' at least ').replace(/\\[a-zA-Z]+/g, ' ')
-      .replace(/[{}\\]/g, ' ').replace(/=/g, ' equals ').replace(/\s+/g, ' ').trim();
+    const keep = [];
+    const K = (w) => `\u0001${keep.push(w) - 1}\u0002`;  // words the reader adds itself: never split into letters
+    const FUNCS = new Set(['sin', 'cos', 'tan', 'sinh', 'cosh', 'tanh', 'log', 'ln', 'exp', 'max', 'min', 'lim', 'det', 'arg', 'mod', 'sup', 'inf']);
+    let t = String(m);
+    t = t.replace(/\\(?:mathrm|text|textrm|mathbf|mathit|operatorname|mathsf)\{([^}]*)\}/g, (_, w) => ` ${K(w)} `);  // words and units
+    t = t.replace(/\\(alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Upsilon|Phi|Psi|Omega)(?![a-zA-Z])/g,
+      (_, g) => ` ${K(g.replace(/^var/, ''))} `);
+    t = t.replace(/\\(sin|cos|tan|sinh|cosh|tanh|log|ln|exp|max|min|lim|det|arg|sup|inf)(?![a-zA-Z])/g, (_, f) => ` ${K(f)} `);
+    t = t.replace(/\\frac\{([^}]*)\}\{([^}]*)\}/g, `$1 ${K('over')} $2`).replace(/\\sqrt\{([^}]*)\}/g, `${K('root of')} $1`);
+    t = t.replace(/\^\{?2\}?(?![0-9])/g, ` ${K('squared')} `).replace(/\^\{?3\}?(?![0-9])/g, ` ${K('cubed')} `)
+      .replace(/\^\{?-1\}?/g, ` ${K('inverse')} `).replace(/\^\{([^}]*)\}|\^(\S)/g, (_, a, b2) => ` ${K('to the')} ${a || b2} `);
+    // a subscript that's a word ("tot", "eff", "max") is read as the word; letters and numbers one by one
+    t = t.replace(/_\{([^}]*)\}|_(\S)/g, (_, a, b2) => { const v = a || b2; return /^[A-Za-z]{3,}$/.test(v) ? ` ${K(v)} ` : ` ${v} `; });
+    t = t.replace(/\\approx/g, ` ${K('approximately')} `).replace(/\\times/g, ` ${K('times')} `).replace(/\\cdot/g, ` ${K('dot')} `)
+      .replace(/\\(le|leq)(?![a-z])/g, ` ${K('at most')} `).replace(/\\(ge|geq)(?![a-z])/g, ` ${K('at least')} `)
+      .replace(/\\propto/g, ` ${K('proportional to')} `).replace(/\\sum/g, ` ${K('the sum of')} `).replace(/\\int/g, ` ${K('the integral of')} `)
+      .replace(/\\nabla/g, ` ${K('del')} `).replace(/\\partial/g, ` ${K('partial')} `).replace(/\\infty/g, ` ${K('infinity')} `).replace(/\\pm/g, ` ${K('plus or minus')} `)
+      .replace(/\\[a-zA-Z]+/g, ' ');
+    t = t.replace(/[{}\\]/g, ' ').replace(/=/g, ` ${K('equals')} `).replace(/</g, ` ${K('less than')} `).replace(/>/g, ` ${K('greater than')} `)
+      .replace(/\+/g, ` ${K('plus')} `).replace(/\//g, ` ${K('over')} `).replace(/(\s|^)-(?=\s|\w)/g, ` ${K('minus')} `);
+    // what's left is symbols: a run of letters is a product of variables ("mc" is "m c"), unless it's a function
+    t = t.replace(/[A-Za-z]{2,}/g, (w) => (FUNCS.has(w) ? w : w.split('').join(' ')))
+      .replace(/(\d)([A-Za-z])/g, '$1 $2');
+    t = t.replace(/\u0001(\d+)\u0002/g, (_, i) => keep[+i]);
+    return t.replace(/\s+/g, ' ').trim();
   }
   // the computer's own voices, by name, the most natural first (macOS, Windows, Chrome's)
   const SYS = {

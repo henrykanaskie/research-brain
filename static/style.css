@@ -1303,3 +1303,6 @@ html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-se
 .chat-v2 .chat-scope .cs-related { margin-left: 0; }
 .chat-v2 .voice-bar .btn, .chat-v2 .vb-voice { height: 32px; border-radius: 8px; }
 .chat-v2 .vb-setup { padding-left: 0; }
+/* the Add menu's section picker */
+.add-section { display: flex; align-items: center; gap: 8px; margin-top: 8px; font: 12px var(--sans); color: var(--ink-2); }
+.add-section select { flex: 1; min-width: 0; height: 28px; border: 1px solid var(--rule); border-radius: var(--r, 3px); background: var(--sheet); color: var(--ink); font: 12.5px var(--sans); padding: 0 4px; }
