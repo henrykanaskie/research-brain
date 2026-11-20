@@ -1119,6 +1119,19 @@ html.win-window :is(.modal, .drop-overlay, .tasks, .toasts, .rf-chooser, .node-m
 .win-caption button:focus { outline: none; }
 .win-caption button:focus-visible { outline: 1px solid var(--ink-2); outline-offset: -3px; }
 html.win-inactive .win-caption button:not(:hover) { opacity: .45; }
+/* the buttons take 138px of the header: it gives way earlier than in a browser (the 960 and 760 rules above),
+   so nothing of it ever sits under them (tests/e2e/test_win_window_e2e.py checks the widths a laptop opens at) */
+@media (max-width: 1240px) {
+  html.win-window #topbar { gap: 12px; padding-left: 14px; }
+  html.win-window .status-text { display: none; }
+}
+@media (max-width: 1080px) {
+  html.win-window .brand-name { display: none; }
+  html.win-window .tb-sep { margin: 0 2px; }
+}
+@media (max-width: 900px) {
+  html.win-window #topbar { overflow-x: auto; overflow-y: hidden; }
+}
 
 /* Ask about topics (app.js chooseChatTopics): a small sheet of checkboxes */
 .tp-sheet { position: fixed; z-index: 80; top: 96px; right: 24px; width: min(340px, calc(100vw - 32px)); padding: 6px 6px 10px; }

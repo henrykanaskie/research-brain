@@ -124,3 +124,25 @@ def test_native_title_bar_without_custom(ctx, server):
     expect(page.locator(".win-caption")).to_have_count(0)
     assert page.evaluate("getComputedStyle(document.getElementById('topbar')).webkitAppRegion") != "drag"
     assert not page.errors
+
+
+@pytest.mark.parametrize("width", [1400, 1326, 1240, 1100, 984, 900])
+def test_nothing_in_the_header_sits_under_the_window_buttons(browser, server, width):
+    """A small laptop screen opens the window narrower (app/winwindow.py _fit): the header gives way so its
+    buttons, search and status never slide under minimize, maximize and close."""
+    c = browser.new_context(viewport={"width": width, "height": 700})
+    try:
+        page = open_win(c, server)
+        page.wait_for_timeout(300)
+        under = page.evaluate("""() => {
+          const cap = document.querySelector('.win-caption').getBoundingClientRect();
+          return [...document.querySelectorAll('#topbar *')].filter((e) => {
+            const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+            if (!r.width || !r.height || s.visibility === 'hidden' || e.closest('.menu, [hidden]')) return false;
+            return r.right > cap.left + 1 && r.left < cap.right && r.top < cap.bottom;
+          }).map((e) => (e.id || e.className || e.tagName) + ' ' + Math.round(e.getBoundingClientRect().right));
+        }""")
+        assert under == [], f"under the window buttons at {width}px: {under}"
+        shot(page, f"win-header-{width}")
+    finally:
+        c.close()
