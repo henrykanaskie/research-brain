@@ -358,10 +358,24 @@ def _controller(c: _Chrome):
     if c.controller is None and c.form is not None:
         from System.Reflection import BindingFlags
         wv = c.form.browser.webview
-        for f in wv.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance):
-            if f.FieldType.Name == "CoreWebView2Controller":
-                c.controller = f.GetValue(wv)
-                break
+        flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly
+        seen = []
+        t = wv.GetType()
+        while t is not None and c.controller is None:
+            for m in list(t.GetFields(flags)) + list(t.GetProperties(flags)):
+                kind = m.FieldType if hasattr(m, "FieldType") else m.PropertyType
+                seen.append(f"{t.Name}.{m.Name}:{kind.Name}")
+                if kind.Name == "CoreWebView2Controller":
+                    try:
+                        c.controller = m.GetValue(wv) if hasattr(m, "FieldType") else m.GetValue(wv, None)
+                    except Exception:
+                        c.controller = None
+                    if c.controller is not None:
+                        break
+            t = t.BaseType if t.Name != "Control" else None
+        if c.controller is None and os.environ.get("RB_WIN_DEBUG") == "1":
+            print(f"[research_brain] WebView2 members: {[x for x in seen if 'ebView' in x or 'ontroller' in x][:40]}",
+                  file=sys.stderr, flush=True)
     return c.controller
 
 
