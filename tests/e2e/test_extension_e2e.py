@@ -260,11 +260,14 @@ def iso(env, tid, expr):
 
 
 def drag_select(page, sel):
-    box = page.locator(sel).bounding_box()
-    y = box["y"] + min(box["height"], 24) / 2
-    page.mouse.move(box["x"] + 1, y)
+    """Drag from the element's first character to its last. Its line boxes, not its bounding box: with wider fonts
+    (Windows) the text wraps, and the bounding box of a wrapped span starts at the paragraph's left edge."""
+    first, last = page.locator(sel).evaluate(
+        "e => { const r = [...e.getClientRects()]; const a = r[0], b = r[r.length - 1];"
+        " return [{x: a.left, y: a.top + a.height / 2}, {x: b.right, y: b.top + b.height / 2}]; }")
+    page.mouse.move(first["x"] + 1, first["y"])
     page.mouse.down()
-    page.mouse.move(box["x"] + box["width"] - 1, box["y"] + box["height"] - 6, steps=10)
+    page.mouse.move(last["x"] - 1, last["y"], steps=10)
     page.mouse.up()
 
 
@@ -363,8 +366,8 @@ def test_annotate_html_page(env):
 
     # 5. click a highlight → card → Copy citation (quote + locator + formatted citation)
     page.locator("#rb-annotate-host .tab").click()  # collapse
-    box = page.locator("#t1").bounding_box()
-    page.mouse.click(box["x"] + 30, box["y"] + 10)
+    r0 = page.locator("#t1").evaluate("e => { const r = e.getClientRects()[0]; return {x: r.left, y: r.top + r.height / 2}; }")
+    page.mouse.click(r0["x"] + 30, r0["y"])  # its first line (the text may wrap)
     card = page.locator("#rb-annotate-host .card")
     expect(card).to_be_visible()
     expect(card.locator(".src")).to_contain_text("Sheath physics, a primer")
