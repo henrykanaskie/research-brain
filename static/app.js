@@ -5345,24 +5345,29 @@
   $('#cs-related').addEventListener('change', (e) => { S.chatRelated = e.target.checked; });
   // ---------- dictation: the mic by the question ----------
   // In the Mac app: macOS dictation (as Edit › Start Dictation), typed straight into the question; macOS hears it
-  // (on this Mac or Apple's servers, per System Settings), research brain never records anything. In a browser
-  // with speech recognition (Chrome, Edge, Safari): the browser's, with your words appearing as you speak.
+  // (on this Mac or Apple's servers, per System Settings), research brain never records anything. In the Windows
+  // app: Windows voice typing (Win+H, pressed by app/winwindow.py), typed into the question the same way. In a
+  // browser with speech recognition (Chrome, Edge, Safari): the browser's, with your words appearing as you speak.
   {
     const mic = $('#btn-chat-mic'), ta = $('#chat-input');
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     // static/live.js loads after this file and knows whether this is the Mac window: asked when it's needed
     const live = () => window.__rbLive || null;
     const isMac = () => { const l = live(); if (l) return l.app === 'mac'; try { return sessionStorage.getItem('rb.appWindow') === 'mac' || new URLSearchParams(location.search).get('app') === 'mac'; } catch { return false; } };
+    // the Windows window (WebView2) has SpeechRecognition but no service behind it: Windows voice typing instead
+    const isWin = () => { const l = live(); if (l) return l.app === 'win'; try { return sessionStorage.getItem('rb.appWindow') === 'win' || new URLSearchParams(location.search).get('app') === 'win'; } catch { return false; } };
+    const native = () => isMac() || isWin();  // the window's own dictation, typing into the focused field
     let on = false, rec = null, base = '', stopT = 0;
     const setOn = (v) => { on = v; mic.classList.toggle('on', v); mic.setAttribute('aria-pressed', String(v)); mic.title = v ? 'Stop dictating' : 'Dictate your question'; };
     const fit = () => ta.dispatchEvent(new Event('input'));
     function start() {
       ta.focus();
-      if (isMac()) {
+      if (native()) {
         if (!live() || !live().native({ dictate: true })) return;
         setOn(true);
-        toast('Speak now. Click the mic again, or press Esc, when you’re done. (If nothing happens, turn on Dictation in System Settings › Keyboard.)', 'info', { ms: 5000 });
-        // macOS ends dictation on its own (Esc, a pause, clicking away): the button follows the field's focus
+        if (isMac()) toast('Speak now. Click the mic again, or press Esc, when you’re done. (If nothing happens, turn on Dictation in System Settings › Keyboard.)', 'info', { ms: 5000 });
+        else toast('Speak now. Click the mic again when you’re done. (Windows voice typing; if nothing happens, press Win+H yourself.)', 'info', { ms: 5000 });
+        // macOS and Windows end dictation on their own (Esc, a pause, clicking away): the button follows the field's focus
         clearTimeout(stopT);
         return;
       }
@@ -5380,19 +5385,18 @@
       try { rec.start(); setOn(true); } catch { setOn(false); }
     }
     function stop() {
-      if (isMac()) { if (live()) live().native({ dictate: false }); setOn(false); ta.focus(); return; }
+      // Windows voice typing (Win+H) is a toggle that also stops on its own: only the Mac is told to stop, so a
+      // stop can never switch Windows' back on
+      if (native()) { if (live() && isMac()) live().native({ dictate: false }); setOn(false); ta.focus(); return; }
       if (rec) rec.stop();
       setOn(false);
     }
-    // the Windows window (WebView2) has SpeechRecognition but no service behind it, so it would fail silently:
-    // no button there (Windows' own dictation, Win+H, types into the question, and voice mode works)
-    const isWin = () => { const l = live(); if (l) return l.app === 'win'; try { return sessionStorage.getItem('rb.appWindow') === 'win' || new URLSearchParams(location.search).get('app') === 'win'; } catch { return false; } };
-    if (isMac() || (SR && !isWin())) {
+    if (native() || SR) {
       mic.hidden = false;
-      if (!isMac()) mic.title = 'Dictate your question (your browser’s speech recognition; in Chrome, Google’s service hears it)';
+      if (!native()) mic.title = 'Dictate your question (your browser’s speech recognition; in Chrome, Google’s service hears it)';
       mic.addEventListener('mousedown', (e) => e.preventDefault());  // keep the question focused
       mic.addEventListener('click', () => (on ? stop() : start()));
-      ta.addEventListener('blur', () => { if (isMac() && on) stopT = setTimeout(() => setOn(false), 300); });
+      ta.addEventListener('blur', () => { if (native() && on) stopT = setTimeout(() => setOn(false), 300); });
       ta.addEventListener('keydown', (e) => { if (e.key === 'Escape' && on) { e.preventDefault(); e.stopPropagation(); stop(); } });
       $('#chat-form') && $('#chat-form').addEventListener('submit', () => { if (on) stop(); });
     }

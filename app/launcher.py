@@ -493,9 +493,15 @@ def _mac_bundle(app: Path) -> str:
     return f"Added {app}: open it from Launchpad or the Applications folder."
 
 
-def _windows_shortcut(remove: bool) -> str:
+def windows_shortcut_path() -> Path:
+    """The Start menu entry (app/winshell.py gives an older one research brain's taskbar ID)."""
     programs = Path(os.environ.get("APPDATA", str(Path.home()))) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
-    lnk = programs / f"{APP_NAME}.lnk"
+    return programs / f"{APP_NAME}.lnk"
+
+
+def _windows_shortcut(remove: bool) -> str:
+    lnk = windows_shortcut_path()
+    programs = lnk.parent
     if remove:
         lnk.unlink(missing_ok=True)
         return f"Removed {lnk}"
@@ -513,6 +519,10 @@ def _windows_shortcut(remove: bool) -> str:
     r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], capture_output=True, text=True)
     if r.returncode != 0:
         raise OSError(r.stderr.strip() or "PowerShell couldn't make the shortcut")
+    # research brain's taskbar ID (WScript.Shell can't set it): its window, this entry and a pinned button
+    # are one taskbar button (app/winshell.py)
+    from . import winshell
+    winshell.set_shortcut_app_id(lnk)
     return f"Added \"{APP_NAME}\" to the Start menu."  # plain quotes: a Windows console shows curly ones as ?
 
 
