@@ -4386,9 +4386,9 @@
     if (!text.trim()) return;
     e.preventDefault();
     closeNodeMenu();
-    const inNote = S.cur && pbody.contains(e.target) && window.__rbNovelty;  // static/novelty.js
+    const nov = window.__rbNovelty && !e.target.closest('#chat-input');  // static/novelty.js: into Ask, Novelty mode
     showMenu('', [menuItem('Copy', null, () => { copyText(text).then((ok) => toast(ok ? 'Copied' : 'Could not copy: press Cmd+C (Ctrl+C) instead', ok ? 'ok' : 'info')); }),
-      inNote ? menuItem('Check novelty', null, () => window.__rbNovelty.open(S.cur, text)) : null], e);
+      nov ? menuItem('Check novelty', null, () => window.__rbNovelty.compose(text)) : null], e);
   });
 
   // "Link to…": the next dot you click is linked to this one
@@ -4722,8 +4722,10 @@
     if (S.chatTopics && S.chatTopics.length) return S.chatTopics.map((t) => t.name).join(', ');
     return 'Whole library';
   }
-  const keepable = (thread) => thread.filter((m, i, a) => !m.pending && !m.error && !m.failed && !(a[i + 1] && a[i + 1].error) && m.mode !== 'research')
-    .map((m) => ({ role: m.role, content: m.content, ...(m.sel ? { sel: m.sel } : {}), ...(m.sources ? { sources: m.sources } : {}) }));
+  // a novelty check (static/novelty.js) is kept once it has started: its run id brings the report back
+  const keepable = (thread) => thread.filter((m, i, a) => !m.pending && !m.error && !m.failed && !(a[i + 1] && a[i + 1].error) && m.mode !== 'research'
+      && !(m.mode === 'novelty' && !m.novelty) && !(m.role === 'user' && a[i + 1] && a[i + 1].mode === 'novelty' && !a[i + 1].novelty))
+    .map((m) => ({ role: m.role, content: m.content, ...(m.sel ? { sel: m.sel } : {}), ...(m.sources ? { sources: m.sources } : {}), ...(m.novelty ? { novelty: m.novelty } : {}) }));
   /** Save the conversation with the library (older turns are condensed there, see app/chats.py). */
   function persistChat(key = chatKey(), thread = S.chat, title = chatTitle()) {
     S.chatThreads[key] = thread;
@@ -4981,7 +4983,8 @@
     }
     for (const m of S.chat) rememberSections(m.passages);
     S.chat.forEach((m, i) => {
-      const ext = m.mode === 'research' && window.__rbResearch ? window.__rbResearch.renderMsg(m, i) : null; // static/research.js
+      const ext = m.mode === 'research' && window.__rbResearch ? window.__rbResearch.renderMsg(m, i) // static/research.js
+        : (m.mode === 'novelty' || m.novelty) && window.__rbNovelty ? window.__rbNovelty.renderMsg(m, i) : null; // static/novelty.js
       if (ext) { kids.push(ext); return; }
       if (m.role === 'user') {
         kids.push(h('div', { class: 'msg user' }, h('div', { class: 'msg-role', text: m.sel ? `You · selection on p. ${m.sel.page}` : 'You' }),
@@ -5076,6 +5079,8 @@
     if (claudeBlocked()) return;
     question = question.trim();
     if (!question) return;
+    // Novelty mode: what you typed is an idea to check against the literature (static/novelty.js), in any scope
+    if (window.__rbNovelty && window.__rbNovelty.wants(opts)) return window.__rbNovelty.send(question);
     // Research mode searches the whole library; a chat about one paper always answers from that paper
     if (!S.chatGeneral && !S.chatPaper && !S.chatTopics && window.__rbResearch && window.__rbResearch.wants(opts)) return window.__rbResearch.send(question);
     const scope = S.chatPaper ? { paper: S.chatPaper.id, include_related: !!S.chatRelated }
@@ -5977,7 +5982,7 @@
     rerenderCritique() { const s = S.cur && $('#summary-sec', pbody); if (s && s.__refresh) s.__refresh(); },
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },
-    queueSave, centerOn, closePanel,
+    queueSave, centerOn, closePanel, persistChat,
     // static/questions.js: a note type with its own panel ({label, render(note) -> nodes}) and the parts it reuses
     registerRenderer(type, r) { (S.renderers || (S.renderers = {}))[type] = r; if (S.cur && S.cur.type === type && !panel.hidden) renderPanel(); },
     titleField, section, renderTags, renderBacklinks, renderLinked, renderDanger, renderMD, autosize, renderPanel,

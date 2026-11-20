@@ -1,10 +1,10 @@
 """HTTP endpoints for the novelty check (logic in app/novelty.py). server.py calls install(app, ...) once.
 
-    POST   /api/novelty/plan        {note_id, text?, use_ai?: true}: the preview. {title, idea, parts, queries,
+    POST   /api/novelty/plan        {note_id?, text?, use_ai?: true} (no note_id: the idea is the text typed in Ask): the preview. {title, idea, parts, queries,
                                     online, online_why, ai, ai_why, planned_by_ai}. Splitting the idea into parts
                                     asks your AI agent (only when it may read the note); nothing goes to a
                                     paper index yet.
-    POST   /api/novelty             {note_id, text?, parts, queries, use_ai?: true}: start a check (background)
+    POST   /api/novelty             {note_id?, text?, parts, queries, use_ai?: true}: start a check (background)
     GET    /api/novelty?note_id=    {runs: [...newest first], running}
     GET    /api/novelty/runs/{id}   one run (poll it while it runs)
     DELETE /api/novelty/runs/{id}
@@ -39,11 +39,11 @@ def _note(nid: str) -> dict:
         raise HTTPException(404, "No such note")
 
 
-def _access(n: dict) -> dict:
-    """What this note's check may do: search the paper indexes, and let the AI read it."""
+def _access(n: dict | None) -> dict:
+    """What this note's check (n None: text typed in Ask) may do: search the paper indexes, let the AI read it."""
     from . import privacy
     try:
-        private = privacy.is_private(n)
+        private = privacy.is_private(n) if n is not None else False
     except Exception:
         private = True
     online, online_why = True, ""
@@ -57,16 +57,26 @@ def _access(n: dict) -> dict:
         ai_why = "No AI agent is set up."
     else:
         try:
-            ai = bool(privacy.allow_ai(n, ctx.agent() if ctx.agent else None))
+            agent = ctx.agent() if ctx.agent else None
+            ai = agent is not None and (n is None or bool(privacy.allow_ai(n, agent)))
         except Exception:
             ai = False
         if not ai:
-            ai_why = "This note is private, so no AI agent reads it."
+            ai_why = "No AI agent is set up." if n is None else "This note is private, so no AI agent reads it."
     return {"online": online, "online_why": online_why, "ai": ai, "ai_why": ai_why}
 
 
 def _asker(nid: str, purpose: str):
-    return lambda instruction, context: ctx.ask(instruction, context, purpose, [nid])
+    return lambda instruction, context: ctx.ask(instruction, context, purpose, [nid] if nid else None)
+
+
+def _subject(note_id: str, text: str) -> tuple[dict | None, str, str]:
+    """(the note or None, title, idea) for a check of a note, the text selected in it, or text typed in Ask."""
+    if note_id:
+        n = _note(note_id)
+        title, idea = novelty.idea_of(n, text)
+        return n, title, idea
+    return None, "", novelty.typed_idea(text)
 
 
 def _family() -> str:
@@ -84,22 +94,21 @@ def _sim():
 
 
 class PlanIn(BaseModel):
-    note_id: str
+    note_id: str = ""
     text: str = ""
     use_ai: bool = True
 
 
 @router.post("/api/novelty/plan")
 def api_novelty_plan(body: PlanIn):
-    n = _note(body.note_id)
-    title, idea = novelty.idea_of(n, body.text)
+    n, title, idea = _subject(body.note_id, body.text)
     if len(f"{title} {idea}".strip()) < 8:
-        raise HTTPException(400, "Write the idea down first (a title and a sentence or two), then check it.")
+        raise HTTPException(400, "Describe the idea first: a sentence or two on the problem and how you'd go at it.")
     acc = _access(n)
     p, why = None, ""
     if acc["ai"] and body.use_ai:
         try:
-            p = novelty.plan(title, idea, _asker(n["id"], "novelty check"))
+            p = novelty.plan(title, idea, _asker(n["id"] if n else "", "novelty check"))
         except HTTPException as e:
             why = str(e.detail)
         except Exception as e:
@@ -107,11 +116,11 @@ def api_novelty_plan(body: PlanIn):
     if p is None:
         p = novelty.plan(title, idea)
     return {"title": title, "idea": idea, "parts": p["parts"], "queries": p["queries"], "planned_by_ai": p["ai"],
-            "plan_error": why, "from_selection": bool(body.text.strip()), **acc}
+            "plan_error": why, "from_selection": bool(n and body.text.strip()), "typed": n is None, **acc}
 
 
 class StartIn(BaseModel):
-    note_id: str
+    note_id: str = ""
     text: str = ""
     parts: list = []
     queries: list[str] = []
@@ -120,13 +129,15 @@ class StartIn(BaseModel):
 
 @router.post("/api/novelty", status_code=202)
 def api_novelty_start(body: StartIn):
-    n = _note(body.note_id)
-    title, idea = novelty.idea_of(n, body.text)
+    n, title, idea = _subject(body.note_id, body.text)
+    if len(f"{title} {idea}".strip()) < 8:
+        raise HTTPException(400, "Describe the idea first: a sentence or two on the problem and how you'd go at it.")
     acc = _access(n)
     parts = body.parts or novelty.plan(title, idea)["parts"]
+    nid = n["id"] if n else ""
     try:
-        row = novelty.start(ctx.store, note_id=n["id"], title=title, idea=idea, parts=parts, queries=body.queries,
-                            online=acc["online"], ask=_asker(n["id"], "novelty check") if acc["ai"] and body.use_ai else None,
+        row = novelty.start(ctx.store, note_id=nid, title=title, idea=idea, parts=parts, queries=body.queries,
+                            online=acc["online"], ask=_asker(nid, "novelty check") if acc["ai"] and body.use_ai else None,
                             sim=_sim(), family=_family(), on_done=_announce,
                             sources=ctx.sources, cites=ctx.cites)
     except novelty.NoveltyError as e:
@@ -138,7 +149,7 @@ def _announce(run: dict) -> None:
     if ctx.publish is None:
         return
     ctx.publish({"type": "novelty-done", "id": run.get("id"), "note_id": run.get("note_id") or "",
-                 "title": run.get("title") or "", "status": run.get("status") or "done",
+                 "title": run.get("title") or " ".join((run.get("idea") or "").split())[:100], "status": run.get("status") or "done",
                  "error": run.get("error") or "", "counts": run.get("counts") or {}})
 
 

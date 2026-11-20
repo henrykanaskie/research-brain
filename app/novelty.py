@@ -1,7 +1,7 @@
 """Novelty check: how many papers already did something like your idea, and how close they came.
 
-You start it on a note (an open question, a draft, any note) or on text you selected in one. It runs in the
-background (a minute or two) and writes a report:
+You type the idea in Ask (the Novelty mode next to Quick and Research; static/novelty.js), or start it on a
+note. It runs in the background (a minute or two) and writes a report:
 
     1. Parts. The idea is split into 2 to 5 parts (problem, method, setting or data, claimed contribution), by
        your AI agent when it may read the note, else the whole idea is one part. You can edit the parts and the
@@ -21,7 +21,8 @@ The report never says "novel": it says how many papers were examined and what wa
 
 Privacy: a private note (app/privacy.py) is checked against your library only; nothing leaves the computer.
 Otherwise only the search words you saw go to OpenAlex and arXiv, and the idea plus the abstracts found go to
-your AI agent (through agents.ask_parts: the privacy guard and the AI log, as every AI feature).
+your AI agent (through agents.ask_parts: the privacy guard and the AI log, as every AI feature). Typed text
+is treated like a question typed into Ask: the privacy guard refuses it if it repeats a private note.
 
 State lives in vault/state/novelty.json (backed up with the vault):
 
@@ -196,6 +197,12 @@ def clean_queries(qs) -> list[str]:
     return out[:MAX_QUERIES]
 
 
+def typed_idea(text: str) -> str:
+    """An idea typed into Ask, cleaned like a note's body."""
+    _, idea = idea_of({}, text or "")
+    return idea
+
+
 def joined(title: str, text: str) -> str:
     """Title and text as one passage ("Does X work? It would..." / "Sparse attention. Use it to...")."""
     title, text = (title or "").strip(), (text or "").strip()
@@ -315,7 +322,8 @@ def run(store, rid: str, *, ask=None, sources=None, cites=None, sim=None) -> dic
     idea = joined(r["title"], r["idea"])
     pool, errors = _Pool(), []
 
-    # 1. your library, on this computer
+    # 1. your library, on this computer (a private paper is compared here but never shown to the AI)
+    from . import privacy
     notes = store.all()
     lib_ids = {}
     for n in notes:
@@ -326,7 +334,13 @@ def run(store, rid: str, *, ask=None, sources=None, cites=None, sim=None) -> dic
              "doi": n.get("doi") or "", "arxiv": n.get("arxiv") or "", "url": n.get("url") or "", "library_id": n["id"]}
         for k in scout.paper_keys(p):
             lib_ids[k] = n["id"]
-        pool.add(p, "library")
+        hit = pool.add(p, "library")
+        try:
+            secret = privacy.is_private(n)
+        except Exception:
+            secret = True
+        if hit is not None and secret:
+            hit["private"] = True
     try:
         own = set(scout.paper_keys(store.get(r["note_id"]))) if r["note_id"] else set()
     except KeyError:  # the note was deleted meanwhile
@@ -420,7 +434,7 @@ def run(store, rid: str, *, ask=None, sources=None, cites=None, sim=None) -> dic
     # 5. the AI reads the closest abstracts
     verdict, uncovered, sent = "", "", 0
     if ask is not None:
-        top = sorted((p for p in pool.items if p["band"] or links(p) >= 1), key=rank)[:JUDGE]
+        top = sorted((p for p in pool.items if (p["band"] or links(p) >= 1) and not p.get("private")), key=rank)[:JUDGE]
         if top:
             handles = {f"P{i + 1}": p for i, p in enumerate(top)}
             blocks = []
@@ -456,7 +470,7 @@ def run(store, rid: str, *, ask=None, sources=None, cites=None, sim=None) -> dic
 
     # 6. the report
     prev = next((x for x in load(store)["runs"] if x["id"] != rid and x.get("note_id") == r["note_id"]
-                 and x.get("status") == "done" and x.get("online") == r["online"]), None)
+                 and x.get("status") == "done" and x.get("online") == r["online"]), None) if r["note_id"] else None
     before = {k for x in (prev or {}).get("papers") or [] for k in scout.paper_keys(x)}
     order = {b: i for i, b in enumerate(BANDS)}
     kept = sorted((p for p in pool.items if p["band"]), key=lambda p: (order[p["band"]], rank(p)))

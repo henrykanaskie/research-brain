@@ -1,13 +1,13 @@
-/* research_brain — Novelty check.
- * "Check novelty…" on an open question (its AI section), the command novelty.check (the open note, or the text
- * selected in it) and "Check novelty" on the right-click menu of selected text in the panel.
- * 1. The preview: the idea split into parts (by your AI agent when it may read the note) and the search words
- *    that will go to OpenAlex and arXiv. You can edit both. A private note is checked against your library only.
+/* research_brain — Novelty check, a mode of "Ask your library" next to Quick and Research.
+ * You describe an idea and send it (or right-click selected text: "Check novelty", or the command novelty.check).
+ * 1. The answer card shows the preview: the idea split into parts (by your AI agent) and the searches that will
+ *    go to OpenAlex and arXiv. You can edit both; nothing goes to a paper index until "Check novelty".
  * 2. It runs in the background (app/novelty.py): searches, follows the citations of the closest hits, scores
- *    every paper against the idea and each part on this computer, and the AI reads the closest abstracts.
- *    You're told when it's done (a toast with Open report).
- * 3. The report: how many papers were examined, very close / overlaps in part / background, which parts each
- *    paper covers (● covers, ◐ touches, ○ not), what none of them does, similar work by year, Add to library.
+ *    every paper against the idea and each part on this computer, and the AI reads the closest abstracts. The
+ *    card follows it, and you're told when it's done (a toast with Open report when the chat isn't showing it).
+ * 3. The card ends as a short report; Full report opens a sheet: very close / overlaps in part / background,
+ *    which parts each paper covers (● covers, ◐ touches, ○ not), what none of them does, similar work by year,
+ *    Add to library. A started check is saved with the conversation (its run id), so it comes back with it.
  * Server: /api/novelty* (app/novelty_api.py), POST /api/import/lookup to add. Needs window.__rb.
  */
 (() => {
@@ -79,6 +79,23 @@
   .nv-past button:hover { color: var(--ink); text-decoration: underline; }
   .nv-past button.on { color: var(--ink); font-weight: 500; }
   .nv-fine { font-size: 12px; color: var(--ink-3); line-height: 1.5; margin-top: 22px; }
+  .nv-card .nv-h:first-of-type { margin-top: 4px; }
+  .nv-card .nv-row input.nv-name { width: 92px; }
+  .nv-card .nv-go { margin-top: 10px; }
+  .nv-card .nv-meta { margin-bottom: 2px; }
+  .nv-bands.sm { gap: 6px; margin: 8px 0; }
+  .nv-bands.sm .nv-band { padding: 6px 8px; }
+  .nv-bands.sm .n { font-size: 18px; }
+  .nv-bands.sm .l { font-size: 11.5px; }
+  .nv-verdict-t { margin: 6px 0 4px; font-weight: 500; }
+  .nv-unc { margin: 4px 0 8px; }
+  .nv-unc .md, .nv-unc p { display: inline; margin: 0; }
+  .nv-mini { padding: 6px 0; border-top: 1px solid var(--rule); font: 14px/1.4 var(--serif); }
+  .nv-mini a { color: var(--ink); }
+  .nv-mini .yr { color: var(--ink-2); font: 12px var(--sans); }
+  .nv-mini .nv-why { font-size: 12.5px; margin-top: 3px; }
+  .nv-tag { font: 500 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: .04em; padding: 2px 5px; border-radius: 3px; margin-right: 6px; vertical-align: 2px; border: 1px solid var(--rule); color: var(--ink-2); }
+  .nv-tag.close { color: var(--red); border-color: var(--red); }
   @media (max-width: 560px) { .nv-bands { grid-template-columns: 1fr; } .nv-row input.nv-name { width: 84px; } }
   `;
   const style = document.createElement('style');
@@ -97,136 +114,231 @@
   /** Fill the sheet (skipping the parts that don't apply: null). */
   const put = (...kids) => N.body.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== ''));
 
-  // ====================================================================== opening
-  /** Check a note (or the text selected in it). With an earlier check of this note and no selection: its report. */
-  async function open(note, selection = '') {
-    if (!note || !note.id) { toast('Open a note or question first, then check its novelty', 'info'); return; }
-    N.note = { id: note.id, title: note.title || '' };
-    let runs = [];
-    try { runs = (await api('GET', `/api/novelty?note_id=${enc(note.id)}`)).runs || []; } catch { /* none */ }
-    N.runs = runs;
-    if (runs.length && !selection.trim()) { showRun(runs[0]); return; }
-    preview(selection);
+  // ====================================================================== in Ask: the Novelty mode
+  // You type the idea and send it. The answer is a card in the chat: first the preview (the parts and the
+  // searches, both editable, and what will be sent where), then "Check novelty" starts the run in the
+  // background; the card follows it and ends as a short report with Full report.
+  const RUNS = new Map();   // run id -> the run, as last fetched
+  const joined = (t, x) => { t = (t || '').trim(); x = (x || '').trim(); return !t || !x ? t || x : `${t}${/[.?!:]$/.test(t) ? '' : '.'} ${x}`; };
+  const aiName = () => (window.RB && RB.aiName ? RB.aiName() : 'Your AI');
+  const running = (r) => r && (r.running || r.status === 'running');
+
+  function wants(opts) {
+    if (opts && opts.mode) return opts.mode === 'novelty';
+    return !!(window.__rbResearch && window.__rbResearch.mode === 'novelty');
   }
 
-  async function openRun(noteId, rid) {
+  /** Put text in Ask's box, in Novelty mode, ready to send (right-click "Check novelty", the command). */
+  function compose(text = '') {
+    if (window.__rbResearch) window.__rbResearch.setMode('novelty');
+    if (rb.openChat) rb.openChat();
+    setTimeout(() => {
+      const ta = $('#chat-input');
+      if (!ta) return;
+      if (text.trim()) { ta.value = text.trim(); ta.dispatchEvent(new Event('input')); }
+      ta.focus();
+    }, 30);
+  }
+
+  async function send(text) {
+    text = (text || '').trim();
+    if (!text) return;
+    const msg = { role: 'assistant', mode: 'novelty', stage: 'plan', text, start: Date.now(), content: '' };
+    S.chat.push({ role: 'user', content: text }, msg);
+    rb.renderChat();
     try {
-      N.runs = (await api('GET', `/api/novelty?note_id=${enc(noteId)}`)).runs || [];
-      const r = N.runs.find((x) => x.id === rid) || await api('GET', `/api/novelty/runs/${enc(rid)}`);
-      N.note = { id: noteId, title: r.title || '' };
-      showRun(r);
-    } catch (e) { toastErr(e, 'Could not open the report'); }
+      msg.plan = await api('POST', '/api/novelty/plan', { text });
+      msg.stage = 'preview';
+    } catch (e) {
+      msg.stage = 'error';
+      msg.problem = rb.errText ? rb.errText(e) : e.message;
+    }
+    rb.renderChat();
   }
 
-  // ====================================================================== 1. the preview
-  async function preview(selection = '') {
-    sheet('Novelty check', (body) => body.replaceChildren(rb.working ? rb.working('Splitting your idea into parts') : h('div', { text: 'Splitting your idea into parts' })));
-    let pl;
-    try { pl = await api('POST', '/api/novelty/plan', { note_id: N.note.id, text: selection }); }
-    catch (e) {
-      if (live()) N.body.replaceChildren(h('div', { class: 'nv-err', text: rb.errText ? rb.errText(e) : e.message }));
+  async function start(msg, btn) {
+    const pl = msg.plan;
+    const parts = pl.parts.filter((p) => (p.text || '').trim().length >= 3);
+    const queries = pl.online ? pl.queries.map((q) => q.trim()).filter((q) => q.length >= 3) : [];
+    if (!parts.length) { toast('Give at least one part of the idea', 'info'); return; }
+    if (pl.online && !queries.length) { toast('Give at least one search, a few words', 'info'); return; }
+    btn.disabled = true;
+    try {
+      const r = await api('POST', '/api/novelty', { text: msg.text, parts, queries });
+      RUNS.set(r.run.id, r.run);
+      msg.novelty = r.run.id;
+      msg.stage = 'run';
+      msg.content = `Novelty check started: ${truncate(msg.text, 200)}`;
+      if (rb.persistChat) rb.persistChat();
+      rb.renderChat();
+      poll();
+    } catch (e) { btn.disabled = false; toastErr(e, 'Could not start the check'); }
+  }
+
+  /** The chat message (static/app.js renderChat calls this for mode "novelty" or a saved message with a run). */
+  function renderMsg(m) {
+    const card = h('div', { class: 'machine nv-card' });
+    const wrap = h('div', { class: 'msg assistant nv-msg', dataset: m.novelty ? { nv: m.novelty } : {} }, card);
+    fillCard(card, m);
+    return wrap;
+  }
+
+  function fillCard(card, m) {
+    const head = (t) => h('div', { class: 'machine-head' }, h('span', { text: t }));
+    if (m.stage === 'plan') { card.replaceChildren(head('Novelty check'), rb.working('Splitting your idea into parts', m.start)); return; }
+    if (m.stage === 'error') { card.replaceChildren(head('Novelty check'), h('div', { class: 'nv-err', text: m.problem || 'Something went wrong.' })); return; }
+    if (m.stage === 'preview' && m.plan) { card.replaceChildren(head('Novelty check: what will be checked'), ...previewKids(m)); return; }
+    const r = m.novelty && RUNS.get(m.novelty);
+    if (!r) {
+      card.replaceChildren(head('Novelty check'), h('div', { class: 'nv-note', text: m.content || 'Loading the report' }));
+      if (m.novelty) fetchRun(m.novelty);
       return;
     }
-    if (!live()) return;
-    const parts = pl.parts.map((p) => ({ ...p }));
-    const queries = pl.online ? pl.queries.slice() : [];
+    card.replaceChildren(head(running(r) ? 'Novelty check, running' : 'Novelty check'), ...reportKids(r));
+  }
+
+  function previewKids(m) {
+    const pl = m.plan;
     const partsBox = h('div'), qBox = h('div');
-    const drawParts = () => partsBox.replaceChildren(...[...parts.map((p, i) => {
-      const name = h('input', { class: 'nv-name', type: 'text', maxlength: 40, value: p.name, 'aria-label': `Part ${i + 1} name` });
-      const text = h('input', { class: 'nv-text', type: 'text', maxlength: 400, value: p.text, 'aria-label': `Part ${i + 1}` });
+    const drawParts = () => partsBox.replaceChildren(...[...pl.parts.map((p, i) => {
+      const name = h('input', { class: 'nv-name', type: 'text', maxlength: 40, 'aria-label': `Part ${i + 1} name` });
+      const text = h('input', { class: 'nv-text', type: 'text', maxlength: 400, 'aria-label': `Part ${i + 1}` });
       name.value = p.name; text.value = p.text;
       name.oninput = () => { p.name = name.value; };
       text.oninput = () => { p.text = text.value; };
       const rm = h('button', { class: 'btn btn-text', type: 'button', text: '×', title: 'Remove this part', 'aria-label': 'Remove this part',
-        disabled: parts.length < 2, onclick: () => { parts.splice(i, 1); drawParts(); } });
+        disabled: pl.parts.length < 2, onclick: () => { pl.parts.splice(i, 1); drawParts(); } });
       return h('div', { class: 'nv-row' }, name, text, rm);
-    }), parts.length < 5 ? h('button', { class: 'btn btn-text', type: 'button', text: 'Add a part', onclick: () => { parts.push({ name: 'Part ' + (parts.length + 1), text: '' }); drawParts(); } }) : null].filter(Boolean));
-    const drawQ = () => qBox.replaceChildren(...[...queries.map((q, i) => {
-      const inp = h('input', { class: 'nv-text', type: 'text', maxlength: 200, value: q, 'aria-label': `Search ${i + 1}` });
+    }), pl.parts.length < 5 ? h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Add a part', onclick: () => { pl.parts.push({ name: 'Part ' + (pl.parts.length + 1), text: '' }); drawParts(); } }) : null].filter(Boolean));
+    const drawQ = () => qBox.replaceChildren(...[...pl.queries.map((q, i) => {
+      const inp = h('input', { class: 'nv-text', type: 'text', maxlength: 200, 'aria-label': `Search ${i + 1}` });
       inp.value = q;
-      inp.oninput = () => { queries[i] = inp.value; };
+      inp.oninput = () => { pl.queries[i] = inp.value; };
       const rm = h('button', { class: 'btn btn-text', type: 'button', text: '×', title: 'Don’t send this search', 'aria-label': 'Remove this search',
-        disabled: queries.length < 2, onclick: () => { queries.splice(i, 1); drawQ(); } });
+        disabled: pl.queries.length < 2, onclick: () => { pl.queries.splice(i, 1); drawQ(); } });
       return h('div', { class: 'nv-row' }, inp, rm);
-    }), queries.length < 5 ? h('button', { class: 'btn btn-text', type: 'button', text: 'Add a search', onclick: () => { queries.push(''); drawQ(); } }) : null].filter(Boolean));
+    }), pl.queries.length < 5 ? h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Add a search', onclick: () => { pl.queries.push(''); drawQ(); } }) : null].filter(Boolean));
     drawParts(); drawQ();
-    const go = h('button', { class: 'btn btn-primary', type: 'button', text: 'Check novelty' });
-    go.onclick = async () => {
-      const ps = parts.filter((p) => (p.text || '').trim().length >= 3);
-      const qs = queries.map((q) => q.trim()).filter((q) => q.length >= 3);
-      if (!ps.length) { toast('Give at least one part of the idea', 'info'); return; }
-      if (pl.online && !qs.length) { toast('Give at least one search, a few words', 'info'); return; }
-      go.disabled = true;
-      try {
-        const r = await api('POST', '/api/novelty', { note_id: N.note.id, text: selection, parts: ps, queries: qs });
-        N.watching.add(r.run.id);
-        N.runs = [r.run, ...N.runs];
-        N.startToast = toast('Checking novelty. It takes a minute or two: close this and keep working, and you’ll be told when the report is ready.', 'ok', { ms: 6000 });
-        showRun(r.run);
-      } catch (e) { go.disabled = false; toastErr(e, 'Could not start the check'); }
-    };
+    const go = h('button', { class: 'btn btn-primary btn-sm', type: 'button', text: 'Check novelty' });
+    go.onclick = () => start(m, go);
     const aiLine = pl.ai
-      ? (pl.planned_by_ai ? `${aiName()} split the idea into parts. When the search is done it reads the closest abstracts and says what each did compared with your idea.` : `${aiName()} will read the closest abstracts.${pl.plan_error ? ' (It couldn’t split the idea: ' + pl.plan_error + ')' : ''}`)
+      ? (pl.planned_by_ai ? `${aiName()} split the idea into parts. After the search it reads the closest abstracts and says what each did compared with your idea.`
+        : `${aiName()} will read the closest abstracts.${pl.plan_error ? ` (It couldn’t split the idea: ${pl.plan_error})` : ''}`)
       : `No AI reading: ${pl.ai_why} Papers are compared with your idea on this computer.`;
-    put(
-      h('p', { class: 'nv-idea', text: truncate(pl.from_selection ? pl.idea : joined(pl.title, pl.idea), 420) }),
+    return [
       h('div', { class: 'nv-h' }, 'Parts of the idea', h('span', { class: 'sub', text: 'each paper is compared with each part' })), partsBox,
       pl.online ? h('div', { class: 'nv-h' }, 'Searches', h('span', { class: 'sub', text: 'these words go to OpenAlex and arXiv' })) : null,
       pl.online ? qBox : null,
-      pl.online ? h('p', { class: 'nv-note', text: 'Only the searches above leave this computer for the paper indexes. Your library is searched locally too, and the closest papers’ citations are followed.' })
-        : h('p', { class: 'nv-note warn', text: pl.online_why }),
+      h('p', { class: 'nv-note' + (pl.online ? '' : ' warn'), text: pl.online ? 'Only these searches go to the paper indexes. Your library is searched on this computer, and the closest papers’ citations are followed.' : pl.online_why }),
       h('p', { class: 'nv-note', text: aiLine }),
-      h('div', { class: 'nv-go' }, go, h('span', { class: 'sp' }), N.runs.length ? h('button', { class: 'btn btn-text', type: 'button', text: 'Back to the last report', onclick: () => showRun(N.runs[0]) }) : null));
+      h('div', { class: 'nv-go' }, go, h('span', { class: 'nv-note', text: 'Runs in the background, about a minute or two.' })),
+    ].filter(Boolean);
   }
-  const joined = (t, x) => { t = (t || '').trim(); x = (x || '').trim(); return !t || !x ? t || x : `${t}${/[.?!:]$/.test(t) ? '' : '.'} ${x}`; };
-  const aiName = () => (window.RB && RB.aiName ? RB.aiName() : 'Your AI');
 
-  // ====================================================================== 3. the report
+  function reportKids(r) {
+    if (running(r)) {
+      return [rb.working(`${STAGE[r.stage] || 'Working'}${r.examined ? ` · ${r.examined} papers so far` : ''}`, Date.parse(r.started_at) || Date.now()),
+        h('p', { class: 'nv-note', text: 'Keep working; you’ll be told when the report is ready.' })];
+    }
+    if (r.status === 'error') return [h('div', { class: 'nv-err', text: r.error || 'The check failed.' })];
+    const c = r.counts || {};
+    const kids = [h('div', { class: 'nv-meta' }, h('span', { text: `${c.examined || r.examined || 0} papers examined, from abstracts${r.online ? '' : ', your library only'}` })),
+      h('div', { class: 'nv-bands sm' }, ...['close', 'partial', 'background'].map((b) =>
+        h('div', { class: 'nv-band ' + b, title: BAND_HINT[b] }, h('div', { class: 'n', text: String(c[b] || 0) }), h('div', { class: 'l', text: BAND[b] }))))];
+    if (r.verdict) kids.push(h('p', { class: 'nv-verdict-t', text: r.verdict }));
+    if (r.uncovered) kids.push(h('div', { class: 'nv-unc' }, h('b', { text: 'What none of them does: ' }), rb.mdEl(r.uncovered)));
+    const top = (r.papers || []).filter((p) => p.band === 'close' || p.band === 'partial').slice(0, 4);
+    for (const p of top) {
+      const url = paperUrl(p);
+      kids.push(h('div', { class: 'nv-mini' },
+        h('span', { class: 'nv-tag ' + p.band, text: p.band === 'close' ? 'very close' : 'in part' }),
+        url ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: p.title }) : h('span', { text: p.title }),
+        p.year ? h('span', { class: 'yr', text: ` (${p.year})` }) : null,
+        p.why ? h('div', { class: 'nv-why', text: p.why }) : null));
+    }
+    if (!top.length) kids.push(h('p', { class: 'nv-note warn', text: 'Nothing close among the papers examined. From abstracts only, so a good sign, not proof: try other searches too.' }));
+    kids.push(h('div', { class: 'nv-go' }, h('button', { class: 'btn btn-sm', type: 'button', text: 'Full report', onclick: () => showRun(r) })));
+    return kids;
+  }
+
+  async function fetchRun(id) {
+    if (fetchRun.busy.has(id)) return;
+    fetchRun.busy.add(id);
+    try { const r = await api('GET', `/api/novelty/runs/${enc(id)}`); RUNS.set(id, r); paintRun(r); if (running(r)) poll(); }
+    catch { RUNS.set(id, { id, status: 'error', error: 'This report is no longer kept.', counts: {} }); paintRun(RUNS.get(id)); }
+    finally { fetchRun.busy.delete(id); }
+  }
+  fetchRun.busy = new Set();
+
+  /** Redraw just the chat cards of this run (not the whole chat: a preview being edited elsewhere keeps its focus). */
+  function paintRun(r) {
+    for (const el of document.querySelectorAll(`#chat-log [data-nv="${CSS.escape(r.id)}"]`)) {
+      const m = S.chat.find((x) => x.novelty === r.id);
+      if (!m) continue;
+      if (!running(r) && r.status === 'done' && !/^Novelty check:/.test(m.content || '')) {
+        const c = r.counts || {};
+        m.content = `Novelty check: ${c.close || 0} very close, ${c.partial || 0} overlapping in part, of ${c.examined || 0} papers examined.${r.verdict ? ' ' + r.verdict : ''}`;
+        if (rb.persistChat) rb.persistChat();
+      }
+      fillCard(el.querySelector('.nv-card'), m);
+    }
+    if (live() && N.run && N.run.id === r.id) { N.run = r; drawRun(); }
+  }
+
+  let pollT = null;
+  function poll() {
+    clearTimeout(pollT);
+    const ids = [...RUNS.values()].filter(running).map((r) => r.id);
+    if (!ids.length) return;
+    pollT = setTimeout(async () => {
+      for (const id of ids) {
+        try { const r = await api('GET', `/api/novelty/runs/${enc(id)}`); RUNS.set(id, r); paintRun(r); } catch { /* next time */ }
+      }
+      poll();
+    }, 2000);
+  }
+
+  // ====================================================================== the full report (a sheet)
+  async function openRun(rid) {
+    try { const r = await api('GET', `/api/novelty/runs/${enc(rid)}`); RUNS.set(rid, r); showRun(r); }
+    catch (e) { toastErr(e, 'Could not open the report'); }
+  }
+
   function showRun(run) {
     N.run = run;
     if (!live()) sheet('Novelty check', () => {});
     drawRun();
-    poll();
-  }
-  function poll() {
-    clearTimeout(N.pollT);
-    const r = N.run;
-    if (!r || !(r.running || r.status === 'running')) return;
-    N.pollT = setTimeout(async () => {
-      if (!live()) return;
-      try {
-        const fresh = await api('GET', `/api/novelty/runs/${enc(r.id)}`);
-        if (N.run && N.run.id === fresh.id) { N.run = fresh; N.runs = N.runs.map((x) => (x.id === fresh.id ? fresh : x)); drawRun(); }
-      } catch { /* try again */ }
-      poll();
-    }, 1500);
   }
 
   function drawRun() {
     if (!live()) return;
     const r = N.run;
     const kids = [h('p', { class: 'nv-idea', text: truncate(joined(r.title, r.idea), 300) })];
-    const again = h('button', { class: 'btn btn-text', type: 'button', text: 'New check', title: 'Check again (edit the parts and searches first)', onclick: () => preview('') });
     const forget = h('button', { class: 'btn btn-text', type: 'button', text: 'Forget', title: 'Delete this report',
       onclick: async () => {
-        try { await api('DELETE', `/api/novelty/runs/${enc(r.id)}`); N.runs = N.runs.filter((x) => x.id !== r.id); if (N.runs.length) showRun(N.runs[0]); else preview(''); }
+        try {
+          await api('DELETE', `/api/novelty/runs/${enc(r.id)}`);
+          RUNS.set(r.id, { id: r.id, status: 'error', error: 'You deleted this report.', counts: {} });
+          paintRun(RUNS.get(r.id));
+          if (CMD) CMD.close(false);
+        }
         catch (e) { toastErr(e, 'Could not delete it'); }
       } });
     if (r.running || r.status === 'running') {
       kids.push(rb.working ? rb.working(`${STAGE[r.stage] || 'Working'}${r.examined ? ` · ${r.examined} papers so far` : ''}`, Date.parse(r.started_at) || Date.now())
         : h('div', { text: STAGE[r.stage] || 'Working' }),
       h('p', { class: 'nv-note', text: 'You can close this and keep working; you’ll be told when the report is ready.' }));
-      put(...kids, pastList());
+      put(...kids);
       return;
     }
     const c = r.counts || {};
     const meta = [fmtDate ? fmtDate(r.finished_at || r.started_at) : '', `${c.examined || r.examined || 0} papers examined (abstracts)`,
       c.via_citations ? `${c.via_citations} found only through citations` : '', c.in_library ? `${c.in_library} of the close or overlapping ones already in your library` : '',
       r.online ? '' : 'your library only', r.tokens ? `~${r.tokens.toLocaleString()} tokens` : ''].filter(Boolean);
-    kids.push(h('div', { class: 'nv-meta' }, ...meta.map((m) => h('span', { text: m })), h('span', { class: 'sp' }), again, forget));
+    kids.push(h('div', { class: 'nv-meta' }, ...meta.map((m) => h('span', { text: m })), h('span', { class: 'sp' }), forget));
     if (r.status === 'error') {
       kids.push(h('div', { class: 'nv-err', text: r.error || 'The check failed.' }));
-      put(...kids, pastList());
+      put(...kids);
       return;
     }
     kids.push(h('div', { class: 'nv-bands' }, ...['close', 'partial', 'background'].map((b) =>
@@ -257,7 +369,7 @@
     const bg = papers.filter((p) => p.band === 'background');
     if (bg.length) kids.push(h('details', { class: 'nv-bg' }, h('summary', { text: `Background (${bg.length})` }), ...bg.map((p) => paperRow(p, parts))));
     kids.push(h('p', { class: 'nv-fine', text: 'From titles and abstracts only. Paywalled, very recent and non-English work can be missing from OpenAlex and arXiv, and a close paper can use words nobody searched for. Treat this as a map of what exists, not a verdict on novelty.' }));
-    put(...kids, pastList());
+    put(...kids);
   }
 
   function years(map) {
@@ -321,13 +433,6 @@
     return b;
   }
 
-  function pastList() {
-    if (N.runs.length < 2) return '';
-    return h('div', { class: 'nv-past' }, h('div', { class: 'nv-h' }, 'Earlier checks of this note'),
-      ...N.runs.map((x) => h('button', { type: 'button', class: N.run && x.id === N.run.id ? 'on' : '', onclick: () => showRun(x),
-        text: `${fmtDate ? fmtDate(x.started_at) : x.started_at} · ${x.status === 'done' ? `${(x.counts || {}).close || 0} very close, ${(x.counts || {}).partial || 0} in part` : x.status}` })));
-  }
-
   // ====================================================================== telling you it's done
   window.addEventListener('rb:novelty-done', (e) => {
     const d = e.detail || {};
@@ -339,27 +444,23 @@
     const failed = d.status === 'error';
     const msg = failed ? `The novelty check of “${what}” didn’t finish: ${d.error || 'something went wrong'}`
       : `Novelty check of “${what}”: ${c.close || 0} very close, ${c.partial || 0} overlapping in part, of ${c.examined || 0} papers.`;
-    if (live() && N.run && N.run.id === d.id) {
-      api('GET', `/api/novelty/runs/${enc(d.id)}`).then((r) => { N.run = r; N.runs = N.runs.map((x) => (x.id === r.id ? r : x)); drawRun(); }).catch(() => {});
-      toast(msg, failed ? 'error' : 'ok');
-      return;
-    }
-    toast(msg, failed ? 'error' : 'ok', { ms: 24 * 3600 * 1000, action: { label: 'Open report', fn: () => openRun(d.note_id, d.id) } });
+    api('GET', `/api/novelty/runs/${enc(d.id)}`).then((r) => { RUNS.set(r.id, r); paintRun(r); }).catch(() => {});
+    // the report is in the chat: say so quietly when you're looking at it, else keep the toast until you act
+    const inView = !!document.querySelector(`#chat:not([hidden]) #chat-log [data-nv="${CSS.escape(d.id)}"]`);
+    toast(msg, failed ? 'error' : 'ok', inView ? {} : { ms: 24 * 3600 * 1000, action: { label: 'Open report', fn: () => openRun(d.id) } });
   });
 
   // ====================================================================== entry points
-  function selectionIn(root) {
-    const sel = window.getSelection && window.getSelection();
+  function selection() {
     const f = document.activeElement && /^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName) ? document.activeElement : null;
-    if (f && root && root.contains(f) && typeof f.selectionStart === 'number') return f.value.slice(f.selectionStart, f.selectionEnd);
-    if (sel && sel.rangeCount && root && root.contains(sel.anchorNode)) return String(sel);
-    return '';
+    if (f && f.id !== 'chat-input' && typeof f.selectionStart === 'number') return f.value.slice(f.selectionStart, f.selectionEnd);
+    return String((window.getSelection && window.getSelection()) || '');
   }
   if (CMD) {
-    CMD.register({ id: 'novelty.check', title: 'Check novelty', group: 'Library',
-      description: 'How many papers already did something like the open note (or the text selected in it), and how close they came. Runs in the background.',
+    CMD.register({ id: 'novelty.check', title: 'Check novelty', group: 'Research',
+      description: 'Ask in Novelty mode: describe an idea and see how many papers already did something like it, and how close they came. Selected text goes in as the idea.',
       aliases: ['novelty', 'prior work', 'has this been done', 'related work', 'similar papers', 'originality'],
-      run: () => open(S.cur, selectionIn($('#panel-body'))) });
+      run: () => compose(selection()) });
   }
-  window.__rbNovelty = { open, openRun };
+  window.__rbNovelty = { wants, send, renderMsg, compose, openRun };
 })();

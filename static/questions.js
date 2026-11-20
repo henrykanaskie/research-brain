@@ -208,11 +208,8 @@
       const dir = h('button', { class: 'btn', type: 'button', text: 'Suggest directions…', disabled: !ai.available, id: 'oq-directions',
         title: ai.available ? 'Gaps, hypotheses and experiments from the kept evidence. You see what would be sent first.' : ai.reason,
         onclick: () => window.__rbDirections && window.__rbDirections.open('question', n.id, n.title) });
-      const nov = h('button', { class: 'btn', type: 'button', text: 'Check novelty…', id: 'oq-novelty',
-        title: 'How many papers already did something like this, and how close they came. You see the searches before anything is sent; a private question is checked against your library only.',
-        onclick: () => window.__rbNovelty && window.__rbNovelty.open(n) });
       box.replaceChildren(h('div', { class: 'sec-head' }, h('span', { class: 'sec-title', text: 'AI' })),
-        h('div', { class: 'oq-tools' }, btn, dir, nov),
+        h('div', { class: 'oq-tools' }, btn, dir),
         ai.available ? null : h('div', { class: 'oq-ai-off', text: `Not available: ${ai.reason || 'this question is private.'}` }), out);
     };
     return box;

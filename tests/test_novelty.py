@@ -161,3 +161,51 @@ def _wait(c, rid, s=20):
             return run
         time.sleep(0.05)
     raise AssertionError("the novelty check didn't finish")
+
+
+def test_api_typed_idea_from_ask(server, monkeypatch):
+    """Novelty mode in Ask: no note, the idea is what was typed; the run is kept with the conversation."""
+    srv, c = server
+    from app import agents, novelty_api
+    monkeypatch.setattr(novelty_api.metadata, "enabled", lambda: True)
+    calls = []
+    monkeypatch.setattr(novelty_api.ctx, "sources", fake_sources([CLOSE, PART], calls))
+    monkeypatch.setattr(novelty_api.ctx, "cites", lambda p, d: [])
+    fb = Recorder(replies=['{"parts": [{"name": "Problem", "text": "protein contact maps"}, {"name": "Method", "text": "sparse attention"}],'
+                           ' "queries": ["sparse attention contact map"]}',
+                           '{"papers": [], "uncovered": "Nothing without alignments.", "verdict": "Partly done."}'])
+    agents.register(fb)
+    agents.set_active(fb.id)
+    try:
+        assert c.post("/api/novelty/plan", json={"text": "short"}).status_code == 400
+        pl = c.post("/api/novelty/plan", json={"text": IDEA_B}).json()
+        assert pl["typed"] and pl["online"] and pl["ai"] and pl["planned_by_ai"] and pl["idea"] == IDEA_B and pl["title"] == ""
+        r = c.post("/api/novelty", json={"text": IDEA_B, "parts": pl["parts"], "queries": pl["queries"]})
+        assert r.status_code == 202, r.text
+        run = _wait(c, r.json()["run"]["id"])
+        assert run["status"] == "done" and run["note_id"] == "" and run["verdict"] == "Partly done."
+        assert [x[0] for x in calls] == ["sparse attention contact map"]
+        assert any(p["title"] == CLOSE["title"] for p in run["papers"])
+        # the chat keeps the run id with the message (and nothing else unknown)
+        c.put("/api/chats/library", json={"messages": [{"role": "user", "content": IDEA_B},
+                                                      {"role": "assistant", "content": "Novelty check: 1 very close", "novelty": run["id"]},
+                                                      {"role": "assistant", "content": "x", "novelty": "../../etc"}], "title": "t"})
+        msgs = c.get("/api/chats/library").json()["messages"]
+        assert msgs[1].get("novelty") == run["id"] and "novelty" not in msgs[2]
+    finally:
+        agents.unregister(fb.id)
+
+
+def test_private_library_papers_are_compared_but_never_sent_to_the_ai(server):
+    srv, c = server
+    from app import novelty
+    secret = c.post("/api/notes", json={"type": "paper", "title": "Sparse attention for protein contact maps, our draft",
+                                        "abstract": "SECRET sparse attention protein residue contact maps without alignments."}).json()
+    c.post(f"/api/notes/{secret['id']}/privacy", json={"private": True})
+    c.post("/api/notes", json={"type": "paper", "title": CLOSE["title"], "abstract": "PUBLIC " + CLOSE["abstract"]})
+    asked = []
+    r = novelty.start(srv.store, note_id="", title="", idea=IDEA_B, parts=[{"name": "Idea", "text": IDEA_B}], queries=[],
+                      online=False, ask=lambda i, ctx: asked.append(ctx) or "{}", wait=True)
+    run = novelty.get(srv.store, r["id"])
+    assert any(p["library_id"] == secret["id"] for p in run["papers"])
+    assert asked and "PUBLIC" in asked[0] and all("SECRET" not in x for x in asked)

@@ -1,6 +1,6 @@
-"""Browser test for the novelty check: from a private question's panel, the preview (library only), the check
-running in the background, the report with its bands and Add / In your library, and "Check novelty" on the
-right-click menu of selected text in the panel.
+"""Browser test for the novelty check, a mode of Ask: type an idea, the preview card (here library only: online
+lookups are off in tests), the check running in the background, the short report in the chat and the full
+report, the run kept with the conversation, and "Check novelty" on the right-click menu of selected text.
 
 Run:  python -m pytest -q tests/e2e/test_novelty_e2e.py   (RB_E2E_SHOTS=<dir> saves screenshots)
 """
@@ -12,13 +12,14 @@ from test_questions_e2e import FIXTURE, _add_paper, _call, browser, server  # no
 
 from playwright.sync_api import expect
 
+IDEA = ("Predict the breathing-mode frequency of a Hall thruster from the electron temperature and density "
+        "that a krypton collisional-radiative model gives.")
 
-def test_novelty_check_from_a_question(server, browser):
+
+def test_novelty_mode_in_ask(server, browser):
     base, vault = server["base"], server["vault"]
     for key in ("breathing", "krcrm", "tokamak"):
         _add_paper(base, vault, key)
-    q = FIXTURE["questions"]["breathing_crm"]
-    n = _call(base, "POST", "/api/notes", {"type": "question", "title": q["title"], "body": q["body"]})
     shots = os.environ.get("RB_E2E_SHOTS")
     page = browser.new_page(viewport={"width": 1400, "height": 900}, bypass_csp=True)
     errors = []
@@ -27,45 +28,65 @@ def test_novelty_check_from_a_question(server, browser):
     page.goto(base + "/")
     page.wait_for_function("window.__rb && window.__rb.S.nodes.size >= 3 && window.__rbNovelty")
     assert page.evaluate("window.RB.commands.conflicts()") == []
-    page.evaluate(f"window.__rb.openNote('{n['id']}')")
-    page.wait_for_function("window.__rb.S.cur && window.__rb.S.cur.type === 'question'")
 
-    # the preview: a private question is checked against the library only, with no searches to send
-    page.locator("#oq-novelty").click()
+    # Novelty sits next to Quick and Research in Ask's composer
+    page.evaluate("window.__rb.openChat()")
+    seg = page.locator("#chat .rs-seg")
+    expect(seg.get_by_role("button", name="Novelty")).to_be_visible()
+    seg.get_by_role("button", name="Novelty").click()
+    expect(seg.get_by_role("button", name="Novelty")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#chat-input")).to_have_attribute("placeholder", "Describe your idea: the problem, your approach, the setting")
+
+    # type the idea and send it: the preview card, nothing searched yet
+    page.locator("#chat-input").fill(IDEA)
+    page.locator("#btn-chat-send").click()
+    card = page.locator("#chat-log .nv-msg").last
+    expect(card.locator(".nv-row input.nv-text").first).to_be_visible()
+    expect(page.locator("#chat-log .msg.user").last).to_contain_text("breathing-mode frequency")
+    expect(card.locator(".nv-note.warn")).to_contain_text("Online lookups are turned off")
+    if shots:
+        page.screenshot(path=f"{shots}/novelty-chat-preview.png")
+    card.get_by_role("button", name="Check novelty").click()
+
+    # the card follows the run and ends as a short report
+    expect(card.locator(".nv-bands")).to_be_visible(timeout=20_000)
+    expect(card.locator(".nv-meta")).to_contain_text("your library only")
+    expect(card.locator(".nv-mini").first).to_contain_text(FIXTURE["papers"]["krcrm"]["title"])
+    assert FIXTURE["papers"]["tokamak"]["title"] not in card.inner_text()
+    if shots:
+        page.screenshot(path=f"{shots}/novelty-chat-report.png")
+    # saved with the conversation: the run id and a one-line summary for the history
+    saved = page.evaluate("window.__rb.S.chat.filter(m => m.novelty).map(m => m.content)")
+    assert saved and saved[0].startswith("Novelty check:")
+
+    # Full report: the sheet
+    card.get_by_role("button", name="Full report").click()
     sheet = page.locator(".nv-sheet")
-    expect(sheet.locator(".nv-note.warn")).to_contain_text("private")
-    expect(sheet.locator(".nv-row input.nv-text")).to_have_count(1)  # one part, no search rows
-    if shots:
-        page.screenshot(path=f"{shots}/novelty-preview.png")
-    sheet.get_by_role("button", name="Check novelty").click()
-
-    # the report: papers from the library, marked as already there
-    expect(sheet.locator(".nv-bands")).to_be_visible(timeout=20_000)
-    expect(sheet.locator(".nv-meta")).to_contain_text("your library only")
-    expect(sheet.locator(".nv-paper").first).to_be_visible()
+    expect(sheet.locator(".nv-bands")).to_be_visible()
     expect(sheet.locator(".nv-paper .btn", has_text="In your library").first).to_be_visible()
-    assert FIXTURE["papers"]["krcrm"]["title"] in sheet.inner_text()
-    assert FIXTURE["papers"]["tokamak"]["title"] not in sheet.inner_text()
-    if shots:
-        page.screenshot(path=f"{shots}/novelty-report.png")
-
-    # opening it again shows the last report straight away
-    page.keyboard.press("Escape")
-    page.locator("#oq-novelty").click()
-    expect(page.locator(".nv-sheet .nv-bands")).to_be_visible()
     page.keyboard.press("Escape")
 
-    # right-click on selected text in the panel: Copy and Check novelty
+    # Quick mode answers normally again
+    seg.get_by_role("button", name="Quick").click()
+    assert page.evaluate("window.__rbNovelty.wants()") is False
+
+    # right-click on selected text in a note: Check novelty puts it in Ask, in Novelty mode
+    n = _call(base, "POST", "/api/notes", {"type": "note", "title": "An idea", "body": "Sparse attention for contact maps without alignments."})
+    page.evaluate(f"window.__rb.openNote('{n['id']}')")
+    page.wait_for_function(f"window.__rb.S.cur && window.__rb.S.cur.id === '{n['id']}'")
+    assert page.locator("#oq-novelty").count() == 0
     page.evaluate("""() => {
-      const el = document.querySelector('#panel-body .oq-detail');
-      el.focus(); el.setSelectionRange(0, 40);
+      const el = [...document.querySelectorAll('#panel-body textarea')].find(t => t.value.includes('Sparse attention'));
+      el.focus(); el.setSelectionRange(0, 16);
       const r = el.getBoundingClientRect();
       el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 10 }));
     }""")
     menu = page.locator(".node-menu")
     expect(menu.get_by_role("button", name="Copy")).to_be_visible()
     menu.get_by_role("button", name="Check novelty").click()
-    expect(page.locator(".nv-sheet .nv-idea")).to_contain_text(q["body"][:20])
+    expect(page.locator("#chat-input")).to_have_value("Sparse attention")
+    expect(seg.get_by_role("button", name="Novelty")).to_have_attribute("aria-pressed", "true")
+    seg.get_by_role("button", name="Quick").click()  # leave the next tests in Quick mode
     assert errors == []
 
 
@@ -100,7 +121,7 @@ def test_novelty_report_with_parts_years_and_ai(server, browser):
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base + "/")
     page.wait_for_function("window.__rbNovelty")
-    page.evaluate(f"window.__rbNovelty.openRun('{n['id']}', 'seeded1')")
+    page.evaluate("window.__rbNovelty.openRun('seeded1')")
     sheet = page.locator(".nv-sheet")
     expect(sheet.locator(".nv-band.close .n")).to_have_text("1")
     expect(sheet.locator(".nv-new")).to_contain_text("1 close or overlapping paper new")
@@ -117,3 +138,23 @@ def test_novelty_report_with_parts_years_and_ai(server, browser):
         sheet.locator("details.nv-bg > summary").click()
         page.screenshot(path=f"{shots}/novelty-full-report.png", full_page=True)
     assert errors == []
+
+
+def test_composer_fits_three_modes(server, browser):
+    """Quick, Research and Novelty fit in the composer, none clipped, at the chat's usual and narrow widths."""
+    page = browser.new_page(viewport={"width": 1400, "height": 900}, bypass_csp=True)
+    page.goto(server["base"] + "/")
+    page.wait_for_function("window.__rbNovelty")
+    page.evaluate("window.__rb.openChat()")
+    for w in (1400, 1000):
+        page.set_viewport_size({"width": w, "height": 900})
+        box = page.evaluate("""() => {
+          const bar = document.querySelector('#chat .cmp-bar').getBoundingClientRect();
+          return [...document.querySelectorAll('#chat .rs-seg button, #chat .cmp-right button')].map(b => {
+            const r = b.getBoundingClientRect(); return [b.textContent.trim(), r.left >= bar.left - 1 && r.right <= bar.right + 1, b.scrollWidth <= b.clientWidth + 1];
+          });
+        }""")
+        assert all(inside and whole for _, inside, whole in box), (w, box)
+    shots = os.environ.get("RB_E2E_SHOTS")
+    if shots:
+        page.screenshot(path=f"{shots}/novelty-composer-narrow.png")

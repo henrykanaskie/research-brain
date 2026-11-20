@@ -861,7 +861,8 @@ Adding a paper uses `POST /api/import/lookup` with its DOI, `arXiv:<id>` or titl
 
 ## ADDED: Novelty check (app/novelty.py, app/novelty_api.py)
 
-How many papers already did something like a note's idea (or text selected in it), and how close they came.
+How many papers already did something like an idea, and how close they came. In the app it is a mode of
+Ask (Quick, Research, Novelty): what you type is the idea, and the answer card shows the preview, then the report.
 The idea is split into parts; the searches go to OpenAlex and arXiv; the library is searched locally; the
 references and citing papers of the closest hits are followed (co-cited papers count); every paper is scored
 against the idea and each part on this computer; when the AI may read the note it reads the closest abstracts
@@ -869,13 +870,14 @@ and labels them. A private note is checked against the library only. State: `vau
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/api/novelty/plan` | `{note_id, text?, use_ai?}` | the preview: `{title, idea, parts: [{name, text}], queries, planned_by_ai, online, online_why, ai, ai_why, from_selection}`; nothing goes to a paper index |
-| POST | `/api/novelty` | `{note_id, text?, parts, queries, use_ai?}` | 202 `{run}`; runs in the background (queries are dropped when the note is private) |
+| POST | `/api/novelty/plan` | `{text, note_id?, use_ai?}` (no `note_id`: the typed idea) | the preview: `{title, idea, parts: [{name, text}], queries, planned_by_ai, online, online_why, ai, ai_why, typed, from_selection}`; nothing goes to a paper index |
+| POST | `/api/novelty` | `{text, note_id?, parts, queries, use_ai?}` | 202 `{run}`; runs in the background (queries are dropped when the note is private) |
 | GET | `/api/novelty?note_id=` | | `{runs, running}`: the note's checks, newest first |
 | GET | `/api/novelty/runs/{id}` | | a run: `status` (running, done, error), `stage`, `counts` {close, partial, background, examined, via_citations, in_library, new, compared}, `years`, `verdict`, `uncovered`, `papers` (each with `band`, `parts` levels 0 to 2 per part, `why`, `via`, `cited_by_seeds`, `cites_seeds`, `library_id`, `new`) |
 | DELETE | `/api/novelty/runs/{id}` | | forgets it |
 
 A finished check is announced on `GET /api/events` as `novelty-done` `{id, note_id, title, status, error, counts}`.
+A chat message keeps its check as `novelty` (the run id) in `/api/chats`.
 
 ## ADDED: Phones and tablets (app/pairing.py, app/mobile_api.py)
 

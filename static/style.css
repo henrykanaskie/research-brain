@@ -1281,8 +1281,8 @@ html.mac-window #topbar { padding-left: 90px; -webkit-user-select: none; user-se
 .chat-v2 .composer textarea:focus { box-shadow: none; outline: 0; }
 .chat-v2 .cmp-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .chat-v2 .cmp-left, .chat-v2 .cmp-right { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.chat-v2 .cmp-left .rs-seg { border: 0; border-radius: 8px; background: color-mix(in srgb, var(--ink) 6%, transparent); padding: 2px; gap: 2px; }
-.chat-v2 .cmp-left .rs-seg button { padding: 5px 10px; border-radius: 6px; font-size: 12px; border: 0 !important; }
+.chat-v2 .cmp-left .rs-seg { flex: none; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--ink) 6%, transparent); padding: 2px; gap: 2px; }
+.chat-v2 .cmp-left .rs-seg button { padding: 5px 8px; border-radius: 6px; font-size: 12px; border: 0 !important; }
 .chat-v2 .cmp-left .rs-seg button[aria-pressed="true"] { background: var(--sheet); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 .chat-v2 .cmp-left .le-tools { margin: 0; }
 .chat-v2 .cmp-left .le-sym-btn { font-size: 12px; padding: 5px 8px; border-radius: 6px; color: var(--ink-2); }

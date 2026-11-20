@@ -52,13 +52,16 @@
   document.head.appendChild(style);
 
   // ====================================================================== mode toggle
-  const R = { mode: LS.get('chatMode', 'quick') === 'research' ? 'research' : 'quick', fast: !!LS.get('researchFast', false) };
+  // Novelty (static/novelty.js): what you type is an idea, checked against the published literature
+  const MODES = ['quick', 'research', 'novelty'];
+  const R = { mode: MODES.includes(LS.get('chatMode', 'quick')) ? LS.get('chatMode', 'quick') : 'quick', fast: !!LS.get('researchFast', false) };
   const form = $('#chat-form');
   const bar = h('div', { class: 'rs-mode' });
   const seg = h('div', { class: 'rs-seg', role: 'group', 'aria-label': 'Answer mode' });
   const bQuick = h('button', { type: 'button', text: 'Quick', title: 'One answer from the most relevant passages (fast)', onclick: () => setMode('quick') });
   const bRes = h('button', { type: 'button', text: 'Research', title: `${RB.aiName()} searches your library itself: several searches, opens pages, follows citations`, onclick: () => setMode('research') });
-  seg.append(bQuick, bRes);
+  const bNov = h('button', { type: 'button', text: 'Novelty', title: 'Describe an idea: how many papers already did something like it, and how close they came. You see the searches before anything is sent.', onclick: () => setMode('novelty') });
+  seg.append(bQuick, bRes, bNov);
   const fastBox = h('input', { type: 'checkbox' });
   fastBox.checked = R.fast;
   fastBox.addEventListener('change', () => { R.fast = fastBox.checked; LS.set('researchFast', R.fast); });
@@ -68,17 +71,19 @@
   if (form) form.insertBefore(bar, form.firstChild);
 
   function setMode(m) {
-    R.mode = m === 'research' ? 'research' : 'quick';
+    R.mode = MODES.includes(m) ? m : 'quick';
     LS.set('chatMode', R.mode);
     paintMode();
   }
   function paintMode() {
     bQuick.setAttribute('aria-pressed', String(R.mode === 'quick'));
     bRes.setAttribute('aria-pressed', String(R.mode === 'research'));
+    bNov.setAttribute('aria-pressed', String(R.mode === 'novelty'));
     fast.hidden = notice.hidden = R.mode !== 'research';
     const ta = $('#chat-input');
     const scoped = window.__rb && window.__rb.S && window.__rb.S.chatPaper;
-    if (ta && scoped) ta.placeholder = 'Ask anything about this paper';
+    if (ta && R.mode === 'novelty') ta.placeholder = 'Describe your idea: the problem, your approach, the setting';
+    else if (ta && scoped) ta.placeholder = 'Ask anything about this paper';
     else if (ta) ta.placeholder = R.mode === 'research' ? `Ask a question for ${RB.aiName()} to research in your library` : 'Ask about your papers and notes';
   }
   paintMode();
