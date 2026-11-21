@@ -50,6 +50,10 @@
   .bk-group details li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bk-group ul { margin: 4px 0 2px; padding-left: 18px; }
   .bk-note { color: var(--ink-2); font-size: 13px; line-height: 1.5; margin: 8px 0 0; }
+  .bk-subopts { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin: -2px 0 4px 26px; font-size: 13.5px; color: var(--ink-2); }
+  .bk-subopts label { display: flex; gap: 6px; align-items: center; }
+  .bk-count { width: 58px; font: inherit; padding: 2px 6px; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); }
+  .bk-count:disabled { opacity: .5; }
   .bk-bar i { display: block; height: 100%; width: 0; background: var(--ink-2); transition: width .2s; }
   `;
   document.head.appendChild(h('style', { id: 'rb-bulk-style', text: CSS }));
@@ -71,6 +75,31 @@
     let i = 0, done = 0;
     const worker = async () => { while (i < items.length) { const it = items[i++]; await fn(it); onEach(++done); } };
     await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  }
+
+  /** How the AI sorts: a number of topics (blank: it decides), and, with `existing`, "only into my existing
+   *  topics" (shown once your topics have loaded, if you have any). value() -> {count, existing_only}. */
+  function sortChoices(existing = true) {
+    const count = h('input', { type: 'number', class: 'bk-count', min: '1', max: '40', step: '1', placeholder: 'any', 'aria-label': 'Number of topics' });
+    const only = h('input', { type: 'checkbox' });
+    const onlyLabel = h('label', { hidden: true }, only, h('span', { text: 'Only into my existing topics' }));
+    only.addEventListener('change', () => { count.disabled = only.checked; });
+    const row = h('div', { class: 'bk-subopts' }, h('label', null, 'Number of topics', count, h('span', { class: 'why', text: 'blank: the AI decides' })), existing ? onlyLabel : null);
+    if (existing) api('GET', '/api/topics').then((ts) => {
+      if (ts && ts.length) { onlyLabel.lastChild.textContent = `Only into my existing topics (${ts.length})`; onlyLabel.hidden = false; }
+    }).catch(() => {});
+    return {
+      row,
+      value: () => ({ count: only.checked ? 0 : Math.max(0, Math.min(40, parseInt(count.value, 10) || 0)), existing_only: only.checked }),
+      disable: (b) => { count.disabled = b || only.checked; only.disabled = b; },
+    };
+  }
+  /** What sorting did, in a sentence. */
+  function sortedText(r, sc) {
+    if (!r.sorted) return r.note || (sc && sc.existing_only ? 'None of them fit your existing topics.' : '');
+    const list = (r.topics || []).map((t) => `${t.name} (${t.count}${t.new ? ', new' : ''})`).join(', ');
+    return `Sorted into ${plural(r.topics.length, 'topic')}${r.by === 'regions' ? ' by similarity (no AI answer)' : ''}: ${list}.`
+      + (r.unplaced ? ` ${plural(r.unplaced, 'paper')} fit none of your topics and have none.` : '');
   }
 
   // ---------------------------------------------------------------- a folder of PDFs
@@ -106,12 +135,16 @@
     const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => { stop = true; d.close(); } });
     let stop = false;
     const conn = connectBox(pdfs.length > 1);
-    d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' }, opts.map(([v, label], i) => h('label', null, radios[i], label))),
+    const sc = sortChoices();
+    const onMode = () => { sc.row.hidden = !radios[1].checked; };
+    radios.forEach((r) => r.addEventListener('change', onMode)); onMode();
+    d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' }, opts.map(([v, label], i) => [h('label', null, radios[i], label), i === 1 ? sc.row : null])),
       pdfs.length > 1 ? h('div', { class: 'bk-opts' }, conn.row) : null,
       h('div', { class: 'bk-bar' }, bar), h('div', { class: 'bk-acts' }, status, cancel, go));
     go.addEventListener('click', async () => {
       const m = (radios.find((r) => r.checked) || radios[0]).value;
-      go.disabled = true; radios.forEach((r) => { r.disabled = true; }); conn.box.disabled = true; d.setBusy(true);
+      go.disabled = true; radios.forEach((r) => { r.disabled = true; }); conn.box.disabled = true; sc.disable(true); d.setBusy(true);
+      const how = sc.value();
       cancel.textContent = 'Stop'; cancel.onclick = () => { stop = true; status.textContent = 'Stopping…'; };
       const res = { added: 0, dup: 0, failed: [], ids: [] };
       // a long one can go on in the background, with the gauge in the corner
@@ -143,9 +176,8 @@
         status.textContent = `${done} Sorting into topics…`;
         cancel.disabled = true;
         try {
-          const r = await api('POST', '/api/topics/auto-sort', { ids: res.ids });
-          const list = (r.topics || []).map((t) => `${t.name} (${t.count}${t.new ? ', new' : ''})`).join(', ');
-          status.textContent = r.sorted ? `${done} Sorted into ${r.topics.length} topic${r.topics.length === 1 ? '' : 's'}${r.by === 'regions' ? ' by similarity (no AI answer)' : ''}: ${list}.` : `${done} ${r.note || ''}`;
+          const r = await api('POST', '/api/topics/auto-sort', { ids: res.ids, ...how });
+          status.textContent = `${done} ${sortedText(r, how)}`;
           rb.refreshGraph();
           window.dispatchEvent(new CustomEvent('rb:topics-changed'));
         } catch (e) { status.textContent = `${done} Couldn’t sort them into topics: ${e.message}`; }
@@ -266,9 +298,11 @@
     const byAI = h('input', { type: 'radio', name: 'bk-ltopic', value: 'ai' });
     (nFolders > 1 ? byFolder : byAI).checked = true;  // subfolders: keep them; one flat folder: let the AI sort it
     const conn = connectBox(pv.pdfs > 1);
+    const sc = sortChoices();
     d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' },
       h('label', null, byFolder, nFolders > 1 ? 'A topic for each folder (change a name below, or clear it to leave that folder out of topics)' : `One topic for the folder (its name below)`),
-      h('label', null, byAI, 'Let the AI sort them into topics by what they’re about, whatever folder they’re in (it reads each paper’s title and opening, and reuses your topics where they fit)')),
+      h('label', null, byAI, 'Let the AI sort them into topics by what they’re about, whatever folder they’re in (it reads each paper’s title and opening, and reuses your topics where they fit)'),
+      sc.row),
       pv.pdfs > 1 ? h('div', { class: 'bk-opts' }, conn.row) : null);
     const topics = new Set((pv.topics || []).map((t) => t.toLowerCase()));
     const inputs = new Map();
@@ -307,7 +341,7 @@
     const go = h('button', { class: 'btn btn-primary', type: 'button', text: `Add ${pv.pdfs - pv.known} PDF${pv.pdfs - pv.known === 1 ? '' : 's'}` });
     const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => d.close() });
     const nameTools = h('div', { class: 'bk-acts bk-acts-l' }, suggest, reset);
-    const onMode = () => { list.hidden = nameTools.hidden = byAI.checked; };
+    const onMode = () => { list.hidden = nameTools.hidden = byAI.checked; sc.row.hidden = !byAI.checked; };
     byFolder.addEventListener('change', onMode); byAI.addEventListener('change', onMode); onMode();
     d.card.append(list, nameTools, h('div', { class: 'bk-bar' }, bar), h('div', { class: 'bk-acts' }, status, cancel, go));
     go.addEventListener('click', async () => {
@@ -315,7 +349,8 @@
       const names = {};
       for (const [dir, inp] of inputs) names[dir] = ai ? '' : inp.value.trim();  // the AI files them instead
       go.disabled = true; suggest.disabled = true; inputs.forEach((i) => { i.disabled = true; });
-      byFolder.disabled = byAI.disabled = conn.box.disabled = true;
+      byFolder.disabled = byAI.disabled = conn.box.disabled = true; sc.disable(true);
+      const how = sc.value();
       let job;
       try { job = (await api('POST', '/api/linked-folders', { path: pv.path, names })).job; }
       catch (e) { status.textContent = e.message; go.disabled = false; suggest.disabled = false; inputs.forEach((i) => { i.disabled = false; }); return; }
@@ -353,9 +388,8 @@
       if (ai) {
         line.textContent = 'Sorting them into topics…';
         try {
-          const r = await api('POST', '/api/topics/auto-sort', { folder: job.folder });
-          const list2 = (r.topics || []).map((t) => `${t.name} (${t.count}${t.new ? ', new' : ''})`).join(', ');
-          line.textContent = r.sorted ? `Sorted into ${plural(r.topics.length, 'topic')}${r.by === 'regions' ? ' by similarity (no AI answer)' : ''}: ${list2}.` : (r.note || '');
+          const r = await api('POST', '/api/topics/auto-sort', { folder: job.folder, ...how });
+          line.textContent = sortedText(r, how);
           rb.refreshGraph();
           window.dispatchEvent(new CustomEvent('rb:topics-changed'));
         } catch (e) { line.textContent = `Couldn’t sort them into topics: ${e.message}`; }
@@ -435,14 +469,15 @@
     const named = h('input', { type: 'radio', name: 'bk-reorg', value: 'named' });
     const sections = h('textarea', { class: 'bk-sections', 'aria-label': 'Your sections', spellcheck: 'true', placeholder: 'One section per line, for example:\nSheath physics\nHall thruster erosion\nDiagnostics' });
     sections.hidden = true;
-    const onMode = () => { sections.hidden = !named.checked; if (named.checked) sections.focus(); };
+    const rc = sortChoices(false);
+    const onMode = () => { sections.hidden = !named.checked; rc.row.hidden = named.checked; if (named.checked) sections.focus(); };
     free.addEventListener('change', onMode); named.addEventListener('change', onMode);
     const conn = connectBox(true);
     const step1 = h('div', null,
       h('div', { class: 'bk-sub', text: 'Which papers' }), scope,
       h('div', { class: 'bk-sub', text: 'Topics' }),
       h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' },
-        h('label', null, free, 'Let the AI choose the topics'),
+        h('label', null, free, 'Let the AI choose the topics'), rc.row,
         h('label', null, named, 'Use my own sections (the AI puts each paper in the one it fits best)')),
       sections,
       h('div', { class: 'bk-opts' }, conn.row));
@@ -465,7 +500,7 @@
 
     async function suggest() {
       const body = { topics: tBoxes.filter(([b]) => b.checked).map(([, t]) => t.slug), unsorted: noTopic.checked,
-        names: named.checked ? sections.value.split('\n') : [] };
+        names: named.checked ? sections.value.split('\n') : [], count: named.checked ? 0 : rc.value().count };
       if (named.checked && !sections.value.trim()) { status.textContent = 'Write the sections you want, one per line.'; sections.focus(); return; }
       if (!body.topics.length && !body.unsorted) { status.textContent = 'Tick some papers to reorganize.'; return; }
       busy(true); status.textContent = 'Asking your AI to group the papers… (this can take a minute)';
