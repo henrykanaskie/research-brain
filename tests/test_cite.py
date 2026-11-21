@@ -5,7 +5,6 @@ Run:  python3 -m pytest -q tests/test_cite.py
 """
 from __future__ import annotations
 
-import importlib
 import json
 import os
 import re
@@ -20,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import bibexport, cite  # noqa: E402
+from rb_app import load_server  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------- items
 JOURNAL = {  # many authors, accents, a particle, a suffix, an acronym and a proper noun in the title
@@ -54,6 +54,10 @@ CHAPTER = {
     "publisher-place": "Cambridge", "page": "55-104", "issued": {"date-parts": [[2002]]}, "edition": "2",
 }
 ITEMS = [JOURNAL, PREPRINT, CONFERENCE, CHAPTER]
+ENTS = [("boeuf2018electron", JOURNAL), ("doe2024neural", PREPRINT), ("wirz2021ion", CONFERENCE), ("hutchinson2002langmuir", CHAPTER)]
+# a user style: APS under another title
+STYLE_OK = (cite.STYLES_DIR / "american-physics-society.csl").read_text(encoding="utf-8").replace(
+    "<title>American Physical Society</title>", "<title>My lab style</title>")
 
 
 def note(nid, **kw):
@@ -64,7 +68,9 @@ def note(nid, **kw):
 
 
 # ---------------------------------------------------------------------------------------------- csl_for
-def test_csl_for_legacy_fields():
+def test_csl_for_builds_csl_from_note_fields_or_csl_property():
+    """csl_for turns a note's legacy fields into a CSL item (names with particles, suffixes and literals, type
+    guessed from venue or arXiv id), and prefers a stored csl property (top level or in old extras), normalised."""
     n = note("hall-2018", title="Kinetic simulations of Hall thrusters", authors=["Jean-Pierre Boeuf", "Garrigues, Laurent",
              "Ludwig van Beethoven", "ATLAS Collaboration", "Martin Luther King Jr."], year=2018,
              venue="Physics of Plasmas", doi="10.1063/1.5017033")
@@ -85,8 +91,7 @@ def test_csl_for_legacy_fields():
     assert cite.csl_for(note("t", title="X", venue="PhD thesis, Oregon State University"))["type"] == "thesis"
     assert cite.csl_for(note("w", type="note", title="My idea"))["type"] in ("article", "webpage")
 
-
-def test_csl_for_prefers_csl_property_and_normalises_it():
+    # a csl property wins over the legacy fields
     raw = {"type": "journal-article", "title": "From a resolver", "author": ["Jane Doe", {"family": "Roe", "given": "R."}],
            "issued": "2020-05-02", "volume": 7, "page": "1-9", "junk": None}
     n = note("x", title="Legacy title", authors=["Somebody Else"], year=1999, csl=raw)
@@ -101,6 +106,8 @@ def test_csl_for_prefers_csl_property_and_normalises_it():
 
 # ---------------------------------------------------------------------------------------------- keys
 def test_citekeys_generation_and_disambiguation():
+    """Keys are author+year+title word, suffixed a, b by age, deterministic, skip fragments, and a stored
+    key wins (cleaned of spaces and braces)."""
     notes = [note("a", title="The kinetic theory of gases", authors=["Jean-Pierre Bœuf"], year=2018, created="2020-01-01"),
              note("b", title="Kinetic theory, again", authors=["J.-P. Boeuf"], year=2018, created="2021-01-01"),
              note("c", title="A kinetic model", authors=["Boeuf, J."], year=2018, created="2019-01-01"),
@@ -129,14 +136,8 @@ def test_citekeys_generation_and_disambiguation():
 
 @pytest.fixture()
 def server(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_AUTO_EXPORT", "0")  # tests drive the exporter directly
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    srv = importlib.import_module("app.server")
+    # RB_AUTO_EXPORT=0: tests drive the exporter directly
+    srv = load_server(monkeypatch, tmp_path, RB_DATA_DIR=tmp_path / "data", RB_AUTO_EXPORT="0")
     from fastapi.testclient import TestClient
     return TestClient(srv.app), srv
 
@@ -147,6 +148,8 @@ def add(srv, **kw):
 
 
 def test_keys_are_persisted_on_first_export_and_never_change(server):
+    """The first export stores each key in the note (not counted as an edit); later papers or title changes
+    never move it; a key set by hand must be unique and have no spaces."""
     client, srv = server
     a = add(srv, title="Kinetic simulations of Hall thrusters", authors=["Jean-Pierre Boeuf"], year=2018)
     before = srv.store.get(a["id"])["updated"]
@@ -172,6 +175,8 @@ def test_keys_are_persisted_on_first_export_and_never_change(server):
 
 
 def test_zotero_citation_keys_are_kept(tmp_path, monkeypatch):
+    """Better BibTeX keys (pinned in Extra or in its own database) are kept on import, and a re-import never
+    replaces a key."""
     from test_zotero import _zedit, build_zotero, run_import
     zdir = build_zotero(tmp_path / "Zotero")
     # a pinned Better BibTeX key in Extra, and BBT's own database for another item
@@ -182,14 +187,7 @@ def test_zotero_citation_keys_are_kept(tmp_path, monkeypatch):
     with sqlite3.connect(zdir / "better-bibtex.sqlite") as db:
         db.execute("CREATE TABLE citationkey (itemID INT, itemKey TEXT, libraryID INT, citationKey TEXT, pinned INT)")
         db.execute("INSERT INTO citationkey VALUES (1, 'HALL2016', 1, 'physicist2016hall', 0)")
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_ZOTERO_DIR", str(zdir))
-    monkeypatch.setenv("RB_AUTO_EXPORT", "0")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    srv = importlib.import_module("app.server")
+    srv = load_server(monkeypatch, tmp_path, RB_ZOTERO_DIR=zdir, RB_AUTO_EXPORT="0")
     for name in ("lookup", "s2_paper", "discover"):
         monkeypatch.setattr(srv.scholar, name, lambda *a, **k: (_ for _ in ()).throw(AssertionError("no network")))
     from fastapi.testclient import TestClient
@@ -217,7 +215,10 @@ def entry(style, iid):
     return next(e for e in out["entries"] if e["id"] == iid)
 
 
-def test_styles_vendored_with_licence():
+def test_shipped_styles_format_every_kind_of_item():
+    """The CSL styles ship with their licence and locale; APS, AIP, IEEE and APA format a journal article,
+    a preprint, a conference paper and a chapter as each style expects, every shipped style formats all four,
+    and HTML output keeps only safe formatting tags."""
     ids = {s["id"]: s for s in cite.list_styles()}
     for sid in ("american-physics-society", "american-institute-of-physics", "ieee",
                 "american-institute-of-aeronautics-and-astronautics", "nature", "apa", "chicago-author-date"):
@@ -226,8 +227,7 @@ def test_styles_vendored_with_licence():
     assert (cite.LOCALES_DIR / "locales-en-US.xml").exists()
     assert "CC BY-SA 3.0" in (cite.CSL_DIR / "LICENSE.md").read_text(encoding="utf-8")
 
-
-def test_aps_output():
+    # APS
     j = entry("american-physics-society", "j")["text"]
     # APS: initials, "and" before the last author, abbreviated journal, bold volume (html), page, (year)
     assert j.startswith("[1] J.-P. Bœuf, L. Garrigues, L. van Beethoven, J. Müller, M. King Jr., A. B. Smith, D.-H. Lee, and Å. Øster,")
@@ -242,8 +242,7 @@ def test_aps_output():
     assert "I. H. Hutchinson" in b and "edited by F. F. Chen" in b and "(Cambridge University Press, Cambridge, 2002)" in b and "pp. 55–104" in b
     assert fmt("american-physics-society", "citation")["text"].strip() in ("[1–4]", "[1-4]", "[1,2,3,4]", "[1, 2, 3, 4]")
 
-
-def test_aip_ieee_apa_output():
+    # AIP, IEEE, APA
     aip = entry("american-institute-of-physics", "j")["text"]
     assert aip.startswith("1 J.-P. Bœuf") and "Phys. Plasmas 25(6), 061204 (2018)" in aip
     ieee = entry("ieee", "j")["text"]
@@ -264,8 +263,7 @@ def test_aip_ieee_apa_output():
         out = fmt(s["id"])
         assert len(out["entries"]) == 4 and all(e["text"] for e in out["entries"]), s["id"]
 
-
-def test_html_output_is_sanitised():
+    # HTML output is sanitised
     evil = dict(JOURNAL, id="e", title='Bad <script>alert(1)</script><img src=x onerror=alert(1)> <i>italic</i>')
     out = fmt("apa", items=[evil])
     assert "<script" not in out["html"] and "<img" not in out["html"] and "onerror" not in out["html"]
@@ -274,7 +272,10 @@ def test_html_output_is_sanitised():
     assert cite.sanitize_html('<a href="javascript:x">l</a><span style="color:red" onclick="x">s</span><b>b</b>') == "l<span>s</span><b>b</b>"
 
 
-def test_format_endpoint_and_bad_style(server):
+def test_format_endpoint_settings_and_user_styles(server, tmp_path):
+    """/api/cite/format gives citations and bibliographies in a chosen or default style, refuses unknown styles
+    and modes; settings validate; an uploaded CSL style is usable, and unsafe, broken, dependent or huge style
+    files are refused (a broken one dropped in by hand is listed with an error); only user styles delete."""
     client, srv = server
     a = add(srv, title="Kinetic simulations", authors=["Jean-Pierre Boeuf"], year=2018, venue="Physics of Plasmas")
     r = client.post("/api/cite/format", json={"ids": [a["id"]], "mode": "citation", "style": "apa"}).json()
@@ -289,8 +290,40 @@ def test_format_endpoint_and_bad_style(server):
     assert client.put("/api/cite/settings", json={"copy": "nope"}).status_code == 400
     assert client.post("/api/cite/format", json={"ids": [a["id"]], "mode": "citation"}).json()["text"] == "(Boeuf, 2018)"
 
+    # user styles
+    r = client.post("/api/cite/styles", json={"filename": "my lab.csl", "content": STYLE_OK})
+    assert r.status_code == 201 and r.json()["id"] == "user:my-lab" and r.json()["title"] == "My lab style"
+    assert (srv.VAULT / "styles" / "my-lab.csl").exists()
+    a = add(srv, title="Kinetic", authors=["Jean Boeuf"], year=2018)
+    assert client.post("/api/cite/format", json={"ids": [a["id"]], "style": "user:my-lab"}).json()["text"].startswith("[1] J. Boeuf")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP-SECRET")
+    xxe = ('<?xml version="1.0"?><!DOCTYPE style [<!ENTITY x SYSTEM "file://' + str(secret) + '">]>'
+           '<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0"><info><title>&x;</title></info></style>')
+    r = client.post("/api/cite/styles", json={"filename": "xxe.csl", "content": xxe})
+    assert r.status_code == 400 and "DOCTYPE" in r.json()["detail"]
+    lol = '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;">]><style>&lol2;</style>'
+    assert client.post("/api/cite/styles", json={"filename": "lol.csl", "content": lol}).status_code == 400
+    assert client.post("/api/cite/styles", json={"filename": "x.csl", "content": "<not-closed"}).status_code == 400
+    assert client.post("/api/cite/styles", json={"filename": "x.csl", "content": "<html><body/></html>"}).status_code == 400
+    dep = ('<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0"><info><title>Dep</title>'
+           '<link href="http://www.zotero.org/styles/apa" rel="independent-parent"/></info></style>')
+    r = client.post("/api/cite/styles", json={"filename": "dep.csl", "content": dep})
+    assert r.status_code == 400 and "dependent" in r.json()["detail"]
+    assert client.post("/api/cite/styles", json={"filename": "big.csl", "content": "<a>" + "x" * (1 << 20) + "</a>"}).status_code == 400
+    assert not (srv.VAULT / "styles" / "xxe.csl").exists()
+    # a broken file dropped into the folder by hand is listed with an error, never crashes the list
+    (srv.VAULT / "styles" / "broken.csl").write_text("<style")
+    lst = {s["id"]: s for s in client.get("/api/cite/styles").json()["styles"]}
+    assert lst["user:broken"]["error"] and not lst["user:my-lab"]["error"]
+    assert client.post("/api/cite/format", json={"ids": [a["id"]], "style": "user:broken"}).status_code == 422
+    assert client.delete("/api/cite/styles/user:my-lab").json() == {"ok": True}
+    assert client.delete("/api/cite/styles/apa").status_code == 404
+
 
 def test_note_and_topic_scopes(server):
+    """Keys, exports and formatting take a note (the papers it links, a fragment through its paper), a topic,
+    or the whole library; a missing scope or unknown topic is refused; citation search finds papers."""
     client, srv = server
     a = add(srv, title="Alpha paper", authors=["Ann Alpha"], year=2001)
     b = add(srv, title="Beta paper", authors=["Bob Beta"], year=2002)
@@ -313,8 +346,11 @@ def test_note_and_topic_scopes(server):
 
 
 # ---------------------------------------------------------------------------------------------- BibTeX / RIS
-def test_bibtex_escaping_types_and_fields():
-    ents = [("boeuf2018electron", JOURNAL), ("doe2024neural", PREPRINT), ("wirz2021ion", CONFERENCE), ("hutchinson2002langmuir", CHAPTER)]
+def test_bibtex_ris_and_csl_json_exports():
+    """BibTeX and BibLaTeX get the right entry types, braced acronyms, accents (LaTeX or UTF-8), fields, arXiv
+    eprints, thesis and report types, and escaped specials with balanced braces; RIS and CSL-JSON carry the
+    same records."""
+    ents = ENTS
     bt = bibexport.to_bibtex(ents, "bibtex")
     bl = bibexport.to_bibtex(ents, "biblatex")
     assert "@article{boeuf2018electron," in bt and "@misc{doe2024neural," in bt
@@ -354,12 +390,31 @@ def test_bibtex_escaping_types_and_fields():
         assert depth >= 0
     assert depth == 0
 
+    # RIS and CSL-JSON
+    ris = bibexport.to_ris(ents)
+    recs = [r for r in ris.split("\r\n\r\n") if r.strip()]
+    assert len(recs) == 4
+    j = recs[0].split("\r\n")
+    assert j[0] == "TY  - JOUR" and j[-1].startswith("ER  -")
+    assert "AU  - Bœuf, Jean-Pierre" in j and "AU  - King, Martin, Jr." in j and "AU  - van Beethoven, Ludwig" in j
+    assert "PY  - 2018" in j and "DA  - 2018/06/03/" in j and "SP  - 061204" in j and "DO  - 10.1063/1.5017033" in j
+    assert "T2  - Physics of Plasmas" in j and "J2  - Phys. Plasmas" in j
+    p = recs[1].split("\r\n")
+    assert "TY  - UNPB" in p and "AN  - arXiv:2401.01234" in p
+    c = recs[2].split("\r\n")
+    assert "TY  - CPAPER" in c
+    b = recs[3].split("\r\n")
+    assert "TY  - CHAP" in b and "ED  - Chen, Francis F." in b and "SP  - 55" in b and "EP  - 104" in b
+    data = json.loads(bibexport.to_csl_json(ents))
+    assert [d["id"] for d in data] == [k for k, _ in ents] and data[0]["author"][0]["family"] == "Bœuf"
+
 
 def test_bibtex_round_trip_with_bibtexparser():
+    """Both flavours parse back with bibtexparser to the same keys, authors, title and fields."""
     bibtexparser = pytest.importorskip("bibtexparser")
     from bibtexparser.bparser import BibTexParser
     from bibtexparser.customization import convert_to_unicode
-    ents = [("boeuf2018electron", JOURNAL), ("doe2024neural", PREPRINT), ("wirz2021ion", CONFERENCE), ("hutchinson2002langmuir", CHAPTER)]
+    ents = ENTS
     for flavor in ("bibtex", "biblatex"):
         text = bibexport.to_bibtex(ents, flavor, header=bibexport.HEADER)
         parser = BibTexParser(common_strings=True)
@@ -381,65 +436,12 @@ def test_bibtex_round_trip_with_bibtexparser():
         assert re.sub(r"[{}]", "", got["wirz2021ion"]["booktitle"]) == CONFERENCE["container-title"]
 
 
-def test_ris_and_csl_json():
-    ents = [("boeuf2018electron", JOURNAL), ("doe2024neural", PREPRINT), ("wirz2021ion", CONFERENCE), ("hutchinson2002langmuir", CHAPTER)]
-    ris = bibexport.to_ris(ents)
-    recs = [r for r in ris.split("\r\n\r\n") if r.strip()]
-    assert len(recs) == 4
-    j = recs[0].split("\r\n")
-    assert j[0] == "TY  - JOUR" and j[-1].startswith("ER  -")
-    assert "AU  - Bœuf, Jean-Pierre" in j and "AU  - King, Martin, Jr." in j and "AU  - van Beethoven, Ludwig" in j
-    assert "PY  - 2018" in j and "DA  - 2018/06/03/" in j and "SP  - 061204" in j and "DO  - 10.1063/1.5017033" in j
-    assert "T2  - Physics of Plasmas" in j and "J2  - Phys. Plasmas" in j
-    p = recs[1].split("\r\n")
-    assert "TY  - UNPB" in p and "AN  - arXiv:2401.01234" in p
-    c = recs[2].split("\r\n")
-    assert "TY  - CPAPER" in c
-    b = recs[3].split("\r\n")
-    assert "TY  - CHAP" in b and "ED  - Chen, Francis F." in b and "SP  - 55" in b and "EP  - 104" in b
-    data = json.loads(bibexport.to_csl_json(ents))
-    assert [d["id"] for d in data] == [k for k, _ in ents] and data[0]["author"][0]["family"] == "Bœuf"
-
-
-# ---------------------------------------------------------------------------------------------- user styles
-STYLE_OK = (cite.STYLES_DIR / "american-physics-society.csl").read_text(encoding="utf-8").replace(
-    "<title>American Physical Society</title>", "<title>My lab style</title>")
-
-
-def test_user_style_upload_validation(server, tmp_path):
-    client, srv = server
-    r = client.post("/api/cite/styles", json={"filename": "my lab.csl", "content": STYLE_OK})
-    assert r.status_code == 201 and r.json()["id"] == "user:my-lab" and r.json()["title"] == "My lab style"
-    assert (srv.VAULT / "styles" / "my-lab.csl").exists()
-    a = add(srv, title="Kinetic", authors=["Jean Boeuf"], year=2018)
-    assert client.post("/api/cite/format", json={"ids": [a["id"]], "style": "user:my-lab"}).json()["text"].startswith("[1] J. Boeuf")
-    secret = tmp_path / "secret.txt"
-    secret.write_text("TOP-SECRET")
-    xxe = ('<?xml version="1.0"?><!DOCTYPE style [<!ENTITY x SYSTEM "file://' + str(secret) + '">]>'
-           '<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0"><info><title>&x;</title></info></style>')
-    r = client.post("/api/cite/styles", json={"filename": "xxe.csl", "content": xxe})
-    assert r.status_code == 400 and "DOCTYPE" in r.json()["detail"]
-    lol = '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;">]><style>&lol2;</style>'
-    assert client.post("/api/cite/styles", json={"filename": "lol.csl", "content": lol}).status_code == 400
-    assert client.post("/api/cite/styles", json={"filename": "x.csl", "content": "<not-closed"}).status_code == 400
-    assert client.post("/api/cite/styles", json={"filename": "x.csl", "content": "<html><body/></html>"}).status_code == 400
-    dep = ('<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0"><info><title>Dep</title>'
-           '<link href="http://www.zotero.org/styles/apa" rel="independent-parent"/></info></style>')
-    r = client.post("/api/cite/styles", json={"filename": "dep.csl", "content": dep})
-    assert r.status_code == 400 and "dependent" in r.json()["detail"]
-    assert client.post("/api/cite/styles", json={"filename": "big.csl", "content": "<a>" + "x" * (1 << 20) + "</a>"}).status_code == 400
-    assert not (srv.VAULT / "styles" / "xxe.csl").exists()
-    # a broken file dropped into the folder by hand is listed with an error, never crashes the list
-    (srv.VAULT / "styles" / "broken.csl").write_text("<style")
-    lst = {s["id"]: s for s in client.get("/api/cite/styles").json()["styles"]}
-    assert lst["user:broken"]["error"] and not lst["user:my-lab"]["error"]
-    assert client.post("/api/cite/format", json={"ids": [a["id"]], "style": "user:broken"}).status_code == 422
-    assert client.delete("/api/cite/styles/user:my-lab").json() == {"ok": True}
-    assert client.delete("/api/cite/styles/apa").status_code == 404
-
-
 # ---------------------------------------------------------------------------------------------- auto-export
-def test_auto_export_path_validation(server, tmp_path):
+def test_auto_export_validates_paths_and_rewrites_on_change(server, tmp_path):
+    """An auto-export path must be an absolute .bib in an existing folder outside the program and vault, not a
+    symlink or a file someone else wrote. The file is written atomically, rewritten only when the library
+    changes (also by the background thread), a topic export follows the topic, and a file swapped for a
+    symlink is refused."""
     client, srv = server
     from app import cite_api
     good = tmp_path / "thesis" / "refs.bib"
@@ -469,10 +471,7 @@ def test_auto_export_path_validation(server, tmp_path):
     assert client.post("/api/cite/auto-exports", json={"path": str(good), "flavor": "x"}).status_code == 400
     assert not (tmp_path / "elsewhere.bib").exists() and mine.read_text(encoding="utf-8").startswith("@article{x")
 
-
-def test_auto_export_rewrites_on_change(server, tmp_path):
-    client, srv = server
-    from app import cite_api
+    # an auto-export is written and kept up to date
     a = add(srv, title="Alpha paper", authors=["Ann Alpha"], year=2001)
     target = tmp_path / "out" / "library.bib"
     target.parent.mkdir()

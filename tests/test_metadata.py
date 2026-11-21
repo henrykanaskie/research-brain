@@ -9,7 +9,6 @@ real request path, redirects and host checks are exercised.
 """
 from __future__ import annotations
 
-import importlib
 import io
 import json
 import sys
@@ -21,7 +20,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-FIX = ROOT / "tests" / "fixtures" / "metadata"
+sys.path.insert(0, str(ROOT / "tests"))
+from rb_app import load_server  # noqa: E402
+
+FIX =ROOT / "tests" / "fixtures" / "metadata"
 
 
 def fx(name: str) -> bytes:
@@ -101,7 +103,10 @@ AX = "https://export.arxiv.org/api/query?id_list="
 
 
 # ---------------------------------------------------------------------------------------------- source mappings
-def test_crossref_aps_article_number_names_and_mathml_title(net, resolver):
+def test_doi_sources_crossref_journal_conference_and_datacite(net, resolver):
+    """Crossref maps a journal article (article number, name particles and suffixes, MathML title, polite-pool
+    User-Agent) and a conference paper (event, corporate author, abstract, ISBN); a DOI Crossref doesn't know falls
+    back to content negotiation, which redirects to DataCite."""
     net.routes[CR + "10.1103/physreve.101.063204"] = (200, fx("crossref_aps.json"))
     res = resolver.resolve({"doi": "https://doi.org/10.1103/PhysRevE.101.063204"})
     assert res["source"] == "crossref"
@@ -124,8 +129,7 @@ def test_crossref_aps_article_number_names_and_mathml_title(net, resolver):
     ua = net.calls[0][2]["User-Agent"]
     assert ua.startswith("research_brain/") and "mailto:me@example.org" in ua  # Crossref's polite pool
 
-
-def test_crossref_conference_paper_and_corporate_author(net, resolver):
+    # a conference paper with a corporate author
     net.routes[CR + "10.2514/6.2023-1234"] = (200, fx("crossref_aiaa_conf.json"))
     c = resolver.resolve({"doi": "10.2514/6.2023-1234"})["csl"]
     assert c["type"] == "paper-conference" and c["container-title"] == "AIAA SCITECH 2023 Forum"
@@ -134,22 +138,24 @@ def test_crossref_conference_paper_and_corporate_author(net, resolver):
     assert c["abstract"] == "We model wall erosion with ab initio sputtering yields."
     assert c["ISBN"] == "9781624106996"
 
-
-def test_not_a_crossref_doi_falls_back_to_content_negotiation_datacite(net, resolver):
+    # not a Crossref DOI: content negotiation at doi.org, redirected to DataCite
     def doi_org(url, headers):
         assert headers["Accept"] == "application/vnd.citationstyles.csl+json"
         return FakeResp(302, b"", {"Location": "https://api.datacite.org/dois/10.5281/zenodo.1234567"})
     net.routes["https://doi.org/10.5281/zenodo.1234567"] = doi_org
     net.routes["https://api.datacite.org/dois/10.5281/zenodo.1234567"] = (200, fx("datacite_csl.json"))
+    n0 = len(net.calls)
     res = resolver.resolve({"doi": "10.5281/ZENODO.1234567"})
     assert res["source"] == "datacite"
     c = res["csl"]
     assert c["type"] == "dataset" and c["publisher"] == "Zenodo" and c["DOI"] == "10.5281/zenodo.1234567"
     assert c["author"] == [{"family": "Hopper", "given": "Grace"}, {"literal": "PESPL Collaboration"}]
-    assert [u for u, _, _ in net.calls][0] == CR + "10.5281/zenodo.1234567"  # Crossref was asked first
+    assert [u for u, _, _ in net.calls][n0] == CR + "10.5281/zenodo.1234567"  # Crossref was asked first
 
 
-def test_arxiv_with_journal_doi_prefers_the_published_record_and_keeps_the_arxiv_id(net, resolver):
+def test_arxiv_published_record_preferred_and_preprint_mapped(net, resolver):
+    """An arXiv id with a journal DOI resolves to the published Crossref record, keeping the arXiv id and the
+    abstract Crossref lacked; a plain preprint maps to an arXiv article with its DataCite DOI."""
     net.routes[AX + "2001.01234"] = (200, fx("arxiv_journal.xml"))
     net.routes[CR + "10.1063/5.0012345"] = (200, fx("crossref_pop.json"))
     res = resolver.resolve({"arxiv": "arXiv:2001.01234v3"})
@@ -163,8 +169,7 @@ def test_arxiv_with_journal_doi_prefers_the_published_record_and_keeps_the_arxiv
     leg = legacy_from_csl(c)
     assert (leg["doi"], leg["arxiv"], leg["venue"]) == ("10.1063/5.0012345", "2001.01234", "Physics of Plasmas")
 
-
-def test_arxiv_preprint(net, resolver):
+    # a preprint with no journal version
     net.routes[AX + "2401.00001"] = (200, fx("arxiv_preprint.xml"))
     res = resolver.resolve({"arxiv": "2401.00001"})
     c = res["csl"]
@@ -172,12 +177,12 @@ def test_arxiv_preprint(net, resolver):
     assert (c["number"], c["archive"], c["publisher"]) == ("2401.00001", "arXiv", "arXiv")
     assert c["DOI"] == "10.48550/arxiv.2401.00001" and c["URL"] == "https://arxiv.org/abs/2401.00001"
     assert c["author"][1] == {"family": "Vries", "given": "Hans Peter", "non-dropping-particle": "de"}
-    from app.metadata import legacy_from_csl
     leg = legacy_from_csl(c)
     assert (leg["doi"], leg["arxiv"], leg["venue"], leg["year"]) == ("", "2401.00001", "arXiv", 2024)
 
 
-def test_pubmed(net, resolver):
+def test_pubmed_openlibrary_osti_and_ntrs_sources(net, resolver):
+    """PubMed (a PMID), Open Library (an ISBN), OSTI and NASA NTRS (their record URLs) each map to CSL-JSON."""
     net.routes["https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=31415926&retmode=json&tool=research_brain&email=me%40example.org"] = (200, fx("pubmed_esummary.json"))
     res = resolver.resolve({"pmid": "31415926"})
     c = res["csl"]
@@ -189,8 +194,7 @@ def test_pubmed(net, resolver):
     assert len(c["author"]) == 2  # the collective name is not an author entry here
     assert (c["PMID"], c["PMCID"], c["page"], c["issued"]) == ("31415926", "PMC6789012", "211-230", {"date-parts": [[2019, 11, 12]]})
 
-
-def test_openlibrary_book(net, resolver):
+    # a book from Open Library
     net.routes["https://openlibrary.org/api/books?bibkeys=ISBN%3A9780306307515&format=json&jscmd=data"] = (200, fx("openlibrary.json"))
     res = resolver.resolve({"isbn": "978-0-306-30751-5"})
     c = res["csl"]
@@ -201,8 +205,7 @@ def test_openlibrary_book(net, resolver):
     from app.metadata import legacy_from_csl
     assert legacy_from_csl(c)["venue"] == "Plenum Press"
 
-
-def test_osti_and_ntrs(net, resolver):
+    # reports from OSTI and NASA NTRS
     net.routes["https://www.osti.gov/api/v1/records/1617000"] = (200, fx("osti.json"))
     net.routes["https://ntrs.nasa.gov/api/citations/20200002395"] = (200, fx("ntrs.json"))
     o = resolver.resolve({}, url="https://www.osti.gov/biblio/1617000")
@@ -219,15 +222,15 @@ def test_osti_and_ntrs(net, resolver):
     assert c["container-title"] == "AIAA Propulsion and Energy Forum" and c["issued"] == {"date-parts": [[2020, 1, 6]]}
 
 
-def test_title_search_needs_a_near_exact_match(net, resolver):
+def test_title_search_needs_a_near_exact_match_and_semantic_scholar_is_the_last_fallback(net, resolver):
+    """A title search only accepts a near exact match; when Crossref and doi.org fail, Semantic Scholar answers,
+    and an S2 record the import already has is used without fetching it again."""
     net.routes["https://api.crossref.org/works?query.bibliographic=*"] = (200, fx("crossref_search.json"))
     res = resolver.resolve({}, title="Machine learning for plasma diagnostics: A review")
     assert res["source"] == "crossref" and res["csl"]["DOI"] == "10.1088/1361-6595/ab9b52"
     assert res["csl"]["page"] == "074001"
     assert resolver.resolve({}, title="Machine learning for fusion reactor control systems") is None
 
-
-def test_semantic_scholar_is_the_last_fallback(net, resolver):
     # Crossref unreachable (5xx), no negotiation answer: S2 (raw API JSON) answers
     net.routes[CR + "10.1063/1.4945558"] = (503, b"")
     net.routes["https://doi.org/10.1063/1.4945558"] = (503, b"")
@@ -286,7 +289,7 @@ def test_page_record_is_the_last_resort_and_fills_gaps(net, resolver):
 
 
 # ---------------------------------------------------------------------------------------------- normalisation
-@pytest.mark.parametrize("raw,want", [
+NAMES = [
     ("van der Waals, Johannes Diderik", {"family": "Waals", "given": "Johannes Diderik", "non-dropping-particle": "van der"}),
     ("Ludwig van Beethoven", {"family": "Beethoven", "given": "Ludwig", "non-dropping-particle": "van"}),
     ("de la Cruz, María", {"family": "Cruz", "given": "María", "non-dropping-particle": "de la"}),
@@ -299,13 +302,16 @@ def test_page_record_is_the_last_resort_and_fills_gaps(net, resolver):
     ({"name": "W7-X Team"}, {"literal": "W7-X Team"}),
     ({"given": "JEAN-PIERRE", "family": "BOEUF"}, {"family": "Boeuf", "given": "Jean-Pierre"}),
     ({"family": "Langmuir", "given": "Irving", "suffix": "III"}, {"family": "Langmuir", "given": "Irving", "suffix": "III"}),
-])
-def test_name_normalisation(raw, want):
+]
+
+
+def test_normalisation_of_names_titles_dates_types_and_identifiers():
+    """Names split into particles, suffixes, initials and corporate literals; titles keep their case and TeX but
+    lose markup; dates, Crossref types, DOIs, ISBNs and identifiers in URLs are normalised."""
     from app.metadata import norm_name
-    assert norm_name(raw) == want
-
-
-def test_titles_keep_case_and_tex_and_lose_markup():
+    for raw, want in NAMES:
+        got = norm_name(raw)
+        assert got == want, f"norm_name({raw!r}) gave {got!r}, expected {want!r}"
     from app.metadata import clean_markup, clean_abstract
     assert clean_markup("The <i>pH</i> of H<sub>2</sub>O in a DC <b>Glow</b>") == "The pH of H2O in a DC Glow"
     assert clean_markup('Drift of <math alttext="\\nabla B"><mi>∇</mi><mi>B</mi></math> and $\\beta$ &amp; more') == \
@@ -314,9 +320,6 @@ def test_titles_keep_case_and_tex_and_lose_markup():
     assert clean_markup("<mml:math><mml:mi>T</mml:mi><mml:mi>e</mml:mi></mml:math> scaling") == "Te scaling"
     assert clean_markup("eBay and iPhone and LaTeX") == "eBay and iPhone and LaTeX"  # never re-cased
     assert clean_abstract("<jats:title>Abstract</jats:title><jats:p>One.</jats:p><jats:p>Two.</jats:p>") == "One.\n\nTwo."
-
-
-def test_dates_types_and_identifiers():
     from app import metadata as md
     assert md.date_parts("2020/06/04") == {"date-parts": [[2020, 6, 4]]}
     assert md.date_parts("2019 Nov 12") == {"date-parts": [[2019, 11, 12]]}
@@ -334,7 +337,9 @@ def test_dates_types_and_identifiers():
 
 
 # ---------------------------------------------------------------------------------------------- cache, rate limit
-def test_cache_serves_repeats_and_expires(net, tmp_path):
+def test_cache_serves_repeats_and_expires_and_rate_limiter_spaces_requests_per_host(net, tmp_path):
+    """The cache answers repeats (also from disk), keeps "not found" for an hour, never keeps errors and expires;
+    the rate limiter spaces requests to one host without making other hosts wait."""
     from app import metadata as md
     clock = [1000.0]
     cache = md.Cache(tmp_path / "c.json", days=1, neg_hours=1, clock=lambda: clock[0])
@@ -356,8 +361,7 @@ def test_cache_serves_repeats_and_expires(net, tmp_path):
     clock[0] += 2 * 86400
     assert r.crossref("10.1063/5.0012345") and len(net.calls) == 5  # expired: asked again
 
-
-def test_rate_limiter_spaces_requests_per_host():
+    # the rate limiter
     from app.metadata import RateLimiter
     t = [0.0]
     slept = []
@@ -374,8 +378,17 @@ def test_rate_limiter_spaces_requests_per_host():
 
 
 # ---------------------------------------------------------------------------------------------- SSRF guard
-def test_only_allowed_hosts_and_public_addresses(net, resolver, monkeypatch):
+def test_only_allowed_hosts_public_addresses_and_plain_small_answers(net, resolver, monkeypatch):
+    """Compressed or oversized answers are refused; redirects to other hosts aren't followed; every request goes
+    over https to an allowed API host; a private address is refused before connecting; the local fetch only
+    takes 127.0.0.1, a port and a path."""
     from app import metadata as md, urlfetch
+    net.routes["https://api.crossref.org/works/10.1/gz"] = FakeResp(200, b"x", {"Content-Encoding": "gzip"})
+    net.routes["https://api.crossref.org/works/10.1/big"] = FakeResp(200, b"x" * 5000)
+    with pytest.raises(urlfetch.FetchError):
+        urlfetch.fetch("https://api.crossref.org/works/10.1/gz", allowed_hosts={"api.crossref.org"})
+    with pytest.raises(urlfetch.FetchError):
+        urlfetch.fetch("https://api.crossref.org/works/10.1/big", allowed_hosts={"api.crossref.org"}, max_bytes=1000)
     # a redirect to a host that isn't an API host is refused (not followed)
     net.routes[CR + "10.1000/redir"] = FakeResp(302, b"", {"Location": "https://evil.example.com/x"})
     net.routes["https://doi.org/10.1000/redir"] = FakeResp(302, b"", {"Location": "http://169.254.169.254/latest/meta-data"})
@@ -401,16 +414,6 @@ def test_only_allowed_hosts_and_public_addresses(net, resolver, monkeypatch):
         urlfetch.fetch_local(0, "/web")
 
 
-def test_compressed_or_oversized_answers_are_refused(net):
-    from app import urlfetch
-    net.routes["https://api.crossref.org/works/10.1/gz"] = FakeResp(200, b"x", {"Content-Encoding": "gzip"})
-    net.routes["https://api.crossref.org/works/10.1/big"] = FakeResp(200, b"x" * 5000)
-    with pytest.raises(urlfetch.FetchError):
-        urlfetch.fetch("https://api.crossref.org/works/10.1/gz", allowed_hosts={"api.crossref.org"})
-    with pytest.raises(urlfetch.FetchError):
-        urlfetch.fetch("https://api.crossref.org/works/10.1/big", allowed_hosts={"api.crossref.org"}, max_bytes=1000)
-
-
 # ---------------------------------------------------------------------------------------------- merge rules
 class MiniStore:
     """Enough of app/store.Store for apply()."""
@@ -423,9 +426,12 @@ class MiniStore:
         return getattr(self.s, k)
 
 
-def test_apply_crossref_beats_page_and_page_never_overwrites_crossref(tmp_path):
+def test_merge_rules_source_priority_zotero_data_and_your_edits(tmp_path):
+    """Crossref replaces a page record but a later page never replaces Crossref; Zotero data is never overwritten,
+    only its gaps filled; an old paper without a record only gets gaps filled unless refreshed; your edits flow into
+    the record and survive refreshes unless you ask to replace them. Each case on its own vault."""
     from app import metadata as md
-    st = MiniStore(tmp_path)
+    st = MiniStore(tmp_path / "priority")
     n = st.create({"type": "paper", "title": "breathing mode osc. (scraped)", "authors": ["A. Physicist"], "year": 2015})
     cr = md.csl_from_crossref(json.loads(fx("crossref_aps.json"))["message"])
     page = md.csl_from_page({"title": "Page title", "authors": ["X Y"], "year": 2019, "venue": "Some venue"})
@@ -443,10 +449,8 @@ def test_apply_crossref_beats_page_and_page_never_overwrites_crossref(tmp_path):
     # the record round-trips through the note file
     assert md.legacy_from_csl(st.s._parse(n["id"], st.note_path(n["id"]).read_text(encoding="utf-8"))["csl"])["year"] == 2020
 
-
-def test_zotero_metadata_is_not_overwritten_but_gaps_are_filled(tmp_path):
-    from app import metadata as md
-    st = MiniStore(tmp_path)
+    # Zotero metadata is not overwritten but gaps are filled
+    st = MiniStore(tmp_path / "zotero")
     n = st.create({"type": "paper", "title": "Kinetic simulation of ExB instability (my Zotero title)",
                    "authors": ["J. van der Berg"], "year": 2020, "venue": "Phys. Rev. E", "doi": "10.1103/PhysRevE.101.063204",
                    "zotero_key": "ZK1", "meta_source": "zotero"})
@@ -459,10 +463,8 @@ def test_zotero_metadata_is_not_overwritten_but_gaps_are_filled(tmp_path):
     assert got["csl"]["volume"] == "101" and got["csl"]["page"] == "063204" and got["csl"]["ISSN"]  # filled in
     assert got["csl"]["type"] == "article-journal"
 
-
-def test_old_paper_without_a_record_only_gets_gaps_filled_unless_refreshed(tmp_path):
-    from app import metadata as md
-    st = MiniStore(tmp_path)
+    # an old paper without a record only gets gaps filled unless refreshed
+    st = MiniStore(tmp_path / "old")
     n = st.create({"type": "paper", "title": "My own title for it", "authors": ["Someone"], "doi": "10.1063/5.0012345"})
     cr = md.csl_from_crossref(json.loads(fx("crossref_pop.json"))["message"])
     md.apply(st, n["id"], {"csl": cr, "source": "crossref"})  # a background pass, not fresh, not forced
@@ -472,10 +474,8 @@ def test_old_paper_without_a_record_only_gets_gaps_filled_unless_refreshed(tmp_p
     md.apply(st, n["id"], {"csl": cr, "source": "crossref"}, force=True, keep_edits=False)
     assert st.get(n["id"])["title"] == "Sheath formation at a floating wall: a kinetic study"
 
-
-def test_edits_flow_into_the_record_and_survive_lookups(tmp_path):
-    from app import metadata as md
-    st = MiniStore(tmp_path)
+    # edits flow into the record and survive lookups
+    st = MiniStore(tmp_path / "edits")
     n = st.create({"type": "paper", "title": "x", "doi": "10.1063/5.0012345"})
     cr = md.csl_from_crossref(json.loads(fx("crossref_pop.json"))["message"])
     md.apply(st, n["id"], {"csl": cr, "source": "crossref"}, fresh=True)
@@ -534,17 +534,8 @@ def test_pdf_xmp_and_info_doi(tmp_path):
 # ---------------------------------------------------------------------------------------------- the app
 @pytest.fixture()
 def app_env(tmp_path, monkeypatch, net):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_CITES_ON_IMPORT", "0")
-    monkeypatch.setenv("RB_PDF_INPROCESS", "1")
-    monkeypatch.setenv("RB_METADATA", "1")
-    monkeypatch.setenv("RB_TRANSLATION_SERVER_PORT", "0")
-    for m in [m for m in sys.modules if m == "app" or m.startswith("app.")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path, RB_DATA_DIR=tmp_path / "data", RB_CITES_ON_IMPORT="0",
+                         RB_PDF_INPROCESS="1", RB_METADATA="1", RB_TRANSLATION_SERVER_PORT="0")
     import app.urlfetch as uf  # the re-imported module: patch it again
     monkeypatch.setattr(uf, "resolve", lambda host: ["93.184.216.34"])
     monkeypatch.setattr(uf, "_request", net.request)
@@ -558,7 +549,9 @@ def app_env(tmp_path, monkeypatch, net):
     return TestClient(server.app), server, events
 
 
-def test_linked_import_resolves_crossref_within_the_response(app_env, net):
+def test_linked_import_resolves_crossref_within_the_response_and_isbn_lookup_uses_open_library(app_env, net):
+    """A linked import gets the Crossref record (with the page's abstract filling the gap) before it answers and
+    publishes a metadata event; a lookup by ISBN that Semantic Scholar can't answer comes from Open Library."""
     c, server, events = app_env
     net.routes[CR + "10.1103/physreve.101.063204"] = (200, fx("crossref_aps.json"))
     r = c.post("/api/import/linked", json={
@@ -572,6 +565,14 @@ def test_linked_import_resolves_crossref_within_the_response(app_env, net):
     assert n["authors"] == ["Johannes D. van der Berg", "Martin King Jr.", "J.-P. Boeuf"]
     assert n["source"] == "linked"
     assert any(e.get("reason") == "metadata" and e["ids"] == [n["id"]] for e in events)
+
+    # lookup by ISBN when Semantic Scholar has nothing
+    net.routes["https://openlibrary.org/api/books?bibkeys=ISBN%3A9780306307515&format=json&jscmd=data"] = (200, fx("openlibrary.json"))
+    r = c.post("/api/import/lookup", json={"query": "ISBN 978-0-306-30751-5"})
+    assert r.status_code == 201, r.text
+    n = r.json()
+    assert n["title"].startswith("Introduction to Plasma Physics") and n["authors"] == ["Francis F. Chen"]
+    assert n["meta_source"] == "openlibrary" and n["csl"]["type"] == "book" and n["year"] == 1984
 
 
 def test_pdf_import_resolves_in_the_background_with_a_live_event(app_env, net):
@@ -601,17 +602,10 @@ def test_pdf_import_resolves_in_the_background_with_a_live_event(app_env, net):
     assert {"type": "notes-changed", "ids": [nid], "reason": "metadata", "source": "crossref"} in events
 
 
-def test_lookup_by_isbn_when_semantic_scholar_has_nothing(app_env, net):
-    c, server, events = app_env
-    net.routes["https://openlibrary.org/api/books?bibkeys=ISBN%3A9780306307515&format=json&jscmd=data"] = (200, fx("openlibrary.json"))
-    r = c.post("/api/import/lookup", json={"query": "ISBN 978-0-306-30751-5"})
-    assert r.status_code == 201, r.text
-    n = r.json()
-    assert n["title"].startswith("Introduction to Plasma Physics") and n["authors"] == ["Francis F. Chen"]
-    assert n["meta_source"] == "openlibrary" and n["csl"]["type"] == "book" and n["year"] == 1984
-
-
-def test_refresh_endpoint(app_env, net):
+def test_refresh_endpoint_and_disabled_means_no_requests(app_env, net, monkeypatch):
+    """The refresh endpoint updates a paper from Crossref and publishes an event, refuses fragments (400) and
+    unknown ids (404), and says when nothing is found; with RB_METADATA=0 nothing is scheduled or fetched and
+    refresh is a 503."""
     c, server, events = app_env
     n = server.store.create({"type": "paper", "title": "old scraped title", "doi": "10.1063/5.0012345"})
     net.routes[CR + "10.1063/5.0012345"] = (200, fx("crossref_pop.json"))
@@ -628,12 +622,10 @@ def test_refresh_endpoint(app_env, net):
     n2 = server.store.create({"type": "paper", "title": "zz", "doi": "10.9999/missing"})
     out = c.post(f"/api/notes/{n2['id']}/refresh-metadata").json()
     assert out["metadata"]["found"] is False and out["title"] == "zz"
-
-
-def test_disabled_means_no_requests(app_env, net, monkeypatch):
-    c, server, events = app_env
+    # switched off: no requests at all
     monkeypatch.setenv("RB_METADATA", "0")
+    n0 = len(net.calls)
     n = server.store.create({"type": "paper", "title": "x", "doi": "10.1063/5.0012345"})
     assert server.metadata.schedule(server.store, n["id"], wait=1) is False
     assert c.post(f"/api/notes/{n['id']}/refresh-metadata").status_code == 503
-    assert net.calls == []
+    assert len(net.calls) == n0, net.calls[n0:]

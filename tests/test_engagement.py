@@ -1,23 +1,28 @@
-"""Node importance inputs: opens counter + mass in /api/graph."""
-import importlib
+"""Node importance inputs (the opens counter and mass in /api/graph) and the note files they sit beside."""
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from rb_app import load_server  # noqa: E402
 
 
-def test_opens_and_mass(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "v"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
-    from fastapi.testclient import TestClient
-    c = TestClient(server.app)
+def _client(tmp_path, monkeypatch):
+    server = load_server(monkeypatch, tmp_path, vault=tmp_path / "v")
+    return server, TestClient(server.app)
+
+
+def test_opens_count_add_mass_show_after_a_cached_graph_and_are_forgotten_on_delete(tmp_path, monkeypatch):
+    """Opening a note counts without editing it, gives it more mass, shows in a graph fetched before the opens
+    (regression: the graph bytes were cached by the note index signature only, so later opens never showed up),
+    and a deleted note's opens are forgotten (regression: a new note reusing the slug started "visited")."""
+    _, c = _client(tmp_path, monkeypatch)
     a = c.post("/api/notes", json={"type": "paper", "title": "Studied", "summary": "word " * 120}).json()
     b = c.post("/api/notes", json={"type": "paper", "title": "Filed"}).json()
+    opens = lambda: {n["id"]: n["opens"] for n in c.get("/api/graph").json()["nodes"]}  # noqa: E731
+    assert opens()[a["id"]] == 0  # the graph is fetched (and cached) before any open
     before = c.get(f"/api/notes/{a['id']}").json()["updated"]
     for _ in range(3):
         assert c.post(f"/api/notes/{a['id']}/opened").status_code == 200
@@ -26,29 +31,11 @@ def test_opens_and_mass(tmp_path, monkeypatch):
     assert nodes[a["id"]]["opens"] == 3 and nodes[b["id"]]["opens"] == 0
     assert nodes[a["id"]]["mass"] > nodes[b["id"]]["mass"]
     assert c.post("/api/notes/no-such-note/opened").status_code == 404
-
-
-def _client(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "v"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
-    from fastapi.testclient import TestClient
-    return server, TestClient(server.app)
-
-
-def test_graph_cache_sees_new_opens(tmp_path, monkeypatch):
-    # regression: /api/graph bytes were cached by the note index signature only, so opens counted
-    # after the first graph fetch never showed up (and the page's next refresh shrank the node back)
-    _, c = _client(tmp_path, monkeypatch)
-    a = c.post("/api/notes", json={"type": "note", "title": "Visited"}).json()
-    opens = lambda: {n["id"]: n["opens"] for n in c.get("/api/graph").json()["nodes"]}[a["id"]]
-    assert opens() == 0
-    c.post(f"/api/notes/{a['id']}/opened")
-    c.post(f"/api/notes/{a['id']}/opened")
-    assert opens() == 2
+    # deleting forgets the opens: a new note that reuses the slug starts unvisited
+    assert c.delete(f"/api/notes/{a['id']}").status_code == 200
+    again = c.post("/api/notes", json={"type": "paper", "title": "Studied"}).json()
+    assert again["id"] == a["id"]
+    assert opens()[again["id"]] == 0
 
 
 def test_unparseable_frontmatter_is_not_overwritten(tmp_path, monkeypatch):
@@ -65,18 +52,6 @@ def test_unparseable_frontmatter_is_not_overwritten(tmp_path, monkeypatch):
     assert r.status_code == 409 and "frontmatter" in r.json()["detail"]
     c.delete(f"/api/notes/{b['id']}")  # would rewrite a's links list
     assert p.read_text(encoding="utf-8") == broken
-
-
-def test_delete_forgets_opens(tmp_path, monkeypatch):
-    # regression: engagement.json kept deleted ids, so a new note that reused the slug started "visited"
-    _, c = _client(tmp_path, monkeypatch)
-    a = c.post("/api/notes", json={"type": "note", "title": "Reused"}).json()
-    for _ in range(4):
-        c.post(f"/api/notes/{a['id']}/opened")
-    assert c.delete(f"/api/notes/{a['id']}").status_code == 200
-    b = c.post("/api/notes", json={"type": "note", "title": "Reused"}).json()
-    assert b["id"] == a["id"]
-    assert {n["id"]: n["opens"] for n in c.get("/api/graph").json()["nodes"]}[b["id"]] == 0
 
 
 def test_state_files_live_outside_index_and_migrate(tmp_path):

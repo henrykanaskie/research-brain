@@ -5,13 +5,14 @@ open-access downloader are replaced.
 """
 from __future__ import annotations
 
-import importlib
 import io
 import json
 import sys
 from pathlib import Path
 
 import pytest
+
+from rb_app import load_server
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -47,15 +48,8 @@ def _pdf(title="Breathing-mode oscillations in Hall thrusters", lines=("Page one
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_CITES_ON_IMPORT", "0")
-    monkeypatch.setenv("RB_PDF_INPROCESS", "1")
-    for m in [m for m in sys.modules if m == "app" or m.startswith("app.")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path, RB_DATA_DIR=tmp_path / "data", RB_CITES_ON_IMPORT="0",
+                         RB_PDF_INPROCESS="1")
     lookups = []
 
     def lookup(q):
@@ -72,7 +66,10 @@ def _text(server, nid):
 
 
 # ------------------------------------------------------------------ the endpoint
-def test_import_linked_creates_a_paper_with_text_and_no_pdf(env):
+def test_import_linked_creates_a_paper_with_text_and_no_pdf(env, monkeypatch):
+    """A linked article becomes a paper with its text, metadata and link but no PDF file, shown as a paper on the
+    map; its own metadata is enough (Semantic Scholar isn't asked), and thin metadata is filled from Semantic
+    Scholar."""
     c, server, lookups = env
     r = c.post("/api/import/linked", json=ARTICLE)
     assert r.status_code == 201, r.text
@@ -93,9 +90,18 @@ def test_import_linked_creates_a_paper_with_text_and_no_pdf(env):
     # an ordinary note's file doesn't grow a source line
     other = c.post("/api/notes", json={"title": "Plain note"}).json()
     assert "source:" not in server.store.note_path(other["id"]).read_text(encoding="utf-8")
+    # thin metadata (an arXiv link and a line of text): filled from Semantic Scholar
+    monkeypatch.setattr(server.scholar, "lookup", lambda q: lookups.append(q) or {
+        "title": "Attention Is All You Need", "authors": ["Ashish Vaswani"], "year": 2017, "arxiv": "1706.03762",
+        "s2_id": "s2-attn", "venue": "NeurIPS", "doi": "", "abstract": "Transformers."})
+    n = c.post("/api/import/linked", json={"url": "https://arxiv.org/abs/1706.03762v7", "text": "[[section Abstract]]\n\nT."}).json()
+    assert lookups == ["arXiv:1706.03762"]
+    assert n["title"] == "Attention Is All You Need" and n["s2_id"] == "s2-attn" and n["year"] == 2017
 
 
-def test_import_linked_validation_and_caps(env, monkeypatch):
+def test_import_linked_validation_caps_and_origin(env, monkeypatch):
+    """Bad links, kinds and empty articles are refused, text is capped, control characters are stripped, JSON only
+    within the size limit; only the research_brain extension (or the app) may import, and it can read the prefs."""
     c, server, _ = env
     for bad in ("javascript:alert(1)", "file:///etc/passwd", "ftp://x.example/a", "https://user:pw@x.example/a", "", "nope"):
         assert c.post("/api/import/linked", json=dict(ARTICLE, url=bad)).status_code == 400, bad
@@ -125,10 +131,7 @@ def test_import_linked_validation_and_caps(env, monkeypatch):
     # and the request size limit applies (16 MB JSON by default)
     from app.security import Policy
     assert Policy().limit_for("/api/import/linked") == Policy().max_json
-
-
-def test_import_linked_origin(env):
-    c, server, _ = env
+    # only the research_brain extension may post from a browser
     r = c.post("/api/import/linked", json=ARTICLE, headers={"Origin": "https://evil.example"})
     assert r.status_code == 403
     r = c.post("/api/import/linked", json=ARTICLE, headers={"Origin": "chrome-extension://" + "a" * 32})
@@ -206,16 +209,6 @@ def test_no_pdf_download_for_linked_papers_unless_asked(env, monkeypatch):
     assert len({n["id"], n2["id"], n3["id"]}) == 3
 
 
-def test_thin_metadata_is_filled_from_semantic_scholar(env, monkeypatch):
-    c, server, lookups = env
-    monkeypatch.setattr(server.scholar, "lookup", lambda q: lookups.append(q) or {
-        "title": "Attention Is All You Need", "authors": ["Ashish Vaswani"], "year": 2017, "arxiv": "1706.03762",
-        "s2_id": "s2-attn", "venue": "NeurIPS", "doi": "", "abstract": "Transformers."})
-    n = c.post("/api/import/linked", json={"url": "https://arxiv.org/abs/1706.03762v7", "text": "[[section Abstract]]\n\nT."}).json()
-    assert lookups == ["arXiv:1706.03762"]
-    assert n["title"] == "Attention Is All You Need" and n["s2_id"] == "s2-attn" and n["year"] == 2017
-
-
 def test_references_become_cites(env):
     c, server, _ = env
     boeuf = server.store.create({"type": "paper", "title": "Low frequency oscillations", "doi": "10.1063/1.368529"})
@@ -231,7 +224,9 @@ def test_references_become_cites(env):
 
 
 # ------------------------------------------------------------------ sections -> passages -> citations
-def test_section_markers_become_passages_with_section_labels():
+def test_section_markers_become_passages_with_section_labels_and_article_links():
+    """Section headings get short labels and split the text into passages (PDF text keeps its pages); article_url
+    links a passage into the article by page or by its first words (or the heading when they are symbols)."""
     from app.chunks import chunk_note, passage_where, section_label, split_sections
     assert section_label("3.2 Frequency scaling") == "3.2"
     assert section_label("1. Introduction") == "1"
@@ -253,6 +248,14 @@ def test_section_markers_become_passages_with_section_labels():
     assert [(r["page"], "section" in r) for r in pdf_rows] == [(1, False), (2, False)]
     # a heading carries over a page break when a text has both
     assert split_sections("[[section 2 Theory]]\nA\n[[page 5]]\nB") == [(None, "2 Theory", "\nA\n"), (5, "2 Theory", "\nB")]
+    from app.server import article_url
+    assert article_url("https://x.example/a#top", 3, "whatever") == "https://x.example/a#page=3"
+    assert article_url("https://x.example/a", None, "The ion-acoustic speed sets everything here") == \
+        "https://x.example/a#:~:text=The%20ion%2Dacoustic%20speed%20sets%20everything%20here"
+    # math or symbols in the first words: fall back to the section heading
+    assert article_url("https://x.example/a", None, "$T_e$ = 5 eV in all runs", "2.1 Probe analysis") == \
+        "https://x.example/a#:~:text=2.1%20Probe%20analysis"
+    assert article_url("https://x.example/a", None, "", "") == "https://x.example/a"
 
 
 def test_chat_cites_sections_and_links_into_the_article(env):
@@ -277,17 +280,6 @@ def test_chat_cites_sections_and_links_into_the_article(env):
     assert row["url"].startswith(HALL_URL) and server.agent_tools.fmt_passage(row).startswith(f"[[{nid}]] §3.2 |")
 
 
-def test_article_url_fragments():
-    from app.server import article_url
-    assert article_url("https://x.example/a#top", 3, "whatever") == "https://x.example/a#page=3"
-    assert article_url("https://x.example/a", None, "The ion-acoustic speed sets everything here") == \
-        "https://x.example/a#:~:text=The%20ion%2Dacoustic%20speed%20sets%20everything%20here"
-    # math or symbols in the first words: fall back to the section heading
-    assert article_url("https://x.example/a", None, "$T_e$ = 5 eV in all runs", "2.1 Probe analysis") == \
-        "https://x.example/a#:~:text=2.1%20Probe%20analysis"
-    assert article_url("https://x.example/a", None, "", "") == "https://x.example/a"
-
-
 # ------------------------------------------------------------------ PDF bytes: link + text, and the upgrade
 def test_pdf_bytes_keep_pdf_0_makes_a_linked_paper_with_pages(env):
     c, server, _ = env
@@ -305,6 +297,8 @@ def test_pdf_bytes_keep_pdf_0_makes_a_linked_paper_with_pages(env):
 
 
 def test_upgrade_attaches_the_pdf_and_page_text_wins(env):
+    """A PDF for a linked paper (from the page, or uploaded) attaches to it: it becomes a PDF paper whose page text
+    replaces the sections and whose passages open the viewer; a second PDF, a non-paper and a missing note are refused."""
     c, server, _ = env
     nid = c.post("/api/import/linked", json=ARTICLE).json()["id"]
     r = c.post("/api/import/pdf-bytes", params={"note": nid, "source_url": ARTICLE["pdf_url"]},
@@ -331,11 +325,8 @@ def test_upgrade_attaches_the_pdf_and_page_text_wins(env):
                   headers={"Content-Type": "application/pdf"}).status_code == 400
     assert c.post("/api/import/pdf-bytes", params={"note": "no-such-note"}, content=_pdf(title="Fourth"),
                   headers={"Content-Type": "application/pdf"}).status_code == 404
-
-
-def test_upload_attach_also_upgrades(env):
-    c, server, _ = env
-    nid = c.post("/api/import/linked", json=ARTICLE).json()["id"]
-    r = c.post(f"/api/notes/{nid}/pdf", files={"file": ("x.pdf", _pdf(), "application/pdf")})
+    # uploading a PDF to a linked paper upgrades it too
+    nid = c.post("/api/import/linked", json=dict(ARTICLE, doi="10.5555/upload", url="https://x.example/upload", pdf_url="")).json()["id"]
+    r = c.post(f"/api/notes/{nid}/pdf", files={"file": ("x.pdf", _pdf(title="Uploaded to attach"), "application/pdf")})
     assert r.status_code == 200 and r.json()["source"] == "pdf" and r.json()["has_pdf"]
     assert "[[page 1]]" in _text(server, nid)

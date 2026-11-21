@@ -3,7 +3,6 @@ and a static check that the extension contains no AI and talks only to this comp
 
 The /api/import/url tests replace app.urlfetch's DNS lookup and HTTP GET, so nothing touches the network.
 """
-import importlib
 import io
 import json
 import re
@@ -15,6 +14,8 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 EXT = ROOT / "extension"
+
+from rb_app import load_server  # noqa: E402
 
 ATTN = dict(s2_id="s2-attn", title="Attention Is All You Need", year=2017,
             authors=["Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit"], venue="NeurIPS", doi="",
@@ -37,13 +38,7 @@ def _pdf(title="Sheath physics", line="The Bohm criterion holds.", arxiv=""):
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_CITES_ON_IMPORT", "0")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path, RB_CITES_ON_IMPORT="0")
     scholar = server.scholar
 
     def lookup(q):
@@ -93,7 +88,10 @@ def web(env, monkeypatch):
 
 
 # ------------------------------------------------------------------ selectors + /api/fragments
-def test_clip_selector_round_trip_and_page_fragments(env):
+def test_clip_selectors_page_fragments_and_citations(env):
+    """A clip keeps its text selector (in the file too), junk selectors become null, GET /api/fragments?url
+    returns a page's highlights oldest first with its note or paper, an arXiv page gets the paper's citation,
+    and the short citation format reads right."""
     c, server = env
     url = "https://blog.example.com/posts/sheaths"
     sel = {"exact": "the sheath edge", "prefix": "Ions reach ", "suffix": " at the Bohm speed"}
@@ -123,7 +121,7 @@ def test_clip_selector_round_trip_and_page_fragments(env):
     plain = server.store.note_path(parent["id"]).read_text(encoding="utf-8")
     assert "selector" not in plain  # not written for notes without one
 
-    # GET /api/fragments?url — same page (hash and trailing slash ignored), oldest first, with selectors
+    # GET /api/fragments?url: same page (hash and trailing slash ignored), oldest first, with selectors
     d = c.get("/api/fragments", params={"url": url + "/#top"}).json()
     assert [f["selector"] for f in d["fragments"]] == [sel, sel2]
     assert d["fragments"][0]["body"] == "Why $v \\geq c_s$?" and d["fragments"][1]["body"] == ""
@@ -132,9 +130,7 @@ def test_clip_selector_round_trip_and_page_fragments(env):
     assert c.get("/api/fragments", params={"url": "https://other.example/b"}).json()["fragments"] == []
     assert c.get("/api/fragments").status_code == 400
 
-
-def test_page_fragments_on_arxiv_carry_citation(env):
-    c, _ = env
+    # on an arXiv page the parent is the paper, with its citation
     url = "https://arxiv.org/abs/1706.03762v7"
     r = c.post("/api/clip", json={"quote": "multi-head attention", "url": url, "note": "",
                                   "selector": {"exact": "multi-head attention", "prefix": "we use ", "suffix": "."}})
@@ -146,9 +142,7 @@ def test_page_fragments_on_arxiv_carry_citation(env):
     assert "arXiv:1706.03762" in p["citation"]
     assert len(d["fragments"]) == 1
 
-
-def test_citation_format(env):
-    _, server = env
+    # the citation format
     cite = server._citation
     assert cite({"authors": ["Ada Lovelace"], "year": 1843, "title": "Notes", "venue": "Taylor", "doi": "10.1/x"}) \
         == "Lovelace, A. (1843). Notes. Taylor. https://doi.org/10.1/x"
@@ -158,6 +152,8 @@ def test_citation_format(env):
 
 # ------------------------------------------------------------------ /api/import/url
 def test_import_url_downloads_and_dedupes(env, web):
+    """A PDF URL is downloaded (following a redirect) into a new paper; the same paper again opens the existing
+    one without a download, and behind another URL it is downloaded then deduped by arXiv id."""
     c, server = env
     pdf = _pdf("Attention Is All You Need", "Self attention.", arxiv="1706.03762")
     web["routes"]["https://arxiv.org/pdf/1706.03762"] = lambda: FakeResp(
@@ -185,7 +181,9 @@ def test_import_url_downloads_and_dedupes(env, web):
     assert len([x for x in server.store.all() if x["type"] == "paper"]) == 1
 
 
-def test_import_url_attaches_pdf_to_known_paper(env, web):
+def test_import_url_attaches_pdf_to_known_paper_or_makes_one(env, web):
+    """A PDF URL for a paper already in the library (without a PDF) attaches to it; a plain PDF with no
+    identifiers becomes a new paper titled from the PDF, keeping the URL."""
     c, _ = env
     p = c.post("/api/import/lookup", json={"query": "arXiv:1706.03762"}).json()
     assert not p["has_pdf"]
@@ -193,16 +191,13 @@ def test_import_url_attaches_pdf_to_known_paper(env, web):
     r = c.post("/api/import/url", json={"url": "https://arxiv.org/pdf/1706.03762v2"})
     assert r.status_code == 201 and r.json()["id"] == p["id"] and r.json()["has_pdf"]
 
-
-def test_import_url_plain_pdf_without_ids(env, web):
-    c, _ = env
     url = "https://journal.example.com/files/sheath_paper.pdf?download=1"
     web["routes"][url] = FakeResp(200, _pdf("Sheath physics in Hall thrusters"))
     n = c.post("/api/import/url", json={"url": url}).json()
     assert n["title"] == "Sheath physics in Hall thrusters" and n["url"] == url and n["has_pdf"]
 
 
-@pytest.mark.parametrize("url,status", [
+UNSAFE_URLS = [
     ("file:///etc/passwd", 400),
     ("ftp://example.com/a.pdf", 400),
     ("javascript:alert(1)", 400),
@@ -220,26 +215,31 @@ def test_import_url_plain_pdf_without_ids(env, web):
     ("https://user:pw@example.com/a.pdf", 400),
     ("https://example.com:22/a.pdf", 400),
     ("https://printer.local/a.pdf", 403),
-])
-def test_import_url_refuses_unsafe_urls(env, web, url, status):
-    c, _ = env
-    r = c.post("/api/import/url", json={"url": url})
-    assert r.status_code == status, (url, r.text)
-    assert web["calls"] == []
+]
 
 
-def test_import_url_refuses_hosts_resolving_private(env, web):
+def test_import_url_refuses_unsafe_urls_before_any_request(env, web):
+    """Non-http schemes, private and local addresses, odd ports, credentials, hosts that resolve to a private
+    address, and a request from a foreign Origin are all refused without fetching anything."""
     c, _ = env
+    for url, status in UNSAFE_URLS:
+        r = c.post("/api/import/url", json={"url": url})
+        assert r.status_code == status, (url, r.text)
+        assert web["calls"] == [], url
     web["dns"]["intranet.example.com"] = ["10.1.2.3"]
     web["dns"]["mixed.example.com"] = ["93.184.216.34", "127.0.0.1"]  # any private address -> refused
     for host in ("intranet.example.com", "mixed.example.com"):
         r = c.post("/api/import/url", json={"url": f"https://{host}/a.pdf"})
-        assert r.status_code == 403
+        assert r.status_code == 403, host
     assert web["calls"] == []
+    r = c.post("/api/import/url", json={"url": "https://example.com/a.pdf"}, headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403 and web["calls"] == []
 
 
-def test_import_url_redirects_are_checked_and_capped(env, web):
-    c, _ = env
+def test_import_url_refuses_bad_redirects_and_responses(env, web, monkeypatch):
+    """Redirects are checked (private address, file://) and capped at 3; a non-PDF, a tiny body, a 404 and a
+    PDF over 100 MB (declared or streamed) are refused, and nothing is added to the library."""
+    c, server = env
     # a public page redirecting to a private address is refused at the redirect
     web["routes"]["https://public.example.com/a.pdf"] = FakeResp(302, headers={"Location": "http://192.168.0.10/a.pdf"})
     r = c.post("/api/import/url", json={"url": "https://public.example.com/a.pdf"})
@@ -255,9 +255,6 @@ def test_import_url_redirects_are_checked_and_capped(env, web):
     assert r.status_code == 502 and "redirect" in r.json()["detail"].lower()
     assert len(web["calls"]) == 4  # the first request + 3 redirects
 
-
-def test_import_url_refuses_non_pdf_and_oversize(env, web, monkeypatch):
-    c, server = env
     web["routes"]["https://example.com/page.pdf"] = FakeResp(200, b"<!doctype html><html>" + b" " * 3000)
     r = c.post("/api/import/url", json={"url": "https://example.com/page.pdf"})
     assert r.status_code == 415 and "isn't a PDF" in r.json()["detail"]
@@ -280,12 +277,6 @@ def test_import_url_refuses_non_pdf_and_oversize(env, web, monkeypatch):
     assert [x for x in server.store.all() if x["type"] == "paper"] == []
 
 
-def test_import_url_origin_guard(env, web):
-    c, _ = env
-    r = c.post("/api/import/url", json={"url": "https://example.com/a.pdf"}, headers={"Origin": "https://evil.example"})
-    assert r.status_code == 403 and web["calls"] == []
-
-
 # ------------------------------------------------------------------ no AI in the extension
 FORBIDDEN = [r"/api/chat", r"/api/research", r"critique", r"explain", r"/api/explain", r"anthropic", r"claude",
              r"openai", r"/api/review/[^\"'`]*/check"]
@@ -303,6 +294,8 @@ def _ext_files():
 
 
 def test_extension_has_no_ai_and_only_talks_to_localhost():
+    """No extension file mentions AI endpoints or names, every URL is this computer (or an inert namespace),
+    nothing loads from a CDN, the footer and README say so, and the only fetch calls go to the local server."""
     files = list(_ext_files())
     assert any(p.name == "annotate.js" for p in files) and any(p.name == "background.js" for p in files)
     for p in files:
@@ -328,8 +321,26 @@ def test_extension_has_no_ai_and_only_talks_to_localhost():
     le = (EXT / "vendor" / "latex-editor.js").read_text(encoding="utf-8")
     assert not re.search(r"\bfetch\(|XMLHttpRequest|WebSocket|sendBeacon", le)
 
+    footer = "No AI in this extension. Everything you save goes only to research_brain on this computer."
+    assert footer in (EXT / "clip.html").read_text(encoding="utf-8")
+    readme = (EXT / "README.md").read_text(encoding="utf-8")
+    assert "No AI" in readme and "127.0.0.1" in readme
+    assert "Alt+Shift+A" in readme and "| " in readme  # shortcuts table
+    # background.js only fetches the local server (and its own bundled files)
+    bg = (EXT / "background.js").read_text(encoding="utf-8")
+    # (base = server(): 127.0.0.1 or localhost only; the third is the PDF hand-off to that server, the fourth the
+    # right-click "Add this PDF" JSON calls to it)
+    targets = re.findall(r"fetch\((base \+ path|chrome\.runtime\.getURL\(`vendor/fonts/\$\{file\}`\)|`\$\{base\}/api/import/pdf-bytes\?\$\{q\}`)", bg)
+    assert len(targets) == len(re.findall(r"\bfetch\(", bg)) == 4, re.findall(r"fetch\([^\n]{0,40}", bg)
+    # annotate.js / note.js / clip.js never fetch directly except clip.js to st.server
+    for name in ("annotate.js", "note.js"):
+        assert "fetch(" not in (EXT / name).read_text(encoding="utf-8"), name
+    assert re.findall(r"fetch\(([^,]+),", (EXT / "clip.js").read_text(encoding="utf-8")) == ["st.server + path"]
+
 
 def test_extension_manifest_permissions_are_minimal():
+    """The manifest asks only for minimal permissions on this computer, injects no content scripts, has a strict
+    CSP, exposes only note.html, and its pinned id is one the server allows."""
     m = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
     assert set(m["permissions"]) <= {"activeTab", "scripting", "storage", "contextMenus"}
     assert set(m["host_permissions"]) == {"http://127.0.0.1:8765/*", "http://localhost:8765/*"}
@@ -357,20 +368,3 @@ def test_extension_manifest_permissions_are_minimal():
     from app.security import extension_id_from_key, Policy
     assert extension_id_from_key(m["key"]) in Policy().extension_ids
 
-
-def test_extension_says_no_ai():
-    footer = "No AI in this extension. Everything you save goes only to research_brain on this computer."
-    assert footer in (EXT / "clip.html").read_text(encoding="utf-8")
-    readme = (EXT / "README.md").read_text(encoding="utf-8")
-    assert "No AI" in readme and "127.0.0.1" in readme
-    assert "Alt+Shift+A" in readme and "| " in readme  # shortcuts table
-    # background.js only fetches the local server (and its own bundled files)
-    bg = (EXT / "background.js").read_text(encoding="utf-8")
-    # (base = server(): 127.0.0.1 or localhost only; the third is the PDF hand-off to that server, the fourth the
-    # right-click "Add this PDF" JSON calls to it)
-    targets = re.findall(r"fetch\((base \+ path|chrome\.runtime\.getURL\(`vendor/fonts/\$\{file\}`\)|`\$\{base\}/api/import/pdf-bytes\?\$\{q\}`)", bg)
-    assert len(targets) == len(re.findall(r"\bfetch\(", bg)) == 4, re.findall(r"fetch\([^\n]{0,40}", bg)
-    # annotate.js / note.js / clip.js never fetch directly except clip.js to st.server
-    for name in ("annotate.js", "note.js"):
-        assert "fetch(" not in (EXT / name).read_text(encoding="utf-8"), name
-    assert re.findall(r"fetch\(([^,]+),", (EXT / "clip.js").read_text(encoding="utf-8")) == ["st.server + path"]

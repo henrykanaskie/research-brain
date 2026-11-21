@@ -257,20 +257,36 @@ def _has(argv: list[str], flag: str, value: str | None) -> bool:
 
 
 # ---------------------------------------------------------------- registry
-def test_cli_adapters_registered(settings_dir):
+def test_cli_adapters_registered_and_report_a_missing_binary(settings_dir, monkeypatch):
+    """Every CLI adapter is registered with its name, cost, homepage, hints and verified version (only
+    Cursor experimental); with no binary found each shows as unavailable naming the binary, and asking
+    fails with "Couldn't find"."""
     for bid in IDS:
         b = agents.get(bid)
         assert b is not None, bid
-        assert b.kind == "cli" and b.name and b.cost_note and b.home.startswith("https://")
-        assert b.verified_version and b.install_hint and b.signin_hint
+        assert b.kind == "cli" and b.name and b.cost_note and b.home.startswith("https://"), bid
+        assert b.verified_version and b.install_hint and b.signin_hint, bid
     assert agents.get("cursor").experimental is True
     for bid in ("codex", "gemini", "copilot", "opencode", "qwen"):
-        assert agents.get(bid).experimental is False
+        assert agents.get(bid).experimental is False, bid
+    from app.agents import _cli
+    monkeypatch.setattr(_cli, "find_executable", lambda names, extra=(), env_var="": None)
+    for bid in IDS:
+        monkeypatch.delenv("RB_EXPERIMENTAL_AGENTS", raising=False)
+        b = agents.get(bid)
+        det = b.detect()
+        assert det.available is False and b.bin_names[0] in det.note, (bid, det.note)
+        monkeypatch.setenv("RB_EXPERIMENTAL_AGENTS", "cursor")
+        with pytest.raises(agents.AgentError, match="Couldn't find"):
+            b.ask("q")
 
 
 # ---------------------------------------------------------------- command line, env, cwd, streaming
 @pytest.mark.parametrize("bid", IDS)
 def test_lockdown_command_env_and_cwd(fake, bid):
+    """Each CLI is started with every lockdown flag and no auto-approve one, the prompt on stdin (argv for
+    Cursor), a scrubbed environment, and a private folder holding only our files, removed afterwards; the
+    answer streams and the system prompt reaches the CLI the way it takes one."""
     b, record = fake(bid)
     chunks = list(b.ask_stream("Summarise the paper. MARKER-PROMPT", system="SYSTEM-MARKER"))
     text = "".join(chunks)
@@ -318,7 +334,9 @@ def test_lockdown_command_env_and_cwd(fake, bid):
     assert "SYSTEM-MARKER" in sysmark
 
 
-def test_codex_specifics(fake, settings_dir):
+def test_codex_specifics_and_sign_in_detection(fake, settings_dir):
+    """Codex: the chosen model, the prompt on stdin, our instructions file, every feature turned off, the work
+    folder, no API keys; detection reads the version and `login status`, and says how to sign in."""
     b, record = fake("codex")
     agents.set_active("codex", model="gpt-test")
     assert b.ask("q", system="S") == "Hello from codex"
@@ -332,9 +350,16 @@ def test_codex_specifics(fake, settings_dir):
         assert _has(argv, "--disable", f)
     assert _has(argv, "--cd", r["cwd"])
     assert "OPENAI_API_KEY" not in r["env"] and "CODEX_API_KEY" not in r["env"]
+    det = b.detect()
+    assert det.available and det.version == "9.9.9" and det.signed_in is True
+    os.environ["FAKECLI_MODE"] = "loggedout"
+    det = b.detect()
+    assert det.signed_in is False and "sign in with ChatGPT" in det.note
 
 
-def test_gemini_specifics(fake):
+def test_gemini_specifics_and_sign_in_detection(fake, tmp_path, monkeypatch):
+    """Gemini: no tools, hooks, MCP or extensions in its settings, a deny-all policy, our system prompt file,
+    telemetry off; signed in is unknown until its OAuth file exists; it lists its models."""
     b, record = fake("gemini")
     b.ask("q", system="S")
     r = _rec(record)
@@ -349,9 +374,21 @@ def test_gemini_specifics(fake):
     assert env["GEMINI_SYSTEM_MD"].replace("\\", "/").endswith(".rb/system.md") and "GEMINI_CLI_SYSTEM_SETTINGS_PATH" not in env
     policy = r["argv"][r["argv"].index("--admin-policy") + 1]
     assert policy.replace("\\", "/").endswith(".rb/deny-all.toml")
+    for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("GEMINI_CLI_HOME", str(tmp_path / "gh"))
+    assert b.detect().signed_in is None
+    (tmp_path / "gh" / ".gemini").mkdir(parents=True)
+    (tmp_path / "gh" / ".gemini" / "oauth_creds.json").write_text("{}")
+    det = b.detect()
+    assert det.available and det.signed_in is True
+    assert "gemini-2.5-pro" in b.models()
 
 
-def test_copilot_specifics(fake, tmp_path, monkeypatch):
+def test_copilot_specifics_mcp_stop_and_sign_in_detection(fake, tmp_path, monkeypatch):
+    """Copilot: the user's MCP servers disabled by name, hooks off, its settings in the environment, the
+    instructions first on stdin; a user MCP server that still connects stops the run; signed in is unknown
+    until its config lists a user; inside a git repository it refuses to run."""
     home = tmp_path / "copilot-home"
     home.mkdir()
     (home / "mcp-config.json").write_text(json.dumps({"mcpServers": {"usersrv": {}, "other one": {}}}))
@@ -365,19 +402,26 @@ def test_copilot_specifics(fake, tmp_path, monkeypatch):
     assert env["COPILOT_AUTO_UPDATE"] == "false" and env["COPILOT_PLUGIN_DIR_ONLY"] == "true"
     assert env["COPILOT_DISABLE_LOGIN_SHELL_ENV"] == "1" and env["COPILOT_TELEMETRY_DISABLED"] == "true"
     assert r["stdin"].startswith("S")  # no system-prompt flag: instructions first, then the request
+    b, record = fake("copilot", "mcp")
+    with pytest.raises(agents.ToolGuardError, match="usersrv"):
+        b.ask("q")
+    b, _ = fake("copilot")
+    for k in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("COPILOT_HOME", str(tmp_path / "ch"))
+    assert b.detect().signed_in is None
+    (tmp_path / "ch").mkdir()
+    (tmp_path / "ch" / "config.json").write_text('{"logged_in_users": [{"login": "x"}]}')
+    assert b.detect().signed_in is True
     from app.agents import copilot as cp
     monkeypatch.setattr(cp, "inside_git_repo", lambda p: Path("/some/repo"))
     with pytest.raises(agents.AgentError, match="git repository"):
         b.ask("q")
 
 
-def test_copilot_running_mcp_server_is_stopped(fake):
-    b, record = fake("copilot", "mcp")
-    with pytest.raises(agents.ToolGuardError, match="usersrv"):
-        b.ask("q")
-
-
-def test_opencode_specifics(fake):
+def test_opencode_specifics_and_sign_in_detection(fake, tmp_path, monkeypatch):
+    """OpenCode: a deny-everything config and agent, project and user config ignored, its own config home;
+    it lists its models; signed in is unknown until its auth file exists."""
     b, record = fake("opencode")
     b.ask("q", system="S")
     r = _rec(record)
@@ -393,9 +437,16 @@ def test_opencode_specifics(fake):
     assert env["OPENCODE_CONFIG"].replace("\\", "/").endswith(".rb/opencode.json")
     assert env["XDG_CONFIG_HOME"].startswith(r["cwd"])  # the user's ~/.config/opencode is not read
     assert b.models() == ["opencode/free-model", "anthropic/claude-x"]
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xd"))
+    assert b.detect().signed_in is None
+    (tmp_path / "xd" / "opencode").mkdir(parents=True)
+    (tmp_path / "xd" / "opencode" / "auth.json").write_text('{"anthropic": {"type": "oauth"}}')
+    assert b.detect().signed_in is True
 
 
-def test_qwen_specifics(fake):
+def test_qwen_specifics_tools_in_init_and_sign_in_detection(fake, tmp_path, monkeypatch):
+    """Qwen: every tool excluded by name and telemetry off; tools listed at init stop the run; signed in is
+    unknown until its settings pick an auth type."""
     b, record = fake("qwen")
     b.ask("q", system="S")
     r = _rec(record)
@@ -405,17 +456,22 @@ def test_qwen_specifics(fake):
         assert t in excluded
     env = r["env"]
     assert env["QWEN_TELEMETRY_ENABLED"] == "false" and env["QWEN_USAGE_STATISTICS_ENABLED"] == "false"
-
-
-def test_qwen_tools_in_init_are_refused(fake):
     b, record = fake("qwen", "toolinit")
     with pytest.raises(agents.ToolGuardError, match="read_file"):
         list(b.ask_stream("q"))
+    q, _ = fake("qwen")
+    monkeypatch.setenv("QWEN_HOME", str(tmp_path / "qh"))
+    assert q.detect().signed_in is None
+    (tmp_path / "qh").mkdir()
+    (tmp_path / "qh" / "settings.json").write_text('{"security": {"auth": {"selectedType": "openai"}}}')
+    assert q.detect().signed_in is True
 
 
 # ---------------------------------------------------------------- tool events, timeout, errors
 @pytest.mark.parametrize("bid", IDS)
 def test_tool_event_kills_process_group(fake, bid):
+    """A tool event in the CLI's output stops the run at once: the CLI and its children are killed and the
+    work folder removed."""
     b, record = fake(bid, "tool")
     t0 = time.monotonic()
     with pytest.raises(agents.ToolGuardError) as e:
@@ -430,22 +486,20 @@ def test_tool_event_kills_process_group(fake, bid):
     assert not Path(r["cwd"]).exists()
 
 
-@pytest.mark.parametrize("bid", ("codex", "gemini", "qwen"))
-def test_timeout_kills_process_group(fake, bid):
-    b, record = fake(bid, "sleep")
-    t0 = time.monotonic()
-    with pytest.raises(agents.AgentError, match="longer than"):
-        list(b.ask_stream("q", timeout=1.5))
-    assert time.monotonic() - t0 < 10
-    r = _rec(record)
-    deadline = time.monotonic() + 5
-    while (_alive(r["pid"]) or _alive(r["child"])) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert not _alive(r["pid"]) and not _alive(r["child"])
-
-
-def test_closing_the_stream_early_kills_the_cli(fake):
-    """The consumer going away (client disconnected) closes the generator: the CLI's group is killed."""
+def test_timeout_or_closing_the_stream_kills_the_process_group(fake):
+    """A CLI running past the timeout is killed with its children and the error says it took longer than the
+    limit. The consumer going away (client disconnected) closes the generator: the CLI's group is killed."""
+    for bid in ("codex", "gemini", "qwen"):
+        b, record = fake(bid, "sleep")
+        t0 = time.monotonic()
+        with pytest.raises(agents.AgentError, match="longer than"):
+            list(b.ask_stream("q", timeout=1.5))
+        assert time.monotonic() - t0 < 10, bid
+        r = _rec(record)
+        deadline = time.monotonic() + 5
+        while (_alive(r["pid"]) or _alive(r["child"])) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _alive(r["pid"]) and not _alive(r["child"]), bid
     b, record = fake("gemini", "slowtext")
     gen = b.ask_stream("q", timeout=60)
     assert next(gen) == "Hello "
@@ -459,83 +513,25 @@ def test_closing_the_stream_early_kills_the_cli(fake):
     assert not Path(r["cwd"]).exists()
 
 
-@pytest.mark.parametrize("bid", ("codex", "gemini", "copilot", "opencode", "qwen"))
-def test_auth_error_message(fake, bid):
-    b, record = fake(bid, "auth")
-    with pytest.raises(agents.AgentError) as e:
-        b.ask("q")
-    assert "isn't signed in" in str(e.value) and b.signin_hint in str(e.value)
-
-
-@pytest.mark.parametrize("bid", ("codex", "gemini"))
-def test_failed_run_is_reported(fake, bid):
-    b, record = fake(bid, "fail")
-    with pytest.raises(agents.AgentError, match="usage limit"):
-        b.ask("q")
+def test_auth_and_failed_run_errors(fake):
+    """A CLI that isn't signed in gives "isn't signed in" with how to sign in; a failed turn reports the
+    CLI's own reason (here a usage limit)."""
+    for bid in ("codex", "gemini", "copilot", "opencode", "qwen"):
+        b, record = fake(bid, "auth")
+        with pytest.raises(agents.AgentError) as e:
+            b.ask("q")
+        assert "isn't signed in" in str(e.value) and b.signin_hint in str(e.value), (bid, str(e.value))
+    for bid in ("codex", "gemini"):
+        b, record = fake(bid, "fail")
+        with pytest.raises(agents.AgentError, match="usage limit"):
+            b.ask("q")
 
 
 # ---------------------------------------------------------------- detection
-@pytest.mark.parametrize("bid", IDS)
-def test_detection_missing_binary(settings_dir, monkeypatch, bid):
-    from app.agents import _cli
-    monkeypatch.setattr(_cli, "find_executable", lambda names, extra=(), env_var="": None)
-    b = agents.get(bid)
-    det = b.detect()
-    assert det.available is False and b.bin_names[0] in det.note
-    monkeypatch.setenv("RB_EXPERIMENTAL_AGENTS", "cursor")
-    with pytest.raises(agents.AgentError, match="Couldn't find"):
-        b.ask("q")
-
-
-def test_detection_codex_login_status(fake):
-    b, _ = fake("codex")
-    det = b.detect()
-    assert det.available and det.version == "9.9.9" and det.signed_in is True
-    os.environ["FAKECLI_MODE"] = "loggedout"
-    det = b.detect()
-    assert det.signed_in is False and "sign in with ChatGPT" in det.note
-
-
-def test_detection_gemini(fake, tmp_path, monkeypatch):
-    b, _ = fake("gemini")
-    for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"):
-        monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("GEMINI_CLI_HOME", str(tmp_path / "gh"))
-    assert b.detect().signed_in is None
-    (tmp_path / "gh" / ".gemini").mkdir(parents=True)
-    (tmp_path / "gh" / ".gemini" / "oauth_creds.json").write_text("{}")
-    det = b.detect()
-    assert det.available and det.signed_in is True
-    assert "gemini-2.5-pro" in b.models()
-
-
-def test_detection_copilot(fake, tmp_path, monkeypatch):
-    b, _ = fake("copilot")
-    for k in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
-        monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("COPILOT_HOME", str(tmp_path / "ch"))
-    assert b.detect().signed_in is None
-    (tmp_path / "ch").mkdir()
-    (tmp_path / "ch" / "config.json").write_text('{"logged_in_users": [{"login": "x"}]}')
-    assert b.detect().signed_in is True
-
-
-def test_detection_opencode_and_qwen(fake, tmp_path, monkeypatch):
-    b, _ = fake("opencode")
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xd"))
-    assert b.detect().signed_in is None
-    (tmp_path / "xd" / "opencode").mkdir(parents=True)
-    (tmp_path / "xd" / "opencode" / "auth.json").write_text('{"anthropic": {"type": "oauth"}}')
-    assert b.detect().signed_in is True
-    q, _ = fake("qwen")
-    monkeypatch.setenv("QWEN_HOME", str(tmp_path / "qh"))
-    assert q.detect().signed_in is None
-    (tmp_path / "qh").mkdir()
-    (tmp_path / "qh" / "settings.json").write_text('{"security": {"auth": {"selectedType": "openai"}}}')
-    assert q.detect().signed_in is True
-
-
-def test_cursor_is_off_by_default(fake, monkeypatch):
+def test_cursor_off_by_default_and_a_too_old_cli_says_how_to_update(fake, monkeypatch):
+    """Cursor is experimental: unavailable and refused until turned on, and a prompt too long for its argv
+    is refused. Copilot CLI 1.0.40 lacks switches the lockdown needs: it shows as too old with how to
+    update, not as a bare "unknown option" error on every question."""
     b, _ = fake("cursor")
     monkeypatch.delenv("RB_EXPERIMENTAL_AGENTS", raising=False)
     det = b.detect()
@@ -546,6 +542,17 @@ def test_cursor_is_off_by_default(fake, monkeypatch):
     assert b.detect().available is True
     with pytest.raises(agents.AgentError, match="too long"):
         b.ask("x" * 200_000)
+    from app.agents import _cli, copilot
+    b = copilot.CopilotBackend()
+    monkeypatch.setattr(b, "find", lambda: "/usr/local/bin/copilot")
+    monkeypatch.setattr(b, "signed_in", lambda path: (True, ""))
+    monkeypatch.setattr(_cli, "version_of", lambda path, args: (True, "GitHub Copilot CLI 1.0.40.\nRun 'copilot update'"))
+    d = b.detect()
+    assert not d.available and "1.0.40 is too old" in d.note and "copilot update" in d.note
+    monkeypatch.setattr(_cli, "version_of", lambda path, args: (True, "GitHub Copilot CLI 1.0.109."))
+    assert b.detect().available
+    err = str(b.error("error: unknown option '--disable-client-telemetry'"))
+    assert "too old" in err and "copilot update" in err
 
 
 # ---------------------------------------------------------------- the real CLIs: --help still has our flags
@@ -917,19 +924,3 @@ def test_real_qwen_offers_no_tools(settings_dir, monkeypatch, tmp_path, mock_llm
     _wrap(monkeypatch, b, _no_proxy)
     answer = b.ask("Say hi.", system="SYSTEM-MARKER", timeout=120)
     _check(mock_llm, marker_dir, answer)
-
-
-def test_a_too_old_cli_says_how_to_update(monkeypatch):
-    """Copilot CLI 1.0.40 lacks switches the lockdown needs: it shows as too old with how to update, not as
-    a bare "unknown option" error on every question."""
-    from app.agents import _cli, copilot
-    b = copilot.CopilotBackend()
-    monkeypatch.setattr(b, "find", lambda: "/usr/local/bin/copilot")
-    monkeypatch.setattr(b, "signed_in", lambda path: (True, ""))
-    monkeypatch.setattr(_cli, "version_of", lambda path, args: (True, "GitHub Copilot CLI 1.0.40.\nRun 'copilot update'"))
-    d = b.detect()
-    assert not d.available and "1.0.40 is too old" in d.note and "copilot update" in d.note
-    monkeypatch.setattr(_cli, "version_of", lambda path, args: (True, "GitHub Copilot CLI 1.0.109."))
-    assert b.detect().available
-    err = str(b.error("error: unknown option '--disable-client-telemetry'"))
-    assert "too old" in err and "copilot update" in err

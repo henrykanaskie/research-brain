@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-
-from tests.test_api import client  # noqa: F401,E402
+from test_api import client  # noqa: F401  (fixture)
 
 
 @pytest.fixture()
@@ -31,14 +30,19 @@ def _folder(tmp_path, version="9.0.0"):
     return lab
 
 
-def test_version_comparison():
-    from app.updates import newer, parse
+def test_version_comparison_and_how_this_copy_was_installed():
+    """Versions parse with or without a v and compare numerically (garbage is never newer); this copy is a checkout."""
+    from app.updates import how_installed, newer, parse
     assert parse("v1.2.3") == (1, 2, 3) and parse("0.10.0") == (0, 10, 0) and parse("nonsense") is None
     assert newer("0.10.0", "0.9.9") and not newer("0.7.0", "0.7.0") and not newer("0.6.9", "0.7.0")
     assert not newer("garbage", "0.7.0")
+    assert how_installed() == "checkout"
 
 
-def test_lab_folder_update_source(upd, tmp_path):
+def test_a_lab_folder_release_is_checked_cached_installed_and_copied_with_its_pins(upd, tmp_path):
+    """A lab folder as the update source: a missing folder is refused; the check finds the newer release and its
+    notes and is cached for a day; the install command fits the installer (uv, venv, none from a checkout, a git tag
+    without a wheel); and preparing copies the wheel and its constraints into the update folder."""
     lab = _folder(tmp_path)
     assert upd.set_source(str(lab)) == str(lab.resolve())
     with pytest.raises(ValueError):
@@ -48,6 +52,18 @@ def test_lab_folder_update_source(upd, tmp_path):
     # the next check within a day is answered from the cache
     (lab / "latest.json").write_text(json.dumps({"version": "9.9.9", "wheel": "x.whl"}), encoding="utf-8")
     assert upd.check()["latest"] == "9.0.0" and upd.check(force=True)["latest"] == "9.9.9"
+    _folder(tmp_path)  # back to 9.0.0
+    info = upd.fetch()
+    cmd = upd.install_command(info, "uv")
+    assert cmd[:6] == ["uv", "tool", "install", "--force", "--python", "3.12"]
+    assert cmd[-1].endswith("research_brain-9.0.0-py3-none-any.whl") and str(lab / "constraints.txt") in cmd
+    pip = upd.install_command(info, "venv")
+    assert pip[:4] == [sys.executable, "-m", "pip", "install"] and pip[-1].endswith(".whl")
+    assert upd.install_command(info, "checkout") is None
+    # no wheel known (a GitHub release seen through the API): install the tag from git
+    assert upd.install_spec({"version": "9.0.0", "tag": "v9.0.0"}).endswith("research-brain.git@v9.0.0")
+    info = upd.prepare(upd.fetch())
+    assert Path(info["wheel"]).parent == upd.update_dir() and (upd.update_dir() / "constraints.txt").is_file()
 
 
 class _Resp:
@@ -67,34 +83,6 @@ class _Resp:
         return False
 
 
-def test_checks_are_off_offline_and_quiet_without_a_source(upd, monkeypatch):
-    monkeypatch.setattr(upd.requests, "get", lambda *a, **k: _Resp(404))  # no release reachable
-    monkeypatch.setattr(upd, "_github_token", lambda: "")  # and no token for the API: nothing more to ask
-    out = upd.check(force=True)
-    assert out["latest"] is None and not out["newer"] and out["source"] == "github"
-    monkeypatch.setenv("RB_UPDATE_CHECK", "0")
-    assert upd.check(force=True)["enabled"] is False
-
-
-def test_install_command_uses_the_installer_that_installed_it(upd, tmp_path):
-    lab = _folder(tmp_path)
-    upd.set_source(str(lab))
-    info = upd.fetch()
-    cmd = upd.install_command(info, "uv")
-    assert cmd[:6] == ["uv", "tool", "install", "--force", "--python", "3.12"]
-    assert cmd[-1].endswith("research_brain-9.0.0-py3-none-any.whl") and str(lab / "constraints.txt") in cmd
-    pip = upd.install_command(info, "venv")
-    assert pip[:4] == [sys.executable, "-m", "pip", "install"] and pip[-1].endswith(".whl")
-    assert upd.install_command(info, "checkout") is None
-    # no wheel known (a GitHub release seen through the API): install the tag from git
-    assert upd.install_spec({"version": "9.0.0", "tag": "v9.0.0"}).endswith("research-brain.git@v9.0.0")
-
-
-def test_this_checkout_is_detected():
-    from app.updates import how_installed
-    assert how_installed() == "checkout"
-
-
 def test_cli_update_check_and_source(upd, tmp_path, capsys):
     from app.cli import main
     lab = _folder(tmp_path)
@@ -106,9 +94,14 @@ def test_cli_update_check_and_source(upd, tmp_path, capsys):
     assert "git pull" in capsys.readouterr().out
 
 
+def test_github_release_checks_need_no_account_and_are_quiet_offline_or_off(upd, monkeypatch):
+    """With no release reachable and no token the check is quiet; the public GitHub release needs no account and
+    names the files of that exact release; RB_UPDATE_CHECK=0 turns checks off."""
+    monkeypatch.setattr(upd.requests, "get", lambda *a, **k: _Resp(404))  # no release reachable
+    monkeypatch.setattr(upd, "_github_token", lambda: "")  # and no token for the API: nothing more to ask
+    out = upd.check(force=True)
+    assert out["latest"] is None and not out["newer"] and out["source"] == "github"
 
-
-def test_the_public_github_release_needs_no_account(upd, monkeypatch):
     asked = []
 
     def get(url, **k):
@@ -122,6 +115,8 @@ def test_the_public_github_release_needs_no_account(upd, monkeypatch):
     assert info["wheel"] == "https://github.com/henrykanaskie/research-brain/releases/download/v9.1.0/research_brain-9.1.0-py3-none-any.whl"
     assert info["constraints"].endswith("/v9.1.0/constraints.txt") and info["url"].endswith("/tag/v9.1.0")
     assert upd.check(force=True)["newer"]
+    monkeypatch.setenv("RB_UPDATE_CHECK", "0")
+    assert upd.check(force=True)["enabled"] is False
 
 
 def test_prepare_downloads_into_the_update_folder(upd, tmp_path, monkeypatch):
@@ -138,13 +133,6 @@ def test_prepare_downloads_into_the_update_folder(upd, tmp_path, monkeypatch):
         upd.prepare({**info, "wheel": upd.release_file("9.1.0", "research_brain-9.1.0-py3-none-any.whl")})
     with pytest.raises(upd.UpdateError, match="Unexpected"):
         upd.prepare({**info, "wheel": "https://example.org/../../evil.sh"})
-
-
-def test_folder_release_is_copied_with_its_pins(upd, tmp_path):
-    lab = _folder(tmp_path)
-    upd.set_source(str(lab))
-    info = upd.prepare(upd.fetch())
-    assert Path(info["wheel"]).parent == upd.update_dir() and (upd.update_dir() / "constraints.txt").is_file()
 
 
 def test_the_update_script_waits_installs_and_starts_research_brain_again(upd, tmp_path):
@@ -184,15 +172,14 @@ def test_the_update_script_waits_installs_and_starts_research_brain_again(upd, t
         subprocess.run(["pkill", "-f", f"http.server {port}"], check=False)
 
 
-def test_windows_script_waits_for_each_process(upd):
+def test_windows_script_waits_for_each_process_and_reopens_the_window(upd):
+    """The .cmd script waits for every pid with tasklist (never `timeout`, which fails without a console), records
+    the exit code, starts research brain again and, when a window was open, reopens it after the update."""
     text = upd.script(["C:\\uv.exe", "tool", "install", "x.whl"], pids=[11, 22], port=8765, windows=True,
                       relaunch=["C:\\py\\python.exe", "-m", "research_brain.cli", "serve", "--no-open"], cwd="C:\\app")
     assert 'tasklist /FI "PID eq 11"' in text and 'tasklist /FI "PID eq 22"' in text
     assert "echo %ERRORLEVEL%" in text and 'start "" /B' in text and text.endswith("\r\n")
     assert "timeout /t" not in text  # timeout fails without a console window
-
-
-def test_windows_script_reopens_the_window_after_the_update(upd):
     reopen = ["C:\\py\\pythonw.exe", "-m", "research_brain.cli", "open", "--port", "8765"]
     kw = dict(port=8765, windows=True, relaunch=["C:\\py\\python.exe", "-m", "research_brain.cli", "serve"], cwd="C:\\app")
     install = ["C:\\uv.exe", "tool", "install", "x.whl"]
@@ -223,25 +210,17 @@ def test_window_pid_only_for_a_running_window(upd):
         live.wait()
 
 
-def test_start_install_waits_for_the_window_and_reopens_it(upd, monkeypatch):
-    monkeypatch.setattr(upd, "how_installed", lambda: "venv")
-    monkeypatch.setattr(upd.subprocess, "Popen", lambda *a, **k: None)
-    monkeypatch.setattr(upd, "window_pid", lambda: 4321)
-    monkeypatch.setattr(upd, "_windows", lambda: True)
+def test_start_install_marks_it_running_reports_once_and_reopens_the_window(upd, monkeypatch):
+    """A dead update (an old marker) never blocks starting; start_install marks the update running so research
+    brain waits for it, reports the result once (failed while the old version still runs), and on Windows waits
+    for an open window and reopens it."""
     d = upd.update_dir()
     d.mkdir(parents=True)
-    info = {"version": "9.0.0", "wheel": str(d / "w.whl"), "source": str(d)}
-    upd.start_install(info, port=8765, pids=[123])
-    text = (d / "run-update.cmd").read_text(encoding="utf-8")
-    assert 'tasklist /FI "PID eq 4321"' in text and "cli open --port 8765" in text
-
-
-def test_start_install_marks_it_running_and_reports_once(upd, monkeypatch):
+    upd.paths.write_json_atomic(d / "updating.json", {"from": "1", "to": "2", "started": "2001-01-01T00:00:00+00:00"})
+    assert upd.in_progress() is None and upd.wait_while_updating(limit=5) is False
     started = []
     monkeypatch.setattr(upd, "how_installed", lambda: "venv")
     monkeypatch.setattr(upd.subprocess, "Popen", lambda *a, **k: started.append((a, k)))
-    d = upd.update_dir()
-    d.mkdir(parents=True)
     (d / "research_brain-9.0.0-py3-none-any.whl").write_bytes(b"PK")
     info = {"version": "9.0.0", "wheel": str(d / "research_brain-9.0.0-py3-none-any.whl"), "source": str(d)}
     upd.start_install(info, port=8765, pids=[123])
@@ -256,17 +235,21 @@ def test_start_install_marks_it_running_and_reports_once(upd, monkeypatch):
     (d / "exit-code").write_text("0\n")
     r = upd.last_result()
     assert r["ok"] is False and r["to"] == "9.0.0" and "error" in r  # this is still the old version
+    old_version = upd.__version__
     monkeypatch.setattr(upd, "__version__", "9.0.0")
     assert upd.last_result()["ok"] is True
     upd.acknowledge()
     assert upd.last_result() is None
+    monkeypatch.setattr(upd, "__version__", old_version)
 
-
-def test_a_dead_update_doesnt_block_starting(upd):
-    d = upd.update_dir()
-    d.mkdir(parents=True)
-    upd.paths.write_json_atomic(d / "updating.json", {"from": "1", "to": "2", "started": "2001-01-01T00:00:00+00:00"})
-    assert upd.in_progress() is None and upd.wait_while_updating(limit=5) is False
+    # on Windows, with the window open: the script waits for it and reopens it
+    monkeypatch.setattr(upd.subprocess, "Popen", lambda *a, **k: None)
+    monkeypatch.setattr(upd, "window_pid", lambda: 4321)
+    monkeypatch.setattr(upd, "_windows", lambda: True)
+    info = {"version": "9.0.0", "wheel": str(d / "w.whl"), "source": str(d)}
+    upd.start_install(info, port=8765, pids=[123])
+    text = (d / "run-update.cmd").read_text(encoding="utf-8")
+    assert 'tasklist /FI "PID eq 4321"' in text and "cli open --port 8765" in text
 
 
 def test_update_api_from_a_checkout(client):

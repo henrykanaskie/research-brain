@@ -6,7 +6,6 @@ No network: a scripted fake agent stands in for the AI, and embeddings are TF-ID
 from __future__ import annotations
 
 import csv
-import importlib
 import io
 import json
 import sys
@@ -19,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.agents.base import Backend as _Backend, Detection as _Detection  # noqa: E402
+from rb_app import load_server  # noqa: E402
 
 PAPER_A = """[[page 1]]
 Abstract
@@ -78,17 +78,8 @@ def cards_json(*cards):
 
 @pytest.fixture()
 def server(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_MEMORY_WATCH", "0")
-    monkeypatch.setenv("RB_WATCH", "0")
-    monkeypatch.setenv("RB_AUTO_EXPORT", "0")
-    monkeypatch.delenv("RB_FAKE_CLAUDE", raising=False)
-    monkeypatch.delenv("RB_AGENT", raising=False)
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    srv = importlib.import_module("app.server")
+    srv = load_server(monkeypatch, tmp_path, fake_claude=False, RB_DATA_DIR=tmp_path / "data", RB_MEMORY_WATCH="0",
+                      RB_WATCH="0", RB_AUTO_EXPORT="0", RB_AGENT=None)
     from fastapi.testclient import TestClient
     added = []
 
@@ -129,8 +120,10 @@ def extract(c, pid):
 
 
 # ====================================================================== parsing and the quote guard (no server)
-def test_parse_cards_reply_variants():
-    from app.cards import parse_cards_reply
+def test_reply_parsing_quote_locator_and_value_check():
+    """The AI's reply is parsed from plain JSON, a fenced block or a bare list; quotes are found in the paper
+    exactly, loosely (hyphenation, ligatures, punctuation) or not at all; a quantity's value must be in its quote."""
+    from app.cards import PaperText, parse_cards_reply, value_in_quote
     one = {"kind": "claim", "text": "x", "quote": "y"}
     assert parse_cards_reply(json.dumps({"cards": [one]})) == [one]
     assert parse_cards_reply("Here you go:\n```json\n" + json.dumps({"cards": [one]}) + "\n```\nDone.") == [one]
@@ -140,9 +133,6 @@ def test_parse_cards_reply_variants():
     assert parse_cards_reply("I can't help with that.") is None
     assert parse_cards_reply("") is None
 
-
-def test_quote_locator_exact_loose_fuzzy_and_page():
-    from app.cards import PaperText
     pt = PaperText("[[page 3]]\nThe elec-\ntron tem­perature was 20 eV at the exit.\n\n[[page 4]]\nThe ﬁeld lines "
                    "are concave toward the anode, which focuses the ion beam.")
     hit = pt.locate("The electron temperature was 20 eV at the exit.")
@@ -154,9 +144,6 @@ def test_quote_locator_exact_loose_fuzzy_and_page():
     assert pt.locate("Tokamak disruptions were predicted with a neural network.") is None
     assert pt.locate("short") is None
 
-
-def test_value_must_be_in_quote():
-    from app.cards import value_in_quote
     assert value_in_quote({"value": 20.0}, "was 20 eV")
     assert value_in_quote({"value": 2.3e5}, "of 2.3 × 10^5 K")
     assert value_in_quote({"value": 25.0, "uncertainty": 5.0}, "between 20 and 30 eV")
@@ -164,6 +151,8 @@ def test_value_must_be_in_quote():
 
 
 def test_extraction_drops_hallucinated_dedups_and_caps(tmp_path, monkeypatch):
+    """Extraction keeps only cards whose quote is in the paper, drops bad kinds and duplicates, stores them as
+    suggested AI cards with a verified page, finds only duplicates the second time, and caps AI cards per paper."""
     from app import cards
     cs = cards.CardStore(tmp_path)
     note = {"id": "hall-2020", "abstract": ""}
@@ -203,7 +192,9 @@ def test_extraction_drops_hallucinated_dedups_and_caps(tmp_path, monkeypatch):
     assert len(res3["added"]) == 1 and len(cs.cards("hall-2020")) == 4
 
 
-def test_extraction_windows_prioritise_results_and_skip_references(monkeypatch):
+def test_extraction_reads_results_first_skips_references_and_retries_bad_json(tmp_path, monkeypatch):
+    """The reference list is cut, the Results window is picked first, and a reply that isn't JSON is asked
+    for once more with a reminder to answer in valid JSON."""
     from app import cards
     monkeypatch.setattr(cards, "WINDOW_CHARS", 300)
     intro = "[[page 1]]\nIntroduction\n" + "Background words about history. " * 12
@@ -215,9 +206,7 @@ def test_extraction_windows_prioritise_results_and_skip_references(monkeypatch):
     order = cards.pick_windows(wins, 2)
     assert "Results" in order[0]["text"]
 
-
-def test_parse_failure_retries_once(tmp_path):
-    from app import cards
+    monkeypatch.undo()  # the retry runs with the real window size
     seen = []
 
     def ask(i, c):
@@ -228,8 +217,11 @@ def test_parse_failure_retries_once(tmp_path):
 
 
 # ====================================================================== units and conflicts
-def test_units_normalise_plasma_quantities():
+def test_units_normalise_and_quantity_conflicts():
+    """Plasma quantities convert to SI (eV to K, cm-3, mTorr, G, mN, sccm, °C) and numbers parse from text;
+    two values of one quantity conflict only when comparable and apart beyond their uncertainty (or 30%)."""
     from app import units
+    from app.cards import quantity_conflict
     a = units.canonical(20, "eV", "electron temperature", "T_e")
     b = units.canonical(2.3e5, "K", "electron temperature", "T_e")
     assert a["unit"] == b["unit"] == "K" and abs(a["value"] - 232090.36) < 0.1
@@ -242,12 +234,9 @@ def test_units_normalise_plasma_quantities():
     assert units.canonical(25, "°C", uncertainty=1) == {"value": 298.15, "uncertainty": pytest.approx(1.0),
                                                         "unit": "K", "dim": "[temperature]"}
     assert units.canonical(3, "furlongs per fortnight squiggle") is None
-    assert units.parse_value("20 ± 2") == (20.0, 2.0) and units.parse_value("20–30") == (25.0, 5.0)
+    assert units.parse_value("20 ± 2") == (20.0, 2.0) and units.parse_value("20\u201330") == (25.0, 5.0)
     assert units.parse_number("2.3 x 10^{5}") == pytest.approx(2.3e5)
 
-
-def test_conflict_rules():
-    from app.cards import quantity_conflict
     te = lambda v, u, unc=None, cond="300 V, channel exit": {"name": "electron temperature", "symbol": "T_e", "value": v,
                                                               "unit": u, "uncertainty": unc, "conditions": cond}
     assert quantity_conflict(te(20, "eV"), te(2.3e5, "K")) == (True, False)          # agree (19.8 eV)
@@ -262,7 +251,9 @@ def test_conflict_rules():
 
 
 # ====================================================================== the server
-def test_extract_endpoint_privacy_and_log(server):
+def test_extract_endpoint_privacy_log_and_refusals(server):
+    """Extraction sends only the paper text (never your summary, notes, other notes or the references), logs
+    the send, refuses a private paper; without an agent it says to add cards by hand, and it needs paper text."""
     srv, c, use = server
     pid = paper(srv, c, "Plume of a Hall thruster", PAPER_A, summary="MY-PRIVATE-SUMMARY wording here",
                 body="MY-OWN-NOTES about the thruster")
@@ -292,23 +283,23 @@ def test_extract_endpoint_privacy_and_log(server):
     assert r.status_code == 403 and "private" in r.json()["detail"]
     assert agent.prompts == []
 
-
-def test_extract_needs_agent_and_text(server):
-    srv, c, use = server
+    # no agent available, or nothing to read
     use(FakeAgent("{}", id="offline", available=False))
-    pid = paper(srv, c, "Some paper", PAPER_A)
-    r = c.post(f"/api/papers/{pid}/cards/extract")
+    pid3 = paper(srv, c, "Some paper", PAPER_A)
+    r = c.post(f"/api/papers/{pid3}/cards/extract")
     assert r.status_code == 503 and "by hand" in r.json()["detail"]
     empty = c.post("/api/notes", json={"type": "paper", "title": "No text"}).json()["id"]
     assert c.post(f"/api/papers/{empty}/cards/extract").status_code == 400
-    note = c.post("/api/notes", json={"type": "note", "title": "A note"}).json()["id"]
-    assert c.post(f"/api/papers/{note}/cards/extract").status_code == 400
+    plain = c.post("/api/notes", json={"type": "note", "title": "A note"}).json()["id"]
+    assert c.post(f"/api/papers/{plain}/cards/extract").status_code == 400
     assert c.post("/api/papers/nope/cards/extract").status_code == 404
-    got = c.get(f"/api/papers/{pid}/cards").json()
+    got = c.get(f"/api/papers/{pid3}/cards").json()
     assert got["cards"] == [] and got["agent"]["available"] is False
 
 
-def test_review_endpoints(server):
+def test_review_endpoints_vault_zip_and_trash(server):
+    """Cards can be confirmed, edited, rejected, added by hand (yours, confirmed, private), confirmed all at once
+    and deleted; the per-paper JSON file goes into the vault zip and to the trash with its paper."""
     srv, c, use = server
     pid = paper(srv, c, "Plume of a Hall thruster", PAPER_A)
     use(FakeAgent(lambda p: cards_json(
@@ -343,6 +334,19 @@ def test_review_endpoints(server):
     assert mine["locator"]["verified"] is True and mine["locator"]["page"] == 2
     assert c.post(f"/api/papers/{pid}/cards", json={"kind": "quantity", "text": "x"}).status_code == 400
     assert c.post(f"/api/papers/{pid}/cards", json={"kind": "nope", "text": "x"}).status_code == 400
+    # a card added by hand to a paper never extracted is stored too, and goes into the vault zip
+    zpid = paper(srv, c, "Zip paper", PAPER_A)
+    r = c.post(f"/api/papers/{zpid}/cards", json={"kind": "claim", "text": "Kept in the zip."})
+    assert r.status_code == 201, r.text
+    from app import cards as cards_mod
+    assert cards_mod.card_store().path(zpid).exists(), (str(cards_mod.card_store().dir), str(srv.store.root))
+    from app import vaultzip
+    assert "cards" in vaultzip.TOP_DIRS
+    r = c.get("/api/vault/export", params={"pdfs": "false"})
+    assert r.status_code == 200
+    import zipfile
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert any(n.endswith(f"cards/{zpid}.json") for n in names), names
     # confirm all + delete
     r = c.patch(f"/api/cards/{claim['id']}", json={"status": "suggested"})
     assert c.post(f"/api/papers/{pid}/cards/confirm-all", json={}).json()["confirmed"] == 1
@@ -385,7 +389,10 @@ def _three_papers(srv, c, use):
     return a, b, cc
 
 
-def test_cross_paper_links_conflicts_and_graph(server):
+def test_cross_paper_links_graph_search_and_csv(server):
+    """Cards in different papers link up (quantities flag conflicts) and show on the paper and the map; cards
+    can be searched by quantity, text, kind and status and exported to CSV with formula injection neutralised;
+    a rejected card loses its links."""
     srv, c, use = server
     a, b, cc = _three_papers(srv, c, use)
     links = c.get("/api/cards/links").json()["links"]
@@ -406,15 +413,8 @@ def test_cross_paper_links_conflicts_and_graph(server):
     assert counts[a] == 2 and counts[b] == 2 and counts[cc] == 1
     assert {"a_paper", "b_paper", "kind", "conflict"} <= set(g["card_links"][0])
     assert any(l["conflict"] for l in g["card_links"])
-    # rejecting a card removes its links (derived data follows the files)
-    c.patch(f"/api/cards/{tq['id']}", json={"status": "rejected"})
-    g = c.get("/api/graph").json()
-    assert not any(a in (l["a_paper"], l["b_paper"]) and l["kind"] == "quantity" for l in g["card_links"])
 
-
-def test_cards_search_table_and_csv(server):
-    srv, c, use = server
-    a, b, cc = _three_papers(srv, c, use)
+    # search and the table
     r = c.get("/api/cards", params={"kind": "quantity", "quantity": "electron temperature"}).json()
     assert r["total"] == 3 and {x["paper"] for x in r["cards"]} == {a, b, cc}
     assert r["quantities"][0] == {"name": "electron temperature", "count": 3}
@@ -439,15 +439,32 @@ def test_cards_search_table_and_csv(server):
     rows = list(csv.DictReader(io.StringIO(c.get("/api/cards/export.csv", params={"kind": "claim"}).text)))
     assert any(row["text"].startswith("'=") for row in rows)
 
+    # rejecting a card removes its links (derived data follows the files)
+    c.patch(f"/api/cards/{tq['id']}", json={"status": "rejected"})
+    g = c.get("/api/graph").json()
+    assert not any(a in (l["a_paper"], l["b_paper"]) and l["kind"] == "quantity" for l in g["card_links"])
 
-def test_agent_tool_and_research_action(server):
+
+def test_module_api_agent_tool_and_research_action(server):
+    """Other features read confirmed cards only (cards.for_paper, cards.search); the agent's cards_search tool
+    appears once a card is confirmed and never shows private or suggested cards, or cards of a private paper;
+    the Research action maps to it."""
     srv, c, use = server
     a, b, cc = _three_papers(srv, c, use)
+    from app import cards
+    assert "cards_search" not in srv.agent_tools.available()       # nothing confirmed yet
+    assert cards.for_paper(a) == []
+    assert len(cards.for_paper(a, confirmed_only=False)) == 2
+    first = cards.for_paper(a, confirmed_only=False)[0]
+    c.patch(f"/api/cards/{first['id']}", json={"status": "confirmed"})
+    assert [x["id"] for x in cards.for_paper(a)] == [first["id"]]
+    hits = cards.search("electron temperature", k=5)
+    assert all(h["status"] in ("confirmed", "edited") for h in hits) and "score" in (hits[0] if hits else {"score": 0})
+
     from app import agent as agent_mod
     from app.agents import research
     run = agent_mod.open_run("q")
     try:
-        assert "cards_search" not in srv.agent_tools.available()       # nothing confirmed yet
         got = c.get("/api/cards", params={"kind": "quantity"}).json()["cards"]
         by_paper = {x["paper"]: x for x in got}
         c.patch(f"/api/cards/{by_paper[a]['id']}", json={"status": "confirmed"})
@@ -475,10 +492,21 @@ def test_agent_tool_and_research_action(server):
         agent_mod.close_run(run)
 
 
-def test_research_loop_uses_cards_action(server):
+def test_chat_and_research_loop_use_confirmed_cards(server):
+    """A chat gets only the confirmed cards; the research loop runs the cards action and feeds the values back
+    with their quotes."""
     srv, c, use = server
     a, b, cc = _three_papers(srv, c, use)
     got = c.get("/api/cards", params={"kind": "quantity"}).json()["cards"]
+    target = next(x for x in got if x["paper"] == cc)
+    c.patch(f"/api/cards/{target['id']}", json={"status": "confirmed"})
+    agent = use(FakeAgent("An answer.", id="fakechat"))
+    r = c.post("/api/chat", json={"question": "electron temperature at the channel exit", "history": []})
+    assert r.status_code == 200
+    sent = agent.prompts[-1]
+    assert "CONFIRMED IDEA CARDS" in sent and "2.3" in sent
+    assert sent.count("(quantity, confirmed by the user)") == 1
+
     for x in got:
         c.patch(f"/api/cards/{x['id']}", json={"status": "confirmed"})
     script = ['{"action": "cards", "query": "electron temperature", "kind": "quantity"}',
@@ -495,44 +523,18 @@ def test_research_loop_uses_cards_action(server):
     assert any("2.3" in p and "Quote:" in p for p in seen[1:])
 
 
-def test_chat_context_includes_confirmed_cards_only(server):
-    srv, c, use = server
-    a, b, cc = _three_papers(srv, c, use)
-    got = c.get("/api/cards", params={"kind": "quantity"}).json()["cards"]
-    target = next(x for x in got if x["paper"] == cc)
-    c.patch(f"/api/cards/{target['id']}", json={"status": "confirmed"})
-    agent = use(FakeAgent("An answer.", id="fakechat"))
-    r = c.post("/api/chat", json={"question": "electron temperature at the channel exit", "history": []})
-    assert r.status_code == 200
-    sent = agent.prompts[-1]
-    assert "CONFIRMED IDEA CARDS" in sent and "2.3" in sent
-    assert sent.count("(quantity, confirmed by the user)") == 1
-
-
-def test_module_api_for_other_features(server):
-    srv, c, use = server
-    a, b, cc = _three_papers(srv, c, use)
-    from app import cards
-    assert cards.for_paper(a) == []
-    assert len(cards.for_paper(a, confirmed_only=False)) == 2
-    first = cards.for_paper(a, confirmed_only=False)[0]
-    c.patch(f"/api/cards/{first['id']}", json={"status": "confirmed"})
-    assert [x["id"] for x in cards.for_paper(a)] == [first["id"]]
-    hits = cards.search("electron temperature", k=5)
-    assert all(h["status"] in ("confirmed", "edited") for h in hits) and "score" in (hits[0] if hits else {"score": 0})
-
-
-def test_vault_zip_includes_cards(server, tmp_path):
-    srv, c, use = server
-    pid = paper(srv, c, "Zip paper", PAPER_A)
-    r = c.post(f"/api/papers/{pid}/cards", json={"kind": "claim", "text": "Kept in the zip."})
-    assert r.status_code == 201, r.text
-    from app import cards as cards_mod
-    assert cards_mod.card_store().path(pid).exists(), (str(cards_mod.card_store().dir), str(srv.store.root))
-    from app import vaultzip
-    assert "cards" in vaultzip.TOP_DIRS
-    r = c.get("/api/vault/export", params={"pdfs": "false"})
-    assert r.status_code == 200
-    import zipfile
-    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
-    assert any(n.endswith(f"cards/{pid}.json") for n in names), names
+def test_features_that_read_cards_cope_when_cards_are_not_set_up(tmp_path, monkeypatch):
+    """Before app.server has set up the card store (or in a process that never does), the card module says so
+    clearly, the privacy check finds no private cards to worry about, and question matching gets no cards
+    instead of an error."""
+    from rb_app import purge_app
+    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
+    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
+    purge_app()
+    from app import cards, privacy, questions
+    assert cards._cs is None
+    with pytest.raises(RuntimeError, match="not configured"):
+        cards.card_store()
+    assert privacy._private_cards(set()) == []
+    assert questions._card_search("electron temperature") == []
+    purge_app()

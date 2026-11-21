@@ -148,7 +148,11 @@ def test_reorganize_by_content_then_into_your_sections(server, browser):
     assert not errors, errors
 
 
-def test_a_folder_of_papers_sorted_by_content_and_linked(server, browser, tmp_path):
+def test_imported_folders_sorted_by_content_or_only_into_existing_topics(server, browser, tmp_path):
+    """A linked folder of PDFs in two subfolders, sorted by the AI into new topics and linked (not one topic per
+    folder); then a copied-in flat folder sorted only into the existing topics (Plasma physics, Optics, from the
+    test before): no new topic, one paper into the first topic, one that fits none."""
+    import base64
     from test_api import make_pdf
     base = server["base"]
     root = tmp_path / "Research"
@@ -181,12 +185,9 @@ def test_a_folder_of_papers_sorted_by_content_and_linked(server, browser, tmp_pa
     assert {"Plasma sheaths", "Language models"} <= names and not {"A", "B"} & names
     expect(page.locator(".toast.error")).to_have_count(0)
     assert not errors, errors
+    page.close()
 
-
-def test_a_copied_in_folder_sorted_only_into_existing_topics(server, browser):
-    import base64
-    from test_api import make_pdf
-    base = server["base"]
+    # a copied-in flat folder, only into my existing topics
     pdfs = {"Inbox/sheath-probe.pdf": make_pdf("Sheath around a Langmuir probe", "probe sheath " * 30),
             "Inbox/optics.pdf": make_pdf("Adaptive optics for telescopes", "mirror wavefront " * 30)}
     page = browser.new_page(viewport={"width": 1400, "height": 900}, bypass_csp=True)

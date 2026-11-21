@@ -16,6 +16,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
+from rb_app import load_server, purge_app  # noqa: E402
 
 # ---------------------------------------------------------------- fake Zotero 7 library
 # Table definitions follow Zotero's resource/schema/userdata.sql (only the tables we read, plus a few neighbours).
@@ -275,13 +277,7 @@ def zdir(tmp_path):
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch, zdir):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_ZOTERO_DIR", str(zdir))
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path, RB_ZOTERO_DIR=zdir)
 
     def no_network(*a, **k):
         raise AssertionError("Zotero import must not call Semantic Scholar")
@@ -310,7 +306,9 @@ def papers(server) -> dict:
 
 
 # ---------------------------------------------------------------- tests
-def test_status(env):
+def test_status_counts_and_collections_or_not_found(env, monkeypatch, tmp_path):
+    """The status counts only real top-level papers, lists live collections (children after their parent, counts
+    including sub-collections); with no Zotero folder it says how to set RB_ZOTERO_DIR and import is a 503."""
     client, _ = env
     st = client.get("/api/zotero/status").json()
     assert st["found"] is True and st["items"] == 5  # deleted item, notes, attachments, annotations excluded
@@ -321,10 +319,7 @@ def test_status(env):
     assert cols["Plasma"]["count"] == 3  # includes items in sub-collections
     names = [c["name"] for c in st["collections"]]
     assert names.index("Hall thrusters") == names.index("Plasma") + 1  # children follow their parent
-
-
-def test_status_not_found(env, monkeypatch, tmp_path):
-    client, _ = env
+    # no Zotero data folder where it points
     monkeypatch.setenv("RB_ZOTERO_DIR", str(tmp_path / "nowhere"))
     st = client.get("/api/zotero/status").json()
     assert st["found"] is False and "RB_ZOTERO_DIR" in st["message"] and st["collections"] == []
@@ -332,7 +327,9 @@ def test_status_not_found(env, monkeypatch, tmp_path):
     assert r.status_code == 503 and "RB_ZOTERO_DIR" in r.json()["detail"]
 
 
-def test_import_everything(env, zdir):
+def test_import_everything_with_fragments_then_reimport(env, zdir):
+    """A full import copies every live paper with its metadata, notes as Markdown, PDFs and text, leaves Zotero's
+    files untouched, turns annotations into fragments, and a second import changes nothing."""
     client, server = env
     before = _tree_hash(zdir)
     job = run_import(client)
@@ -369,10 +366,7 @@ def test_import_everything(env, zdir):
     g = client.get("/api/graph").json()
     assert len([n for n in g["nodes"] if n["type"] == "paper"]) == 5
 
-
-def test_annotations_become_fragments(env):
-    client, server = env
-    run_import(client)
+    # annotations become fragments under their paper
     attn = papers(server)["ATTN2017"]
     note = client.get(f"/api/notes/{attn['id']}").json()
     frags = note["fragments"]
@@ -390,10 +384,14 @@ def test_annotations_become_fragments(env):
     g = client.get("/api/graph").json()
     assert sum(1 for l in g["links"] if l["kind"] == "part") == 4
 
+    # the HTML to Markdown conversion used for notes
+    from app.zotero import html_to_markdown
+    assert html_to_markdown("<p>a &amp; b</p><p>c<br>d</p>") == "a & b\n\nc\nd"
+    assert html_to_markdown("<ul><li>x<ul><li>y</li></ul></li><li>z</li></ul>") == "- x\n  - y\n- z"
+    assert html_to_markdown("<blockquote><p>quoted</p></blockquote>") == "> quoted"
+    assert html_to_markdown("") == ""
 
-def test_reimport_is_idempotent(env):
-    client, server = env
-    run_import(client)
+    # importing again is idempotent
     n1 = len(server.store.all())
     job = run_import(client)
     assert (job["created"], job["updated"], job["skipped"], job["fragments"], job["pdfs"]) == (0, 0, 5, 0, 0)
@@ -454,8 +452,7 @@ def test_reads_wal_while_zotero_is_open(tmp_path, monkeypatch):
     live.commit()
     assert (zdir / "zotero.sqlite-wal").stat().st_size > 0
     monkeypatch.setenv("RB_ZOTERO_DIR", str(zdir))
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
+    purge_app()
     zotero = importlib.import_module("app.zotero")
     lib = zotero.read_library(zdir)
     assert "Only in the WAL" in [it["title"] for it in lib["items"]]
@@ -470,13 +467,7 @@ def _zedit(zdir: Path, sql: str, *args):
 
 def test_group_libraries(tmp_path, monkeypatch):
     zdir = build_zotero(tmp_path / "Zotero", groups=True)
-    monkeypatch.setenv("RB_ZOTERO_DIR", str(zdir))
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path, RB_ZOTERO_DIR=zdir)
     from fastapi.testclient import TestClient
     client = TestClient(server.app)
     st = client.get("/api/zotero/status").json()
@@ -536,14 +527,6 @@ def test_annotation_sync_on_reimport(env, zdir):
     job = run_import(client)
     assert s.get(now["ANNA0001"]["id"])["body"] == "My rewrite."
     assert any(k["id"] == now["ANNA0001"]["id"] for k in job["kept"])
-
-
-def test_html_to_markdown():
-    from app.zotero import html_to_markdown
-    assert html_to_markdown("<p>a &amp; b</p><p>c<br>d</p>") == "a & b\n\nc\nd"
-    assert html_to_markdown("<ul><li>x<ul><li>y</li></ul></li><li>z</li></ul>") == "- x\n  - y\n- z"
-    assert html_to_markdown("<blockquote><p>quoted</p></blockquote>") == "> quoted"
-    assert html_to_markdown("") == ""
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ import asyncio
 import base64
 import hashlib
 import http.server
-import importlib
 import io
 import json
 import os
@@ -27,6 +26,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from rb_app import load_server, purge_app  # noqa: E402
 from rb_testserver import run_server  # noqa: E402
 
 
@@ -42,18 +42,10 @@ def _pdf_bytes(text="Langmuir probe sheath theory") -> bytes:
 
 @pytest.fixture()
 def app_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_MEMORY_WATCH", "0")
-    monkeypatch.setenv("RB_WATCH", "0")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path, RB_MEMORY_WATCH="0", RB_WATCH="0")
     from fastapi.testclient import TestClient
     yield TestClient(server.app), server
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
+    purge_app()
 
 
 @pytest.fixture(scope="module")
@@ -83,22 +75,26 @@ def raw_request(port: int, head: str, body: bytes = b"") -> tuple[int, dict, byt
 
 
 # ---------------------------------------------------------------- DNS rebinding: the Host allowlist
-@pytest.mark.parametrize("host,ok", [
-    ("127.0.0.1:{port}", True), ("localhost:{port}", True), ("[::1]:{port}", True), ("LOCALHOST.:{port}", True),
-    ("evil.example:{port}", False), ("evil.example", False), ("127.0.0.1.evil.example:{port}", False),
-    ("localhost@evil.example", False), ("", False), ("192.168.1.5:{port}", False),
-])
-def test_host_header_allowlist(live, host, ok):
-    for path in ("/api/status", "/api/graph", "/", "/static/app.js"):
-        h = f"Host: {host.format(port=live.port)}\n" if host else ""
-        status, headers, _ = raw_request(live.port, f"GET {path} HTTP/1.1\n{h}Connection: close\n")
-        if ok:
-            assert status == 200, (host, path)
-        else:
-            assert status in (400, 421), (host, path, status)  # 400: uvicorn itself rejects a missing Host
+HOSTS = [("127.0.0.1:{port}", True), ("localhost:{port}", True), ("[::1]:{port}", True), ("LOCALHOST.:{port}", True),
+         ("evil.example:{port}", False), ("evil.example", False), ("127.0.0.1.evil.example:{port}", False),
+         ("localhost@evil.example", False), ("", False), ("192.168.1.5:{port}", False)]
+
+
+def test_host_header_allowlist(live):
+    """Only loopback names in the Host header are served (page, API and static files); any other Host, or none,
+    is refused."""
+    for host, ok in HOSTS:
+        for path in ("/api/status", "/api/graph", "/", "/static/app.js"):
+            h = f"Host: {host.format(port=live.port)}\n" if host else ""
+            status, headers, _ = raw_request(live.port, f"GET {path} HTTP/1.1\n{h}Connection: close\n")
+            if ok:
+                assert status == 200, (host, path)
+            else:
+                assert status in (400, 421), (host, path, status)  # 400: uvicorn itself rejects a missing Host
 
 
 def test_rb_host_is_allowed(tmp_path):
+    """The address in RB_HOST is accepted as a Host (then asks for pairing); a neighbouring address is not."""
     with run_server(tmp_path / "vault", env={"RB_HOST": "100.101.102.103", "RB_WATCH": "0"}) as srv:
         st, _, _ = raw_request(srv.port, f"GET /api/status HTTP/1.1\nHost: 100.101.102.103:{srv.port}\nConnection: close\n")
         # the Host is accepted; a request naming another host than loopback must come from a paired device
@@ -109,7 +105,10 @@ def test_rb_host_is_allowed(tmp_path):
 
 
 # ---------------------------------------------------------------- cross-site requests
-def test_origin_must_be_this_app(live):
+def test_cross_site_requests_are_refused(live):
+    """Only this app's own origins may send requests (no CORS headers for others); what a form or a no-cors
+    fetch can send without a preflight never mutates anything, Origin or not; and fetch metadata blocks
+    cross-site reads while a link from another site still opens the page."""
     b, port = live.base, live.port
     ok_origins = [b, f"http://localhost:{port}", f"http://[::1]:{port}"]
     bad_origins = ["https://evil.example", "http://localhost:3000", f"http://127.0.0.1:{port + 1}", "null",
@@ -125,10 +124,7 @@ def test_origin_must_be_this_app(live):
             assert r.status_code == 403, (o, method, path)
             assert "access-control-allow-origin" not in {k.lower() for k in r.headers}
 
-
-def test_simple_cross_site_requests_cannot_mutate(live):
-    """What an HTML form or a no-cors fetch can send without a CORS preflight is refused, Origin or not."""
-    b = live.base
+    # simple requests (an HTML form, a no-cors fetch) are refused, Origin or not
     before = len(requests.get(b + "/api/graph", timeout=10).json()["nodes"])
     bodies = [("text/plain", b'{"title": "csrf"}'), ("application/x-www-form-urlencoded", b"title=csrf"),
               ("multipart/form-data; boundary=x", b'--x\r\nContent-Disposition: form-data; name="title"\r\n\r\ncsrf\r\n--x--\r\n'),
@@ -141,9 +137,7 @@ def test_simple_cross_site_requests_cannot_mutate(live):
         assert r.status_code == 415, ctype
     assert len(requests.get(b + "/api/graph", timeout=10).json()["nodes"]) == before
 
-
-def test_fetch_metadata_blocks_cross_site_reads(live):
-    b = live.base
+    # fetch metadata: cross-site and same-site reads are blocked
     for site in ("cross-site", "same-site"):
         for path in ("/api/graph", "/api/search?q=a", "/pdf/x", "/api/memory"):
             r = requests.get(b + path, headers={"Sec-Fetch-Site": site, "Sec-Fetch-Mode": "no-cors",
@@ -158,7 +152,10 @@ def test_fetch_metadata_blocks_cross_site_reads(live):
     assert requests.get(b + "/api/graph", timeout=10).status_code == 200
 
 
-def test_security_headers_and_csp(live):
+def test_security_headers_csp_and_revalidation(live):
+    """The page carries the security headers and a strict CSP that allows exactly its own inline scripts; the API
+    gets nosniff but no CSP. After an update the app's window must not keep the old scripts: the page and static
+    files say no-cache (revalidate each load), and the page names this version's scripts."""
     r = requests.get(live.base + "/", timeout=10)
     h = {k.lower(): v for k, v in r.headers.items()}
     assert h["x-content-type-options"] == "nosniff"
@@ -179,8 +176,19 @@ def test_security_headers_and_csp(live):
     j = requests.get(live.base + "/api/status", timeout=10)
     assert j.headers["X-Content-Type-Options"] == "nosniff" and "Content-Security-Policy" not in j.headers
 
+    for path in ("/", "/static/app.js", "/static/style.css"):
+        status, headers, _ = raw_request(live.port, f"GET {path} HTTP/1.1\nHost: 127.0.0.1:{live.port}\nConnection: close\n")
+        assert status == 200 and headers.get("cache-control") == "no-cache", (path, headers)
+    # and the page asks for this version's scripts by name, so a script saved from an older version is never run
+    from app import __version__
+    _, _, body = raw_request(live.port, f"GET / HTTP/1.1\nHost: 127.0.0.1:{live.port}\nConnection: close\n")
+    body = body.decode() if isinstance(body, bytes) else body
+    assert f'src="/static/app.js?v={__version__}"' in body and f'href="/static/style.css?v={__version__}"' in body
+
 
 def test_body_size_limits(live):
+    """JSON bodies over RB_MAX_JSON_MB are refused (also when streamed in chunks), uploads over RB_MAX_UPLOAD_MB
+    too, and an upload that is not a PDF is a 400."""
     b = live.base
     big = json.dumps({"title": "x", "body": "a" * 80_000})  # RB_MAX_JSON_MB=0.05 on this server
     r = requests.post(b + "/api/notes", data=big, headers={"Content-Type": "application/json"}, timeout=10)
@@ -216,6 +224,7 @@ def test_port_is_learned_from_the_socket_not_the_host_header(app_env):
 
 # ---------------------------------------------------------------- path traversal
 def test_path_traversal_is_refused(live):
+    """Encoded ../, backslashes, NUL bytes and odd ids never reach a file outside the vault or static folder."""
     b = live.base
     secret = Path(live.log_path).parent / "secret.txt"
     secret.write_text("TOP SECRET")
@@ -234,7 +243,10 @@ def test_path_traversal_is_refused(live):
 
 
 # ---------------------------------------------------------------- untrusted note files (YAML)
-def test_yaml_bomb_note_is_refused_quickly(app_env):
+def test_untrusted_note_files_and_pdf_uploads(app_env):
+    """A YAML bomb, a self-referencing alias or a huge note file is reported as a YAML error quickly and never
+    rewritten; plain aliases from older versions still load and are written back without aliases; a broken PDF
+    upload is parsed or refused, never a server error."""
     c, server = app_env
     bomb = "---\ntitle: bomb\na: &a [x, x, x, x, x, x, x, x, x]\n" + "".join(
         f"{chr(98 + i)}: &{chr(98 + i)} [{', '.join(['*' + chr(97 + i)] * 9)}]\n" for i in range(9)) + "---\nbody\n"
@@ -250,9 +262,6 @@ def test_yaml_bomb_note_is_refused_quickly(app_env):
     assert c.get("/api/graph").status_code == 200
     assert time.monotonic() - t < 10
 
-
-def test_plain_aliases_from_older_versions_still_load(app_env):
-    c, server = app_env
     (Path(server.VAULT) / "Notes" / "old.md").write_text(
         "---\ntitle: Old\ncritique: &id001\n  text: fine\n  at: '2025-01-01'\ncritiques:\n- *id001\n---\n")
     n = c.get("/api/notes/old").json()
@@ -260,9 +269,13 @@ def test_plain_aliases_from_older_versions_still_load(app_env):
     c.put("/api/notes/old", json={"summary": "edited"})
     assert "*id" not in server.store.note_path("old").read_text(encoding="utf-8")  # written without aliases
 
+    r = c.post("/api/import/pdf", files={"file": ("x.pdf", b"%PDF-1.7\n" + os.urandom(4000), "application/pdf")})
+    assert r.status_code in (201, 400)  # parsed (pdfium is lenient) or refused; never a server error
+
 
 # ---------------------------------------------------------------- untrusted PDFs
 def test_pdf_parser_runs_in_a_limited_child(tmp_path, monkeypatch):
+    """PDF text comes from a child process that is killed at its time limit (and, on Linux, its memory limit)."""
     from app import pdftext
     good = tmp_path / "good.pdf"
     good.write_bytes(_pdf_bytes())
@@ -287,12 +300,6 @@ def test_pdf_parser_runs_in_a_limited_child(tmp_path, monkeypatch):
             pdftext.extract(good)
 
 
-def test_broken_pdf_upload_is_a_clean_400(app_env):
-    c, _ = app_env
-    r = c.post("/api/import/pdf", files={"file": ("x.pdf", b"%PDF-1.7\n" + os.urandom(4000), "application/pdf")})
-    assert r.status_code in (201, 400)  # parsed (pdfium is lenient) or refused; never a server error
-
-
 # ---------------------------------------------------------------- SSRF: URL import
 class _Resp:
     def __init__(self, status=200, body=b"%PDF-1.4\n%%EOF\n", headers=None):
@@ -306,7 +313,9 @@ class _Resp:
         pass
 
 
-def test_urlfetch_resolves_once_and_connects_to_the_checked_address(monkeypatch):
+def test_urlfetch_checks_addresses_types_and_time(monkeypatch):
+    """URL import resolves a host once and connects to the checked address (no DNS rebinding), checks every
+    redirect hop again, refuses non-PDF content types and compressed bodies, and stops at its total time limit."""
     from app import urlfetch
     answers = iter([["93.184.216.34"], ["127.0.0.1"], ["127.0.0.1"]])  # a rebinding DNS server
     lookups, opened = [], []
@@ -331,27 +340,19 @@ def test_urlfetch_resolves_once_and_connects_to_the_checked_address(monkeypatch)
         urlfetch.download_pdf("https://first.example/a.pdf")
     assert e.value.status == 403
 
-
-@pytest.mark.parametrize("headers", [{"Content-Type": "text/html"}, {"Content-Type": "image/png"},
-                                     {"Content-Encoding": "gzip"}, {"content-encoding": "br"}])
-def test_urlfetch_refuses_wrong_content_types_and_compression(monkeypatch, headers):
-    from app import urlfetch
     monkeypatch.setattr(urlfetch, "resolve", lambda h: ["93.184.216.34"])
-    monkeypatch.setattr(urlfetch, "_open", lambda url, addr=None: _Resp(headers=headers))
-    with pytest.raises(urlfetch.FetchError) as e:
-        urlfetch.download_pdf("https://example.com/a.pdf")
-    assert e.value.status == 415
-
-
-def test_urlfetch_total_time_limit(monkeypatch):
-    from app import urlfetch
+    for headers in ({"Content-Type": "text/html"}, {"Content-Type": "image/png"},
+                    {"Content-Encoding": "gzip"}, {"content-encoding": "br"}):
+        monkeypatch.setattr(urlfetch, "_open", lambda url, addr=None, headers=headers: _Resp(headers=headers))
+        with pytest.raises(urlfetch.FetchError) as e:
+            urlfetch.download_pdf("https://example.com/a.pdf")
+        assert e.value.status == 415, headers
 
     class Slow(_Resp):
         def iter_content(self, n):
             for _ in range(100):
                 time.sleep(0.05)
                 yield b"%PDF" + b"0" * 100
-    monkeypatch.setattr(urlfetch, "resolve", lambda h: ["93.184.216.34"])
     monkeypatch.setattr(urlfetch, "_open", lambda url, addr=None: Slow())
     monkeypatch.setattr(urlfetch, "TOTAL_TIMEOUT", 0.3)
     with pytest.raises(urlfetch.FetchError) as e:
@@ -406,7 +407,9 @@ FAKE_CLI = textwrap.dedent('''\
 ''')
 
 
-def test_claude_cli_gets_no_settings_hooks_or_claude_md(tmp_path, monkeypatch):
+def test_claude_cli_is_locked_down_in_a_private_folder(tmp_path, monkeypatch):
+    """The Claude CLI gets no settings, hooks, tools or CLAUDE.md, a scrubbed environment, and an empty private
+    working folder; a working folder under a folder other users can write to is refused."""
     from app import claude_cli
     exe = tmp_path / "claude"
     exe.write_text(FAKE_CLI.format(py=sys.executable))
@@ -436,9 +439,6 @@ def test_claude_cli_gets_no_settings_hooks_or_claude_md(tmp_path, monkeypatch):
         for d in cwd.resolve().parents:
             assert not (d.stat().st_mode & 0o002), d
 
-
-def test_private_workdir_refuses_shared_parents(tmp_path, monkeypatch):
-    from app import claude_cli
     shared = tmp_path / "shared"
     shared.mkdir()
     shared.chmod(0o777)
@@ -453,7 +453,9 @@ def test_private_workdir_refuses_shared_parents(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- agent tool input
-def test_agent_tool_arguments_are_validated():
+def test_agent_tool_input_is_validated(tmp_path):
+    """Agent tool arguments are checked (types, sizes, unknown keys) before a tool runs; over HTTP a bad call is
+    a tool error, a good one works, and no token is a 403."""
     from app import agent
     assert agent.validate_args("search", {"queries": ["a", "b"], "k": "3"}) == {"queries": ["a", "b"], "k": 3}
     bad = [("search", {"queries": ["x"] * 9}), ("search", {"queries": ["x" * 5000]}), ("search", {"cmd": "rm"}),
@@ -465,8 +467,6 @@ def test_agent_tool_arguments_are_validated():
         with pytest.raises(ValueError):
             agent.validate_args(name, args)
 
-
-def test_agent_tool_endpoint_rejects_bad_input(tmp_path):
     env = {"RB_AGENT_DEV_TOKEN": "dev-token", "RB_WATCH": "0", "RB_MEMORY_WATCH": "0"}
     with run_server(tmp_path / "vault", env=env) as srv:
         requests.post(srv.base + "/api/notes", json={"title": "A note"}, timeout=10)
@@ -522,28 +522,30 @@ def _bad_html(out: str) -> list[str]:
     return bad
 
 
-@pytest.mark.skipif(not NODE, reason="node is not installed")
-@pytest.mark.parametrize("le", ["static/latex-editor.js", "extension/vendor/latex-editor.js"])
-def test_renderer_neutralises_xss(tmp_path, le):
+def test_renderer_neutralises_xss(tmp_path):
+    """One renderer: extension/vendor/latex-editor.js is a copy of static/latex-editor.js (fonts come from each
+    page's --sans), so a fix to one is never missing from the other; copy the file over when you change it.
+    Both render every XSS case (block and inline) without scripts, handlers or script URLs and keep good links,
+    and the safeUrl link check every note goes through refuses script and data URLs."""
+    assert (ROOT / "extension/vendor/latex-editor.js").read_bytes() == (ROOT / "static/latex-editor.js").read_bytes()
+    if not NODE:
+        pytest.skip("node is not installed")
     script = tmp_path / "render.js"
     script.write_text(RENDER_JS)
-    out = subprocess.run([NODE, str(script), str(ROOT / "static/vendor/marked.min.js"),
-                          str(ROOT / "static/vendor/katex/katex.min.js"), str(ROOT / le)],
-                         input=json.dumps(XSS_CASES), capture_output=True, text=True, timeout=60)
-    assert out.returncode == 0, out.stderr
-    for case, pair in zip(XSS_CASES, json.loads(out.stdout)):
-        for html in pair:
-            assert not _bad_html(html), (case, html)
-    ok = json.loads(subprocess.run([NODE, str(script), str(ROOT / "static/vendor/marked.min.js"),
-                                    str(ROOT / "static/vendor/katex/katex.min.js"), str(ROOT / le)],
-                                   input=json.dumps(["[ok](https://a.example/x)", "[rel](#sec-2)"]),
-                                   capture_output=True, text=True, timeout=60).stdout)
-    assert 'href="https://a.example/x"' in ok[0][0] and 'href="#sec-2"' in ok[1][0]
+    for le in ("static/latex-editor.js", "extension/vendor/latex-editor.js"):
+        out = subprocess.run([NODE, str(script), str(ROOT / "static/vendor/marked.min.js"),
+                              str(ROOT / "static/vendor/katex/katex.min.js"), str(ROOT / le)],
+                             input=json.dumps(XSS_CASES), capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, (le, out.stderr)
+        for case, pair in zip(XSS_CASES, json.loads(out.stdout)):
+            for html in pair:
+                assert not _bad_html(html), (le, case, html)
+        ok = json.loads(subprocess.run([NODE, str(script), str(ROOT / "static/vendor/marked.min.js"),
+                                        str(ROOT / "static/vendor/katex/katex.min.js"), str(ROOT / le)],
+                                       input=json.dumps(["[ok](https://a.example/x)", "[rel](#sec-2)"]),
+                                       capture_output=True, text=True, timeout=60).stdout)
+        assert 'href="https://a.example/x"' in ok[0][0] and 'href="#sec-2"' in ok[1][0], le
 
-
-@pytest.mark.skipif(not NODE, reason="node is not installed")
-def test_renderer_safe_url():
-    """The link check of the renderer every note goes through (static/latex-editor.js)."""
     src = (ROOT / "static" / "latex-editor.js").read_text(encoding="utf-8")
     fn = re.search(r"function safeUrl\(href\) \{[\s\S]*?\n  \}", src).group(0)
     js = fn + "\nconst cases = " + json.dumps(["javascript:x", "java\tscript:x", "\x01javascript:x", " data:x",
@@ -553,7 +555,9 @@ def test_renderer_safe_url():
     assert out[:5] == [None] * 5 and all(out[5:])
 
 
-def test_exported_site_escapes_note_content(app_env):
+def test_exported_site_is_escaped_and_vault_files_are_private(app_env):
+    """Note content in an exported site is escaped (no script tags, handlers or javascript: links); on POSIX the
+    vault folder is 0700 and note files are readable by their owner only."""
     c, server = app_env
     evil = "</script><script>alert(1)</script><img src=x onerror=alert(1)>"
     n = c.post("/api/notes", json={"title": evil, "body": evil, "summary": evil, "url": "javascript:alert(1)",
@@ -566,32 +570,10 @@ def test_exported_site_escapes_note_content(app_env):
         html = page.read_text(encoding="utf-8")
         assert "<script>alert" not in html and "<img src=x" not in html and 'href="javascript:' not in html, page
 
+    # file permissions
+    if os.name == "posix":
+        n = c.post("/api/notes", json={"title": "Private"}).json()
+        vault = Path(server.VAULT)
+        assert stat.S_IMODE(vault.stat().st_mode) == 0o700
+        assert stat.S_IMODE(server.store.note_path(n["id"]).stat().st_mode) & 0o077 == 0
 
-# ---------------------------------------------------------------- file permissions
-@pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")
-def test_vault_files_are_private(app_env):
-    c, server = app_env
-    n = c.post("/api/notes", json={"title": "Private"}).json()
-    vault = Path(server.VAULT)
-    assert stat.S_IMODE(vault.stat().st_mode) == 0o700
-    assert stat.S_IMODE(server.store.note_path(n["id"]).stat().st_mode) & 0o077 == 0
-
-
-
-def test_page_and_scripts_are_rechecked_after_an_update(live):
-    """After an update the app's window must not keep the old scripts: the page and static files say
-    no-cache (revalidate each load), and an unchanged file still comes back as a cheap 304."""
-    for path in ("/", "/static/app.js", "/static/style.css"):
-        status, headers, _ = raw_request(live.port, f"GET {path} HTTP/1.1\nHost: 127.0.0.1:{live.port}\nConnection: close\n")
-        assert status == 200 and headers.get("cache-control") == "no-cache", (path, headers)
-    # and the page asks for this version's scripts by name, so a script saved from an older version is never run
-    from app import __version__
-    _, _, body = raw_request(live.port, f"GET / HTTP/1.1\nHost: 127.0.0.1:{live.port}\nConnection: close\n")
-    body = body.decode() if isinstance(body, bytes) else body
-    assert f'src="/static/app.js?v={__version__}"' in body and f'href="/static/style.css?v={__version__}"' in body
-
-
-def test_the_extension_uses_the_same_renderer_as_the_app():
-    """One renderer: extension/vendor/latex-editor.js is a copy of static/latex-editor.js (fonts come from each
-    page's --sans), so a fix to one is never missing from the other. Copy the file over when you change it."""
-    assert (ROOT / "extension/vendor/latex-editor.js").read_bytes() == (ROOT / "static/latex-editor.js").read_bytes()

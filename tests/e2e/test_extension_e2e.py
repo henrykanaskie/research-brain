@@ -419,6 +419,15 @@ def test_annotate_html_page(env):
 
 
 def test_popup_for_page_and_quick_clip(env):
+    """The extension id is the pinned one the server allows; the popup on an annotated page shows the paper, its
+    note count, Annotate this page (which turns annotate mode on) and the no-AI footer; the quick-clip form saves
+    a quote and a note; the server address can only be this computer."""
+    # Chrome derives the unpacked extension's id from manifest "key"; the server allows exactly that origin
+    from app.security import Policy, extension_id_from_key
+    key = json.loads((EXT_SRC / "manifest.json").read_text(encoding="utf-8"))["key"]
+    assert env["ext_id"] == extension_id_from_key(key)
+    assert env["ext_id"] in Policy().extension_ids
+
     ctx, site = env["ctx"], env["site"]
     url = site.base + "/paper.html"
     page = ctx.new_page()
@@ -468,7 +477,11 @@ def test_popup_for_page_and_quick_clip(env):
     assert not env["external"], env["external"]
 
 
-def test_pdf_tab_imports_and_opens_viewer(env):
+def test_pdf_tabs_and_local_pdfs_open_in_the_viewer(env):
+    """A PDF tab: the popup's Annotate imports it (/api/import/url, mocked) and opens the viewer, whose selection
+    toolbar matches the extension's and H saves a highlight. The right-click "Add this PDF to research brain" on a
+    web PDF downloads it in the tab, adds it and opens the viewer; on a file:/// PDF research brain reads it from
+    its path (the extension never reads the file) and the original stays where it is."""
     ctx, site = env["ctx"], env["site"]
     # the paper the (mocked) import resolves to: imported through the normal upload endpoint
     import requests
@@ -521,10 +534,7 @@ def test_pdf_tab_imports_and_opens_viewer(env):
     tab.close()
     viewer.close()
 
-
-def test_right_click_adds_a_web_pdf(env):
-    """"Add this PDF to research brain" on a PDF tab: downloaded in the tab, added, and opened in the viewer."""
-    ctx, site = env["ctx"], env["site"]
+    # right-click "Add this PDF to research brain" on a web PDF tab
     site.pages["/menu.pdf"] = (_pdf_bytes("Right click zqm web PDF"), "application/pdf")
     pdf_url = site.base + "/menu.pdf"
     tab = ctx.new_page()
@@ -539,11 +549,8 @@ def test_right_click_adds_a_web_pdf(env):
     tab.close()
     viewer.close()
 
-
-def test_right_click_adds_a_pdf_on_this_computer(env, tmp_path):
-    """A file:/// PDF (one opened from Downloads): research brain reads it from its path; the extension never
-    reads the file. The name has a character Windows' code page can't spell, as real paper titles do."""
-    ctx = env["ctx"]
+    # a file:/// PDF (one opened from Downloads); the name has a character Windows' code page can't spell, as
+    # real paper titles do
     home_dir = Path.home() / f"rb-ext-test-{os.getpid()}"
     home_dir.mkdir(exist_ok=True)
     try:
@@ -572,8 +579,10 @@ def _note_by_url(env, url):
     return api(env, "GET", f"/api/notes/{m['id']}")
 
 
-def test_popup_saves_an_article_as_link_and_text(env):
-    """On a publisher page the popup's main button saves link + text (no PDF); "Save PDF too" upgrades it."""
+def test_popup_saves_an_article_and_a_pdf_tab_as_link_and_text(env):
+    """On a publisher page the popup's main button saves link + text (no PDF); "Save PDF too" upgrades it, and the
+    Library setting "Link + text + PDF" swaps the buttons. On a PDF tab, link + text reads the PDF in the browser
+    and keeps its page text, not the file, filed in a new topic that the popup remembers."""
     ctx, site = env["ctx"], env["site"]
     url = site.base + "/doi/10.1063/1.4945558"
     page = ctx.new_page()
@@ -626,10 +635,7 @@ def test_popup_saves_an_article_as_link_and_text(env):
     page.close()
     assert not env["external"], env["external"]
 
-
-def test_popup_saves_a_pdf_tab_as_link_and_text(env):
-    """On a PDF tab, link + text reads the PDF in the browser and keeps its page text, not the file."""
-    ctx, site = env["ctx"], env["site"]
+    # a PDF tab: link + text keeps the page text, not the file
     url = site.base + "/linked.pdf"
     tab = ctx.new_page()
     tab.goto(url)
@@ -661,14 +667,6 @@ def test_popup_saves_a_pdf_tab_as_link_and_text(env):
     assert not (env["vault"] / "pdfs" / f"{n['id']}.pdf").exists()
     tab.close()
     assert not env["external"], env["external"]
-
-
-def test_extension_id_is_the_pinned_one(env):
-    """Chrome derives the unpacked extension's id from manifest "key"; the server allows exactly that origin."""
-    from app.security import Policy, extension_id_from_key
-    key = json.loads((EXT_SRC / "manifest.json").read_text(encoding="utf-8"))["key"]
-    assert env["ext_id"] == extension_id_from_key(key)
-    assert env["ext_id"] in Policy().extension_ids
 
 
 # the popup's Cite tab: copies are captured from navigator.clipboard.write (text/html + text/plain)

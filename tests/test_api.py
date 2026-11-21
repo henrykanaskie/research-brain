@@ -2,13 +2,13 @@
 
 Run:  .venv/bin/python -m pytest -q tests
 """
-import importlib
 import io
-import os
 import sys
 from pathlib import Path
 
 import pytest
+
+from rb_app import load_server
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -35,12 +35,7 @@ PAPERS = {
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path)
     scholar = server.scholar
 
     def s2_paper(pid):
@@ -242,9 +237,10 @@ def test_store_roundtrip(tmp_path):
     assert n2["id"] != n["id"]
 
 
-def test_hand_edited_frontmatter_does_not_break_library(client):
+def test_odd_field_types_from_files_or_requests_do_not_break_the_library(client):
     """A note file edited outside the app (e.g. Obsidian) with odd or broken YAML must not take
-    down /api/graph, search, or note creation (regression: `tags: foo` / `authors: 5` raised TypeError)."""
+    down /api/graph, search, or note creation (regression: `tags: foo` / `authors: 5` raised TypeError),
+    and a PUT with fields of the wrong type is coerced instead of refused."""
     from app.server import store
     ok = client.post("/api/notes", json={"type": "note", "title": "Plasma notes", "body": "plasma"}).json()
     nd = store.notes_dir  # the Notes folder, where notes made outside the app go
@@ -261,9 +257,6 @@ def test_hand_edited_frontmatter_does_not_break_library(client):
     assert client.put("/api/notes/weird-types", json={"body": "edited"}).status_code == 200
     assert client.post("/api/notes", json={"type": "note", "title": "Still works"}).status_code == 201
     assert client.get(f"/api/notes/{ok['id']}").status_code == 200
-
-
-def test_put_with_wrong_field_types(client):
     n = client.post("/api/notes", json={"type": "note", "title": "Typed"}).json()
     for body in ({"tags": 5}, {"title": 123}, {"authors": {"a": 1}}, {"summary": None}, {"body": ["x"]}):
         r = client.put(f"/api/notes/{n['id']}", json=body)
@@ -271,14 +264,3 @@ def test_put_with_wrong_field_types(client):
     got = client.get(f"/api/notes/{n['id']}").json()
     assert got["title"] == "123" and got["tags"] == [] and isinstance(got["body"], str)
     assert client.get("/api/graph").status_code == 200
-
-
-def test_pdfjs_modules_are_served_as_javascript(client):
-    """Browsers refuse ES modules with a non-JavaScript type (and we send nosniff). Some Pythons don't
-    map .mjs, which broke the PDF viewer on macOS; the server registers the type itself."""
-    import mimetypes
-    for name in ("pdf.min.mjs", "pdf.worker.min.mjs"):
-        r = client.get(f"/static/vendor/pdfjs/build/{name}")
-        assert r.status_code == 200, name
-        assert r.headers["content-type"].startswith("text/javascript"), (name, r.headers["content-type"])
-    assert mimetypes.guess_type("x.mjs")[0] == "text/javascript"

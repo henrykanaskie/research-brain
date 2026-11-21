@@ -2,7 +2,6 @@
 
 Run:  .venv/bin/python -m pytest -q tests/test_wikilinks.py
 """
-import importlib
 import sys
 from pathlib import Path
 
@@ -11,17 +10,13 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from rb_app import load_server  # noqa: E402
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
     from fastapi.testclient import TestClient
-    return TestClient(server.app)
+    return TestClient(load_server(monkeypatch, tmp_path).app)
 
 
 def mk(client, **fields):
@@ -37,7 +32,10 @@ def get(client, nid):
     return r.json()
 
 
-def test_resolve_by_id_title_and_alias(client):
+def test_wikilinks_resolve_and_backlinks(client):
+    """[[links]] resolve by id, title (any case) and alias, deduped in order; code spans and unknown titles stay
+    unresolved; titles prefer a non-fragment; backlinks carry a snippet; self-links are ignored; creating the
+    missing note resolves a dangling link."""
     attn = mk(client, type="paper", title="Attention Is All You Need", year=2017)
     sheath = mk(client, title="Plasma sheath")
     src = mk(client, title="Idea log",
@@ -52,8 +50,7 @@ def test_resolve_by_id_title_and_alias(client):
     assert n["links"] == []
     assert get(client, attn["id"])["mentions"] == [] and get(client, attn["id"])["unresolved"] == []
 
-
-def test_title_prefers_non_fragment(client):
+    # a title shared with a fragment resolves to the non-fragment
     paper = mk(client, type="paper", title="Dispersion")
     other = mk(client, title="Host")
     frag = mk(client, type="fragment", parent=other["id"], title="Dispersion", quote="w(k)")
@@ -65,8 +62,7 @@ def test_title_prefers_non_fragment(client):
     client.put(f"/api/notes/{frag['id']}", json={"quote": "w(k), cf. [[Uses it]]"})
     assert [m["id"] for m in get(client, frag["id"])["mentions"]] == [src["id"]]
 
-
-def test_backlinks_with_snippet(client):
+    # backlinks with a snippet around the link
     tgt = mk(client, title="Debye length")
     long_before = "Lorem ipsum dolor sit amet " * 12
     src = mk(client, title="Sheath notes",
@@ -84,8 +80,19 @@ def test_backlinks_with_snippet(client):
     client.put(f"/api/notes/{tgt['id']}", json={"body": "I am [[Debye length]]"})
     assert get(client, tgt["id"])["mentions"] == []
 
+    # creating the note a dangling link names resolves it
+    src = mk(client, title="Draft", body="Need a note on [[Ohmic heating]].")
+    assert get(client, src["id"])["unresolved"] == ["Ohmic heating"]
+    new = mk(client, title="Ohmic heating")
+    s = get(client, src["id"])
+    assert s["unresolved"] == [] and [m["id"] for m in s["mentions"]] == [new["id"]]
+    assert [b["id"] for b in get(client, new["id"])["backlinks"]] == [src["id"]]
 
-def test_graph_mention_edges(client):
+
+def test_graph_mention_edges_and_unlink(client):
+    """Mentions become graph edges (deduped, none where a manual link exists, reciprocal ones merged), and
+    right-click Unlink on a [[mention]] removes the [[links]] to that note while links to other notes,
+    and anything inside code, stay as they are."""
     a = mk(client, title="Alpha note")
     b = mk(client, title="Beta note")
     c = mk(client, title="Gamma note")
@@ -108,17 +115,28 @@ def test_graph_mention_edges(client):
     pairs = [tuple(sorted((l["source"], l["target"]))) for l in g["links"] if l["kind"] == "mention"]
     assert len(pairs) == len(set(pairs)) == 2
 
-
-def test_create_from_unresolved(client):
-    src = mk(client, title="Draft", body="Need a note on [[Ohmic heating]].")
-    assert get(client, src["id"])["unresolved"] == ["Ohmic heating"]
-    new = mk(client, title="Ohmic heating")
-    s = get(client, src["id"])
-    assert s["unresolved"] == [] and [m["id"] for m in s["mentions"]] == [new["id"]]
-    assert [b["id"] for b in get(client, new["id"])["backlinks"]] == [src["id"]]
+    # Unlink a mention
+    target = mk(client, title="Helium line ratios")
+    other = mk(client, title="Stochastic parrots")
+    src = mk(client, title="Cross sections", body=(
+        "See [[Helium line ratios]] and [[" + target["id"] + "|the helium paper]], not [[Stochastic parrots]].\n"
+        "Code keeps it: `[[Helium line ratios]]`"))
+    links = lambda: {(l["source"], l["target"], l["kind"]) for l in client.get("/api/graph").json()["links"]}
+    assert (src["id"], target["id"], "mention") in links()
+    r = client.post(f"/api/notes/{src['id']}/unmention", json={"target": target["id"]})
+    assert r.status_code == 200 and r.json()["unmentioned"] == ["body"]
+    body = client.get(f"/api/notes/{src['id']}").json()["body"]
+    assert body.startswith("See and, not [[Stochastic parrots]].")
+    assert "`[[Helium line ratios]]`" in body
+    assert (src["id"], target["id"], "mention") not in links() and (src["id"], other["id"], "mention") in links()
+    again = client.post(f"/api/notes/{src['id']}/unmention", json={"target": target["id"]}).json()
+    assert again["unmentioned"] == []
 
 
 def test_rename_rewrites_title_links(client):
+    """Renaming a note rewrites [[title]] links to it (not id links, code, or other links), switches them to
+    [[id|text]] when the new title is taken, and leaves a link alone when it resolves to another note
+    of the same title."""
     tgt = mk(client, title="Breathing mode")
     by_title = mk(client, title="Uses title",
                   body="See [[breathing MODE]] and [[Breathing mode|the oscillation]]. `[[Breathing mode]]` is code.",
@@ -151,32 +169,11 @@ def test_rename_rewrites_title_links(client):
     # a body-only update never rewrites
     assert "rewritten" not in client.put(f"/api/notes/{other['id']}", json={"body": "x"}).json()
 
-
-def test_rename_skips_ambiguous_title(client):
+    # an ambiguous title: renaming the note the link does NOT resolve to leaves it alone
     a = mk(client, title="Same name")
     b = mk(client, title="Same name")
     src = mk(client, title="Ref", body="[[Same name]]")
     assert [m["id"] for m in get(client, src["id"])["mentions"]] == [a["id"]]  # oldest wins
-    # renaming the note the link does NOT resolve to leaves it alone
     r = client.put(f"/api/notes/{b['id']}", json={"title": "Second"})
     assert "rewritten" not in r.json() and get(client, src["id"])["body"] == "[[Same name]]"
 
-
-def test_unlink_a_mention_removes_the_link_text(client):
-    """Right-click Unlink on a [[mention]]: the [[links]] to that note are removed; links to other notes,
-    and anything inside code, stay as they are."""
-    target = mk(client, title="Helium line ratios")
-    other = mk(client, title="Stochastic parrots")
-    src = mk(client, title="Cross sections", body=(
-        "See [[Helium line ratios]] and [[" + target["id"] + "|the helium paper]], not [[Stochastic parrots]].\n"
-        "Code keeps it: `[[Helium line ratios]]`"))
-    links = lambda: {(l["source"], l["target"], l["kind"]) for l in client.get("/api/graph").json()["links"]}
-    assert (src["id"], target["id"], "mention") in links()
-    r = client.post(f"/api/notes/{src['id']}/unmention", json={"target": target["id"]})
-    assert r.status_code == 200 and r.json()["unmentioned"] == ["body"]
-    body = client.get(f"/api/notes/{src['id']}").json()["body"]
-    assert body.startswith("See and, not [[Stochastic parrots]].")
-    assert "`[[Helium line ratios]]`" in body
-    assert (src["id"], target["id"], "mention") not in links() and (src["id"], other["id"], "mention") in links()
-    again = client.post(f"/api/notes/{src['id']}/unmention", json={"target": target["id"]}).json()
-    assert again["unmentioned"] == []

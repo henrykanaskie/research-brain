@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from test_questions import Recorder, library, server  # noqa: F401
-from test_scout import fake_sources, paper
+from test_questions import Recorder, fake_sources, library, paper, server  # noqa: F401
 
 
 def test_find_papers_puts_proposals_on_deck(server):
@@ -61,9 +60,12 @@ def test_find_papers_puts_proposals_on_deck(server):
     assert [i["status"] for i in v["items"]] == ["dismissed"] and all(s["id"] != row["id"] for s in v["searches"])
 
 
-def test_find_papers_validates_and_records_failures(server):
+def test_find_papers_validates_records_failures_announces_and_ties_to_a_question(server):
+    """Bad topics and windows are refused, the endpoint says online lookups are off, a failing agent is
+    recorded; a finished search calls on_done and is announced on the live-update bus; a search is tied to
+    the open question it is about."""
     srv, c = server
-    from app import finder
+    from app import finder, finder_api
     import pytest
     for topic, since in (("x", "any"), ("plasma", "forever")):
         with pytest.raises(finder.FinderError):
@@ -79,11 +81,7 @@ def test_find_papers_validates_and_records_failures(server):
     finder.start(srv.store, "plasma sheaths", backend=Broken(), sources=fake_sources([], []), wait=True)
     s = c.get("/api/finder").json()["searches"][0]
     assert s["status"] == "error" and "signed out" in s["error"]
-
-
-def test_a_finished_search_is_announced(server):
-    srv, c = server
-    from app import finder, finder_api
+    # a finished search is announced
     seen, sent = [], []
     fb = Recorder(replies=['{"action": "search", "queries": ["x"]}', '{"action": "read", "papers": ["P1"]}',
                            '{"action": "propose", "papers": [{"paper": "P1", "why": "fits"}]}', '{"action": "done"}'])
@@ -99,6 +97,18 @@ def test_a_finished_search_is_announced(server):
         finder_api.ctx.publish = old
     assert sent == [{"type": "finder-done", "id": seen[0]["id"], "topic": "plasma sheaths", "status": "done",
                      "added": 1, "error": "", "deck": 1}]
+    # a search is tied to the open question it is about
+    q = c.post("/api/notes", json={"type": "question", "title": "How accurate are atomic cross sections for krypton?",
+                                   "body": "electron impact ionization cross sections krypton accuracy"}).json()["id"]
+    for t in ("Tomato gardening", "Bread baking at altitude", "Hall thruster plume"):
+        c.post("/api/notes", json={"type": "paper", "title": t, "abstract": t})
+    m = srv._match_question("atomic cross sections krypton ionization")
+    assert m and m["id"] == q
+    assert srv._match_question("sourdough bread baking") is None
+    row = finder.start(srv.store, "krypton cross sections", question=m, backend=Recorder(replies=['{"action": "done"}']),
+                       sources=fake_sources([], []), wait=True, copies=[])
+    s = next(x for x in c.get("/api/finder").json()["searches"] if x["id"] == row["id"])
+    assert s["question"]["id"] == q
 
 
 def test_paywalled_papers_get_a_free_copy_and_a_note(server):

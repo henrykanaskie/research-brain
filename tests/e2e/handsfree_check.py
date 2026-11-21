@@ -1,4 +1,4 @@
-"""Run by test_voice_e2e.py in its own process: hands-free voice mode with Chromium's fake microphone.
+"""Run by test_e2e.py (test_hands_free_turns_with_a_microphone) in its own process: hands-free voice mode with Chromium's fake microphone.
 Env: RB_VOICE_TEST_DIR (a set-up voice folder), RB_VOICE_TEST_TURN (a WAV: quiet, a spoken question, 20 s of quiet)."""
 import json
 import os

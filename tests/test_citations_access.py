@@ -12,27 +12,6 @@ We measured anomalous electron transport using laser-induced fluorescence. The B
 """
 
 
-def test_locate_finds_the_sentence_and_corrects_an_off_by_one_page():
-    from app.locate import locate
-    r = locate(TEXT, 2, "The breathing-mode oscillation frequency lies between 10 and 30 kHz.")
-    assert r["page"] == 2 and r["quote"] == "The breathing mode oscillates at 10-30 kHz." and not r["moved"]
-    r = locate(TEXT, 2, "Anomalous transport was measured with laser-induced fluorescence (Bohm coefficient 1/16).")
-    assert r["page"] == 3 and r["moved"] and r["quote"].startswith("We measured anomalous electron transport")
-    r = locate(TEXT, 2, "Quantum gravity is unrelated.")
-    assert r["quote"] == "" and r["page"] == 2  # no confident match: open the cited page, highlight nothing
-    assert locate(TEXT, 2, "The amplitude grows, as shown in Fig. 3, with voltage")["quote"].startswith("Its amplitude grows")
-
-
-def test_locate_endpoint(client):
-    from app import server
-    n = client.post("/api/notes", json={"type": "paper", "title": "Hall thruster notes"}).json()
-    server.store.text_path(n["id"]).write_text(TEXT, encoding="utf-8")
-    out = client.post("/api/locate", json={"items": [
-        {"id": n["id"], "page": 2, "claim": "It oscillates at 10-30 kHz"}, {"id": "missing", "page": 1, "claim": "x"}]}).json()
-    assert out["items"][0]["quote"] == "The breathing mode oscillates at 10-30 kHz." and out["items"][0]["pdf"] == n["id"]
-    assert out["items"][1] is None
-
-
 def test_access_states_and_cache(client, monkeypatch):
     from app import access, server
     calls = []
@@ -118,8 +97,18 @@ The final paragraph is about something else entirely, namely data acquisition ha
 """
 
 
-def test_locate_gives_a_rough_stretch_when_no_sentence_says_it():
+def test_citations_point_at_their_sentence_or_a_rough_stretch(client):
+    """locate() finds the cited sentence (moving to the next page when the citation's page is one off), gives a
+    rough stretch when only neighbouring sentences together say it, falls back to the page with no confident match,
+    and POST /api/locate does the same for stored papers (None for a missing one)."""
     from app.locate import locate
+    r = locate(TEXT, 2, "The breathing-mode oscillation frequency lies between 10 and 30 kHz.")
+    assert r["page"] == 2 and r["quote"] == "The breathing mode oscillates at 10-30 kHz." and not r["moved"]
+    r = locate(TEXT, 2, "Anomalous transport was measured with laser-induced fluorescence (Bohm coefficient 1/16).")
+    assert r["page"] == 3 and r["moved"] and r["quote"].startswith("We measured anomalous electron transport")
+    r = locate(TEXT, 2, "Quantum gravity is unrelated.")
+    assert r["quote"] == "" and r["page"] == 2  # no confident match: open the cited page, highlight nothing
+    assert locate(TEXT, 2, "The amplitude grows, as shown in Fig. 3, with voltage")["quote"].startswith("Its amplitude grows")
     # the claim draws on three neighbouring sentences, none of which says it alone
     r = locate(ROUGH, 4, "Redeposited carbon and long-duration wall erosion widen ceramic channels unless magnetic shielding is used.")
     assert r["precision"] in ("rough", "sentence") and r["quote"]
@@ -127,3 +116,10 @@ def test_locate_gives_a_rough_stretch_when_no_sentence_says_it():
     r = locate(ROUGH, 4, "Chamber pressure, beam-dump carbon, channel widening and magnetic shielding interact in facility tests.")
     assert r["precision"] == "rough" and r["page"] == 4 and "data acquisition" not in r["quote"]
     assert locate(ROUGH, 4, "Quantum gravity")["precision"] == "page"
+    from app import server
+    n = client.post("/api/notes", json={"type": "paper", "title": "Hall thruster notes"}).json()
+    server.store.text_path(n["id"]).write_text(TEXT, encoding="utf-8")
+    out = client.post("/api/locate", json={"items": [
+        {"id": n["id"], "page": 2, "claim": "It oscillates at 10-30 kHz"}, {"id": "missing", "page": 1, "claim": "x"}]}).json()
+    assert out["items"][0]["quote"] == "The breathing mode oscillates at 10-30 kHz." and out["items"][0]["pdf"] == n["id"]
+    assert out["items"][1] is None

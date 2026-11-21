@@ -91,28 +91,32 @@ def _rich(store):
     return store.get(note["id"])
 
 
-@pytest.mark.parametrize("dates_unquoted", [False, True], ids=["quoted-dates", "obsidian-datetime"])
-def test_obsidian_reserialized_frontmatter_parses_identically(store, dates_unquoted):
-    before = _rich(store)
-    path = store.note_path(before["id"])
-    front, body = _split(path.read_text(encoding="utf-8"))
+def test_obsidian_reserialized_frontmatter_parses_identically(store):
+    """A rich note whose frontmatter Obsidian rewrote (block lists, double quotes, and, in the second case,
+    unquoted ISO datetimes) reads back exactly as before."""
     import yaml
-    meta = yaml.safe_load(front)
-    rewritten = "---\n" + obsidian_dump(meta, dates_unquoted) + "---\n" + body
-    assert rewritten != path.read_text(encoding="utf-8")
-    assert "tags:\n  - ml\n" in rewritten and "links:\n  - " in rewritten  # block-style lists
-    if dates_unquoted:
-        assert re.search(r"^created: \d{4}-\d{2}-\d{2}T", rewritten, re.M)
-    path.write_text(rewritten, encoding="utf-8")
-    after = store.get(before["id"])
-    assert after == before
+    for dates_unquoted in (False, True):
+        before = _rich(store)
+        path = store.note_path(before["id"])
+        front, body = _split(path.read_text(encoding="utf-8"))
+        meta = yaml.safe_load(front)
+        rewritten = "---\n" + obsidian_dump(meta, dates_unquoted) + "---\n" + body
+        assert rewritten != path.read_text(encoding="utf-8"), dates_unquoted
+        assert "tags:\n  - ml\n" in rewritten and "links:\n  - " in rewritten, dates_unquoted  # block-style lists
+        if dates_unquoted:
+            assert re.search(r"^created: \d{4}-\d{2}-\d{2}T", rewritten, re.M)
+        path.write_text(rewritten, encoding="utf-8")
+        after = store.get(before["id"])
+        assert after == before, dates_unquoted
 
 
-def test_obsidian_empty_and_null_properties(store):
+def test_obsidian_empty_added_and_unknown_properties(store):
+    """Empty and null properties Obsidian writes read as empty; aliases and cssclasses added there are
+    tolerated and not shown as fields; unknown keys survive when the app saves the note."""
+    import yaml
     n = store.create({"type": "note", "title": "Plain"})
     path = store.note_path(n["id"])
     front, body = _split(path.read_text(encoding="utf-8"))
-    import yaml
     meta = yaml.safe_load(front)
     meta["year"] = None
     meta["page"] = None
@@ -123,8 +127,7 @@ def test_obsidian_empty_and_null_properties(store):
     got = store.get(n["id"])
     assert got["year"] is None and got["authors"] == [] and got["tags"] == []
 
-
-def test_obsidian_added_properties_and_aliases_are_tolerated(store):
+    # aliases and cssclasses added in Obsidian
     n = store.create({"type": "note", "title": "Keeps working"})
     path = store.note_path(n["id"])
     raw = path.read_text(encoding="utf-8")
@@ -133,17 +136,13 @@ def test_obsidian_added_properties_and_aliases_are_tolerated(store):
     got = store.get(n["id"])
     assert got["title"] == "Keeps working" and "aliases" not in got
 
-
-def test_unknown_frontmatter_survives_app_edits(tmp_path):
-    """Properties added in Obsidian (aliases, cssclasses, custom keys) must not be lost when the app saves."""
-    from app.store import Store
-    s = Store(tmp_path)
-    n = s.create({"type": "note", "title": "Sheath notes"})
-    p = s.note_path(n["id"])
+    # properties added in Obsidian (aliases, custom keys) are not lost when the app saves
+    n = store.create({"type": "note", "title": "Sheath notes"})
+    p = store.note_path(n["id"])
     raw = p.read_text(encoding="utf-8")
     p.write_text(raw.replace("---\n", "---\naliases:\n  - Bohm sheath\nrating: 4\nreviewed: 2026-11-09\n", 1))
-    s.update(n["id"], {"body": "edited in the app"})
+    store.update(n["id"], {"body": "edited in the app"})
     out = p.read_text(encoding="utf-8")
     assert "Bohm sheath" in out and "rating: 4" in out and "reviewed:" in out
-    got = s.get(n["id"])
+    got = store.get(n["id"])
     assert got["body"] == "edited in the app" and got["_extra"]["rating"] == 4

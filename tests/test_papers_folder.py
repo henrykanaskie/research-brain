@@ -46,7 +46,10 @@ def test_same_file_is_never_stored_twice(client, home):
 
 
 def test_move_the_papers_folder(client, home, tmp_path):
-    h, _ = home
+    """Moving the papers folder moves the library's PDFs and survives a restart; relative paths and the library's
+    own state folder are refused. Your own PDFs in either folder stay where they are; the plan says beforehand
+    what will move; a folder of papers you follow (or one inside or around it) can't become the papers folder."""
+    h, trashed = home
     from app import server
     a = client.post("/api/import/pdf", files={"file": ("a.pdf", _pdf(), "application/pdf")}).json()
     f = client.get("/api/papers-folder").json()
@@ -61,6 +64,31 @@ def test_move_the_papers_folder(client, home, tmp_path):
     assert Store(server.store.root).pdf_dir == dest.resolve()
     assert client.put("/api/papers-folder", json={"folder": "relative/path"}).status_code == 400
     assert client.put("/api/papers-folder", json={"folder": str(server.store.root / "state")}).status_code == 400
+
+    # moving again: only the library's own PDFs go
+    first = dest
+    (first / "my own notes.pdf").write_bytes(_pdf("Not the library's"))
+    second = h / "Documents" / "Elsewhere"
+    second.mkdir(parents=True)
+    (second / "already here.pdf").write_bytes(_pdf("Someone else's"))
+    p = client.post("/api/papers-folder/plan", json={"folder": str(second)}).json()
+    assert p["moves"] == 1 and p["stay_behind"] == ["my own notes.pdf"] and p["already_there"] == ["already here.pdf"]
+    assert p["room"] and not p["same"] and p["clash"] == []
+    assert (first / f"{a['id']}.pdf").exists()  # planning moved nothing
+    r = client.put("/api/papers-folder", json={"folder": str(second)}).json()
+    assert r["moved"] == 1 and (second / f"{a['id']}.pdf").exists()
+    assert (first / "my own notes.pdf").exists() and (second / "already here.pdf").exists()
+    assert client.get(f"/api/notes/{a['id']}").json()["has_pdf"]
+    # a folder of papers you follow, a folder inside one, or one around one: refused, nothing moves
+    followed = h / "OneDrive" / "Papers"
+    (followed / "Sub").mkdir(parents=True)
+    server.store.links.add_folder(followed, {})
+    for bad in (followed, followed / "Sub", h / "OneDrive"):
+        for call in (lambda: client.post("/api/papers-folder/plan", json={"folder": str(bad)}),
+                     lambda: client.put("/api/papers-folder", json={"folder": str(bad)})):
+            res = call()
+            assert res.status_code == 400 and "follow" in res.json()["detail"], (bad, res.text)
+    assert (second / f"{a['id']}.pdf").exists() and trashed == []
 
 
 def test_delete_keeps_or_trashes_the_pdf(client, home):
@@ -78,7 +106,11 @@ def test_delete_keeps_or_trashes_the_pdf(client, home):
     assert client.delete("/api/notes/x?pdf=bogus").status_code in (400, 404)
 
 
-def test_check_a_folder_and_add_what_is_missing(client, home):
+def test_check_a_folder_and_add_what_is_missing(client, home, monkeypatch):
+    """Checking a folder sorts its PDFs into already in the library and new (deeper with recursive), only inside
+    your home folder; adding never trashes the original and skips copies of what you have; and the check never
+    opens (so never downloads) an online-only PDF."""
+    from app import acquire, papers
     h, trashed = home
     known, new1, new2 = _pdf("Known paper"), _pdf("New paper one"), _pdf("New paper two")
     client.post("/api/import/pdf", files={"file": ("k.pdf", known, "application/pdf")})
@@ -104,11 +136,26 @@ def test_check_a_folder_and_add_what_is_missing(client, home):
     from app import server
     assert len(list(server.store.pdf_dir.glob("*.pdf"))) == 3
 
+    # an online-only PDF is listed as online, never read
+    d = h / "Elsewhere"
+    d.mkdir()
+    (d / "cloud.pdf").write_bytes(_pdf("In the cloud"))
+    (d / "here.pdf").write_bytes(_pdf("On this computer"))
+    real = acquire.cloud_only
+    read = []
+    monkeypatch.setattr(acquire, "cloud_only", lambda st: st.st_size == (d / "cloud.pdf").stat().st_size or real(st))
+    monkeypatch.setattr(papers, "_sha", lambda p, _r=papers._sha: read.append(p.name) or _r(p))
+    r = client.post("/api/papers/scan", json={"folder": str(d)}).json()
+    assert [x["name"] for x in r["online"]] == ["cloud.pdf"] and [x["name"] for x in r["new"]] == ["here.pdf"]
+    assert "cloud.pdf" not in read  # never opened, so never downloaded
 
-def test_zip_export_takes_pdfs_from_the_papers_folder(client, home, tmp_path):
+
+def test_export_takes_pdfs_from_the_papers_folder_leaves_out_online_only_ones_and_checks_for_room(client, home, tmp_path, monkeypatch):
+    """The zip export takes PDFs from a moved papers folder, without kept "Removed from library" copies or the
+    folder setting; online-only PDFs can be left out; with no room it is refused before anything is written."""
     h, _ = home
     import zipfile
-    from app import server, vaultzip
+    from app import acquire, diskspace, server, vaultzip
     a = client.post("/api/import/pdf", files={"file": ("a.pdf", _pdf(), "application/pdf")}).json()
     client.put("/api/papers-folder", json={"folder": str(h / "Papers")})
     client.delete(f"/api/notes/{a['id']}?pdf=keep")
@@ -118,6 +165,26 @@ def test_zip_export_takes_pdfs_from_the_papers_folder(client, home, tmp_path):
     names = zipfile.ZipFile(out).namelist()
     assert f"PDFs/{b['id']}.pdf" in names and m["pdfs"] == 1
     assert "state/papers.json" not in names and not any("Removed from library" in n for n in names)
+
+    # one more PDF here and one online only: the online one can be left out
+    a = client.post("/api/import/pdf", files={"file": ("a.pdf", _pdf("Here"), "application/pdf")}).json()
+    b = client.post("/api/import/pdf", files={"file": ("b.pdf", _pdf("In the cloud"), "application/pdf")}).json()
+    cloud = server.store.pdf_path(b["id"])
+    real = acquire.cloud_only
+    monkeypatch.setattr(acquire, "cloud_only", lambda st: st.st_ino == cloud.stat().st_ino or real(st))
+    p = client.get("/api/vault/export/plan?pdfs=true").json()
+    assert p["online"] == 1 and p["room"]
+    out = tmp_path / "lib2.zip"
+    m = vaultzip.export_zip(server.store.root, out, include_online=False)
+    names = zipfile.ZipFile(out).namelist()
+    assert f"PDFs/{a['id']}.pdf" in names and f"PDFs/{b['id']}.pdf" not in names and m["online_left_out"] == 1
+    # no room: refused before anything is written, with a message, and no half-written zip left
+    monkeypatch.setattr(diskspace, "free_bytes", lambda p: diskspace.MIN_FREE + 10)
+    out2 = tmp_path / "full.zip"
+    with pytest.raises(diskspace.DiskFull) as e:
+        vaultzip.export_zip(server.store.root, out2)
+    assert "Not enough space" in str(e.value) and not out2.exists() and not out2.with_name("full.zip.tmp").exists()
+    assert client.get("/api/vault/export/plan?pdfs=true").json()["room"] is False
 
 
 def test_quick_import_into_a_topic_and_bookmarks(client, home):
@@ -144,6 +211,8 @@ def test_quick_import_into_a_topic_and_bookmarks(client, home):
 
 
 def test_pdf_with_highlights_has_real_annotations(client, home):
+    """The annotated PDF has a highlight (with its note) for each passage found, a note for the ones that couldn't
+    be placed, and leaves the library's copy untouched; find_range ignores whitespace and hyphenation."""
     import io
     from pypdf import PdfReader
     body = ("Ions enter the sheath at the Bohm speed.\nThe presheath accelerates them over many Debye lengths.\n"
@@ -164,9 +233,6 @@ def test_pdf_with_highlights_has_real_annotations(client, home):
     # the library's copy is untouched
     from app import server
     assert "/Annots" not in PdfReader(str(server.store.pdf_path(a["id"]))).pages[0]
-
-
-def test_find_range_ignores_whitespace_and_hyphenation():
     from app.annotate_pdf import find_range
     page = "The breathing mode is an ioniza-\r\ntion instability whose frequency\r\nscales with the neutral velocity."
     a, b = find_range(page, "an ionization instability whose frequency scales")
@@ -196,75 +262,3 @@ def test_pdfs_in_a_followed_folder_are_never_trashed_or_counted_as_copies(client
     r = client.post("/api/papers/import-files", json={"paths": [str(followed / "mine.pdf")], "mode": "move"}).json()
     assert r["added"] == [] and r["originals"] == [] and len(r["followed"]) == 1 and (followed / "mine.pdf").exists()
     assert a["id"]
-
-
-def test_the_check_of_a_folder_does_not_download_online_only_pdfs(client, home, monkeypatch):
-    h, _ = home
-    from app import acquire
-    d = h / "Downloads"
-    (d / "cloud.pdf").write_bytes(_pdf("In the cloud"))
-    (d / "here.pdf").write_bytes(_pdf("On this computer"))
-    real = acquire.cloud_only
-    read = []
-    monkeypatch.setattr(acquire, "cloud_only", lambda st: st.st_size == (d / "cloud.pdf").stat().st_size or real(st))
-    from app import papers
-    monkeypatch.setattr(papers, "_sha", lambda p, _r=papers._sha: read.append(p.name) or _r(p))
-    r = client.post("/api/papers/scan", json={"folder": str(d)}).json()
-    assert [x["name"] for x in r["online"]] == ["cloud.pdf"] and [x["name"] for x in r["new"]] == ["here.pdf"]
-    assert "cloud.pdf" not in read  # never opened, so never downloaded
-
-
-def test_moving_the_papers_folder_moves_only_the_librarys_own_pdfs(client, home):
-    """Your own PDFs in either folder stay where they are; the plan says beforehand what will move; a folder of
-    papers you follow (or one around it) can't become the papers folder."""
-    h, trashed = home
-    from app import server
-    a = client.post("/api/import/pdf", files={"file": ("a.pdf", _pdf("Library paper"), "application/pdf")}).json()
-    first = h / "Documents" / "Papers"
-    client.put("/api/papers-folder", json={"folder": str(first)})
-    (first / "my own notes.pdf").write_bytes(_pdf("Not the library's"))
-    second = h / "Documents" / "Elsewhere"
-    second.mkdir(parents=True)
-    (second / "already here.pdf").write_bytes(_pdf("Someone else's"))
-    p = client.post("/api/papers-folder/plan", json={"folder": str(second)}).json()
-    assert p["moves"] == 1 and p["stay_behind"] == ["my own notes.pdf"] and p["already_there"] == ["already here.pdf"]
-    assert p["room"] and not p["same"] and p["clash"] == []
-    assert (first / f"{a['id']}.pdf").exists()  # planning moved nothing
-    r = client.put("/api/papers-folder", json={"folder": str(second)}).json()
-    assert r["moved"] == 1 and (second / f"{a['id']}.pdf").exists()
-    assert (first / "my own notes.pdf").exists() and (second / "already here.pdf").exists()
-    assert client.get(f"/api/notes/{a['id']}").json()["has_pdf"]
-    # a folder of papers you follow, a folder inside one, or one around one: refused, nothing moves
-    followed = h / "OneDrive" / "Papers"
-    (followed / "Sub").mkdir(parents=True)
-    server.store.links.add_folder(followed, {})
-    for bad in (followed, followed / "Sub", h / "OneDrive"):
-        for call in (lambda: client.post("/api/papers-folder/plan", json={"folder": str(bad)}),
-                     lambda: client.put("/api/papers-folder", json={"folder": str(bad)})):
-            res = call()
-            assert res.status_code == 400 and "follow" in res.json()["detail"], (bad, res.text)
-    assert (second / f"{a['id']}.pdf").exists() and trashed == []
-
-
-def test_export_leaves_out_online_only_pdfs_and_checks_for_room(client, home, tmp_path, monkeypatch):
-    h, _ = home
-    import zipfile
-    from app import server, vaultzip, acquire, diskspace
-    a = client.post("/api/import/pdf", files={"file": ("a.pdf", _pdf("Here"), "application/pdf")}).json()
-    b = client.post("/api/import/pdf", files={"file": ("b.pdf", _pdf("In the cloud"), "application/pdf")}).json()
-    cloud = server.store.pdf_path(b["id"])
-    real = acquire.cloud_only
-    monkeypatch.setattr(acquire, "cloud_only", lambda st: st.st_ino == cloud.stat().st_ino or real(st))
-    p = client.get("/api/vault/export/plan?pdfs=true").json()
-    assert p["online"] == 1 and p["room"]
-    out = tmp_path / "lib.zip"
-    m = vaultzip.export_zip(server.store.root, out, include_online=False)
-    names = zipfile.ZipFile(out).namelist()
-    assert f"PDFs/{a['id']}.pdf" in names and f"PDFs/{b['id']}.pdf" not in names and m["online_left_out"] == 1
-    # no room: refused before anything is written, with a message, and no half-written zip left
-    monkeypatch.setattr(diskspace, "free_bytes", lambda p: diskspace.MIN_FREE + 10)
-    out2 = tmp_path / "full.zip"
-    with pytest.raises(diskspace.DiskFull) as e:
-        vaultzip.export_zip(server.store.root, out2)
-    assert "Not enough space" in str(e.value) and not out2.exists() and not out2.with_name("full.zip.tmp").exists()
-    assert client.get("/api/vault/export/plan?pdfs=true").json()["room"] is False

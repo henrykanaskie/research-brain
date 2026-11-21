@@ -4,8 +4,7 @@ from __future__ import annotations
 import json
 import time
 
-from test_questions import Recorder, add_question, library, server  # noqa: F401
-from test_scout import fake_sources, paper
+from test_questions import Recorder, add_question, fake_sources, library, paper, server  # noqa: F401
 
 IDEA_T = "Sparse attention for protein contact map prediction"
 IDEA_B = "Use sparse attention transformers to predict protein residue contact maps without multiple sequence alignments."
@@ -31,7 +30,9 @@ def cites_fake(calls):
     return cites
 
 
-def test_check_finds_close_work_follows_citations_and_compares_runs(server):
+def test_check_finds_close_work_follows_citations_compares_runs_and_ai_labels_win(server):
+    """A check searches each query, bands papers by closeness, follows citations both ways, and a second check
+    marks what is new; when the AI reads the closest papers, its labels and verdict win."""
     srv, c = server
     from app import novelty
     q = add_question(c)
@@ -42,7 +43,8 @@ def test_check_finds_close_work_follows_citations_and_compares_runs(server):
               queries=["sparse attention protein contact", "protein contact map", ""], online=True,
               sources=fake_sources([CLOSE, PART, FAR], calls), cites=cites_fake(ccalls), wait=True)
     r = novelty.start(srv.store, **kw)
-    assert [x[0] for x in calls] == ["sparse attention protein contact", "protein contact map"]  # empty query dropped
+    # each query searched once, the empty one dropped (the searches run in parallel, so in any order)
+    assert sorted(x[0] for x in calls) == ["protein contact map", "sparse attention protein contact"]
     run = novelty.get(srv.store, r["id"])
     assert run["status"] == "done", run
     by = {p["title"]: p for p in run["papers"]}
@@ -66,12 +68,7 @@ def test_check_finds_close_work_follows_citations_and_compares_runs(server):
     assert by2[CLOSE["title"]]["new"] is False
     assert run2["counts"]["compared"] is True and run2["counts"]["new"] >= 1
     assert [x["id"] for x in novelty.runs_for(srv.store, q["id"])] == [r2["id"], r["id"]]
-
-
-def test_ai_reads_the_closest_and_its_labels_win(server):
-    srv, c = server
-    from app import novelty
-    q = add_question(c)
+    # the AI reads the closest and its labels win
     asked = []
 
     def ask(instr, ctx):
@@ -103,10 +100,24 @@ def test_plan_parses_the_agent_and_falls_back():
     assert lp["ai"] is False and lp["parts"][0]["name"] == "Idea" and "Sparse" in lp["queries"][0]
 
 
-def test_api_private_note_checks_only_the_library(server, monkeypatch):
+def _wait(c, rid, s=20):
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < s:
+        run = c.get(f"/api/novelty/runs/{rid}").json()
+        if run["status"] != "running":
+            return run
+        time.sleep(0.05)
+    raise AssertionError("the novelty check didn't finish")
+
+
+def test_api_private_note_typed_idea_and_shareable_note(server, monkeypatch):
+    """Through the API: a private note's check stays in the library (no search, no citations, no AI) and its
+    run can be listed and deleted; an idea typed in Ask is planned by the agent, searched, and its run id is
+    kept with the chat message; a shareable note is searched with the edited queries and read by the agent."""
     srv, c = server
-    from app import novelty_api
+    from app import agents, novelty_api
     monkeypatch.setattr(novelty_api.metadata, "enabled", lambda: True)
+
     def boom(q, since):
         raise AssertionError("a private note's check searched a paper index")
     monkeypatch.setattr(novelty_api.ctx, "sources", {"boom": boom})
@@ -126,48 +137,6 @@ def test_api_private_note_checks_only_the_library(server, monkeypatch):
     assert c.delete(f"/api/novelty/runs/{rid}").status_code == 200
     assert c.get(f"/api/novelty/runs/{rid}").status_code == 404
 
-
-def test_api_shareable_note_searches_and_uses_the_agent(server, monkeypatch):
-    srv, c = server
-    from app import agents, novelty_api
-    monkeypatch.setattr(novelty_api.metadata, "enabled", lambda: True)
-    calls = []
-    monkeypatch.setattr(novelty_api.ctx, "sources", fake_sources([CLOSE, PART], calls))
-    monkeypatch.setattr(novelty_api.ctx, "cites", lambda p, d: [])
-    q = add_question(c)
-    c.post(f"/api/notes/{q['id']}/privacy", json={"private": False})
-    fb = Recorder(replies=['{"parts": [{"name": "Problem", "text": "protein contact maps"}], "queries": ["protein contact map"]}',
-                           '{"papers": [], "uncovered": "Nothing found does it.", "verdict": "Looks open."}'])
-    agents.register(fb)
-    agents.set_active(fb.id)
-    try:
-        pl = c.post("/api/novelty/plan", json={"note_id": q["id"], "text": IDEA_B}).json()
-        assert pl["online"] and pl["ai"] and pl["planned_by_ai"] and pl["queries"] == ["protein contact map"]
-        assert pl["from_selection"] and pl["idea"] == IDEA_B and IDEA_B in fb.prompts[0]
-        r = c.post("/api/novelty", json={"note_id": q["id"], "text": IDEA_B, "parts": pl["parts"], "queries": ["edited words"]})
-        run = _wait(c, r.json()["run"]["id"])
-        assert run["status"] == "done" and [x[0] for x in calls] == ["edited words"]
-        assert run["uncovered"] == "Nothing found does it." and len(fb.prompts) == 2
-        assert c.post("/api/novelty/plan", json={"note_id": q["id"], "text": "x"}).status_code in (200, 400)
-    finally:
-        agents.unregister(fb.id)
-
-
-def _wait(c, rid, s=20):
-    t0 = time.monotonic()
-    while time.monotonic() - t0 < s:
-        run = c.get(f"/api/novelty/runs/{rid}").json()
-        if run["status"] != "running":
-            return run
-        time.sleep(0.05)
-    raise AssertionError("the novelty check didn't finish")
-
-
-def test_api_typed_idea_from_ask(server, monkeypatch):
-    """Novelty mode in Ask: no note, the idea is what was typed; the run is kept with the conversation."""
-    srv, c = server
-    from app import agents, novelty_api
-    monkeypatch.setattr(novelty_api.metadata, "enabled", lambda: True)
     calls = []
     monkeypatch.setattr(novelty_api.ctx, "sources", fake_sources([CLOSE, PART], calls))
     monkeypatch.setattr(novelty_api.ctx, "cites", lambda p, d: [])
@@ -177,6 +146,7 @@ def test_api_typed_idea_from_ask(server, monkeypatch):
     agents.register(fb)
     agents.set_active(fb.id)
     try:
+        # novelty mode in Ask: no note, the idea is what was typed; the run is kept with the conversation
         assert c.post("/api/novelty/plan", json={"text": "short"}).status_code == 400
         pl = c.post("/api/novelty/plan", json={"text": IDEA_B}).json()
         assert pl["typed"] and pl["online"] and pl["ai"] and pl["planned_by_ai"] and pl["idea"] == IDEA_B and pl["title"] == ""
@@ -192,6 +162,21 @@ def test_api_typed_idea_from_ask(server, monkeypatch):
                                                       {"role": "assistant", "content": "x", "novelty": "../../etc"}], "title": "t"})
         msgs = c.get("/api/chats/library").json()["messages"]
         assert msgs[1].get("novelty") == run["id"] and "novelty" not in msgs[2]
+
+        # a shareable note: searched with the edited queries, and the agent plans and reads
+        c.post(f"/api/notes/{q['id']}/privacy", json={"private": False})
+        calls.clear()
+        n0 = len(fb.prompts)
+        fb.replies = ['{"parts": [{"name": "Problem", "text": "protein contact maps"}], "queries": ["protein contact map"]}',
+                      '{"papers": [], "uncovered": "Nothing found does it.", "verdict": "Looks open."}']
+        pl = c.post("/api/novelty/plan", json={"note_id": q["id"], "text": IDEA_B}).json()
+        assert pl["online"] and pl["ai"] and pl["planned_by_ai"] and pl["queries"] == ["protein contact map"]
+        assert pl["from_selection"] and pl["idea"] == IDEA_B and IDEA_B in fb.prompts[n0]
+        r = c.post("/api/novelty", json={"note_id": q["id"], "text": IDEA_B, "parts": pl["parts"], "queries": ["edited words"]})
+        run = _wait(c, r.json()["run"]["id"])
+        assert run["status"] == "done" and [x[0] for x in calls] == ["edited words"]
+        assert run["uncovered"] == "Nothing found does it." and len(fb.prompts) == n0 + 2
+        assert c.post("/api/novelty/plan", json={"note_id": q["id"], "text": "x"}).status_code in (200, 400)
     finally:
         agents.unregister(fb.id)
 

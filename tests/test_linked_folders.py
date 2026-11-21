@@ -35,8 +35,11 @@ def _topic_members(client, name):
     return set(client.get(f"/api/topics/{t['slug']}").json()["members"]) if t else set()
 
 
-def test_folders_of_papers_stay_where_they_are(client, tmp_path):
-    from app import server
+def test_folders_of_papers_stay_where_they_are(client, tmp_path, monkeypatch):
+    """A followed folder's subfolders become topics (named after the folders, or by AI from folder and file names
+    only); the files are never moved, copied or changed; moved, new and deleted PDFs are followed; deleting a paper
+    or no longer following the folder leaves the files alone."""
+    from app import linked_api, server
     root = tmp_path / "OneDrive" / "Research"
     files = _tree(root)
 
@@ -44,6 +47,17 @@ def test_folders_of_papers_stay_where_they_are(client, tmp_path):
     assert pv["pdfs"] == 5 and pv["known"] == 0
     names = {f["dir"]: f["topic"] for f in pv["folders"]}
     assert names == {"": "Research", "Atomic": "Atomic", "Plasma/Sheaths": "Sheaths", "Plasma/Thrusters": "Thrusters"}
+
+    # AI names see folder and file names, never the PDFs' text
+    seen = {}
+
+    def ask(instruction, context, purpose):
+        seen["context"] = context
+        return '{"names": {"Sheaths": "Plasma sheaths", "Atomic": "Atomic data", "Research": "General"}}'
+    monkeypatch.setattr(linked_api.ctx, "ask", ask)
+    r = client.post("/api/linked-folders/suggest-names", json={"path": str(root)}).json()
+    assert r["names"] == {"Plasma/Sheaths": "Plasma sheaths", "Atomic": "Atomic data", "": "General"}
+    assert "bohm" in seen["context"] and "Ions enter" not in seen["context"]  # names, never the PDFs' text
 
     r = client.post("/api/linked-folders", json={"path": str(root), "names": {"Atomic": "Cross sections", "": ""}})
     assert r.status_code == 201, r.text
@@ -97,7 +111,10 @@ def test_folders_of_papers_stay_where_they_are(client, tmp_path):
     assert (root / "Plasma/Sheaths/bohm.pdf").exists()
 
 
-def test_the_same_pdf_twice_is_one_paper_in_both_topics(client, tmp_path):
+def test_the_same_pdf_twice_is_one_paper_and_unsafe_folders_are_refused(client, tmp_path):
+    """The same PDF in two subfolders is one paper in both topics; a folder overlapping a followed one, the
+    library's own documents folder and a missing folder are refused."""
+    from app import server
     root = tmp_path / "Papers"
     data = make_pdf("One paper in two folders", "Same bytes.")
     for d in ("Reading", "Thesis"):
@@ -108,9 +125,6 @@ def test_the_same_pdf_twice_is_one_paper_in_both_topics(client, tmp_path):
     assert len(_topic_members(client, "Reading") | _topic_members(client, "Thesis")) == 1
     assert _topic_members(client, "Reading") == _topic_members(client, "Thesis")
 
-
-def test_unsafe_folders_are_refused(client, tmp_path):
-    from app import server
     root = tmp_path / "Research"
     (root / "Inner").mkdir(parents=True)
     (root / "Inner" / "a.pdf").write_bytes(make_pdf("Overlap test paper", "Text."))
@@ -121,21 +135,6 @@ def test_unsafe_folders_are_refused(client, tmp_path):
     assert r.status_code == 400
     r = client.post("/api/linked-folders/preview", json={"path": str(tmp_path / "nope")})
     assert r.status_code == 400
-
-
-def test_ai_names_come_from_folder_and_file_names_only(client, tmp_path, monkeypatch):
-    from app import linked_api
-    root = tmp_path / "Lab"
-    _tree(root)
-    seen = {}
-
-    def ask(instruction, context, purpose):
-        seen["context"] = context
-        return '{"names": {"Sheaths": "Plasma sheaths", "Atomic": "Atomic data", "Lab": "General"}}'
-    monkeypatch.setattr(linked_api.ctx, "ask", ask)
-    r = client.post("/api/linked-folders/suggest-names", json={"path": str(root)}).json()
-    assert r["names"] == {"Plasma/Sheaths": "Plasma sheaths", "Atomic": "Atomic data", "": "General"}
-    assert "bohm" in seen["context"] and "Ions enter" not in seen["context"]  # names, never the PDFs' text
 
 
 def _cloud_tree(tmp_path):

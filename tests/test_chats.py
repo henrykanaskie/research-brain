@@ -1,26 +1,17 @@
-"""Remembered conversations (app/chats.py) and asking about the papers in a topic or two.
+"""Remembered conversations (app/chats.py) and Past chats kept as <key>~<stamp>, asking about the papers in a topic
+or two, the general chat (attachments, web search and the papers a web answer names, app/finder.py from_answer),
+the folder chooser, and continuing a conversation on the phone.
 
 Run:  .venv/bin/python -m pytest -q tests/test_chats.py
 """
-import importlib
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from rb_app import add_paper as paper, load_server
 
 
 @pytest.fixture()
 def server(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_CITES_ON_IMPORT", "0")
-    monkeypatch.setenv("RB_RECS_AUTO", "0")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    srv = importlib.import_module("app.server")
+    srv = load_server(monkeypatch, tmp_path, RB_CITES_ON_IMPORT="0", RB_RECS_AUTO="0")
     monkeypatch.setattr(srv.scholar, "lookup", lambda q: None)
     return srv
 
@@ -31,13 +22,9 @@ def client(server):
     return TestClient(server.app)
 
 
-def paper(client, title, abstract="", **kw):
-    r = client.post("/api/notes", json={"type": "paper", "title": title, "abstract": abstract, **kw})
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
-
-
-def test_a_conversation_is_remembered_and_older_turns_are_condensed(client, server):
+def test_a_conversation_is_remembered_older_turns_condensed_and_past_chats_kept(client, server):
+    """A long conversation keeps the last KEEP messages (trimmed) plus a summary that goes to the agent; a new
+    conversation forgets it; earlier conversations are kept under a stamped key, with long abstracts cut."""
     from app import chats
     msgs = []
     for i in range(30):
@@ -64,14 +51,29 @@ def test_a_conversation_is_remembered_and_older_turns_are_condensed(client, serv
     assert client.get("/api/chats/library").json()["messages"] == []
     assert client.get("/api/chats").json() == []
 
+    # Past chats: the earlier conversation is kept as <key>~<stamp>
+    msgs = [{"role": "user", "content": "What is a cross section?"},
+            {"role": "assistant", "content": "An effective area.", "papers": [
+                {"id": "x1", "key": "external:doi:10.1000/aaa", "title": "Paper A", "paper": {"doi": "10.1000/aaa", "abstract": "y" * 5000},
+                 "status": "deck", "library_id": ""}]}]
+    assert client.put("/api/chats/general", json={"messages": msgs, "title": "General"}).status_code == 200
+    assert client.put("/api/chats/general~lx3k9a01", json={"messages": msgs[:1] + [{"role": "assistant", "content": "Old."}],
+                                                            "title": "General"}).status_code == 200
+    keys = {t["key"] for t in client.get("/api/chats").json()}
+    assert {"general", "general~lx3k9a01"} <= keys
+    got = client.get("/api/chats/general").json()["messages"][1]
+    assert got["papers"][0]["title"] == "Paper A" and len(got["papers"][0]["paper"]["abstract"]) == 1500
+    assert client.delete("/api/chats/general~lx3k9a01").status_code == 200
+    assert "general~lx3k9a01" not in {t["key"] for t in client.get("/api/chats").json()}
 
-def test_bad_conversation_names_are_refused(client):
+
+def test_conversation_names_are_checked_and_space_is_capped(client, server, monkeypatch):
+    """Bad conversation keys are refused, and only the newest MAX_THREADS conversations are kept."""
     for key in ("../../etc", "Library", "paper-", "topics-a+b+c+d+e+f+g+h+i+j"):
         assert client.put(f"/api/chats/{key}", json={"messages": []}).status_code in (400, 404), key
     assert client.get("/api/chats/paper-..").status_code in (400, 404)
+    assert client.put("/api/chats/general~BAD", json={"messages": [{"role": "user", "content": "q"}]}).status_code == 400
 
-
-def test_space_is_capped(client, server, monkeypatch):
     from app import chats
     monkeypatch.setattr(chats, "MAX_THREADS", 3)
     for i in range(5):
@@ -81,6 +83,8 @@ def test_space_is_capped(client, server, monkeypatch):
 
 
 def test_asking_about_topics_uses_only_their_papers(client, server):
+    """A chat about topics sees only their papers (your summary standing for a paper), through the API too,
+    and an empty topic is refused."""
     a = paper(client, "Sheath formation at a floating wall", "ion acceleration sheath presheath Bohm criterion")
     b = paper(client, "Secondary electron emission in Hall thrusters", "wall material secondary electron emission sheath")
     c = paper(client, "Transformers for language modelling", "attention tokens sheath")  # another topic
@@ -114,7 +118,9 @@ def _sse(text):
     return out
 
 
-def test_general_chat_answers_without_the_library(client, server):
+def test_general_chat_leaves_out_the_library_and_web_search_is_off_until_turned_on(client, server):
+    """The general chat sends no library content, refuses a private attachment, and refuses web search until
+    the setting is on (then needs Claude Code); the setting can be turned off again."""
     paper(client, "Secret sheath paper", "a very particular phrase about sheaths")
     r = client.post("/api/general/stream", json={"question": "What is a Debye length?"})
     evs = _sse(r.text)
@@ -122,8 +128,10 @@ def test_general_chat_answers_without_the_library(client, server):
     assert done and done[0]["web"] is False
     assert "particular phrase" not in done[0]["answer"]  # no library content goes along
 
+    note = client.post("/api/notes", json={"type": "note", "title": "Private idea", "body": "secret"}).json()["id"]
+    client.put(f"/api/notes/{note}", json={"private": True})
+    assert client.post("/api/general/stream", json={"question": "Thoughts?", "attach": [note]}).status_code == 403
 
-def test_web_search_is_off_until_you_turn_it_on(client, server):
     r = client.post("/api/general/stream", json={"question": "Latest on Hall thrusters?", "web": True})
     assert r.status_code == 403 and "Web search is off" in r.json()["detail"]
     s = client.put("/api/privacy/settings", json={"web_search": True}).json()
@@ -138,6 +146,8 @@ def test_web_search_is_off_until_you_turn_it_on(client, server):
 
 
 def test_web_calls_get_exactly_the_web_tools(monkeypatch):
+    """A web call passes only WebSearch and WebFetch to Claude Code and the session guard allows only those;
+    an ordinary call has no tools at all."""
     from app import claude_cli
     seen = {}
 
@@ -163,6 +173,8 @@ def test_web_calls_get_exactly_the_web_tools(monkeypatch):
 
 
 def test_attachments_in_general_chat(client, server, monkeypatch):
+    """Attached items go along in full without web search; with web search only a published paper's public
+    parts go along, and your own writing needs a confirmation setting first."""
     sent = {}
 
     def fake_sse(instruction, context, finish, purpose="ask", sources=None):
@@ -207,15 +219,53 @@ def test_attachments_in_general_chat(client, server, monkeypatch):
     assert r.status_code == 200 and "MY OWN IDEA" in sent["context"] and "MY OWN SUMMARY" in sent["context"]
 
 
-def test_private_items_cant_be_attached(client, server):
-    note = client.post("/api/notes", json={"type": "note", "title": "Private idea", "body": "secret"}).json()["id"]
-    client.put(f"/api/notes/{note}", json={"private": True})
-    r = client.post("/api/general/stream", json={"question": "Thoughts?", "attach": [note]})
-    assert r.status_code == 403
+def _row(title, doi="", arxiv=""):
+    return {"title": title, "doi": doi, "arxiv": arxiv, "year": 2024, "authors": ["A. Author"], "venue": "J. Test",
+            "access": "closed", "url": f"https://doi.org/{doi}" if doi else "", "abstract": "An abstract."}
+
+
+def test_papers_named_in_a_web_answer_go_on_deck(client, server):
+    """DOIs and arXiv ids are found in an answer's text (deduplicated); the papers named go On deck, linked to the
+    library copy when there is one; dismissed ones aren't shown again and a repeat makes no new search."""
+    from app import finder
+    text = ("See [Bray](https://doi.org/10.1103/PhysRevA.65.042708), arXiv:2401.01234v2, "
+            "https://arxiv.org/abs/2401.01234 again, iopscience.iop.org/article/10.1088/1361-6455/ab1234/pdf, "
+            "and https://doi.org/10.48550/arXiv.2312.00001.")
+    assert finder.ids_in(text) == [("doi", "10.1103/PhysRevA.65.042708"), ("arxiv", "2401.01234"),
+                                   ("doi", "10.1088/1361-6455/ab1234"), ("arxiv", "2312.00001")]
+    assert finder.ids_in("no papers here") == []
+
+    known = {("doi", "10.1000/aaa"): _row("Paper A", doi="10.1000/aaa"), ("arxiv", "2401.00001"): _row("Paper B", arxiv="2401.00001")}
+    lib = client.post("/api/notes", json={"type": "paper", "title": "Paper C", "doi": "10.1000/ccc"}).json()["id"]
+    known[("doi", "10.1000/ccc")] = _row("Paper C", doi="10.1000/ccc")
+    text = "Read https://doi.org/10.1000/aaa, arXiv:2401.00001, 10.1000/ccc and 10.1000/unknown."
+    r = finder.from_answer(server.store, "iodine cross sections", text, lookup=lambda k, v: known.get((k, v)),
+                           copies=[], wait=True)
+    titles = {i["title"]: i for i in r["items"]}
+    assert set(titles) == {"Paper A", "Paper B", "Paper C"}
+    assert titles["Paper C"]["library_id"] == lib and titles["Paper A"]["library_id"] == ""
+    deck = client.get("/api/finder").json()
+    assert {i["title"] for i in deck["items"] if i["status"] == "deck"} == {"Paper A", "Paper B"}
+    assert deck["searches"][0]["topic"] == "From a web search: iodine cross sections"
+    # dismissed papers aren't shown again; a repeat shows the same card without a new search
+    a = titles["Paper A"]["id"]
+    client.put(f"/api/finder/items/{a}", json={"status": "dismissed"})
+    r2 = finder.from_answer(server.store, "again", text, lookup=lambda k, v: known.get((k, v)), copies=[], wait=True)
+    assert {i["title"] for i in r2["items"]} == {"Paper B", "Paper C"} and r2["search"] == ""
+    assert finder.from_answer(server.store, "q", "nothing named", lookup=lambda k, v: None) is None
 
 
 def test_choose_folder_uses_the_computers_own_dialog(client, server, monkeypatch, tmp_path):
+    """The folder chooser runs the computer's own dialog (osascript on a Mac), handles cancel and a computer
+    without one, and a paired phone can never open it."""
     import subprocess
+    import sys
+    from app import pairing
+    assert any(rx.match("/api/pick-folder") for rx, _ in pairing.COMPUTER_ONLY)
+    if sys.platform == "darwin":
+        cmd = server.pick_folder_command('Pick "this"')
+        assert cmd[0] == "/usr/bin/osascript" and "choose folder" in cmd[-1] and '"Pick \'this\'"' in cmd[-1]
+
     picked = tmp_path / "Lab Drive" / "research-brain"
     picked.mkdir(parents=True)
     calls = []
@@ -236,62 +286,9 @@ def test_choose_folder_uses_the_computers_own_dialog(client, server, monkeypatch
     assert client.post("/api/pick-folder", json={}).status_code == 501
 
 
-def test_mac_folder_chooser_command():
-    import sys
-    from app import server as srv
-    if sys.platform != "darwin":
-        pytest.skip("macOS only")
-    cmd = srv.pick_folder_command('Pick "this"')
-    assert cmd[0] == "/usr/bin/osascript" and "choose folder" in cmd[-1] and '"Pick \'this\'"' in cmd[-1]
-
-
-def test_a_paired_phone_cant_open_a_dialog_on_the_computer():
-    from app import pairing
-    assert any(rx.match("/api/pick-folder") for rx, _ in pairing.COMPUTER_ONLY)
-
-
-def test_ai_sorts_imported_papers_into_topics(client, server, monkeypatch):
-    import json as _j
-    ids = [paper(client, t, a) for t, a in [
-        ("Sheath formation at a floating wall", "ion sheath presheath Bohm"),
-        ("Secondary electron emission from walls", "sheath wall emission"),
-        ("Transformers for language", "attention tokens language model"),
-        ("Scaling laws for language models", "language model scaling compute")]]
-    existing = client.post("/api/topics", json={"name": "Plasma sheaths"}).json()["slug"]
-    seen = {}
-
-    def fake_ask(instruction, context, purpose="ask", sources=None):
-        seen.update(context=context, purpose=purpose)
-        return "Here you go:\n" + _j.dumps({"topics": [
-            {"name": "Plasma sheaths", "ids": ids[:2]},
-            {"name": "Language models", "ids": ids[2:] + ["not-a-paper"]}]})
-    monkeypatch.setattr(server, "_ask", fake_ask)
-    r = client.post("/api/topics/auto-sort", json={"ids": ids}).json()
-    assert r["by"] == "ai" and r["sorted"] == 4
-    assert {(t["name"], t["count"], t["new"]) for t in r["topics"]} == {("Plasma sheaths", 2, False), ("Language models", 2, True)}
-    assert set(server.topics_mod.get_topic(server.store, existing)["members"]) == set(ids[:2])  # reused, not duplicated
-    assert "EXISTING TOPICS: Plasma sheaths" in seen["context"] and f"[[{ids[0]}]]" in seen["context"]
-    # nothing left without a topic
-    assert client.post("/api/topics/auto-sort", json={"unsorted": True}).json()["sorted"] == 0
-
-
-def test_sorting_falls_back_to_regions_without_a_usable_answer(client, server, monkeypatch):
-    ids = [paper(client, f"Sheath paper {i}", "ion sheath presheath Bohm wall") for i in range(3)]
-    monkeypatch.setattr(server, "_ask", lambda *a, **k: "I can't do JSON today")
-    r = client.post("/api/topics/auto-sort", json={"ids": ids}).json()
-    assert r["by"] == "regions" and r["sorted"] == 3 and r["topics"]
-
-
-def test_private_papers_are_not_sent_for_sorting(client, server, monkeypatch):
-    ids = [paper(client, f"Paper {i}", "words") for i in range(3)]
-    client.put(f"/api/notes/{ids[0]}", json={"private": True})
-    seen = {}
-    monkeypatch.setattr(server, "_ask", lambda i, c, *a, **k: seen.setdefault("c", c) and '{"topics": []}')
-    client.post("/api/topics/auto-sort", json={"ids": ids})
-    assert f"[[{ids[0]}]]" not in seen["c"] and f"[[{ids[1]}]]" in seen["c"]
-
-
-def test_continue_on_phone_writes_the_conversation_as_one_prompt_without_private_notes(client, server):
+def test_continue_on_phone_writes_one_prompt_without_private_notes_and_condenses(client, server):
+    """Handoff writes the conversation as one prompt with the papers cited in full, leaves out private notes
+    (saying so), refuses an empty conversation, and condenses a long one to fit."""
     pid = paper(client, "Sheath formation in plasmas", "How ions reach the wall.", authors=["Ada Bray", "Ben Cole"], year=2002, doi="10.1/x")
     secret = client.post("/api/notes", json={"type": "note", "title": "My secret idea",
                                              "body": "the wall potential secretly depends on the purple electron mood ring"}).json()["id"]
@@ -310,8 +307,6 @@ def test_continue_on_phone_writes_the_conversation_as_one_prompt_without_private
     # nothing to continue
     assert client.post("/api/chats/library/handoff", json={"messages": []}).status_code == 400
 
-
-def test_continue_on_phone_condenses_a_long_conversation_to_fit(client, server):
     from app import chats
     msgs = []
     for i in range(40):
