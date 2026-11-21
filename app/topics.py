@@ -271,6 +271,16 @@ def remove_note(store, slug: str, nid: str) -> dict:
         return _read(store, slug)
 
 
+def remove_notes(store, slug: str, ids) -> dict:
+    """Take several notes out of a topic in one write (reorganizing moves hundreds at once)."""
+    drop = set(ids)
+    with _lock:
+        t = _read(store, slug)
+        t["members"] = [m for m in t["members"] if m not in drop]
+        _write(store, t)
+        return _read(store, slug)
+
+
 def topics_for(store, nid: str) -> list[dict]:
     out = []
     for slug in _all_slugs(store):
