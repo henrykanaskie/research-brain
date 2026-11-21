@@ -646,6 +646,10 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
             if a != b and a in adj and b in adj:
                 adj[a][b] = adj[a].get(b, 0) + 0.8
                 adj[b][a] = adj[b].get(a, 0) + 0.8
+    for l in links:  # connections your AI agent found (app/connect_api.py)
+        if l["kind"] == "ai" and l["source"] in adj and l["target"] in adj:
+            adj[l["source"]][l["target"]] = adj[l["source"]].get(l["target"], 0) + 0.8
+            adj[l["target"]][l["source"]] = adj[l["target"]].get(l["source"], 0) + 0.8
     for l in links:  # real citations
         if l["kind"] == "cites" and l["source"] in adj and l["target"] in adj:
             adj[l["source"]][l["target"]] = adj[l["source"]].get(l["target"], 0) + 0.6
@@ -1182,16 +1186,20 @@ def _graph_data() -> dict:
                 links.append({"source": n["id"], "target": t, "kind": "cites"})
                 degree[n["id"]] += 1
                 degree[t] += 1
-    similar, best = [], {}
-    for i, neigh in idx["neighbours"].items():
-        for j, s in neigh[:5]:
-            key = tuple(sorted((i, j)))
-            best[key] = max(best.get(key, 0.0), s)
-    similar = [{"source": a, "target": b, "score": round(s, 4)} for (a, b), s in best.items()]
+    # AI connections (app/connect_api.py): pairs your AI agent read and judged connected. Kept apart from your
+    # own links: drawn faint and dashed, and they pull only lightly
+    for l in connect_api.ai_links(by_id):
+        key = tuple(sorted((l["a"], l["b"])))
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append({"source": key[0], "target": key[1], "kind": "ai", "why": l["why"]})
+        degree[key[0]] += 1
+        degree[key[1]] += 1
     # regions are the expensive part (label propagation + TF-IDF naming); they depend only on the index,
     # so compute them once per index signature
     # (and on the topics: a paper added to a topic joins that topic's region)
-    csig = (idx.get("sig"), regions_mod.signature(store), questions_mod.REV[0])  # + evidence you kept
+    csig = (idx.get("sig"), regions_mod.signature(store), questions_mod.REV[0], connect_api.REV[0])  # + evidence, AI
     if idx.get("_clusters_sig") != csig or "_clusters_out" not in idx:
         idx["_clusters_out"] = _clusters(idx, links)
         idx["_clusters_sig"] = csig
@@ -1204,6 +1212,7 @@ def _graph_data() -> dict:
     clusters = regions_mod.apply(store, clusters, _mem)
     _region_namer.maybe(clusters, _mem, by_id)  # research-area names from your AI agent, in the background
     private = privacy.private_ids()  # the panel and graph show a lock; nothing private leaves via AI or export
+    similar = _similar_edges(idx, cluster_of)
     nodes = [{"id": n["id"], "type": n["type"], "title": n["title"], "year": n["year"], "authors": n["authors"][:3],
               "tags": n["tags"], "parent": n["parent"], "quote": n["quote"][:200], "degree": degree[n["id"]],
               "cluster": cluster_of.get(n["id"], -1), "sub": idx.get("_sub_of", {}).get(n["id"], -1),
@@ -1227,6 +1236,63 @@ def _graph_data() -> dict:
                                                       if ln["a_paper"] in by_id and ln["b_paper"] in by_id]}
 
 
+def _similar_edges(idx: dict, cluster_of: dict[str, int]) -> list[dict]:
+    """The similarity lines: each note's 5 closest notes, plus, inside every section, the strongest tree that
+    joins all of its papers (a maximum spanning tree by what sets the papers apart, as the sections themselves
+    are found). The tree's lines are marked `tree`: the map always shows them, so no paper sits in a section
+    with nothing joining it to the rest, and a section of n papers adds only n - 1 lines. Scores are plain
+    cosine similarity, which the map's threshold is set against."""
+    best: dict[tuple[str, str], float] = {}
+    for i, neigh in idx["neighbours"].items():
+        for j, s in neigh[:5]:
+            key = tuple(sorted((i, j)))
+            best[key] = max(best.get(key, 0.0), s)
+    tree: set[tuple[str, str]] = set()
+    ids, m, by_id = idx.get("ids") or [], idx.get("m"), idx["by_id"]
+    if m is not None and len(ids) > 1:
+        M = np.asarray(m, dtype=float)
+        pos = {i: k for k, i in enumerate(ids)}
+        tops = [i for i in ids if by_id.get(i, {}).get("type") != "fragment"]
+        centred = _centred_neighbours(idx, tops)
+        D = centred[1] if centred is not None else M  # compare by what sets papers apart, like the regions do
+        groups: dict[int, list[str]] = {}
+        for i in tops:
+            c = cluster_of.get(i, -1)
+            if c >= 0 and i in pos:
+                groups.setdefault(c, []).append(i)
+        for mem in groups.values():
+            if len(mem) < 2:
+                continue
+            rows = np.array([pos[i] for i in mem])
+            sub = D[rows]
+            # Prim's algorithm on similarity (largest first): O(n^2) time, O(n) memory, no n x n matrix
+            n = len(mem)
+            inside = np.zeros(n, dtype=bool)
+            key = np.full(n, -np.inf)
+            parent = np.full(n, -1)
+            key[0] = 0.0
+            for _ in range(n):
+                u = int(np.argmax(np.where(inside, -np.inf, key)))
+                inside[u] = True
+                if parent[u] >= 0:
+                    a, b = mem[u], mem[parent[u]]
+                    pair = tuple(sorted((a, b)))
+                    tree.add(pair)
+                    if pair not in best:
+                        best[pair] = float(max(0.0, min(1.0, M[pos[a]] @ M[pos[b]])))
+                s = sub @ sub[u]
+                better = (~inside) & (s > key)
+                key[better] = s[better]
+                parent[better] = u
+    out = []
+    for (a, b), s in best.items():
+        e = {"source": a, "target": b, "score": round(s, 4)}
+        if (a, b) in tree:
+            e["tree"] = True
+        out.append(e)
+    return out
+
+
 @app.get("/api/graph")
 def api_graph():
     # At a few thousand notes the payload is >1 MB, and FastAPI's generic encoder alone took ~75 ms,
@@ -1235,7 +1301,8 @@ def api_graph():
     # opens (engagement.json) and the privacy settings aren't in the index signature
     from . import cards_api as _cards_api
     key = (idx.get("sig"), embedder.kind, _eng_rev[0], privacy.version(), questions_mod.REV[0],  # + evidence
-           _cards_api.signature(), regions_mod.signature(store))  # idea cards; region and topic names
+           _cards_api.signature(), regions_mod.signature(store),  # idea cards; region and topic names
+           connect_api.REV[0])  # AI connections
     cached = idx.get("_graph_bytes")
     if not cached or cached[0] != key:
         body = json.dumps(_graph_data(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")

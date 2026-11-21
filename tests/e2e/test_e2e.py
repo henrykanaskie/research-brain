@@ -555,7 +555,8 @@ def test_a_new_paper_joins_the_dots_you_placed_and_old_pins_dont_bend_the_map(ct
     assert not page.errors
 
 
-def test_linked_dots_follow_a_dragged_dot(ctx, server):
+def test_dragging_a_dot_moves_only_that_dot(ctx, server):
+    """Dragging one paper never carries others along, not even the ones linked to it: its lines stretch."""
     clear_vault(server)
     a = api(server, "POST", "/api/notes", {"type": "paper", "title": "Main dot"})["id"]
     b = api(server, "POST", "/api/notes", {"type": "paper", "title": "Linked dot"})["id"]
@@ -565,7 +566,7 @@ def test_linked_dots_follow_a_dragged_dot(ctx, server):
     page.wait_for_function("window.__rb.S.nodes.size >= 3")
     page.wait_for_timeout(2500)
     pos = lambda i: page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y]; }", i)
-    (bx0, by0), (cx0, cy0) = pos(b), pos(c)
+    (ax0, ay0), (bx0, by0), (cx0, cy0) = pos(a), pos(b), pos(c)
     sx, sy = page.evaluate("(id) => { const fg = window.__rb.fg, n = window.__rb.S.nodes.get(id); const p = fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }", a)
     k = page.evaluate("window.__rb.fg.zoom()")
     box = page.locator("#graph").bounding_box()
@@ -575,14 +576,12 @@ def test_linked_dots_follow_a_dragged_dot(ctx, server):
         page.mouse.move(box["x"] + sx + 10 * i, box["y"] + sy + 6 * i)
     page.mouse.up()
     moved = (200 / k, 120 / k)  # how far the main dot went, in graph units
-    # the link is elastic: the linked dot trails on its spring and catches up a moment later (it isn't carried
-    # in lockstep, so the distance between them stretches while you pull)
     page.wait_for_timeout(2500)
-    (bx1, by1), (cx1, cy1) = pos(b), pos(c)
-    # the linked dot came a good part of the way (its link stretches, so not all of it); the unrelated one
-    # didn't jump with it
-    assert (bx1 - bx0) > 0.35 * moved[0] and (by1 - by0) > 0.35 * moved[1], ((bx0, by0), (bx1, by1), moved)
-    assert abs(cx1 - cx0) < 0.3 * moved[0], ((cx0, cy0), (cx1, cy1))
+    (ax1, ay1), (bx1, by1), (cx1, cy1) = pos(a), pos(b), pos(c)
+    assert (ax1 - ax0) > 0.6 * moved[0] and (ay1 - ay0) > 0.6 * moved[1], ((ax0, ay0), (ax1, ay1), moved)
+    # the linked dot and the unrelated one stayed where they were
+    assert abs(bx1 - bx0) < 0.05 * moved[0] and abs(by1 - by0) < 0.05 * moved[1], ((bx0, by0), (bx1, by1), moved)
+    assert abs(cx1 - cx0) < 0.05 * moved[0] and abs(cy1 - cy0) < 0.05 * moved[1], ((cx0, cy0), (cx1, cy1))
     assert not page.errors
 
 
@@ -1622,3 +1621,56 @@ def test_hands_free_turns_with_a_microphone(tmp_path):
     r = subprocess.run([sys.executable, script, str(tmp_path)], capture_output=True, text=True, timeout=240,
                        cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+
+
+def test_sections_sit_close_their_papers_evenly_spaced_and_clean_up_tidies_the_map(ctx, server):
+    """Sections pack close (no section far from its nearest neighbour), each section's papers are spread evenly
+    over it (no two crowded, none flung out), and Clean up puts a dragged dot back into its section."""
+    import math
+    clear_vault(server)
+    groups = {
+        "Sheaths": ["Bohm criterion sheath wall", "presheath ion flow sheath wall", "secondary emission sheath wall",
+                    "floating wall sheath potential", "sheath edge ion velocity wall"],
+        "Language": ["transformer attention language tokens", "scaling laws language model tokens",
+                     "language model pretraining tokens", "attention heads language transformer"],
+        "Proteins": ["protein folding structure prediction", "protein structure amino acid folding",
+                     "folding energy landscape protein"]}
+    ids = {}
+    for name, titles in groups.items():
+        mem = [api(server, "POST", "/api/notes", {"type": "paper", "title": t, "abstract": t + " " + t})["id"] for t in titles]
+        api(server, "POST", "/api/topics", {"name": name, "members": mem})
+        ids[name] = mem
+    page = open_app(ctx, server)
+    page.wait_for_function("(n) => window.__rb.S.nodes.size >= n", arg=12)
+    still = """() => { const S = window.__rb.S, now = JSON.stringify([...S.nodes.values()].map(n => [n.x, n.y]));
+      const same = window.__still === now; window.__still = now; return same && !!S.stops; }"""
+    page.wait_for_function(still, polling=500, timeout=20000)
+    pos = lambda: page.evaluate("() => Object.fromEntries([...window.__rb.S.nodes.values()].map(n => [n.id, [n.x, n.y, n.cluster, window.__rb.nodeRadius(n)]]))")
+    P = pos()
+
+    def check(P):
+        secs = {}
+        for i, (x, y, c, r) in P.items():
+            if c >= 0:
+                secs.setdefault(c, []).append((x, y, r))
+        assert len(secs) == 3, secs
+        cen = {c: (sum(p[0] for p in m) / len(m), sum(p[1] for p in m) / len(m)) for c, m in secs.items()}
+        rad = {c: max(math.hypot(p[0] - cen[c][0], p[1] - cen[c][1]) + p[2] for p in m) for c, m in secs.items()}
+        for c in secs:  # each section's nearest neighbour is close: an edge-to-edge gap of at most ~60 units
+            gap = min(math.hypot(cen[c][0] - cen[o][0], cen[c][1] - cen[o][1]) - rad[c] - rad[o] for o in secs if o != c)
+            assert gap < 60, (c, gap)
+        for c, m in secs.items():  # evenly spaced: nearest-neighbour distances all alike, none overlapping
+            nn = [min(math.hypot(a[0] - b[0], a[1] - b[1]) for b in m if b is not a) for a in m]
+            assert min(nn) > 2 * max(p[2] for p in m), (c, nn)
+            assert max(nn) < 2.6 * min(nn), (c, nn)
+    check(P)
+
+    # drag one paper far out of its section, then Clean up: it goes back in, and the map is tidy again
+    victim = ids["Sheaths"][0]
+    page.evaluate("""(id) => { const rb = window.__rb, n = rb.S.nodes.get(id); n.__home = [n.x + 400, n.y + 300];
+      n.__userPin = true; n.__pinRel = [400, 300]; n.x += 400; n.y += 300; rb.kick(100); }""", victim)
+    page.locator("#btn-cleanup").click()
+    expect(page.locator(".toast", has_text="Tidied the map")).to_be_visible()
+    page.wait_for_function(still, polling=500, timeout=20000)
+    check(pos())
+    assert not page.errors

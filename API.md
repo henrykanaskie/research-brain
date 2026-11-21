@@ -947,10 +947,18 @@ writes to `/api/profiles*`, `/api/settings`, `/api/agents/active`, `/api/privacy
   `replace` topics, files each group (a group named like an existing topic joins it), and trashes replaced topics
   left empty. Every topic file is copied to `.trash/topics-before-reorganize-<token>/` first.
 - `POST /api/topics/reorganize/undo` body `{"token"}` → `{"ok", "topics"}`: every topic back as it was.
-- `POST /api/links/ai-connect` body `{"ids"?, "folder"?, "topics"?, "unsorted"?}` → a job `{"id", "state":
+- `POST /api/links/ai-connect` body `{"ids"?, "folder"?, "topics"?, "unsorted"?, "groups"?: [[id]]}` → a job `{"id", "state":
   "waiting"|"running"|"done"|"stopped"|"error", "papers", "pairs", "checked", "left", "linked", "batches",
   "done_batches", "links": [{a, b, why, a_title, b_title}], "message"}`. Each paper's 4 most similar papers among
-  the chosen ones become candidate pairs; the AI judges them in batches of 60 (at most 25 batches a run, `left`
-  waits for the next) and the pairs it keeps become manual links. Every pair asked about is remembered in
-  `.index/ai-links.json`, so a run never asks twice and a link you remove isn't put back. One job at a time.
+  the chosen ones (by what sets them apart: the library's average taken out) become candidate pairs, plus each
+  paper's 3 closest within its own `groups` entry; the AI judges them in batches of 60 (at most 25 batches a run,
+  `left` waits for the next) and the pairs it keeps become AI connections: `/api/graph` links of kind `"ai"`
+  (with `"why"`), never your own links. Every pair asked about is remembered in `.index/ai-links.json`, so a run
+  never asks twice and a connection you remove isn't put back. One job at a time.
 - `GET /api/links/ai-connect/jobs/{job}`, `POST .../stop`, `POST .../undo` (→ the job with `"undone": n`).
+- `POST /api/links/ai/remove` body `{"a", "b"}`: drop one AI connection (not suggested again).
+  `POST /api/links/ai/keep` body `{"a", "b"}`: make it a link of your own.
+- `GET /api/links/ai-connect/legacy` → `{"count"}`: links of yours that an older version's analysis made.
+  `POST /api/links/ai-connect/legacy` body `{"undo"?}` → `{"converted"}`: turn those into AI connections (or back).
+- `/api/graph` `similar` entries with `"tree": true` join every section's papers into one maximum spanning tree
+  (by distinctive similarity); the map always shows them while similarity lines are on.

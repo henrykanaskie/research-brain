@@ -418,7 +418,7 @@
     if (j.state === 'running') return j.batches ? `Finding connections: ${j.done_batches} of ${j.batches} batches read, ${plural(j.linked, 'link')} so far…` : 'Finding connections…';
     if (j.state === 'error') return `Couldn’t find connections: ${j.message}`;
     if (j.undone != null && !j.links.length) return `Took back ${plural(j.undone, 'link')}.`;
-    const bits = [j.linked ? `Linked ${plural(j.linked, 'pair')} of papers that belong together` : (j.message || `The AI found no new connections among ${plural(j.checked, 'likely pair')}`)];
+    const bits = [j.linked ? `Found ${plural(j.linked, 'connection')} between papers that belong together (faint dashed lines on the map)` : (j.message || `The AI found no new connections among ${plural(j.checked, 'likely pair')}`)];
     if (j.left) bits.push(`${j.left} more likely pairs are left: run it again to check them`);
     return bits.join('. ') + (j.state === 'stopped' ? ' (stopped).' : '.');
   }
@@ -451,7 +451,7 @@
   const connectBox = (checked = true) => {
     const box = h('input', { type: 'checkbox' });
     box.checked = checked;
-    return { box, row: h('label', null, box, 'Have the AI find connections between them: it reads the papers that look alike and links the ones that really belong together, so they sit together on the map') };
+    return { box, row: h('label', null, box, 'Have the AI find connections between them: it reads the papers that look alike (and the papers filed together) and marks the ones that really belong together. These show as faint dashed lines, not as links of yours') };
   };
 
   // ---------------------------------------------------------------- reorganizing topics (POST /api/topics/reorganize*)
@@ -555,7 +555,8 @@
       if (conn.box.checked && plan.ids.length > 1) {
         const line = h('p', { class: 'bk-note' });
         notes.replaceChildren(line);
-        const job = await findConnections({ ids: plan.ids }, (j) => {
+        // papers filed into the same new topic are always checked against each other
+        const job = await findConnections({ ids: plan.ids, groups: groups.map((g) => g.ids) }, (j) => {
           line.textContent = connectText(j);
           bar.style.width = j.batches ? `${Math.round((j.done_batches / j.batches) * 100)}%` : '0%';
         }, d.card);
