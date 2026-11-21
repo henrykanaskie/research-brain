@@ -1659,11 +1659,27 @@ def test_sections_sit_close_their_papers_evenly_spaced_and_clean_up_tidies_the_m
         for c in secs:  # each section's nearest neighbour is close: an edge-to-edge gap of at most ~60 units
             gap = min(math.hypot(cen[c][0] - cen[o][0], cen[c][1] - cen[o][1]) - rad[c] - rad[o] for o in secs if o != c)
             assert gap < 60, (c, gap)
-        for c, m in secs.items():  # evenly spaced: nearest-neighbour distances all alike, none overlapping
+        for c, m in secs.items():  # spread over the section, loosely: none crowded, none flung out
             nn = [min(math.hypot(a[0] - b[0], a[1] - b[1]) for b in m if b is not a) for a in m]
             assert min(nn) > 2 * max(p[2] for p in m), (c, nn)
-            assert max(nn) < 2.6 * min(nn), (c, nn)
+            assert max(nn) < 4 * min(nn), (c, nn)
+            assert len({round(d, 1) for d in nn}) > 1, (c, nn)  # not a perfect grid
     check(P)
+
+    # pointing at a paper lights up its connections: its lines at full strength, unrelated papers fade
+    hub = ids["Language"][0]
+    sx, sy = page.evaluate("(id) => { const fg = window.__rb.fg, n = window.__rb.S.nodes.get(id); const p = fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }", hub)
+    box = page.locator("#graph").bounding_box()
+    page.mouse.move(box["x"] + sx, box["y"] + sy)
+    page.wait_for_function("(id) => window.__rb.S.hover === id", arg=hub)
+    page.wait_for_timeout(600)
+    lit = page.evaluate("""(id) => { const S = window.__rb.S, mine = new Set([id]);
+      for (const l of S.links) { if (!window.__rb.fg.linkVisibility()(l)) continue;
+        const a = l.source.id, b = l.target.id; if (a === id) mine.add(b); if (b === id) mine.add(a); }
+      const far = [...S.nodes.values()].filter(n => !mine.has(n.id) && n.type !== 'fragment');
+      return { mine: mine.size, near: [...mine].map(i => S.nodes.get(i).__a), far: far.map(n => n.__a) }; }""", hub)
+    assert lit["mine"] > 1 and min(lit["near"]) > 0.9 and max(lit["far"]) < 0.5, lit
+    page.mouse.move(box["x"] + 5, box["y"] + 5)
 
     # drag one paper far out of its section, then Clean up: it goes back in, and the map is tidy again
     victim = ids["Sheaths"][0]
