@@ -802,16 +802,17 @@
   // ---------- focus / fade ----------
   /** neighbours of the selected node (manual, part, and visible similar links) */
   function focusSet() {
-    if (!S.selected || !S.nodes.has(S.selected)) return null;
+    const id = activeId();
+    if (!id) return null;
     const fc = S.focusCache;
-    if (fc && fc.id === S.selected && fc.links === S.links && fc.thr === S.threshold && fc.sim === S.showSim) return fc.set;
-    const set = new Set([S.selected]);
+    if (fc && fc.id === id && fc.links === S.links && fc.thr === S.threshold && fc.sim === S.showSim) return fc.set;
+    const set = new Set([id]);
     for (const l of S.links) {
       if (!linkShown(l)) continue;
       const a = lid(l.source), b = lid(l.target);
-      if (a === S.selected) set.add(b); else if (b === S.selected) set.add(a);
+      if (a === id) set.add(b); else if (b === id) set.add(a);
     }
-    S.focusCache = { id: S.selected, links: S.links, thr: S.threshold, sim: S.showSim, set };
+    S.focusCache = { id, links: S.links, thr: S.threshold, sim: S.showSim, set };
     return set;
   }
   const DIM = 0.2;
@@ -841,8 +842,17 @@
   }
   // S.hidden: ids hidden outright by a neighbourhood focus (static/views.js); their links go too
   const nodeHidden = (id) => !!(S.hidden && S.hidden.has(id));
+  /** The dot whose connections light up: the one under the pointer, else the one you clicked (selected). */
+  function activeId() {
+    if (S.hover && !S.dragging && S.nodes.has(S.hover) && !nodeHidden(S.hover)) {
+      const n = S.nodes.get(S.hover);
+      if (n.type !== 'fragment') return S.hover;
+    }
+    return S.selected && S.nodes.has(S.selected) ? S.selected : null;
+  }
+  const touchesActive = (l) => { const id = activeId(); return !!id && (lid(l.source) === id || lid(l.target) === id); };
   const linkShown = (l) => !(S.hidden && (nodeHidden(lid(l.source)) || nodeHidden(lid(l.target))))
-    && (l.kind !== 'similar' || (S.showSim && l.top && (l.tree || l.score >= S.threshold)))
+    && (l.kind !== 'similar' || (S.showSim && (l.top || touchesActive(l)) && (l.tree || l.score >= S.threshold)))
     && (l.kind !== 'cites' || S.showCites);
 
   // ---------- redraw control: only animate while something is moving ----------
@@ -1190,10 +1200,10 @@
   function linkStyle(l) {
     const a = l.source, b = l.target;
     const fa = a.__a ?? 1, fb = b.__a ?? 1;
-    const touchSel = S.selected && (a.id === S.selected || b.id === S.selected);
-    let dim = touchSel ? 1 : Math.min(fa, fb);
+    const lit = touchesActive(l);  // a connection of the dot under the pointer (or the one you clicked)
+    let dim = lit ? 1 : Math.min(fa, fb);
     if (S.search) dim = Math.min(fa, fb);
-    const hov = S.hoverLink === l;
+    const hov = S.hoverLink === l || lit;
     // long fibres recede a little, like depth in tissue
     const len = Math.hypot(b.x - a.x, b.y - a.y) || 0;
     const depth = Math.max(0.45, Math.min(1, 1.25 - len / 320));
@@ -1768,8 +1778,9 @@
       }
     };
     force.regionAt = (cid) => anchors.get(cid) || null;
-    /** After a layout: each section's papers spread evenly over their section, on a sunflower of evenly spaced
-     *  spots that fills the section's disc (a section grows only as it gets more papers). Which paper takes
+    /** After a layout: each section's papers spread over their whole section, from a sunflower of evenly spaced
+     *  spots that fills the section's disc (a section grows only as it gets more papers), loosened so it doesn't
+     *  read as a grid: each paper leans toward where the layout put it and is offset a little on its own. Which paper takes
      *  which spot follows where the layout put it, so papers that belong together stay side by side. Dots you
      *  placed keep their place, and no spot is given out on top of one. */
     force.arrange = () => {
@@ -1818,7 +1829,35 @@
             if (d < bd) { bd = d; bi = i; }
           }
           if (bi < 0) continue;
-          taken[bi] = 1; n.x = spots[bi][0]; n.y = spots[bi][1]; n.vx = 0; n.vy = 0;
+          taken[bi] = 1;
+          // not a grid: each paper leans a quarter of the way toward where the layout wanted it (so close
+          // papers sit a little closer), plus a small offset of its own, fixed by its id so it never jitters
+          const h = strHash(n.id), ja = ((h % 360) / 180) * Math.PI, jr = c * (0.12 + 0.22 * (((h >> 9) % 100) / 100));
+          let x = spots[bi][0] + (wx - spots[bi][0]) * 0.25 + Math.cos(ja) * jr;
+          let y = spots[bi][1] + (wy - spots[bi][1]) * 0.25 + Math.sin(ja) * jr;
+          const dx = x - a.x, dy = y - a.y, d = Math.hypot(dx, dy), lim = a.r - nodeRadius(n) - 1;
+          if (d > lim && d > 0) { x = a.x + (dx / d) * lim; y = a.y + (dy / d) * lim; }
+          n.x = x; n.y = y; n.vx = 0; n.vy = 0;
+        }
+        // and no two papers closer than a clear gap (the loose placement can bring a pair too close)
+        const mem = free.concat(inside);
+        for (let pass = 0; pass < 6; pass++) {
+          let moved = false;
+          for (let i = 0; i < free.length; i++) {
+            const p = free[i];
+            for (const q of mem) {
+              if (q === p) continue;
+              const min = nodeRadius(p) + nodeRadius(q) + Math.max(3, c * 0.9);
+              let dx = p.x - q.x, dy = p.y - q.y, d = Math.hypot(dx, dy);
+              if (d >= min) continue;
+              if (d < 1e-6) { dx = 1; dy = 0; d = 1; }
+              const push = (min - d) * (free.includes(q) ? 0.5 : 1);
+              p.x += (dx / d) * push; p.y += (dy / d) * push;
+              if (free.includes(q)) { q.x -= (dx / d) * push; q.y -= (dy / d) * push; }
+              moved = true;
+            }
+          }
+          if (!moved) break;
         }
       }
       // papers in no section: evenly spaced round the outside of the map, in the order they sit there now
@@ -2192,7 +2231,7 @@
       .linkHoverPrecision(6)
       // no tooltip on a trace: hovering highlights it and shows the pointer; a click explains the link
       .linkLabel(() => '')
-      .onNodeHover((n) => { S.hover = n ? n.id : null; graphEl.style.cursor = n ? 'pointer' : ''; kick(50); })
+      .onNodeHover((n) => { S.hover = n ? n.id : null; S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
