@@ -19,6 +19,56 @@ def _browser_window(monkeypatch):
     monkeypatch.setenv("RB_APP_WINDOW", "browser")
 
 
+class _Running:
+    """A started server process that hasn't stopped (Popen's stand-in)."""
+    def poll(self):
+        return None
+
+
+class _Stopped:
+    """A started server process that stopped at once (what serve did under pythonw before 1.0.55)."""
+    def poll(self):
+        return 1
+
+
+def test_open_says_at_once_when_the_server_stops_while_starting(monkeypatch, tmp_path):
+    """The server stopped while starting: no waiting minutes for an answer that can't come."""
+    from app import launcher
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
+    asked = []
+    monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: asked.append(1) is not None)
+    monkeypatch.setattr(launcher, "_port_busy", lambda port: False)
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: _Stopped())
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
+    assert launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799") is False
+    assert len(asked) < 5
+
+
+def test_open_keeps_waiting_when_another_server_holds_the_port(monkeypatch, tmp_path):
+    """serve stops at once when the port is taken: a research brain that is still starting there is waited for."""
+    from app import launcher
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
+    answers = iter([False] * 6 + [True])
+    monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: next(answers, True))
+    monkeypatch.setattr(launcher, "_port_busy", lambda port: True)
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: _Stopped())
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
+    assert launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799") is True
+
+
+def test_serve_hands_its_output_to_the_server_on_windows(monkeypatch):
+    """Opened from the Start menu (pythonw), the server gets serve's output (app.log) explicitly, or it has
+    none and stops while starting, saying nothing."""
+    from app import cli
+    kw = cli._quiet_child()
+    assert kw["creationflags"] == 0x08000000 and kw["stdin"] == cli.subprocess.DEVNULL
+    assert kw["stdout"] == sys.stdout.fileno() or kw["stdout"] == cli.subprocess.DEVNULL
+    monkeypatch.setattr(cli.sys, "stdout", None)
+    monkeypatch.setattr(cli.sys, "stderr", None)
+    kw = cli._quiet_child()
+    assert kw["stdout"] == kw["stderr"] == cli.subprocess.DEVNULL
+
+
 def test_open_reuses_a_running_server(monkeypatch):
     from app import launcher
     opened, started = [], []
@@ -40,7 +90,7 @@ def test_open_starts_a_server_that_quits_when_closed(monkeypatch, tmp_path):
     started = []
     monkeypatch.setattr(launcher, "_status_ok", status)
     monkeypatch.setattr(launcher, "open_window", lambda url: "app")
-    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: started.append((args, k)))
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: started.append((args, k)) or _Running())
     monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
     assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="lab")) == 0
     args, kw = started[0]
@@ -251,7 +301,7 @@ def test_a_failed_start_says_so_without_a_terminal(monkeypatch, tmp_path):
     monkeypatch.setattr(launcher.sys, "stderr", None)  # what pythonw and a menu launch give you
     monkeypatch.setattr(launcher.shutil, "which", lambda n: "/usr/bin/zenity" if n == "zenity" else None)
     shown = []
-    monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **k: shown.append(cmd))
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **k: shown.append(cmd) or _Running())
     assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 1
     dialog = shown[-1]
     assert dialog[:2] == ["zenity", "--error"] and "app.log" in dialog[-1]
@@ -404,7 +454,7 @@ def test_open_waits_for_a_stopping_server_to_let_go(monkeypatch, tmp_path):
     monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: False)
     monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
     order = []
-    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: order.append("started"))
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: order.append("started") or _Running())
     launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799")
     assert order == ["started"] and next(busy, "done") == "done"  # started only after the port was free
 
