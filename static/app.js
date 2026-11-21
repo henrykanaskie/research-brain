@@ -842,7 +842,7 @@
   // S.hidden: ids hidden outright by a neighbourhood focus (static/views.js); their links go too
   const nodeHidden = (id) => !!(S.hidden && S.hidden.has(id));
   const linkShown = (l) => !(S.hidden && (nodeHidden(lid(l.source)) || nodeHidden(lid(l.target))))
-    && (l.kind !== 'similar' || (S.showSim && l.top && l.score >= S.threshold))
+    && (l.kind !== 'similar' || (S.showSim && l.top && (l.tree || l.score >= S.threshold)))
     && (l.kind !== 'cites' || S.showCites);
 
   // ---------- redraw control: only animate while something is moving ----------
@@ -884,7 +884,10 @@
     const ec = fg.d3Force('edgeClear');
     if (ec && ec.settle) ec.settle();  // no dot left on a line that isn't its own (out of sight, so no jump)
     if (rf && rf.contain) rf.contain();
-    if (ec && ec.settle) ec.settle();  // containment can nudge a dot onto a line: clear it once more (a small step)
+    // last: every section's papers evenly spaced over it, compact and in order; then any dot the even spacing
+    // left on top of a line it isn't part of steps the shortest way off it (a dot on a line reads as connected)
+    if (rf && rf.arrange) rf.arrange();
+    if (ec && ec.settle) ec.settle();
     for (const n of nodes) { n.vx = 0; n.vy = 0; }
   }
   /** Work out the new layout from where the dots are resting now, and glide every dot there. */
@@ -1200,6 +1203,8 @@
     if (l.kind === 'cites') return { col: C.ink, a: (hov ? 0.9 : 0.4) * dim * depth, w: hov ? 0.8 : 0.5 };
     if (l.kind === 'question') return { col: C.violet, a: (hov ? 1 : l.verdict === 'related' ? 0.4 : 0.7) * dim, w: hov ? 1 : 0.7 };
     if (l.kind === 'conflict') return { col: C.ochre, a: (hov ? 1 : 0.85) * dim, w: hov ? 1.1 : 0.8, dash: true };
+    // a connection your AI found (not one you drew): quiet and dashed, so the red lines stay yours
+    if (l.kind === 'ai') return { col: C.machine, a: (hov ? 0.95 : 0.5) * dim * depth, w: hov ? 0.8 : 0.55, dash: true };
     const span = Math.max(1e-3, 1 - S.threshold);
     const sa = 0.22 + 0.4 * Math.min(1, Math.max(0, (l.score - S.threshold) / span));
     return { col: C.machine, a: (hov ? 0.95 : sa) * dim * depth, w: hov ? 0.8 : 0.5 };
@@ -1718,6 +1723,7 @@
         const pos = regionPos[regionKey(id)];
         if (pos) { a.x = pos[0]; a.y = pos[1]; a.mine = true; fixed.push(a); }
       }
+      compactRegions(anchors);
       if (fixed.length) {
         const placed = [...fixed];
         for (const id of ids) {
@@ -1762,6 +1768,75 @@
       }
     };
     force.regionAt = (cid) => anchors.get(cid) || null;
+    /** After a layout: each section's papers spread evenly over their section, on a sunflower of evenly spaced
+     *  spots that fills the section's disc (a section grows only as it gets more papers). Which paper takes
+     *  which spot follows where the layout put it, so papers that belong together stay side by side. Dots you
+     *  placed keep their place, and no spot is given out on top of one. */
+    force.arrange = () => {
+      const was = new Map(nodes.filter((n) => n.type !== 'fragment' && Number.isFinite(n.x)).map((n) => [n, [n.x, n.y]]));
+      const by = new Map();
+      for (const n of nodes) {
+        if (n.type === 'fragment' || n.cluster == null || n.cluster < 0 || !Number.isFinite(n.x)) continue;
+        if (!anchors.has(n.cluster)) continue;
+        (by.get(n.cluster) || by.set(n.cluster, { free: [], held: [] }).get(n.cluster))[n.__home || n.fx !== undefined ? 'held' : 'free'].push(n);
+      }
+      for (const [cid, { free, held }] of by) {
+        if (!free.length) continue;
+        const a = anchors.get(cid);
+        const inside = held.filter((m) => Math.hypot(m.x - a.x, m.y - a.y) < a.r);
+        const count = free.length + inside.length;
+        let rMax = 0;
+        for (const n of free) rMax = Math.max(rMax, nodeRadius(n));
+        // spots fill the disc evenly: spot i at radius c * sqrt(i + 0.5), turning by the golden angle
+        const c = Math.max(rMax * 2 + 1.5, Math.min(9, (a.r - rMax - 1.5) / Math.sqrt(count)));
+        const rot = (strHash(regionKey(cid)) % 360) * (Math.PI / 180);
+        let spots = [];
+        for (let i = 0; i < count; i++) {
+          const rr = count === 1 ? 0 : c * Math.sqrt(i + 0.5), t = rot + i * 2.39996;
+          spots.push([a.x + Math.cos(t) * rr, a.y + Math.sin(t) * rr * 0.92]);
+        }
+        for (const m of inside) {  // the spot nearest a dot you placed is its own
+          let bi = -1, bd = Infinity;
+          spots.forEach((p, i) => { const d = (p[0] - m.x) ** 2 + (p[1] - m.y) ** 2; if (d < bd) { bd = d; bi = i; } });
+          if (bi >= 0) spots.splice(bi, 1);
+        }
+        // where the layout put each paper, scaled to the spots' spread, decides which spot it takes
+        let mx = 0, my = 0;
+        for (const n of free) { mx += n.x; my += n.y; }
+        mx /= free.length; my /= free.length;
+        const rms = (pts) => Math.sqrt(pts.reduce((s, [x, y]) => s + x * x + y * y, 0) / Math.max(1, pts.length)) || 1;
+        const sx = rms(spots.map(([x, y]) => [x - a.x, y - a.y])) / rms(free.map((n) => [n.x - mx, n.y - my]));
+        const want = free.map((n) => [n, a.x + (n.x - mx) * sx, a.y + (n.y - my) * sx]);
+        // the outermost papers choose first (each its nearest spot still open), so the edge stays the edge
+        want.sort((p, q) => ((q[1] - a.x) ** 2 + (q[2] - a.y) ** 2) - ((p[1] - a.x) ** 2 + (p[2] - a.y) ** 2) || (p[0].id < q[0].id ? -1 : 1));
+        const taken = new Uint8Array(spots.length);
+        for (const [n, wx, wy] of want) {
+          let bi = -1, bd = Infinity;
+          for (let i = 0; i < spots.length; i++) {
+            if (taken[i]) continue;
+            const d = (spots[i][0] - wx) ** 2 + (spots[i][1] - wy) ** 2;
+            if (d < bd) { bd = d; bi = i; }
+          }
+          if (bi < 0) continue;
+          taken[bi] = 1; n.x = spots[bi][0]; n.y = spots[bi][1]; n.vx = 0; n.vy = 0;
+        }
+      }
+      // papers in no section: evenly spaced round the outside of the map, in the order they sit there now
+      const loose = nodes.filter((n) => n.type !== 'fragment' && (n.cluster == null || n.cluster < 0 || !anchors.has(n.cluster))
+        && !n.__home && n.fx === undefined && Number.isFinite(n.x) && !nodeHidden(n.id));
+      if (loose.length) {
+        loose.sort((p, q) => Math.atan2(p.y, p.x) - Math.atan2(q.y, q.x) || (p.id < q.id ? -1 : 1));
+        const R = Math.max(outerR, (loose.length * 9) / (2 * Math.PI));
+        const t0 = Math.atan2(loose[0].y, loose[0].x);
+        loose.forEach((n, i) => { const t = t0 + (i / loose.length) * Math.PI * 2; n.x = Math.cos(t) * R; n.y = Math.sin(t) * R * 0.92; n.vx = 0; n.vy = 0; });
+      }
+      // a paper's highlights move with it, by the same amount
+      for (const n of nodes) {
+        if (n.type !== 'fragment' || !n.parent || !Number.isFinite(n.x)) continue;
+        const p = nodeById.get(n.parent), w = was.get(p);
+        if (p && w) { n.x += p.x - w[0]; n.y += p.y - w[1]; }
+      }
+    };
     /** After a layout: every dot inside its own section and out of the others (dots you placed stay put). */
     force.contain = () => {
       const free = (n) => n.type !== 'fragment' && !n.__home && n.fx === undefined && Number.isFinite(n.x);
@@ -1850,6 +1925,52 @@
     cx /= P.size; cy /= P.size;
     for (const p of P.values()) { p.x -= cx; p.y -= cy; }
     return P;
+  }
+  /** Pull the sections in toward the middle until each one sits a set gap from its neighbours, never further:
+   *  the related-regions layout says which sections sit side by side, and this keeps that arrangement but
+   *  closes the empty space it leaves between unrelated ones (which made the map spread out). Sections you
+   *  dragged stay where you put them; the others pack around them. */
+  const REGION_GAP = 2 * 9 + 16;  // two cloud margins (CLOUD_PAD) and clear space between them: clouds never touch
+  function compactRegions(anchors) {
+    const all = [...anchors.values()];
+    if (all.length < 2) return;
+    const free = all.filter((a) => !a.mine);
+    if (!free.length) return;
+    const clear = (passes) => {
+      for (let p = 0; p < passes; p++) {
+        let moved = false;
+        for (let i = 0; i < all.length; i++) {
+          const a = all[i];
+          for (let j = i + 1; j < all.length; j++) {
+            const b = all[j], want = a.r + b.r + REGION_GAP;
+            let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+            if (d >= want - 0.01) continue;
+            if (d < 1e-6) { dx = 1; dy = 0.3; d = Math.hypot(dx, dy); }
+            const over = want - d, wa = a.mine ? 0 : b.mine ? 1 : 0.5;
+            if (a.mine && b.mine) continue;
+            a.x -= (dx / d) * over * wa; a.y -= (dy / d) * over * wa;
+            b.x += (dx / d) * over * (1 - wa); b.y += (dy / d) * over * (1 - wa);
+            moved = true;
+          }
+        }
+        if (!moved) return;
+      }
+    };
+    // the middle the free sections gather round: the papers' centre of mass, as packRegions left it
+    let cx = 0, cy = 0, w = 0;
+    for (const a of free) { const k = a.r * a.r; cx += a.x * k; cy += a.y * k; w += k; }
+    cx /= w; cy /= w;
+    for (let it = 0; it < 160; it++) {
+      const pull = 0.12 * (1 - it / 200);
+      for (const a of free) {
+        const dx = cx - a.x, dy = cy - a.y, d = Math.hypot(dx, dy);
+        if (d < 1e-6) continue;
+        const step = Math.min(d, d * pull + 1.5);
+        a.x += (dx / d) * step; a.y += (dy / d) * step * 1.25;  // a little more vertically: the screen is wider than tall
+      }
+      clear(6);
+    }
+    clear(60);
   }
   function packRegions(ids, sizes, now = new Map()) {
     const GAP = 2 * 9 + 16;  // two cloud margins (CLOUD_PAD) and clear space between them: clouds never touch
@@ -2271,6 +2392,7 @@
     // question's evidence) makes every dot's position NaN and the whole graph disappears
     const score = (l) => (Number.isFinite(l.score) ? l.score : 0.3);
     lf.distance((l) => (l.kind === 'part' ? 5 : l.kind === 'manual' ? 12 : l.kind === 'mention' ? 14 : l.kind === 'cites' ? 16
+      : l.kind === 'ai' ? 13
       : l.kind === 'question' ? 14 : 10 + 14 * (1 - score(l))))
       .strength((l) => {
         if (l.kind === 'part') return 1;
@@ -2280,6 +2402,7 @@
         if (l.kind === 'cites') return S.showCites ? 0.12 : 0;
         // similarity across two regions pulls only a little, so it can't drag the regions into each other
         const across = l.source && l.target && l.source.cluster >= 0 && l.target.cluster >= 0 && l.source.cluster !== l.target.cluster;
+        if (l.kind === 'ai') return across ? 0.02 : 0.12;
         return linkShown(l) ? (0.03 + 0.2 * score(l)) * (across ? 0.2 : 1) : 0;
       });
     kick(200);
@@ -2978,10 +3101,10 @@
     for (const l of g.links || []) {
       const s = lid(l.source), t = lid(l.target);
       if (!next.has(s) || !next.has(t) || s === t) continue;
-      const kind = ['part', 'mention', 'cites', 'question', 'conflict'].includes(l.kind) ? l.kind : 'manual';
+      const kind = ['part', 'mention', 'cites', 'question', 'conflict', 'ai'].includes(l.kind) ? l.kind : 'manual';
       const key = kind + linkKey(s + (l.sPart ? '#' + l.sPart : ''), t + (l.tPart ? '#' + l.tPart : ''));
       if (seen.has(key)) continue; seen.add(key);
-      (kind === 'part' ? part : manual).push({ source: s, target: t, kind, sPart: l.sPart || null, tPart: l.tPart || null, verdict: l.verdict });
+      (kind === 'part' ? part : manual).push({ source: s, target: t, kind, sPart: l.sPart || null, tPart: l.tPart || null, verdict: l.verdict, why: l.why || '' });
       if (!neighbour.has(s)) neighbour.set(s, t);
       if (!neighbour.has(t)) neighbour.set(t, s);
     }
@@ -3001,14 +3124,17 @@
       const key = linkKey(s, t);
       if (simSeen.has(key) || linkedPairs.has(key)) continue; // manual link wins visually
       simSeen.add(key);
-      sim.push({ source: s, target: t, kind: 'similar', score: Number(l.score) || 0, sPart: l.sPart || null, tPart: l.tPart || null });
+      sim.push({ source: s, target: t, kind: 'similar', score: Number(l.score) || 0, tree: !!l.tree, sPart: l.sPart || null, tPart: l.tPart || null });
     }
     // keep each node's 3 strongest similarities: enough to show where it belongs, not a hairball
     const byNode = new Map();
     for (const l of sim) for (const id of [l.source, l.target]) { if (!byNode.has(id)) byNode.set(id, []); byNode.get(id).push(l); }
     for (const arr of byNode.values()) { arr.sort((a, b) => b.score - a.score); arr.slice(0, 2).forEach((l) => { l.top = true; }); }
+    // the lines that join each section's papers into one tree (the server's similarity tree) always show with
+    // similarity on: no paper sits in a section with nothing joining it to the others
+    for (const l of sim) if (l.tree) l.top = true;
     // compare link structure with current
-    const sig = (arr) => arr.map((l) => l.kind + linkKey(lid(l.source), lid(l.target)) + (l.kind === 'similar' ? ':' + l.score.toFixed(3) : '')).sort().join('|');
+    const sig = (arr) => arr.map((l) => l.kind + linkKey(lid(l.source), lid(l.target)) + (l.kind === 'similar' ? ':' + l.score.toFixed(3) + (l.tree ? 't' : '') : '')).sort().join('|');
     const newLinks = [...part, ...manual, ...sim];
     if (!structural && sig(newLinks) !== sig(S.links)) structural = true;
 
@@ -3066,7 +3192,21 @@
       // a shorter, gentler glide from where everything is now
       relayout(S.firstGraph ? { alpha: 1, ms: 2400, fit: !S.userMovedView } : { alpha: 0.35, ms: 1400 });
     }
+    if (S.firstGraph) setTimeout(convertOldAiLinks, 1500);
     S.firstGraph = false;
+  }
+  /** An earlier version wrote the links the AI found as your own (red) links. Once, those become AI connections
+   *  (faint dashed lines) again; links you drew yourself stay as they are. Undo from the message. */
+  async function convertOldAiLinks() {
+    try {
+      const { count } = await api('GET', '/api/links/ai-connect/legacy');
+      if (!count) return;
+      const r = await api('POST', '/api/links/ai-connect/legacy', {});
+      if (!r.converted) return;
+      refreshGraph();
+      toast(`${r.converted} red line${r.converted === 1 ? '' : 's'} the AI made (not you) now show as faint dashed AI connections`, 'ok', { ms: 12000,
+        action: { label: 'Undo', fn: async () => { try { await api('POST', '/api/links/ai-connect/legacy', { undo: true }); refreshGraph(); } catch (e) { toastErr(e, 'Could not undo it'); } } } });
+    } catch { /* an older server, or offline: nothing to do */ }
   }
   const countType = (t) => { let c = 0; for (const n of S.nodes.values()) if (n.type === t) c++; return c; };
 
@@ -3145,35 +3285,36 @@
     relayout();
     toast('Every dot moves freely again', 'ok');
   }
-  /** While you drag a dot, the dots connected to it come along: your links and question evidence closely,
-   *  its strongest similar and citing papers about halfway. Dots you placed yourself stay where they are.
-   *  The layout then settles them around the dot's new place. */
+  /** Clean up: every dot you dragged and every section you moved goes back to the tidy layout (sections packed
+   *  close, each section's papers evenly spaced, papers in no section in a neat ring round the outside), and the
+   *  map fits the view. Nothing about your library changes, only where dots sit; Undo puts them back. */
+  function cleanUp() {
+    const before = { pins: { ...pins }, regionPos: { ...regionPos } };
+    pins = {}; savePins();
+    regionPos = {}; LS.set('regionPos', regionPos);
+    for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; delete n.__home; delete n.__pinRel; }
+    relayout({ alpha: 1, ms: 1100, fit: true });
+    toast('Tidied the map', 'ok', { ms: 8000, action: { label: 'Undo', fn: () => {
+      pins = before.pins; savePins();
+      regionPos = before.regionPos; LS.set('regionPos', regionPos);
+      for (const n of S.nodes.values()) restoreNodePin(n);
+      relayout({ alpha: 1, ms: 900, fit: true });
+    } } });
+  }
+  { const b = document.getElementById('btn-cleanup'); if (b) b.addEventListener('click', () => cleanUp()); }
+  /** Dragging a dot moves that dot and nothing else: its lines stretch to follow it, but no other paper is
+   *  carried along (its attached highlights, drawn on its ring, go with it). */
   let dragLast = null;
-  const FOLLOW = { manual: 0.85, mention: 0.75, question: 0.75, cites: 0.45, similar: 0.4 };
   function dragNeighbours(n) {
     const x = Number.isFinite(n.fx) ? n.fx : n.x, y = Number.isFinite(n.fy) ? n.fy : n.y;
-    if (!dragLast || dragLast.id !== n.id) { dragLast = { id: n.id, x, y, follow: followersOf(n) }; return; }
+    if (!dragLast || dragLast.id !== n.id) { dragLast = { id: n.id, x, y }; return; }
     const dx = x - dragLast.x, dy = y - dragLast.y;
     dragLast.x = x; dragLast.y = y;
     if (!dx && !dy) return;
-    // a tug, not a carry: the linked dot gets some of the drag as speed and its link's spring does the rest,
-    // so the distance between them stretches while you pull and eases back after
-    for (const [m, w] of dragLast.follow) {
-      if (m.__home || m.fx !== undefined || !Number.isFinite(m.x)) continue;
-      m.x += dx * w * 0.8; m.y += dy * w * 0.8;  // most of the way: the link stretches a little
+    for (const m of S.nodes.values()) {  // only the dot's own highlights (fragments) come with it
+      if (m.type !== 'fragment' || m.parent !== n.id || !Number.isFinite(m.x)) continue;
+      m.x += dx; m.y += dy;
     }
-  }
-  function followersOf(n) {
-    const out = new Map();
-    for (const l of S.links) {
-      const w = FOLLOW[l.kind];
-      if (!w || !linkShown(l) || (l.kind === 'similar' && !l.top)) continue;
-      const a = lid(l.source), b = lid(l.target);
-      const other = a === n.id ? b : b === n.id ? a : null;
-      const m = other && S.nodes.get(other);
-      if (m && m !== n) out.set(m, Math.max(out.get(m) || 0, w));
-    }
-    return out;
   }
   /** Put a dot you placed back where you left it (on load, and when it reappears). */
   function restoreNodePin(n) {
@@ -4474,10 +4615,22 @@
   /** Right-click one of your links (a red line) or a [[mention]]: unlink the two. */
   function linkMenu(l, e) {
     closeNodeMenu();
+    if (l && l.kind === 'ai') { aiLinkMenu(l, e); return; }
     if (!l || (l.kind !== 'manual' && l.kind !== 'mention')) return;
     const a = l.sPart || lid(l.source), b = l.tPart || lid(l.target);
     showMenu(`${truncate(nodeTitle(a), 30)} and ${truncate(nodeTitle(b), 30)}`, [
       menuItem('Unlink', null, () => unlinkAny(l.kind, a, b)),
+      menuItem('Why are they connected?', null, () => openExplain(a, b))], e);
+  }
+  /** Right-click a connection your AI found (a dashed line): remove it, or make it a link of your own. */
+  function aiLinkMenu(l, e) {
+    const a = lid(l.source), b = lid(l.target);
+    const go = async (path, done) => {
+      try { await api('POST', path, { a, b }); toast(done, 'ok'); refreshGraph(); } catch (err) { toastErr(err, 'Could not change it'); }
+    };
+    showMenu(`AI connection${l.why ? ': ' + truncate(l.why, 60) : ''}`, [
+      menuItem('Remove', 'it won’t be suggested again', () => go('/api/links/ai/remove', 'Removed that AI connection')),
+      menuItem('Make it my link', 'a red line', () => go('/api/links/ai/keep', 'Linked')),
       menuItem('Why are they connected?', null, () => openExplain(a, b))], e);
   }
   function showMenu(label, items, e) {
@@ -5954,6 +6107,10 @@
       aliases: ['cluster', 'topic', 'zoom to region', 'isolate', 'only this group'],
       description: 'Zooms to one region and dims the rest. Click a region\'s name on the graph to do the same; Esc shows everything again.',
       run: chooseRegion });
+    CMD.register({ id: 'graph.cleanUp', title: 'Clean up the map', group: 'Graph',
+      aliases: ['clean up', 'tidy', 'tidy up', 'neaten', 'compact', 'reset layout', 'organize map'],
+      description: 'Puts every dot you dragged and every section you moved back into the tidy layout: sections close together, each section\'s papers evenly spaced. Undo from the message.',
+      run: cleanUp });
     CMD.register({ id: 'graph.unpinAll', title: 'Let every dot move freely', group: 'Graph',
       aliases: ['unpin', 'unpin all', 'reset positions', 'release dots', 'auto layout'],
       description: 'Dots you dragged stay where you dropped them. This lets all of them move with the layout again.',

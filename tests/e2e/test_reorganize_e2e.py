@@ -119,12 +119,14 @@ def test_reorganize_by_content_then_into_your_sections(server, browser):
     assert {t["name"] for t in _call(base, "GET", "/api/topics")} == {"Folder A", "Folder B"}
     card.get_by_role("button", name="Reorganize").click()
     expect(card).to_contain_text("Filed 4 papers into 2 topics")
-    expect(card).to_contain_text("Linked 1 pair of papers that belong together")
+    expect(card).to_contain_text("Found 1 connection")
     if shots:
         page.screenshot(path=f"{shots}/reorganize-3.png")
     tops = {t["name"]: t["count"] for t in _call(base, "GET", "/api/topics")}
     assert tops == {"Sheath physics": 2, "Language models": 2}
-    assert sum(len(_call(base, "GET", f"/api/notes/{i}")["links"]) for i in ids) == 2  # one link, both ends
+    # an AI connection on the map, not a link of yours (no red line you didn't draw)
+    assert sum(len(_call(base, "GET", f"/api/notes/{i}")["links"]) for i in ids) == 0
+    assert sum(1 for l in _call(base, "GET", "/api/graph")["links"] if l["kind"] == "ai") == 1
 
     card.get_by_role("button", name="Undo", exact=True).click()
     expect(card).to_contain_text("back the way they were")
@@ -178,7 +180,7 @@ def test_imported_folders_sorted_by_content_or_only_into_existing_topics(server,
     card.locator(".bk-count").fill("2")
     card.get_by_role("button", name="Add 4 PDFs").click()
     expect(card).to_contain_text("Sorted into 2 topics", timeout=60_000)
-    expect(card).to_contain_text("Linked 1 pair", timeout=60_000)
+    expect(card).to_contain_text("Found 1 connection", timeout=60_000)
     if os.environ.get("RB_E2E_SHOTS"):
         page.screenshot(path=f"{os.environ['RB_E2E_SHOTS']}/linked-ai.png")
     names = {t["name"] for t in _call(base, "GET", "/api/topics")}

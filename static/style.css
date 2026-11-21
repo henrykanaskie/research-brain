@@ -1023,6 +1023,7 @@ html .ls-card .modal-actions { position: sticky; bottom: -16px; background: var(
 
 .lg-q { width: 8px; height: 8px; border: 1px solid var(--violet); transform: rotate(45deg); background: var(--ground); }
 .lg-conflict { width: 20px; border-top: 1px dashed var(--ochre); }
+.lg-ai { width: 20px; border-top: 1px dashed color-mix(in srgb, var(--machine) 75%, transparent); }
 
 /* topic entry: a quiet dashed pill, not a form box (all sizes; larger touch target on small screens) */
 html .tp-add { border: 1px dashed color-mix(in srgb, var(--ink-3) 60%, transparent); border-radius: 999px;
