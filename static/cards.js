@@ -59,7 +59,7 @@
   .iv-lede { color: var(--ink-2); max-width: 75ch; margin: 8px 0 20px; line-height: 1.55; }
   .iv-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
   .iv-bar input[type=search], .iv-bar input[list] { height: 28px; min-width: 220px; }
-  .iv-bar .seg button.on { color: var(--ink); background: var(--ground); font-weight: 500; }
+  .iv-bar .seg button.on { color: var(--ink); font-weight: 600; }
   .iv table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .iv th { text-align: left; font: 500 12px var(--sans); color: var(--ink-2); border-bottom: 1px solid var(--rule); padding: 6px 8px; cursor: pointer; white-space: nowrap; user-select: none; }
   .iv th.sorted::after { content: attr(data-dir); color: var(--ink-3); margin-left: 4px; }
@@ -392,7 +392,7 @@
     const lede = h('p', { class: 'iv-lede', text: 'Claims, equations, measured quantities and methods from your papers. Suggested cards came from the AI, each with a quote found in its paper; confirmed and edited ones are yours. Values are converted to SI for comparison; a badge marks a value that disagrees with another paper under comparable conditions.' });
     const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Kind' },
       [['quantity', 'Quantities'], ['claim', 'Claims'], ['equation', 'Equations'], ['method', 'Methods'], ['', 'All']].map(([k, label]) =>
-        h('button', { type: 'button', class: IV.kind === k ? 'on' : '', text: label, onclick: () => { IV.kind = k; IV.sort = null; ivPaint(); ivLoad(); } })));
+        h('button', { type: 'button', class: IV.kind === k ? 'on' : '', 'aria-pressed': String(IV.kind === k), text: label, onclick: () => { IV.kind = k; IV.sort = null; ivPaint(); ivLoad(); } })));
     const qIn = h('input', { type: 'search', placeholder: 'Filter: Hall thruster plume', 'aria-label': 'Filter ideas', value: IV.q });
     qIn.addEventListener('input', () => { IV.q = qIn.value; clearTimeout(IV.t); IV.t = setTimeout(ivLoad, 250); });
     const dl = h('datalist', { id: 'iv-quantities' }, IV.quantities.map((x) => h('option', { value: x.name, text: `${x.count}` })));

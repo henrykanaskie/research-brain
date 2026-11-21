@@ -24,6 +24,8 @@
   .agent-menu .am-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--red); }
   .agent-menu .am-dot.on { background: var(--moss); }
   .agent-menu .am-check { margin-left: auto; color: var(--ink-2); }
+  .agent-menu button.am-row[aria-checked="true"] { font-weight: 600; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .agent-menu button.am-row[aria-checked="true"] .am-check { color: var(--ink); }
   .agent-menu .am-sub { color: var(--ink-3); font-size: 12px; }
   .agent-menu .am-sep { border-top: 1px solid var(--rule); margin: 6px 4px; }
   .agent-menu .am-other { display: flex; gap: 6px; padding: 4px 8px 6px; }

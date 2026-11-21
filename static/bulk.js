@@ -24,6 +24,11 @@
   .bk-card p { color: var(--ink-2); line-height: 1.55; margin: 0 0 10px; font-size: 14px; }
   .bk-opts { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 12px; font-size: 14px; }
   .bk-opts label { display: flex; gap: 8px; align-items: baseline; }
+  .bk-opts[role=radiogroup] { gap: 2px; }
+  .bk-opts[role=radiogroup] > label { color: var(--ink-2); padding: 6px 8px; margin: 0 -9px; border: 1px solid transparent; border-radius: var(--r); cursor: pointer; }
+  .bk-opts[role=radiogroup] > label:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+  .bk-opts[role=radiogroup] > label:has(input:checked) { color: var(--ink); font-weight: 500; border-color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .bk-opts input[type=radio], .bk-opts input[type=checkbox] { accent-color: var(--ink); }
   .bk-list { overflow: auto; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 6px 0; margin-bottom: 12px; font-size: 13.5px; }
   .bk-folder { margin: 6px 0 2px; font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
   .bk-folder .n, .bk-item .why { color: var(--ink-3); font-weight: 400; font-size: 12px; }

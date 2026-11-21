@@ -145,7 +145,7 @@
       ? h('span', null, h('span', { class: 'tnum', text: String(c.hit) }), ` of ${c.all} match`)
       : h('span', { text: 'Showing everything' }),
     h('div', { class: 'spacer' }),
-    isActive() ? h('button', { class: 'btn btn-text btn-sm', text: 'Clear filter', onclick: () => { F = EMPTY(); changed(); render(); } }) : null);
+    isActive() ? h('button', { class: 'btn btn-text btn-sm', text: 'Clear filter', onclick: () => { F = EMPTY(); changed(); render(); } }) : '');
   }
 
   function render() {
@@ -224,7 +224,7 @@
       h('div', { class: 'gv-row' }, h('span', { class: 'l', text: 'Tag' }), tagSel),
       h('div', { class: 'gv-row' }, h('span', { class: 'l', text: 'Region' }), regSel),
       h('div', { class: 'gv-row' }, h('span', { class: 'l', text: 'Status' }), stSel),
-      topicRow,
+      topicRow || '',
       footEl,
       h('div', { class: 'menu-sep' }),
       h('span', { class: 'menu-label', text: 'Saved views' }),
