@@ -83,7 +83,16 @@ if ($WasRunning) {
     Start-Sleep -Milliseconds 500
     try { Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/api/status" -TimeoutSec 1 | Out-Null } catch { break }
   }
-  Start-Sleep -Seconds 1
+  # Its processes can outlive the server by a few seconds (the launcher, Python, a worker), still holding the
+  # app's files: wait for every process run from an installed copy (uv, pipx or the private environment all
+  # keep it in a folder named research-brain or research_brain) to exit, and stop any still there after 20 s.
+  $Mine = { Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -match 'research[-_]brain' } }
+  for ($i = 0; $i -lt 40 -and (& $Mine); $i++) { Start-Sleep -Milliseconds 500 }
+  $Left = & $Mine
+  if ($Left) {
+    $Left | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+  }
 }
 
 function Add-UserPath($dir) {
