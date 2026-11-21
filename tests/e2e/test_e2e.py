@@ -1,5 +1,8 @@
 """End-to-end browser tests: a real server (fake Claude, TF-IDF embeddings, temp vault) driven by
-Playwright + Chromium.
+Playwright + Chromium. The server, browser and per-test context fixtures are in conftest.py; the helpers
+here (api, clear_vault, open_app, ...) are shared with test_shortcuts.py. All tests in this file share one
+server: a test that needs an empty library calls clear_vault first. Set RB_SHOT_DIR=/some/dir to save
+screenshots.
 
 Run:   python -m pytest -q tests/e2e
 Needs: pip install playwright reportlab && python -m playwright install chromium
@@ -16,20 +19,20 @@ import io
 import json
 import os
 import re
-import shutil
+import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 import pytest
 
-from rb_testserver import note_file, run_server
+from rb_testserver import note_file
 
 ROOT = Path(__file__).resolve().parents[2]
 
 try:
-    from playwright.sync_api import Error as PWError
-    from playwright.sync_api import expect, sync_playwright
+    from playwright.sync_api import expect
 except ImportError:  # pragma: no cover
     pytest.skip("playwright is not installed (pip install playwright && python -m playwright install chromium)",
                 allow_module_level=True)
@@ -39,7 +42,8 @@ try:
 except ImportError:  # pragma: no cover
     pytest.skip("reportlab is not installed (needed to build a test PDF)", allow_module_level=True)
 
-TIMEOUT = 15_000
+TIMEOUT = 15_000  # ms, as in conftest.py
+MOD = "Meta" if sys.platform == "darwin" else "Control"
 
 
 def _pdf_bytes() -> bytes:
@@ -60,56 +64,15 @@ def _pdf_bytes() -> bytes:
     return buf.getvalue()
 
 
-@pytest.fixture(scope="module")
-def server(tmp_path_factory):
-    vault = tmp_path_factory.mktemp("vault")
-    with run_server(vault, log_path=vault.parent / "server.log") as srv:
-        yield {"base": srv.base, "vault": vault}
+def shot(page, name, **kw):
+    d = os.environ.get("RB_SHOT_DIR")
+    if d:
+        Path(d).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(Path(d) / f"{name}.png"), **kw)
 
 
-def _chrome():
-    for p in (os.environ.get("RB_E2E_CHROME"), "/usr/bin/google-chrome", "/usr/bin/chromium",
-              "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
-        if p and Path(p).exists():
-            return p
-    return None
-
-
-@pytest.fixture(scope="module")
-def browser():
-    with sync_playwright() as pw:
-        kw = {"headless": not os.environ.get("RB_E2E_HEADED")}
-        try:
-            b = pw.chromium.launch(**kw)  # Playwright's own Chromium (CI)
-        except PWError as e1:
-            exe = _chrome()
-            if not exe:
-                pytest.skip(f"no browser for Playwright: run `python -m playwright install chromium` ({str(e1).splitlines()[0]})")
-            b = pw.chromium.launch(executable_path=exe, **kw)
-        yield b
-        b.close()
-
-
-@pytest.fixture()
-def ctx(browser, server):
-    # bypass_csp: Playwright evaluates wait_for_function("...") strings with eval, which the app's CSP
-    # forbids. tests/e2e/test_csp_e2e.py checks the app itself without the bypass.
-    c = browser.new_context(viewport={"width": 1400, "height": 900}, bypass_csp=True)
-    c.set_default_timeout(TIMEOUT)
-    external = []
-
-    def route(r):
-        url = r.request.url
-        if url.startswith(server["base"]) or url.startswith(("data:", "blob:")):
-            r.continue_()
-        else:
-            external.append(url)
-            r.abort()
-    c.route("**/*", route)
-    c.external = external
-    yield c
-    c.close()
-    assert not external, f"the app tried to reach the network: {external}"
+def blur(page):
+    page.evaluate("document.activeElement && document.activeElement.blur()")
 
 
 def api(server, method, path, body=None):
@@ -164,20 +127,10 @@ def body_editor(page):
 
 
 # ------------------------------------------------------------------------------------------- tests
-def test_empty_state(ctx, server):
-    clear_vault(server)
-    page = open_app(ctx, server)
-    expect(page.locator("#empty-state")).to_be_visible()
-    expect(page.locator("#empty-state h1")).to_have_text("Start your library")
-    expect(page.locator("#empty-state")).to_contain_text("Drop a PDF here, or add a paper by DOI, arXiv id or title.")
-    expect(page.locator("#status .status-text")).to_contain_text("Claude")
-    # real, self-hosted fonts are in use
-    assert page.evaluate("document.fonts.check('500 13px \"Archivo\"')")
-    assert page.evaluate("document.fonts.check('italic 500 20px \"Newsreader\"')")
-    assert not page.errors
-
-
-def test_new_note_autosave(ctx, server):
+def test_writing_a_note_autosaves_ignores_shortcuts_and_autocompletes_latex(ctx, server):
+    """A new note's body is saved as you type (to the API and the vault file, once) and the note joins the
+    graph; letters that are shortcuts elsewhere just type; the LaTeX autocomplete owns Tab, the live preview
+    renders KaTeX, Esc closes the popup before the panel, and Mod+E (allowed while typing) shows the preview."""
     clear_vault(server)
     page = open_app(ctx, server)
     nid = new_note(page, "Sheath notes")
@@ -191,16 +144,15 @@ def test_new_note_autosave(ctx, server):
     # the empty state is gone and the node is on the graph
     expect(page.locator("#empty-state")).to_be_hidden()
     page.wait_for_function("(id) => window.__rb.S.nodes.has(id)", arg=nid)
-    assert not page.errors
-
-
-def test_latex_autocomplete(ctx, server):
-    clear_vault(server)
-    page = open_app(ctx, server)
-    nid = new_note(page, "Math note")
-    ta = body_editor(page)
-    ta.click()
-    ta.type("Angle $\\alph")
+    # no shortcuts while typing
+    n_before = page.evaluate("window.__rb.S.nodes.size")
+    ta.type("?nasgf/ G then T")  # letters that are shortcuts outside a text field
+    expect(page.locator(".rbk-ov:not([hidden])")).to_have_count(0)
+    expect(page.locator("#chat")).to_be_hidden()
+    assert ta.input_value() == "Ions reach the Bohm speed.?nasgf/ G then T"
+    assert page.evaluate("window.__rb.S.nodes.size") == n_before
+    # the LaTeX autocomplete still owns Tab
+    ta.type(" Angle $\\alph")
     pop = page.locator(".le-pop")
     expect(pop).to_be_visible()
     expect(pop.locator("li.on")).to_contain_text("alpha")
@@ -212,6 +164,16 @@ def test_latex_autocomplete(ctx, server):
     # the live preview renders KaTeX
     expect(page.locator("#panel-body .md.live .katex").first).to_be_visible()
     wait_saved(page, server, nid, "body", "\\alpha")
+    # and Esc closes its popup before anything else
+    ta.type(" $\\bet")
+    expect(pop).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(pop).to_be_hidden()
+    expect(page.locator("#panel")).to_be_visible()
+    # Mod+E (allowed while typing) switches to the preview
+    page.keyboard.press(f"{MOD}+e")
+    expect(page.locator("#panel-body .preview")).to_be_visible()
+    assert not page.errors
 
 
 def test_wikilink_autocomplete_and_backlink(ctx, server):
@@ -237,7 +199,10 @@ def test_wikilink_autocomplete_and_backlink(ctx, server):
     assert api(server, "GET", f"/api/notes/{target['id']}")["backlinks"][0]["id"] == src
 
 
-def test_pdf_import_viewer_fragment(ctx, server, tmp_path):
+def test_pdf_import_viewer_passage_note_and_citations(ctx, server, tmp_path):
+    """A PDF added from the Add menu is read and shown in the viewer, where a selected passage is saved as a
+    note and highlighted. A "[[paper]] p. 1" citation in an answer is pointed at the sentence that backs the
+    claim and the viewer highlights it for a moment; a rough citation marks its stretch with a margin bar."""
     clear_vault(server)
     pdf = tmp_path / "sheath.pdf"
     pdf.write_bytes(_pdf_bytes())
@@ -277,6 +242,29 @@ def test_pdf_import_viewer_fragment(ctx, server, tmp_path):
     # the saved passage is highlighted on the page
     expect(viewer.locator(".textLayer [data-frag]").first).to_be_attached()
 
+    # a citation in an answer opens the PDF with its sentence highlighted
+    page.evaluate("""(nid) => { const d = document.createElement('div'); d.className = 'md'; d.id = 'cite-test';
+      d.innerHTML = window.__rb.renderMD(`Ions must reach the sound speed at the sheath edge [[${nid}]] p. 1.`);
+      document.body.appendChild(d); }""", nid)
+    a = page.locator("#cite-test a.cite")
+    expect(a).to_have_attribute("data-pinned", "1", timeout=10_000)
+    href = a.get_attribute("href")
+    assert "&hl=" in href and "Bohm" in urllib.parse.unquote(href)
+    v = ctx.new_page()
+    v.goto(server["base"] + href)
+    expect(v.locator(".textLayer span.rb-cite").first).to_be_visible(timeout=30_000)
+    assert "Bohm criterion" in " ".join(v.locator(".textLayer span.rb-cite").all_inner_texts())
+    assert "hl=" not in v.evaluate("location.hash")  # the highlight isn't kept in the address
+
+    # a rough citation marks a stretch with a margin bar
+    quote = page.evaluate("(nid) => fetch('/api/locate', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+                          "body: JSON.stringify({items: [{id: nid, page: 1, claim: 'sheath'}]})}).then(r => r.json())", nid)
+    q = quote["items"][0]["quote"] or "Bohm criterion"
+    v2 = ctx.new_page()
+    v2.goto(f"{server['base']}/viewer/{nid}#page=1&hl={urllib.parse.quote(q)}&near=1")
+    expect(v2.locator(".rb-cite-bar.near")).to_be_visible(timeout=30_000)
+    assert v2.locator(".textLayer span.rb-cite-near").count() > 0 and v2.locator(".textLayer span.rb-cite").count() == 0
+
 
 def test_critique_fake(ctx, server):
     clear_vault(server)
@@ -299,35 +287,40 @@ def test_critique_fake(ctx, server):
         time.sleep(0.1)
 
 
-def test_chat_fake(ctx, server):
+def test_library_chat_quick_answer_phone_handoff_research_mode_and_memory(ctx, server):
+    """Ask your library (Quick, the default): the answer streams in with math typeset; the phone button writes
+    the conversation out as one prompt to copy into another AI; Research mode shows its steps, then folds
+    them; the Memory view shows the library map and findings; Esc closes the chat."""
     clear_vault(server)
-    api(server, "POST", "/api/notes", {"type": "note", "title": "Hall thrusters", "body": "Breathing mode oscillations."})
+    api(server, "POST", "/api/notes", {"type": "note", "title": "Hall thrusters", "body": "Breathing mode oscillations near 20 kHz."})
+    api(server, "POST", "/api/notes", {"type": "paper", "title": "Breathing mode in Hall thrusters", "abstract": "Ionization oscillations."})
     page = open_app(ctx, server)
+    page.evaluate("localStorage.removeItem('rb.chatMode')")
     page.click("#btn-chat")
     expect(page.locator("#chat")).to_be_visible()
+    expect(page.locator(".rs-seg button", has_text="Quick")).to_have_attribute("aria-pressed", "true")  # Quick is the default
+    expect(page.locator(".rs-notice")).to_be_hidden()
     page.locator("#chat-input").fill("What causes the breathing mode?")
     page.keyboard.press("Enter")
     log = page.locator("#chat-log")
     expect(log.locator(".msg.user")).to_contain_text("breathing mode")
-    expect(log).to_contain_text("fake Claude")
+    expect(log).to_contain_text("fake Claude", timeout=15000)
     expect(log.locator(".katex").first).to_be_visible()
-    page.keyboard.press("Escape")
-    expect(page.locator("#chat")).to_be_hidden()
-
-
-def test_research_mode_and_memory(ctx, server):
-    clear_vault(server)
-    api(server, "POST", "/api/notes", {"type": "note", "title": "Hall thrusters", "body": "Breathing mode oscillations near 20 kHz."})
-    page = open_app(ctx, server)
-    page.evaluate("localStorage.removeItem('rb.chatMode')")
-    page.click("#btn-chat")
-    expect(page.locator(".rs-seg button", has_text="Quick")).to_have_attribute("aria-pressed", "true")  # Quick is the default
-    expect(page.locator(".rs-notice")).to_be_hidden()
+    page.wait_for_function("() => !window.__rb.S.chatBusy", timeout=15000)  # the answer has finished, not just started
+    # continue on your phone
+    page.click("#btn-chat-handoff")
+    sheet = page.locator(".ho-sheet")
+    expect(sheet).to_be_visible()
+    text = sheet.locator(".ho-text").input_value()
+    assert "What causes the breathing mode?" in text and "pick up where we left off" in text
+    shot(page, "handoff")
+    sheet.get_by_role("button", name="Copy prompt").click()
+    expect(page.locator(".ho-sheet")).to_be_hidden()
+    # Research mode
     page.locator(".rs-seg button", has_text="Research").click()
     expect(page.locator(".rs-notice")).to_contain_text("Claude can only read your library here")
     page.locator("#chat-input").fill("What frequency is the breathing mode?")
     page.keyboard.press("Enter")
-    log = page.locator("#chat-log")
     expect(log.locator(".rs-step").first).to_contain_text("Searching your library")
     expect(log).to_contain_text("fake research")
     trail = log.locator(".rs-trail").last
@@ -346,12 +339,19 @@ def test_research_mode_and_memory(ctx, server):
     if ids is not None:
         assert {"research.toggle", "research.ask", "memory.open"} <= set(ids)
     page.locator(".rs-seg button", has_text="Quick").click()
+    # Esc from the chat box closes the chat
+    page.locator("#chat-input").focus()
+    page.keyboard.press("Escape")
+    expect(page.locator("#chat")).to_be_hidden()
+    assert not page.errors
 
 
-def test_search_with_slash(ctx, server):
+def test_search_with_slash_then_export_what_matches_from_the_view_menu(ctx, server):
+    """"/" focuses the search, which counts matches and opens the first with Enter; Export in the View menu
+    exports only the notes matching the search (a real index.html), or all of them with no search."""
     clear_vault(server)
-    a = api(server, "POST", "/api/notes", {"type": "note", "title": "Langmuir probe analysis"})
-    api(server, "POST", "/api/notes", {"type": "note", "title": "Transformer attention"})
+    a = api(server, "POST", "/api/notes", {"type": "note", "private": False, "title": "Langmuir probe analysis", "summary": "$T_e$ from the I-V curve."})
+    api(server, "POST", "/api/notes", {"type": "note", "private": False, "title": "Transformer attention"})
     page = open_app(ctx, server)
     page.wait_for_function("window.__rb.S.nodes.size >= 2")
     page.locator("#graph").click(position={"x": 5, "y": 5})
@@ -362,15 +362,8 @@ def test_search_with_slash(ctx, server):
     page.keyboard.press("Enter")
     expect(page.locator("#panel-body .title-input")).to_have_value("Langmuir probe analysis")
     assert page.evaluate("window.__rb.S.cur.id") == a["id"]
-
-
-def test_export_from_view_menu(ctx, server):
-    clear_vault(server)
-    api(server, "POST", "/api/notes", {"type": "note", "private": False, "title": "Langmuir probe analysis", "summary": "$T_e$ from the I-V curve."})
-    api(server, "POST", "/api/notes", {"type": "note", "private": False, "title": "Transformer attention"})
-    page = open_app(ctx, server)
-    page.wait_for_function("window.__rb.S.nodes.size >= 2")
-    page.locator("#search-input").fill("langmuir")
+    # export what the search matches
+    expect(page.locator("#search-input")).to_have_value("langmuir")
     page.click("#btn-view-menu")
     page.click("#btn-export")
     modal = page.locator("#export-modal")
@@ -407,9 +400,14 @@ def test_delete(ctx, server):
     assert (server["vault"] / ".trash" / f"{n['id']}.md").exists() or list((server["vault"] / ".trash").rglob(f"{n['id']}*"))
 
 
-def test_settings_tabs_and_search(ctx, server):
-    """Library settings: tabs keep kinds of settings apart; the search box finds a setting in any tab."""
+def test_library_settings_tabs_search_folders_and_no_update_ui(ctx, server, tmp_path):
+    """Library settings: tabs keep kinds of settings apart and the search box finds a setting in any tab.
+    Folders are picked with the computer's own chooser; the app has no update section or update chip."""
+    folder = tmp_path / "My Papers"
+    folder.mkdir()
+    api(server, "POST", "/api/notes", {"type": "note", "title": "Counted in Where research brain saves"})
     page = open_app(ctx, server)
+    page.route("**/api/pick-folder", lambda r: r.fulfill(json={"path": str(folder)}))  # the Finder dialog, answered
     page.click("#btn-view-menu")
     expect(page.locator("#btn-view-menu")).to_have_attribute("aria-label", "Settings")
     expect(page.locator("#view-menu .menu-item").first).to_contain_text("Library settings")
@@ -429,6 +427,24 @@ def test_settings_tabs_and_search(ctx, server):
     expect(dlg.locator(".ls-empty")).to_be_visible()
     dlg.locator(".ls-search").fill("")
     expect(dlg.locator("#ls-lookup")).to_be_visible()  # back on the tab you were on
+    # opened from code too; step 1 is where your papers are, step 2 where research brain saves; the rest is
+    # under Advanced
+    page.evaluate("window.__rbSettings.open()")
+    page.locator("#library-settings .ls-tab", has_text="Library").first.click()
+    expect(page.locator("#ls-papers .ls-h")).to_have_text("1. Where your papers are")
+    expect(page.locator("#ls-documents .ls-h")).to_have_text("2. Where research brain saves")
+    expect(page.locator("#ls-advanced details")).not_to_have_attribute("open", "")
+    page.locator("#ls-papers-change").click()  # where PDFs are saved: the computer's chooser, then a move if any
+    if page.locator("#modal").is_visible():
+        page.locator("#modal-ok").click()
+    expect(page.locator("#ls-papers-path")).to_have_text(str(folder))
+    page.locator("#ls-advanced summary").click()
+    page.locator("#ls-advanced").get_by_role("button", name="Choose folder…").click()  # check a folder for duplicates
+    expect(page.locator("#ls-scan-folder")).to_have_value(str(folder))
+    expect(page.locator("#library-settings .ls-tab", has_text="Devices")).to_have_text("Devices")
+    assert page.locator("#ls-updates").count() == 0
+    page.wait_for_timeout(4500)  # the old update check ran after 4 s
+    assert page.locator("#rb-update-chip").count() == 0
     assert not page.errors
 
 
@@ -570,20 +586,97 @@ def test_linked_dots_follow_a_dragged_dot(ctx, server):
     assert not page.errors
 
 
-def test_resizing_the_window_refits_the_map(ctx, server):
+def test_resizing_the_window_and_changing_screens_keep_the_map_whole(ctx, server):
+    """Window resizes and screen changes, on one settled map:
+    - shrinking the window and growing it back leaves the map as it was (step-by-step zoom factors used to
+      ratchet it smaller with every resize until it almost disappeared);
+    - after a resize the map is refitted, so every dot is on screen;
+    - each step of a resize used to wipe the map until the next frame (a flicker): right after the app
+      handles a resize, the canvas must still show the map;
+    - Fit used to do a third of a zoom-in from far out in one frame; it should feel the same both ways;
+    - dragging the window to a Retina or a regular monitor changes the pixel density, not the size: the map's
+      canvas must follow, or it draws at the wrong scale and the pointer finds the wrong dots."""
+    import math
     clear_vault(server)
-    for i in range(8):
+    for i in range(10):
         api(server, "POST", "/api/notes", {"type": "paper", "title": f"Resize paper {i} on topic {i % 3}"})
     page = open_app(ctx, server)
-    page.wait_for_function("window.__rb.S.nodes.size >= 8")
+    page.wait_for_function("window.__rb.S.nodes.size >= 10")
     page.wait_for_timeout(2500)
     inside = """() => { const fg = window.__rb.fg, el = document.getElementById('graph');
       return [...window.__rb.S.nodes.values()].every(n => { const p = fg.graph2ScreenCoords(n.x, n.y);
         return p.x >= 0 && p.y >= 0 && p.x <= el.clientWidth && p.y <= el.clientHeight; }); }"""
+
+    # back and forth doesn't shrink it
+    k0 = page.evaluate("window.__rb.fg.zoom()")
+    W, H = 1400, 900
+    for _ in range(4):  # drag the right edge in and out, then the bottom edge, then a corner
+        for w in list(range(W, 900, -50)) + list(range(900, W + 1, 50)):
+            page.set_viewport_size({"width": w, "height": H}); page.wait_for_timeout(10)
+        for h in list(range(H, 560, -40)) + list(range(560, H + 1, 40)):
+            page.set_viewport_size({"width": W, "height": h}); page.wait_for_timeout(10)
+    for step in list(range(0, 10)) + list(range(10, -1, -1)):
+        page.set_viewport_size({"width": W - step * 40, "height": H - step * 25}); page.wait_for_timeout(10)
+    page.set_viewport_size({"width": W, "height": H})
+    page.wait_for_timeout(1500)
+    k1 = page.evaluate("window.__rb.fg.zoom()")
+    assert abs(k1 - k0) / k0 < 0.05, (k0, k1)
+    assert page.evaluate(inside)
+
+    # refitted after a resize
     for size in ({"width": 700, "height": 500}, {"width": 1600, "height": 1000}, {"width": 900, "height": 700}):
         page.set_viewport_size(size)
         page.wait_for_timeout(1200)  # the refit runs once resizing stops
         assert page.evaluate(inside), size
+
+    # never a blank frame while resizing
+    page.evaluate("""() => { window.__fl = {blank: 0, steps: 0};
+      new ResizeObserver(() => { const c = document.querySelector('#graph canvas'); if (!c) return;
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let ink = 0;
+        for (let i = 3; i < d.length; i += 4 * 97) if (d[i] > 0) { ink++; if (ink > 3) break; }
+        window.__fl.steps++; if (ink <= 3) window.__fl.blank++; }).observe(document.getElementById('graph')); }""")
+    for i in range(25):
+        page.set_viewport_size({"width": 1100 + i * 12, "height": 760 + i * 6})
+        page.wait_for_timeout(16)
+    page.wait_for_timeout(800)
+    fl = page.evaluate("window.__fl")
+    assert fl["steps"] >= 10 and fl["blank"] == 0, fl
+    page.set_viewport_size({"width": W, "height": H})
+    page.wait_for_timeout(1500)
+
+    # Fit is as smooth from far out as from close in
+    shares = {}
+    for label, start in (("far", 0.13), ("close", 60)):
+        page.evaluate(f"() => {{ window.__rb.fg.zoom({start}); }}")
+        page.wait_for_timeout(400)
+        page.evaluate("""() => { window.__ks = []; const rec = () => { window.__ks.push(window.__rb.fg.zoom()); if (window.__ks.length < 70) requestAnimationFrame(rec); }; requestAnimationFrame(rec); }""")
+        page.click("#btn-zoom-fit")
+        page.wait_for_timeout(1600)
+        ls = [math.log(k) for k in page.evaluate("window.__ks") if k > 0]
+        steps = [abs(b - a) for a, b in zip(ls, ls[1:])]
+        shares[label] = max(steps) / (abs(ls[-1] - ls[0]) or 1)
+    assert shares["far"] < 0.15 and shares["close"] < 0.15, shares
+
+    # another pixel density
+    canvas = "() => { const c = document.querySelector('#graph canvas'); return [c.width, document.getElementById('graph').clientWidth, window.devicePixelRatio]; }"
+    w, css, dpr = page.evaluate(canvas)
+    assert abs(w - css * dpr) <= 2
+    cdp = page.context.new_cdp_session(page)
+    vp = page.viewport_size
+    cdp.send("Emulation.setDeviceMetricsOverride", {"width": vp["width"], "height": vp["height"], "deviceScaleFactor": 2 if dpr < 2 else 1, "mobile": False})
+    page.wait_for_function("window.devicePixelRatio !== %s" % dpr)
+    page.wait_for_function("() => { const c = document.querySelector('#graph canvas'); return Math.abs(c.width - document.getElementById('graph').clientWidth * window.devicePixelRatio) <= 2; }", timeout=4000)
+    page.wait_for_timeout(1200)  # the refit after a screen change animates the view
+    w2, css2, dpr2 = page.evaluate(canvas)
+    assert dpr2 != dpr and abs(w2 - css2 * dpr2) <= 2, (w2, css2, dpr2)
+    # and hovering a dot still finds it
+    sx, sy = page.evaluate("() => { const fg = window.__rb.fg, n = [...window.__rb.S.nodes.values()][0]; const p = fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }")
+    box = page.locator("#graph").bounding_box()
+    page.mouse.move(5, box["y"] + 300)
+    page.wait_for_timeout(300)
+    page.mouse.move(box["x"] + sx, box["y"] + sy, steps=6)
+    page.wait_for_function("!!window.__rb.S.hover", timeout=4000)
+    cdp.send("Emulation.clearDeviceMetricsOverride")
     assert not page.errors
 
 
@@ -615,10 +708,18 @@ def test_ask_about_topics_and_the_conversation_is_remembered(ctx, server):
     assert not page.errors and not page2.errors
 
 
-def test_general_chat_and_the_web_switch(ctx, server):
-    api(server, "PUT", "/api/privacy/settings", {"web_search": False})
+def test_general_chat_web_switch_attachments_and_the_one_time_warning(ctx, server):
+    """Ask anything: the web switch is off while Settings forbid web search and works once they allow it, and
+    the General conversation is kept across modes. Attaching a published paper with the web on sends without
+    a warning; attaching your own note asks once, then answers and remembers the choice."""
+    clear_vault(server)
+    api(server, "PUT", "/api/privacy/settings", {"web_search": False, "web_with_attachments": False})
     api(server, "PUT", "/api/chats/general", {"messages": []})
+    api(server, "POST", "/api/notes", {"type": "paper", "title": "Sheath formation at a floating wall", "abstract": "Bohm criterion"})
+    n = api(server, "POST", "/api/notes", {"type": "note", "title": "My presheath idea", "body": "an idea"})["id"]
+    api(server, "PUT", f"/api/notes/{n}", {"private": False})
     page = open_app(ctx, server)
+    page.evaluate("localStorage.removeItem('rb.generalAttach')")
     page.evaluate("RB.commands.run('chat.general')")
     expect(page.locator("#chat .chat-title")).to_have_text("Ask anything")
     expect(page.locator(".chat-modes button[data-mode=general]")).to_have_class(re.compile(r"\bon\b"))
@@ -637,20 +738,8 @@ def test_general_chat_and_the_web_switch(ctx, server):
     page.fill("#chat-input", "Recent reviews on sheaths?")
     page.click("#btn-chat-send")
     expect(page.locator("#chat .msg.assistant").last).to_contain_text("fake Claude", timeout=20_000)
-    api(server, "PUT", "/api/privacy/settings", {"web_search": False})
-    assert not page.errors
-
-
-def test_general_chat_attachments_and_the_one_time_warning(ctx, server):
-    clear_vault(server)
-    api(server, "PUT", "/api/privacy/settings", {"web_search": True, "web_with_attachments": False})
-    api(server, "PUT", "/api/chats/general", {"messages": []})
-    a = api(server, "POST", "/api/notes", {"type": "paper", "title": "Sheath formation at a floating wall", "abstract": "Bohm criterion"})["id"]
-    n = api(server, "POST", "/api/notes", {"type": "note", "title": "My presheath idea", "body": "an idea"})["id"]
-    api(server, "PUT", f"/api/notes/{n}", {"private": False})
-    page = open_app(ctx, server)
-    page.evaluate("localStorage.removeItem('rb.generalAttach')")
-    page.evaluate("RB.commands.run('chat.general')")
+    page.wait_for_function("!window.__rb.S.chatBusy")
+    # attach a published paper
     page.click("#cs-attach")
     page.fill(".ca-sheet .ca-q", "sheath")
     page.locator(".ca-sheet .ca-row", has_text="Sheath formation").click()
@@ -658,7 +747,7 @@ def test_general_chat_attachments_and_the_one_time_warning(ctx, server):
     expect(page.locator("#cs-chips .cs-chip")).to_have_count(1)
     expect(page.locator("#chat-general .cs-note")).to_contain_text("item you attached")
     # web + a published paper: no warning
-    page.check("#cs-web")
+    expect(page.locator("#cs-web")).to_be_checked()
     page.fill("#chat-input", "Newer work on this?")
     page.click("#btn-chat-send")
     expect(page.locator("#chat .msg.assistant").last).to_contain_text("fake Claude", timeout=20_000)
@@ -818,136 +907,6 @@ def test_panels_can_be_made_wider(ctx, server):
     assert abs(chat.bounding_box()["width"] - c0) < 2
     assert not page.errors
 
-
-def test_moving_to_a_screen_with_another_pixel_density(ctx, server):
-    """Dragging the window to a Retina or a regular monitor changes the pixel density, not the size: the map's
-    canvas must follow, or it draws at the wrong scale and the pointer finds the wrong dots."""
-    clear_vault(server)
-    for t in ("Density paper one", "Density paper two"):
-        api(server, "POST", "/api/notes", {"type": "paper", "title": t})
-    page = open_app(ctx, server)
-    page.wait_for_function("window.__rb.S.nodes.size >= 2")
-    page.wait_for_timeout(2500)  # let the layout settle
-    canvas = "() => { const c = document.querySelector('#graph canvas'); return [c.width, document.getElementById('graph').clientWidth, window.devicePixelRatio]; }"
-    w, css, dpr = page.evaluate(canvas)
-    assert abs(w - css * dpr) <= 2
-    cdp = page.context.new_cdp_session(page)
-    vp = page.viewport_size
-    cdp.send("Emulation.setDeviceMetricsOverride", {"width": vp["width"], "height": vp["height"], "deviceScaleFactor": 2 if dpr < 2 else 1, "mobile": False})
-    page.wait_for_function("window.devicePixelRatio !== %s" % dpr)
-    page.wait_for_function("() => { const c = document.querySelector('#graph canvas'); return Math.abs(c.width - document.getElementById('graph').clientWidth * window.devicePixelRatio) <= 2; }", timeout=4000)
-    page.wait_for_timeout(1200)  # the refit after a screen change animates the view
-    w2, css2, dpr2 = page.evaluate(canvas)
-    assert dpr2 != dpr and abs(w2 - css2 * dpr2) <= 2, (w2, css2, dpr2)
-    # and hovering a dot still finds it
-    sx, sy = page.evaluate("() => { const fg = window.__rb.fg, n = [...window.__rb.S.nodes.values()][0]; const p = fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }")
-    box = page.locator("#graph").bounding_box()
-    page.mouse.move(5, box["y"] + 300)
-    page.wait_for_timeout(300)
-    page.mouse.move(box["x"] + sx, box["y"] + sy, steps=6)
-    page.wait_for_function("!!window.__rb.S.hover", timeout=4000)
-    cdp.send("Emulation.clearDeviceMetricsOverride")
-    assert not page.errors
-
-
-def test_resizing_never_flashes_a_blank_map(ctx, server):
-    """Each step of a window resize used to wipe the map until the next frame (a flicker). Right after the
-    app handles a resize, the canvas must still show the map."""
-    clear_vault(server)
-    for i in range(8):
-        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Flash paper {i} topic {i % 3}"})
-    page = open_app(ctx, server)
-    page.wait_for_function("window.__rb.S.nodes.size >= 8")
-    page.wait_for_timeout(2500)
-    page.evaluate("""() => { window.__fl = {blank: 0, steps: 0};
-      new ResizeObserver(() => { const c = document.querySelector('#graph canvas'); if (!c) return;
-        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let ink = 0;
-        for (let i = 3; i < d.length; i += 4 * 97) if (d[i] > 0) { ink++; if (ink > 3) break; }
-        window.__fl.steps++; if (ink <= 3) window.__fl.blank++; }).observe(document.getElementById('graph')); }""")
-    for i in range(25):
-        page.set_viewport_size({"width": 1100 + i * 12, "height": 760 + i * 6})
-        page.wait_for_timeout(16)
-    page.wait_for_timeout(800)
-    fl = page.evaluate("window.__fl")
-    assert fl["steps"] >= 10 and fl["blank"] == 0, fl
-    assert not page.errors
-
-
-def test_resizing_back_and_forth_doesnt_shrink_the_map(ctx, server):
-    """Shrinking the window and growing it back must leave the map as it was: step-by-step zoom factors used to
-    ratchet it smaller with every resize until it almost disappeared."""
-    clear_vault(server)
-    for i in range(8):
-        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Ratchet paper {i} topic {i % 3}"})
-    page = open_app(ctx, server)
-    page.wait_for_function("window.__rb.S.nodes.size >= 8")
-    page.wait_for_timeout(2500)
-    k0 = page.evaluate("window.__rb.fg.zoom()")
-    W, H = 1400, 900
-    for _ in range(4):  # drag the right edge in and out, then the bottom edge, then a corner
-        for w in list(range(W, 900, -50)) + list(range(900, W + 1, 50)):
-            page.set_viewport_size({"width": w, "height": H}); page.wait_for_timeout(10)
-        for h in list(range(H, 560, -40)) + list(range(560, H + 1, 40)):
-            page.set_viewport_size({"width": W, "height": h}); page.wait_for_timeout(10)
-    for step in list(range(0, 10)) + list(range(10, -1, -1)):
-        page.set_viewport_size({"width": W - step * 40, "height": H - step * 25}); page.wait_for_timeout(10)
-    page.set_viewport_size({"width": W, "height": H})
-    page.wait_for_timeout(1500)
-    k1 = page.evaluate("window.__rb.fg.zoom()")
-    assert abs(k1 - k0) / k0 < 0.05, (k0, k1)
-    assert page.evaluate("""() => { const fg = window.__rb.fg, el = document.getElementById('graph');
-      return [...window.__rb.S.nodes.values()].every(n => { const p = fg.graph2ScreenCoords(n.x, n.y);
-        return p.x >= 0 && p.y >= 0 && p.x <= el.clientWidth && p.y <= el.clientHeight; }); }""")
-    assert not page.errors
-
-
-def test_fit_is_as_smooth_from_far_out_as_from_close_in(ctx, server):
-    """Fit used to do a third of a zoom-in from far out in one frame; it should feel the same both ways."""
-    import math
-    clear_vault(server)
-    for i in range(10):
-        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Smooth fit paper {i} topic {i % 3}"})
-    page = open_app(ctx, server)
-    page.wait_for_function("window.__rb.S.nodes.size >= 10")
-    page.wait_for_timeout(2500)
-    shares = {}
-    for label, start in (("far", 0.13), ("close", 60)):
-        page.evaluate(f"() => {{ window.__rb.fg.zoom({start}); }}")
-        page.wait_for_timeout(400)
-        page.evaluate("""() => { window.__ks = []; const rec = () => { window.__ks.push(window.__rb.fg.zoom()); if (window.__ks.length < 70) requestAnimationFrame(rec); }; requestAnimationFrame(rec); }""")
-        page.click("#btn-zoom-fit")
-        page.wait_for_timeout(1600)
-        ls = [math.log(k) for k in page.evaluate("window.__ks") if k > 0]
-        steps = [abs(b - a) for a, b in zip(ls, ls[1:])]
-        shares[label] = max(steps) / (abs(ls[-1] - ls[0]) or 1)
-    assert shares["far"] < 0.15 and shares["close"] < 0.15, shares
-    assert not page.errors
-
-
-def test_choose_folder_and_no_update_ui(ctx, server, tmp_path):
-    """Folders are picked with the computer's own chooser; the app has no update section or update chip."""
-    folder = tmp_path / "My Papers"
-    folder.mkdir()
-    page = open_app(ctx, server)
-    page.route("**/api/pick-folder", lambda r: r.fulfill(json={"path": str(folder)}))  # the Finder dialog, answered
-    page.evaluate("window.__rbSettings.open()")
-    page.locator("#library-settings .ls-tab", has_text="Library").first.click()
-    # step 1 is where your papers are, step 2 where research brain saves; the rest is under Advanced
-    expect(page.locator("#ls-papers .ls-h")).to_have_text("1. Where your papers are")
-    expect(page.locator("#ls-documents .ls-h")).to_have_text("2. Where research brain saves")
-    expect(page.locator("#ls-advanced details")).not_to_have_attribute("open", "")
-    page.locator("#ls-papers-change").click()  # where PDFs are saved: the computer's chooser, then a move if any
-    if page.locator("#modal").is_visible():
-        page.locator("#modal-ok").click()
-    expect(page.locator("#ls-papers-path")).to_have_text(str(folder))
-    page.locator("#ls-advanced summary").click()
-    page.locator("#ls-advanced").get_by_role("button", name="Choose folder…").click()  # check a folder for duplicates
-    expect(page.locator("#ls-scan-folder")).to_have_value(str(folder))
-    expect(page.locator("#library-settings .ls-tab", has_text="Devices")).to_have_text("Devices")
-    assert page.locator("#ls-updates").count() == 0
-    page.wait_for_timeout(4500)  # the old update check ran after 4 s
-    assert page.locator("#rb-update-chip").count() == 0
-    assert not page.errors
 
 def test_map_labels_first_author_and_year_by_default(ctx, server):
     clear_vault(server)
@@ -1170,22 +1129,496 @@ def test_with_no_ai_set_up_the_top_bar_says_so(ctx, server):
     assert not page.errors
 
 
-def test_continue_on_phone(ctx, server):
-    """The chat's phone button writes the conversation out as one prompt to copy into another AI."""
+
+
+# ------------------------------------------------------------------- sections on the map (was test_sections_e2e.py)
+PLASMA = "Hall thruster plasma discharge {w} ionization breathing mode oscillations anomalous electron transport xenon"
+STARS = "Stellar spectra of cool dwarf stars {w} atmospheres metallicity abundances exoplanet hosts photometry"
+
+
+def test_sections_drag_and_add_into(ctx, server):
+    """Sections on the map: drawn as clouds, dragged as a whole by their name tag (only that section moves, and
+    it stays where you drop it), and a paper added "into a section" joins it."""
     clear_vault(server)
-    api(server, "POST", "/api/notes", {"type": "paper", "title": "Breathing mode in Hall thrusters", "abstract": "Ionization oscillations."})
+    for w in ("alpha", "beta", "gamma", "delta"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Hall thruster oscillations {w}", "abstract": PLASMA.format(w=w)})
+    for w in ("one", "two", "three", "four"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Cool dwarf atmospheres {w}", "abstract": STARS.format(w=w)})
+    page = open_app(ctx, server)
+    page.wait_for_function("(window.__rb.S.stops || 0) >= 1 && (window.__rb.S.regionLabels || []).filter((r) => r.box).length >= 2", timeout=30000)
+    page.wait_for_timeout(500)
+    tag = page.evaluate("""() => { const r = window.__rb.S.regionLabels.find((r) => r.box), fg = window.__rb.fg, b = r.box,
+      p = fg.graph2ScreenCoords((b[0] + b[2]) / 2, (b[1] + b[3]) / 2); return { cid: r.cid, x: p.x, y: p.y }; }""")
+    snap = "() => Object.fromEntries([...window.__rb.S.nodes.values()].map((n) => [n.id, [n.x, n.y, n.cluster]]))"
+    before = page.evaluate(snap)
+    box = page.locator("#graph").bounding_box()
+    x, y = box["x"] + tag["x"], box["y"] + tag["y"]
+    page.mouse.move(x, y); page.mouse.down()
+    for i in range(1, 16):
+        page.mouse.move(x + i * 5, y + i * 3)
+        page.wait_for_timeout(16)
+    page.mouse.up(); page.wait_for_timeout(600)
+    after = page.evaluate(snap)
+    mine = [k for k, v in before.items() if v[2] == tag["cid"]]
+    others = [k for k, v in before.items() if v[2] != tag["cid"]]
+    assert mine and all(abs(after[k][0] - before[k][0]) > 5 for k in mine)       # the section came along
+    assert all(abs(after[k][0] - before[k][0]) < 0.01 for k in others)           # nothing else moved
+    assert page.evaluate("() => Object.keys(JSON.parse(localStorage.getItem('rb.regionPos') || '{}')).length") == 1
+    # a new paper, put into that section as it's added
+    note = api(server, "POST", "/api/notes", {"type": "paper", "title": "Exoplanet transit timing", "abstract": "Transit timing variations of hot Jupiters"})
+    page.evaluate("""async ([nid, cid]) => { await window.__rb.refreshGraph(); const sec = window.__rb.S.clusters.find((c) => c.id === cid);
+      await window.__rb.intoSection({ id: nid, title: 'Exoplanet transit timing' }, sec); }""", [note["id"], tag["cid"]])
+    page.wait_for_function("""([nid, ids]) => { const S = window.__rb.S, n = S.nodes.get(nid), m = S.nodes.get(ids[0]);
+      return n && m && n.cluster === m.cluster; }""", arg=[note["id"], mine], timeout=20000)
+    assert not page.errors
+
+
+# --------------------------------------------------------------- diagrams in answers (was test_diagram_e2e.py)
+DIAGRAMS = [
+    'flowchart TD\n  A["1. Collect spectra"] --> B["2. Fit the CRM"]\n  B --> C["- check residuals"]',
+    'flowchart LR\n  A[1. Measure] -->|2. compare| B(* model)\n  B --> C{# done?}',
+    'mindmap\n  root((Cross sections))\n    1. Theory\n    2. Experiment',
+]
+
+
+def test_list_like_labels_draw(ctx, server):
+    """Diagrams in answers (static/app.js drawVisuals): mermaid reads labels as Markdown, so a label that starts
+    like a list or heading ("1. Fit", "- check", "# done?") used to come out as "Unsupported markdown: list".
+    They draw with their own text now."""
+    clear_vault(server)
+    ans = "\n\n".join(f"```mermaid\n{d}\n```" for d in DIAGRAMS)
+    api(server, "PUT", "/api/chats/library", {"messages": [{"role": "user", "content": "Draw it"},
+                                                              {"role": "assistant", "content": ans}], "title": "Ask your library"})
     page = open_app(ctx, server)
     page.click("#btn-chat")
-    page.locator("#chat-input").fill("What causes the breathing mode?")
-    page.keyboard.press("Enter")
-    expect(page.locator("#chat-log")).to_contain_text("fake Claude", timeout=15000)
-    page.wait_for_function("() => !window.__rb.S.chatBusy", timeout=15000)  # the answer has finished, not just started
-    page.click("#btn-chat-handoff")
-    sheet = page.locator(".ho-sheet")
-    expect(sheet).to_be_visible()
-    text = sheet.locator(".ho-text").input_value()
-    assert "What causes the breathing mode?" in text and "pick up where we left off" in text
-    if os.environ.get("RB_SHOT_DIR"):
-        page.screenshot(path=os.path.join(os.environ["RB_SHOT_DIR"], "handoff.png"))
-    sheet.get_by_role("button", name="Copy prompt").click()
-    expect(page.locator(".ho-sheet")).to_be_hidden()
+    page.wait_for_function("document.querySelectorAll('#chat .md-visual-mermaid svg').length === 3", timeout=20000)
+    texts = page.evaluate("""() => [...document.querySelectorAll('#chat .md-visual-mermaid')].map((v) =>
+      [...v.querySelectorAll('svg .nodeLabel, svg .edgeLabel, svg text')].map((t) => t.textContent).join(' ').replace(/\\u00a0/g, ' '))""")
+    joined = " ".join(texts)
+    assert "Unsupported markdown" not in joined
+    for label in ["1. Collect spectra", "- check residuals", "2. compare", "* model", "# done?", "1. Theory"]:
+        assert label in joined, label
+    assert not page.errors
+
+
+# ------------------------------------------------------------------------- idea cards (was test_cards_e2e.py)
+TEXT_A = """[[page 1]]
+Magnetic shielding strongly reduces erosion of the discharge channel walls in this thruster.
+
+[[page 2]]
+The electron temperature in the plume was 20 eV at the exit plane.
+
+We used a Langmuir probe mounted on a radial arm for every measurement here.
+"""
+TEXT_B = """[[page 3]]
+Ion beam focusing improved markedly when the magnetic field was optimised for this study.
+
+[[page 4]]
+The electron temperature in the plume was 35 eV at the exit plane.
+
+A Langmuir probe measured the plasma properties across the whole plume.
+"""
+
+
+def _paper_with_text(server, title, text):
+    n = api(server, "POST", "/api/notes", {"type": "paper", "title": title})
+    (Path(server["vault"]) / "text" / f"{n['id']}.txt").write_text(text, encoding="utf-8")
+    return n["id"]
+
+
+def _extract_cards_now(server, pid):
+    j = api(server, "POST", f"/api/papers/{pid}/cards/extract")
+    t0 = time.time()
+    while time.time() - t0 < 20:
+        s = api(server, "GET", f"/api/cards/jobs/{j['job_id']}")
+        if s["state"] != "running":
+            return s
+        time.sleep(0.1)
+    raise AssertionError("extraction didn't finish")
+
+
+def test_ideas_review_flow_and_view(ctx, server):
+    """Idea cards: suggest ideas from a paper (fake agent), review them with the keyboard (J/K move, Y confirm,
+    X reject, E edit), add one by hand, then the Ideas view: the quantity table with a conflict badge,
+    sorting, the CSV link, and Esc."""
+    clear_vault(server)
+    a = _paper_with_text(server, "Shielded thruster plume study", TEXT_A)
+    b = _paper_with_text(server, "Optimised field plume study", TEXT_B)
+    page = open_app(ctx, server)
+    assert page.evaluate("RB.commands.conflicts()") == []
+    page.wait_for_function("(id) => window.__rb.S.nodes.has(id)", arg=a)
+    page.evaluate("(id) => window.__rb.openNote(id)", a)
+    sec = page.locator("#ideas-sec")
+    expect(sec).to_be_visible()
+    expect(sec).to_contain_text("Suggest them from the paper, or add your own")
+
+    # suggest: the fake agent proposes 4 cards; the one whose quote isn't in the paper is dropped
+    sec.locator("[data-act=ideas-suggest]").click()
+    cards = sec.locator(".ic[data-card]")
+    expect(cards).to_have_count(3)
+    expect(sec.locator(".ic.sug")).to_have_count(3)
+    expect(sec).to_contain_text("The electron temperature in the plume was 20 eV")
+    expect(sec.locator(".ic-meta .tnum", has_text="p. 2").first).to_be_visible()  # no PDF here, so not a link
+
+    # keyboard review
+    blur(page)
+    page.keyboard.press("j")
+    expect(cards.nth(0)).to_have_class("ic sug on")
+    page.keyboard.press("y")
+    expect(cards.nth(0)).to_have_attribute("data-status", "confirmed")
+    # the next suggestion (the quantity) is selected; J skips to the method, X rejects it (hidden, can be shown)
+    expect(sec.locator(".ic.on")).to_have_attribute("data-status", "suggested")
+    expect(sec.locator(".ic.on")).to_contain_text("20 eV")
+    page.keyboard.press("j")
+    expect(sec.locator(".ic.on")).to_contain_text("Langmuir probe")
+    page.keyboard.press("x")
+    expect(sec.locator(".ic[data-card]")).to_have_count(2)
+    expect(sec.get_by_role("button", name="Show 1 rejected")).to_be_visible()
+    # back on the quantity: edit it (an edited suggestion counts as confirmed)
+    expect(sec.locator(".ic.on")).to_contain_text("20 eV")
+    page.keyboard.press("k")
+    expect(sec.locator(".ic.on")).to_have_attribute("data-status", "confirmed")
+    page.keyboard.press("j")
+    page.keyboard.press("e")
+    form = sec.locator("form.ic-form")
+    expect(form).to_be_visible()
+    ta = form.locator("textarea").first
+    ta.fill("My wording of this idea.")
+    ta.press(f"{MOD}+Enter")
+    expect(form).to_have_count(0)
+    expect(sec).to_contain_text("My wording of this idea.")
+    statuses = sorted(sec.locator(".ic[data-card]").evaluate_all("els => els.map((e) => e.dataset.status)"))
+    assert statuses == ["confirmed", "edited"], statuses
+
+    # add a card by hand
+    sec.locator("[data-act=ideas-add]").click()
+    form = sec.locator("form.ic-form")
+    form.locator("select").select_option("claim")
+    form.locator("textarea").first.fill("The sheath is what matters most here.")
+    form.get_by_role("button", name="Add card").click()
+    expect(sec).to_contain_text("The sheath is what matters most here.")
+    expect(sec.locator(".ic", has_text="The sheath is what matters").locator(".st")).to_have_text("Yours")
+    sec.scroll_into_view_if_needed()
+    shot(page, "ideas-panel")
+
+    # the second paper disagrees (35 eV vs 20 eV): the Ideas view flags it
+    assert _extract_cards_now(server, b)["added"] == 3
+    blur(page)
+    page.keyboard.press("g")
+    page.keyboard.press("i")
+    view = page.locator("section.iv")
+    expect(view).to_be_visible()
+    rows = view.locator("tbody tr")
+    expect(rows).to_have_count(2)
+    expect(view.locator(".bad", has_text="Disagrees")).to_have_count(2)
+    expect(view.locator("th", has_text="SI")).to_be_visible()
+    shot(page, "ideas-view")
+    view.locator("th[data-col=value]").click()
+    first = rows.nth(0).locator("td").nth(1)
+    expect(first).to_have_text("20")
+    view.locator("th[data-col=value]").click()
+    expect(rows.nth(0).locator("td").nth(1)).to_have_text("35")
+    href = view.locator("[data-act=ideas-csv]").get_attribute("href")
+    assert href.startswith("/api/cards/export.csv?") and "kind=quantity" in href
+    view.locator("input[type=search]").fill("optimised field")
+    expect(rows).to_have_count(1)
+    view.locator(".seg button", has_text="Claims").click()
+    view.locator("input[type=search]").fill("")
+    expect(view.locator("tbody tr").first).to_be_visible()
+    blur(page)
+    page.keyboard.press("Escape")
+    expect(view).to_have_count(0)
+    assert page.evaluate("RB.commands.conflicts()") == []
+    assert not page.errors, page.errors
+
+
+# ----------------------------------------------------- dropping a folder on the window (was test_drop_folder_e2e.py)
+# a folder "Plasma" holding a.pdf, notes.txt and a subfolder "Hall" with b.pdf; and a loose c.pdf beside it
+DROP = """(withLoose) => {
+  const pdf = (n) => new File(['%PDF-1.4 x'], n, { type: 'application/pdf' });
+  const fileEntry = (n, f) => ({ name: n, isFile: true, isDirectory: false, file: (ok) => ok(f) });
+  const dirEntry = (n, kids) => ({ name: n, isFile: false, isDirectory: true, createReader() {
+    let done = false; return { readEntries: (ok) => { const batch = done ? [] : kids; done = true; setTimeout(() => ok(batch), 0); } }; } });
+  const hall = dirEntry('Hall', [fileEntry('b.pdf', pdf('b.pdf'))]);
+  const root = dirEntry('Plasma', [fileEntry('a.pdf', pdf('a.pdf')), fileEntry('notes.txt', new File(['x'], 'notes.txt')), hall]);
+  const folderFile = new File([], 'Plasma');
+  const loose = pdf('c.pdf');
+  const items = [{ kind: 'file', webkitGetAsEntry: () => root }];
+  const files = [folderFile];
+  if (withLoose) { items.push({ kind: 'file', webkitGetAsEntry: () => fileEntry('c.pdf', loose) }); files.push(loose); }
+  window.__importedLoose = [];
+  const ev = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'dataTransfer', { value: { types: ['Files'], files, items } });
+  window.dispatchEvent(ev);
+}"""
+WIN_DROP = """
+window.chrome = window.chrome || {};
+window.chrome.webview = { __l: [], postMessage() {},
+  addEventListener(t, f) { if (t === 'message') this.__l.push(f); },
+  postMessageWithAdditionalObjects(msg, files) {  // as app/winwindow.py answers: where each dropped item is
+    const paths = Array.from(files).map((f) => ({ name: f.name, path: 'C:\\\\Users\\\\me\\\\Documents\\\\' + f.name }));
+    setTimeout(() => this.__l.forEach((f) => f({ data: { rb: { dropped: msg.rb.dropped, paths } } })), 10);
+  } };"""
+MAC_DROP = """
+window.webkit = { messageHandlers: { rb: { postMessage(s) {  // as app/macwindow.py answers through __rbDropped
+  const m = JSON.parse(s);
+  if (m.dropped) setTimeout(() => window.__rbDropped({ dropped: m.dropped,
+    paths: m.names.map((n) => ({ name: n, path: '/Users/me/Papers/' + n })) }), 10);
+} } } };"""
+SILENT_MAC = "window.webkit = { messageHandlers: { rb: { postMessage() {} } } };"  # never answers
+
+
+def test_dropping_a_folder_links_it_in_the_app_window_and_imports_it_in_a_browser(ctx, server):
+    """Dropping a folder on the window (static/app.js droppedFolders, static/live.js droppedPaths). In research
+    brain's own window (Mac or Windows) the window says where the folder is, and it's added like Add folders of
+    papers (kept where it is); in a browser, or when the window doesn't answer, its PDFs are read from the drop
+    and offered like Import a folder (copied). The drop is synthetic: Playwright can't drag a real folder in,
+    so its DataTransfer and directory entries are faked."""
+    cases = [  # (what, query, init script, linked, copied)
+        ("browser", "", "", [], [["Plasma/Hall/b.pdf", "Plasma/a.pdf"]]),
+        ("Windows window", "?app=win", WIN_DROP, ["C:\\Users\\me\\Documents\\Plasma"], []),
+        ("Mac window", "?app=mac", MAC_DROP, ["/Users/me/Papers/Plasma"], []),
+        ("Mac window that doesn't answer", "?app=mac", SILENT_MAC, [], None),
+    ]
+    for what, query, init, linked, copied in cases:
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        if init:
+            page.add_init_script(init)
+        page.goto(server["base"] + "/" + query)
+        page.wait_for_function("window.__rb && window.__rbLive && window.__rbBulk")
+        page.evaluate("""() => {
+          window.__linked = []; window.__copied = [];
+          window.__rbBulk.linkDialog = (p) => window.__linked.push(p);
+          window.__rbBulk.folderDialog = (fs) => window.__copied.push(fs.map((f) => f.webkitRelativePath));
+        }""")
+        page.evaluate(DROP, False)
+        if linked:
+            page.wait_for_function("window.__linked.length === 1")
+        else:
+            page.wait_for_function("window.__copied.length === 1", timeout=6000)
+        assert page.evaluate("window.__linked") == linked, what
+        if copied is None:  # the fallback: copied, whatever it read
+            assert len(page.evaluate("window.__copied")) == 1, what
+        else:
+            assert [sorted(c) for c in page.evaluate("window.__copied")] == copied, what
+        assert not errors, (what, errors)
+        page.close()
+
+
+# -------------------------------------------------------- the Windows window's title bar (was test_win_window_e2e.py)
+FAKE_WEBVIEW = """
+window.__sent = [];
+window.chrome = window.chrome || {};
+window.chrome.webview = {
+  postMessage: (m) => window.__sent.push(JSON.parse(JSON.stringify(m))),
+  // like WebView2: every 'message' listener hears each message
+  __listeners: [],
+  addEventListener(type, f) { if (type === 'message') this.__listeners.push(f); },
+};
+window.__rbMsg = (e) => window.chrome.webview.__listeners.forEach((f) => f(e));
+"""
+
+
+def _open_win(ctx, server, query="?app=win&titlebar=custom", viewport=None):
+    """The page in research brain's own Windows window, in Playwright's Chromium with WebView2's channel
+    (window.chrome.webview) faked."""
+    page = ctx.new_page()
+    if viewport:
+        page.set_viewport_size(viewport)
+    page.add_init_script(FAKE_WEBVIEW)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.errors = errors
+    page.goto(server["base"] + "/" + query)
+    page.wait_for_function("window.__rb && window.__rb.fg !== undefined && window.__rbLive")
+    return page
+
+
+def _sent(page, key):
+    return page.evaluate(f"window.__sent.filter((m) => m.rb && {key!r} in m.rb).map((m) => m.rb[{key!r}])")
+
+
+def _win_shot(page, name):
+    shot(page, name, clip={"x": 0, "y": 0, "width": 1400, "height": 120})
+
+
+def test_windows_window_header_is_the_title_bar_and_the_mic_uses_voice_typing(ctx, server):
+    """With no title bar (?app=win&titlebar=custom, app/winwindow.py): the header is the title bar, the window
+    buttons sit at its right end and say what was clicked, the window's messages swap and dim them, and the
+    header's color is sent so the window can match it; the chat's mic uses Windows voice typing. With Windows'
+    own title bar (old WebView2): no buttons drawn, no drag region."""
+    page = _open_win(ctx, server)
+    assert page.evaluate("document.documentElement.classList.contains('win-window')")
+    assert page.evaluate("location.search") == ""  # stripped, kept for reloads
+    assert page.evaluate("sessionStorage.getItem('rb.winTitlebar')") == "custom"
+    buttons = page.locator(".win-caption button")
+    expect(buttons).to_have_count(3)
+    assert [buttons.nth(i).get_attribute("aria-label") for i in range(3)] == ["Minimize", "Maximize", "Close"]
+    # the header is a drag region, its buttons and fields aren't, and nothing in it sits under the window buttons
+    assert page.evaluate("getComputedStyle(document.getElementById('topbar')).webkitAppRegion") == "drag"
+    assert page.evaluate("getComputedStyle(document.querySelector('#topbar button')).webkitAppRegion") == "no-drag"
+    assert page.evaluate("getComputedStyle(document.querySelector('.win-caption')).webkitAppRegion") == "no-drag"
+    caption_left = page.evaluate("document.querySelector('.win-caption').getBoundingClientRect().left")
+    right = page.evaluate("""Math.max(...[...document.querySelectorAll('#topbar *')].map((e) => e.getBoundingClientRect())
+        .filter((r) => r.width && r.height).map((r) => r.right))""")
+    assert right <= caption_left, (right, caption_left)
+    box = buttons.nth(2).bounding_box()
+    assert box["width"] == 46 and box["height"] == 52 and box["x"] + box["width"] == 1400 and box["y"] == 0
+    # the header's color, for the window's edge above the page
+    chrome = _sent(page, "chrome")
+    assert chrome and chrome[-1].startswith("#") and len(chrome[-1]) == 7
+    _win_shot(page, "win-titlebar-light")
+
+    for i, what in enumerate(["minimize", "maximize", "close"]):
+        buttons.nth(i).click()
+    assert _sent(page, "caption") == ["minimize", "maximize", "close"]
+
+    # the window says it's maximized: the middle button restores; inactive: dimmed
+    page.evaluate("window.__rbMsg({data: {rb: {window: 'maximized'}}})")
+    expect(buttons.nth(1)).to_have_attribute("aria-label", "Restore")
+    assert buttons.nth(1).text_content() == "\ue923"  # the restore glyph (Segoe Fluent Icons)
+    page.evaluate("window.__rbMsg({data: {rb: {window: 'normal'}}})")
+    expect(buttons.nth(1)).to_have_attribute("aria-label", "Maximize")
+    page.evaluate("window.__rbMsg({data: {rb: {active: false}}})")
+    assert page.evaluate("document.documentElement.classList.contains('win-inactive')")
+    page.mouse.move(700, 600)
+    assert page.evaluate("getComputedStyle(document.querySelector('.wc-min')).opacity") == "0.45"
+    page.evaluate("window.__rbMsg({data: {rb: {active: true}}})")
+    assert not page.evaluate("document.documentElement.classList.contains('win-inactive')")
+
+    # dark theme: the color is sent again
+    before = _sent(page, "chrome")[-1]
+    page.evaluate("document.documentElement.setAttribute('data-theme', 'dark')")
+    page.wait_for_function(f"window.__sent.filter((m) => m.rb && m.rb.chrome).length > {len(_sent(page, 'chrome')) - 1}"
+                           f" && window.__sent.filter((m) => m.rb && m.rb.chrome).pop().rb.chrome !== {before!r}")
+    page.locator(".wc-close").hover()
+    _win_shot(page, "win-titlebar-dark-close-hover")
+    assert page.evaluate("getComputedStyle(document.querySelector('.wc-close')).backgroundColor") == "rgb(196, 43, 28)"
+
+    # the chat's mic: Windows voice typing
+    assert _sent(page, "dictate") == []
+    page.evaluate("document.querySelector('#btn-chat').click()")
+    mic = page.locator("#btn-chat-mic")
+    expect(mic).to_be_visible()
+    mic.click()
+    assert _sent(page, "dictate") == [True]
+    expect(mic).to_have_attribute("aria-pressed", "true")
+    mic.click()  # stopping never presses Win+H again (a toggle that also stops by itself)
+    assert _sent(page, "dictate") == [True]
+    expect(mic).to_have_attribute("aria-pressed", "false")
+    assert not page.errors
+
+    # Windows' own title bar
+    native = _open_win(ctx, server, "?app=win")
+    assert not native.evaluate("document.documentElement.classList.contains('win-window')")
+    expect(native.locator(".win-caption")).to_have_count(0)
+    assert native.evaluate("getComputedStyle(document.getElementById('topbar')).webkitAppRegion") != "drag"
+    assert not native.errors
+
+
+def test_nothing_in_the_windows_header_sits_under_the_window_buttons(ctx, server):
+    """A small laptop screen opens the window narrower (app/winwindow.py _fit): the header gives way so its
+    buttons, search and status never slide under minimize, maximize and close, at every width."""
+    for width in (1400, 1326, 1240, 1100, 984, 900):
+        page = _open_win(ctx, server, viewport={"width": width, "height": 700})
+        page.wait_for_timeout(300)
+        under = page.evaluate("""() => {
+          const cap = document.querySelector('.win-caption').getBoundingClientRect();
+          return [...document.querySelectorAll('#topbar *')].filter((e) => {
+            const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+            if (!r.width || !r.height || s.visibility === 'hidden' || e.closest('.menu, [hidden]')) return false;
+            return r.right > cap.left + 1 && r.left < cap.right && r.top < cap.bottom;
+          }).map((e) => (e.id || e.className || e.tagName) + ' ' + Math.round(e.getBoundingClientRect().right));
+        }""")
+        assert under == [], f"under the window buttons at {width}px: {under}"
+        shot(page, f"win-header-{width}")
+        page.close()
+
+
+# ----------------------------------------------------------------------- voice mode (was test_voice_e2e.py)
+VOICE_STUB = """localStorage.setItem('rb.tour.done','true'); window.__sent = [];
+Object.defineProperty(window, 'webkit', { configurable: true, value: { messageHandlers: { rb: {
+  postMessage: (m) => window.__sent.push(JSON.parse(m)) } } } });"""
+
+
+def test_voice_mode_talks_listens_again_and_ignores_its_own_echo(ctx, server):
+    """Voice mode (static/voice.js) in the Mac window: macOS dictation types the question, a pause sends it
+    (asking the AI for a spoken, conversational answer), the answer is spoken sentence by sentence as it
+    streams, then it listens again. Dictation and the native channel are stood in for; speech goes through the
+    page's speech queue. What can't be heard (math, citations, code, tables, links, memory tags) is read
+    plainly or skipped. While it talks, its own voice coming back through the microphone (here a fifth of what
+    it plays) is learned and ignored; you talking clearly over it starts an interruption. Voice is tagged beta."""
+    from app import server as srv
+    assert srv._extras(srv.ChatIn(question="q", voice=True)) == srv.VOICE_EXTRAS
+    assert srv._extras(srv.ChatIn(question="q")) == srv.CHAT_EXTRAS
+    assert srv._extras(srv.GeneralIn(question="q", voice=True)) == srv.VOICE_EXTRAS
+    assert "markdown" in srv.VOICE_EXTRAS.lower() and "mermaid" not in srv.VOICE_EXTRAS
+
+    clear_vault(server)
+    api(server, "POST", "/api/notes", {"type": "paper", "title": "Cross sections", "abstract": "Electron impact cross sections."})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(VOICE_STUB)
+    page.goto(server["base"] + "/?app=mac")
+    page.wait_for_function("window.__rb && window.__rbVoice && window.__rb.fg !== undefined")
+    page.evaluate("() => { window.__said = []; const sp = window.__rbVoice._speech; const say = sp.say.bind(sp); sp.say = (t) => { window.__said.push(t); say(t); }; }")
+    page.click("#btn-chat")
+    page.click("#btn-chat-voice")
+    expect(page.locator(".voice-bar")).to_be_visible()
+    page.wait_for_function("() => window.__rbVoice.state === 'listening'")  # it checks the voice's setup first
+    assert {"dictate": True} in page.evaluate("() => window.__sent")
+    for part in ["What is", "What is a cross section?"]:  # macOS dictation typing
+        page.evaluate("(t) => { const ta = document.getElementById('chat-input'); ta.value = t; ta.dispatchEvent(new Event('input')); }", part)
+    page.wait_for_function("() => window.__rb.S.chat.some((m) => m.role === 'user' && m.content === 'What is a cross section?')", timeout=TIMEOUT)
+    page.wait_for_function("() => !window.__rb.S.chatBusy", timeout=TIMEOUT)
+    said = page.evaluate("() => window.__said")
+    assert said and all("[[" not in s and "$" not in s for s in said)  # prose only: no citations, math read plainly
+    page.wait_for_function("() => window.__rbVoice.state === 'listening'", timeout=60000)  # then it listens again
+    page.click(".voice-bar .btn")  # End
+    assert page.evaluate("() => window.__rbVoice.state") == "off"
+    expect(page.locator(".voice-bar")).to_be_hidden()
+    assert page.locator(".msg-read").count() >= 1  # Read aloud on the answer
+    assert not errors
+
+    # in a browser tab: what can be spoken, and its own echo
+    page = ctx.new_page()
+    page.add_init_script("localStorage.setItem('rb.tour.done','true');")
+    page.goto(server["base"] + "/")
+    page.wait_for_function("window.__rbVoice")
+    out = page.evaluate("""() => window.__rbVoice.speakable(
+      "## Result\\nThe rate is $\\\\sigma^2$ [[paper-a]] p. 3, see [the paper](https://x.org).\\n\\n```python\\nprint(1)\\n```\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |\\n<remember>Likes plots.</remember>")""")
+    assert "sigma squared" in out and "[[" not in out and "print" not in out and "| a" not in out
+    assert "the paper" in out and "https" not in out and "Likes plots" not in out and "##" not in out
+    out = page.evaluate("""() => {
+      const mic = window.__rbVoice._mic, o = window.__rbVoice._out;
+      o.level = () => 0.1;  // it's talking
+      const starts = [];
+      mic.onStart = (b) => starts.push(b); mic.onUtter = () => {}; mic.onNothing = () => {};
+      mic.mode = 'speaking'; mic.rate = 48000;
+      const frame = (amp) => { const b = new Float32Array(2048); for (let i = 0; i < b.length; i++) b[i] = amp * Math.sqrt(2) * Math.sin(i / 7); mic.frame(b); };
+      for (let i = 0; i < 80; i++) frame(0.02);      // 3.4 s of only its echo
+      const afterEcho = starts.length;
+      for (let i = 0; i < 10; i++) frame(0.16);      // you, talking over it
+      return { afterEcho, starts, echo: mic.echo };
+    }""")
+    assert out["afterEcho"] == 0, out
+    assert out["starts"] == [True], out
+    assert 0.1 < out["echo"] < 0.35, out
+    page.click("#btn-chat")
+    assert "beta" in (page.get_attribute("#btn-chat-voice", "aria-label") or "").lower()
+    assert page.locator(".voice-bar .beta-tag").count() == 1
+
+
+@pytest.mark.skipif(not os.environ.get("RB_VOICE_TEST_DIR"), reason="needs the voice download (RB_VOICE_TEST_DIR: a set-up voice folder)")
+def test_hands_free_turns_with_a_microphone(tmp_path):
+    """The microphone (a recorded question, played as Chromium's fake microphone), turn-taking, Whisper and the
+    natural voice, end to end: it hears the question, answers out loud, then listens and hears the next one.
+    Runs in its own process (it needs its own Chromium, with a fake microphone)."""
+    import subprocess
+    script = os.path.join(os.path.dirname(__file__), "handsfree_check.py")
+    r = subprocess.run([sys.executable, script, str(tmp_path)], capture_output=True, text=True, timeout=240,
+                       cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]

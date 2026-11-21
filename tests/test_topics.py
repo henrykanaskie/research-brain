@@ -1,32 +1,20 @@
-"""Reading status, park-for-later, topics and per-topic reading queues (with mocked Semantic Scholar).
+"""Reading status, park-for-later, topics, the map's sections and per-topic reading queues (with mocked
+Semantic Scholar).
 
 Run:  python3 -m pytest -q tests/test_topics.py
 """
-import importlib
 import json
 import sys
-import time
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from rb_app import add_paper, load_server
 
 
 @pytest.fixture()
 def server(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_CITES_ON_IMPORT", "0")
-    monkeypatch.setenv("RB_RECS_AUTO", "0")  # tests trigger refreshes explicitly
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    srv = importlib.import_module("app.server")
-    monkeypatch.setattr(srv.scholar, "lookup", lambda q: None)
-    monkeypatch.setattr(srv.scholar, "s2_paper", lambda pid: None)
-    monkeypatch.setattr(srv.citations, "_sleep", lambda s: None)
+    # RB_RECS_AUTO=0: tests trigger refreshes explicitly
+    srv = load_server(monkeypatch, tmp_path, offline_scholar=True, RB_CITES_ON_IMPORT="0", RB_RECS_AUTO="0")
     monkeypatch.setattr(srv.citations, "MIN_INTERVAL", 0.0)
     return srv
 
@@ -38,19 +26,19 @@ def client(server):
 
 
 def paper(client, title, abstract="", s2_id="", **kw):
-    r = client.post("/api/notes", json={"type": "paper", "title": title, "abstract": abstract, **kw})
-    assert r.status_code == 201, r.text
-    nid = r.json()["id"]
+    nid = add_paper(client, title, abstract, **kw)
     if s2_id:
-        # s2_id isn't user-editable through PUT; set it like an import would
-        from app import server as srv  # noqa: F401  (the fixture's fresh module)
+        # s2_id isn't user-editable through PUT; set it like an import would (on the fixture's fresh module)
         sys.modules["app.server"].store.set_fields(nid, s2_id=s2_id)
     return nid
 
 
 # ---------------------------------------------------------------- status
-def test_status_defaults_and_validation(client, server):
-    old = client.post("/api/notes", json={"type": "note", "title": "Idea"}).json()
+def test_status_defaults_validation_park_and_meta_index(client, server):
+    """New papers are to-read (other notes have no status), a bad status is refused, an old file without the key
+    reads as "", the meta index mirrors the field and rebuilds when the fields change; parking sets later with a
+    one-line reason, and parking again without one keeps it."""
+    old =client.post("/api/notes", json={"type": "note", "title": "Idea"}).json()
     assert old["status"] == "" and old["saved_because"] == ""
     p = client.post("/api/notes", json={"type": "paper", "title": "Hall thrusters"}).json()
     assert p["status"] == "to-read"  # new papers wait to be read
@@ -67,18 +55,7 @@ def test_status_defaults_and_validation(client, server):
     nodes = {n["id"]: n for n in client.get("/api/graph").json()["nodes"]}
     assert nodes[p["id"]]["status"] == "read"
 
-
-def test_meta_index_rebuilds_for_new_fields(server, tmp_path):
-    # FIELDS_DEFAULTS changed -> a db built from older fields is rebuilt (fields signature)
-    meta = server.store.meta
-    assert meta.ok
-    meta.conn.execute("UPDATE info SET v='old' WHERE k='fields'")
-    from app.meta import MetaIndex
-    m2 = MetaIndex(server.store)
-    assert m2.ok and m2.rebuilds >= 1
-
-
-def test_park_for_later(client):
+    # park for later
     nid = paper(client, "Sheath physics")
     r = client.post(f"/api/notes/{nid}/park", json={"saved_because": "  Needed when\nI model the wall sheath  "})
     assert r.status_code == 200
@@ -90,9 +67,19 @@ def test_park_for_later(client):
     n = client.post(f"/api/notes/{nid}/park").json()
     assert n["status"] == "later" and n["saved_because"].startswith("Needed when")
 
+    # FIELDS_DEFAULTS changed: a db built from older fields is rebuilt (fields signature)
+    meta = server.store.meta
+    assert meta.ok
+    meta.conn.execute("UPDATE info SET v='old' WHERE k='fields'")
+    from app.meta import MetaIndex
+    m2 = MetaIndex(server.store)
+    assert m2.ok and m2.rebuilds >= 1
+
 
 # ---------------------------------------------------------------- topics CRUD + files
 def test_topic_crud_and_membership(client, server):
+    """A topic gets a slug (a duplicate or blank name is refused), takes paper members grouped by status but
+    never fragments or unknown ids, keeps its slug on rename, and goes to the trash when deleted."""
     a, b = paper(client, "Erosion of channel walls"), paper(client, "Magnetic shielding")
     r = client.post("/api/topics", json={"name": "Hall thruster lifetime", "description": "wall erosion"})
     assert r.status_code == 201
@@ -131,7 +118,9 @@ def test_topic_crud_and_membership(client, server):
     assert any(p.name.startswith(f"topic-{slug}") for p in server.store.trash_dir.iterdir())
 
 
-def test_topic_file_persistence(client, server):
+def test_topic_file_persistence_and_functions_for_other_modules(client, server):
+    """A topic is a plain Markdown file that hand edits feed back into; papers_by_status, topics_for and
+    list_topics read it; dismissals and snoozes survive deleting .index."""
     a = paper(client, "Plasma sheath")
     slug = client.post("/api/topics", json={"name": "Sheaths", "members": [a]}).json()["slug"]
     path = server.topics_mod.topics_dir(server.store) / f"{slug}.md"
@@ -142,6 +131,13 @@ def test_topic_file_persistence(client, server):
     path.write_text(text.replace("description: ''", "description: hand written") + f"- [[{b}|Bohm]]\n")
     t = client.get(f"/api/topics/{slug}").json()
     assert t["members"] == [a, b] and t["description"] == "hand written"
+    # the functions other modules use
+    client.post(f"/api/notes/{b}/park", json={"saved_because": "later use"})
+    tm = server.topics_mod
+    assert [x["id"] for x in tm.papers_by_status(server.store, "later")] == [b]
+    assert [x["id"] for x in tm.papers_by_status(server.store, "to-read", topic=slug)] == [a]
+    assert tm.topics_for(server.store, a)[0]["slug"] == slug
+    assert tm.list_topics(server.store)[0]["counts"]["later"] == 1
     # dismissals and snoozes live in the topic file, not in .index (which is safe to delete)
     client.post(f"/api/topics/{slug}/queue/dismiss", json={"s2_id": "X1", "title": "Bad paper"})
     client.post(f"/api/topics/{slug}/queue/snooze", json={"key": "X2"})
@@ -155,6 +151,8 @@ def test_topic_file_persistence(client, server):
 
 
 def test_region_to_topic(client, server):
+    """Regions of the map are suggested as topics with a capitalised name; one made into a topic is no longer
+    suggested."""
     ids = [paper(client, f"Hall thruster erosion study {i}", "hall thruster channel wall erosion boron nitride")
            for i in range(3)]
     ids += [paper(client, f"Tokamak disruption {i}", "tokamak disruption prediction neural network") for i in range(3)]
@@ -169,19 +167,29 @@ def test_region_to_topic(client, server):
     assert all(x["region"] != s["region"] for x in client.get("/api/topics/suggest").json())
 
 
-def test_topic_functions_for_other_modules(client, server):
-    a, b = paper(client, "A paper"), paper(client, "B paper")
-    client.post(f"/api/notes/{b}/park", json={"saved_because": "later use"})
-    slug = client.post("/api/topics", json={"name": "T", "members": [a, b]}).json()["slug"]
-    tm = server.topics_mod
-    assert [x["id"] for x in tm.papers_by_status(server.store, "later")] == [b]
-    assert [x["id"] for x in tm.papers_by_status(server.store, "to-read", topic=slug)] == [a]
-    assert tm.topics_for(server.store, a)[0]["slug"] == slug
-    assert tm.list_topics(server.store)[0]["counts"]["later"] == 1
+def test_topic_members_share_one_section_on_the_map(client, server):
+    """Sections of the map (app/server.py _clusters): a paper you put in a topic is in that topic's section,
+    however similar it is to papers elsewhere."""
+    plasma = [paper(client, f"Hall thruster discharge oscillations {w}", f"Hall thruster plasma discharge {w} ionization breathing mode oscillations anomalous electron transport xenon propellant")
+              for w in ("alpha", "beta", "gamma", "delta")]
+    stars = [paper(client, f"Cool dwarf stellar atmospheres {w}", f"Stellar spectra of cool dwarf stars {w} atmospheres metallicity abundances exoplanet hosts photometry")
+             for w in ("one", "two", "three", "four", "five", "six", "seven")]
+    g = client.get("/api/graph").json()
+    cl = {n["id"]: n["cluster"] for n in g["nodes"]}
+    assert cl[stars[0]] != cl[plasma[0]] and cl[stars[0]] >= 0  # two sections by similarity
+    # put a star paper in the plasma section (its topic): it moves there, against its similarity
+    t = client.post("/api/topics", json={"name": "Hall thrusters", "members": plasma[:2] + [stars[0]]}).json()
+    assert t.get("slug")
+    g = client.get("/api/graph").json()
+    cl = {n["id"]: n["cluster"] for n in g["nodes"]}
+    assert cl[stars[0]] == cl[plasma[0]] and all(cl[p] == cl[plasma[0]] for p in plasma)
+    assert cl[stars[1]] != cl[plasma[0]]
 
 
 # ---------------------------------------------------------------- queue
 def test_queue_orders_to_read_by_relevance(client, server):
+    """A topic's queue lists its unread papers, cited and similar ones first with the reason; a snoozed library
+    paper drops out."""
     read = paper(client, "Hall thruster wall erosion", "boron nitride channel wall erosion sputtering yield")
     client.put(f"/api/notes/{read}", json={"status": "read"})
     far = paper(client, "Protein folding", "amino acid chains fold into structures")
@@ -230,6 +238,8 @@ def _topic_with_papers(client):
 
 
 def test_recommendation_fusion(client, server, monkeypatch):
+    """Recommendations fuse papers cited by several topic papers, Semantic Scholar suggestions and similarity,
+    skip ones cited once or already in the library, cache references, and reading the queue never calls S2."""
     slug, (p1, p2, p3) = _topic_with_papers(client)
     shared = {"s2_id": "C2", "title": "Sputtering yields of boron nitride", "doi": "", "arxiv": ""}
     once = {"s2_id": "C1", "title": "Only cited once", "doi": "", "arxiv": ""}
@@ -266,7 +276,9 @@ def test_recommendation_fusion(client, server, monkeypatch):
     assert len(calls["recs"]) == m
 
 
-def test_dismiss_feeds_negatives_and_is_never_shown(client, server, monkeypatch):
+def test_dismiss_feeds_negatives_and_snooze_hides_for_14_days(client, server, monkeypatch):
+    """A dismissed recommendation is hidden at once, sent as a negative next time and kept in the topic file;
+    a snoozed one is hidden for 14 days and comes back when the snooze expires."""
     slug, papers = _topic_with_papers(client)
     recs = [_rec("R1", "Wall erosion modelling"), _rec("R2", "Second recommendation")]
     calls = {}
@@ -281,24 +293,21 @@ def test_dismiss_feeds_negatives_and_is_never_shown(client, server, monkeypatch)
     text = (server.topics_mod.topics_dir(server.store) / f"{slug}.md").read_text(encoding="utf-8")
     assert "dismissed:" in text and "R1" in text and "Wall erosion modelling" in text
 
-
-def test_snooze_hides_for_14_days(client, server, monkeypatch):
-    slug, _ = _topic_with_papers(client)
-    _mock_s2(server, monkeypatch, {}, [_rec("R1", "Wall erosion modelling")], {})
-    client.post(f"/api/topics/{slug}/queue/refresh?wait=1")
-    r = client.post(f"/api/topics/{slug}/queue/snooze", json={"key": "R1"}).json()
+    # snooze the one left
+    r = client.post(f"/api/topics/{slug}/queue/snooze", json={"key": "R2"}).json()
     import datetime as dt
     until = dt.datetime.fromisoformat(r["until"])
     assert 13.9 < (until - dt.datetime.now().astimezone()).total_seconds() / 86400 < 14.1
     assert client.get(f"/api/topics/{slug}/queue").json()["items"] == []
     # once the snooze expires it comes back (and the expired entry is dropped from the file on next write)
     t = server.topics_mod.get_topic(server.store, slug)
-    t["snoozed"]["R1"] = (dt.datetime.now().astimezone() - dt.timedelta(minutes=1)).isoformat()
+    t["snoozed"]["R2"] = (dt.datetime.now().astimezone() - dt.timedelta(minutes=1)).isoformat()
     server.topics_mod._write(server.store, t)
-    assert [i["s2_id"] for i in client.get(f"/api/topics/{slug}/queue").json()["items"]] == ["R1"]
+    assert [i["s2_id"] for i in client.get(f"/api/topics/{slug}/queue").json()["items"]] == ["R2"]
 
 
 def test_offline_fallback(client, server, monkeypatch):
+    """Offline, the queue shows only your to-read papers, or the cached recommendations with a note saying from when."""
     slug, (p1, p2, p3) = _topic_with_papers(client)
     todo = paper(client, "Erosion measurements", "erosion profilometry")
     client.post(f"/api/topics/{slug}/notes", json={"ids": [todo]})
@@ -321,6 +330,7 @@ def test_offline_fallback(client, server, monkeypatch):
 
 
 def test_accept_imports_into_topic(client, server, monkeypatch):
+    """Accepting a recommendation imports it as a to-read paper in the topic, from cached metadata when offline."""
     slug, _ = _topic_with_papers(client)
     _mock_s2(server, monkeypatch, {}, [_rec("R1", "Wall erosion modelling", "erosion model")], {})
     client.post(f"/api/topics/{slug}/queue/refresh?wait=1")
@@ -344,6 +354,8 @@ def test_accept_imports_into_topic(client, server, monkeypatch):
 
 
 def test_global_queue(client, server, monkeypatch):
+    """The global queue pages the library's to-read papers five at a time; with topics it takes them round-robin,
+    tagged with the topic."""
     # no topics: the library's to-read papers
     ids = [paper(client, f"Paper {i}") for i in range(7)]
     q = client.get("/api/queue").json()

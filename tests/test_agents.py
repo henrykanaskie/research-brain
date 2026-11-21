@@ -1,10 +1,11 @@
 """Pluggable AI backends (app/agents): registry and saved choice, the app-driven Research loop, the local
-model servers (Ollama, OpenAI-compatible) against fake HTTP servers, and the server routing every AI call
-through the active backend. No network, no real CLIs.
+model servers (Ollama, OpenAI-compatible) against fake HTTP servers, the server routing every AI call
+through the active backend, and the AI usage budgets (app/budget.py: how much each feature may send, the
+light model for small jobs, the critique cache and the usage estimate). No network, no real CLIs.
 """
 from __future__ import annotations
 
-import importlib
+import datetime as dt
 import json
 import os
 import sys
@@ -17,6 +18,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+from rb_app import load_server  # noqa: E402
 
 
 @pytest.fixture()
@@ -73,18 +76,17 @@ def registry(data_dir):
 
 
 # ---------------------------------------------------------------- registry and selection
-def test_builtin_adapters_registered(data_dir):
-    from app import agents
+def test_registry_order_default_choice_and_saved_choice(registry, data_dir, monkeypatch):
+    """The built-in adapters are registered in order with a name, kind and cost note; with nothing available the
+    active AI is Claude; otherwise the first available one; an explicit choice (and its model) is saved and wins;
+    an unknown id is refused; RB_AGENT overrides."""
+    from app import agents, paths
     ids = [b.id for b in agents.all_backends()]
     for need in ("claude", "ollama", "openai-local"):
-        assert need in ids
+        assert need in ids, need
     assert ids.index("claude") < ids.index("ollama") < ids.index("openai-local")
     for b in agents.all_backends():
-        assert b.name and b.kind in ("cli", "local-server") and b.cost_note
-
-
-def test_active_defaults_to_first_available_and_choice_persists(registry, data_dir, monkeypatch):
-    from app import agents, paths
+        assert b.name and b.kind in ("cli", "local-server") and b.cost_note, b.id
     monkeypatch.delenv("RB_FAKE_CLAUDE", raising=False)
     claude = agents.get("claude")
     monkeypatch.setattr(type(claude), "detect", lambda self: agents.Detection(False, note="not here"))
@@ -113,6 +115,7 @@ def test_active_defaults_to_first_available_and_choice_persists(registry, data_d
 
 
 def test_broken_adapter_module_is_skipped(tmp_path, monkeypatch, caplog):
+    """An adapter module that fails to import is logged and skipped; the others still load."""
     from app import agents
     bad = Path(agents.__file__).with_name("zz_broken_for_test.py")
     bad.write_text("raise RuntimeError('boom')\n")
@@ -128,6 +131,8 @@ def test_broken_adapter_module_is_skipped(tmp_path, monkeypatch, caplog):
 
 
 def test_base_helpers_kill_and_timeout(tmp_path):
+    """The shared helpers: a private empty work folder, stdin to a process, a timeout that kills it, a scrubbed
+    environment, and the system prompt first in a combined prompt."""
     from app.agents import base
     wd = base.private_workdir("t_")
     assert wd.is_dir() and not any(wd.iterdir()) and (os.name == "nt" or (wd.stat().st_mode & 0o077) == 0)
@@ -176,6 +181,8 @@ def _run(backend, tmp_path, **kw):
 
 
 def test_research_search_read_answer(tmp_path):
+    """A search, a page read and an answer: the events, the tool inputs and results, the streamed text, and the
+    results fed back to the model under a system prompt that forbids tools and asks for JSON."""
     fb = FakeBackend(script=[
         'Sure!\n```json\n{"action": "search", "queries": ["krypton temperature", "line ratio"]}\n```',
         '{"action": "read", "id": "kr-cr", "pages": [2, 3]} I will read these.',
@@ -198,30 +205,27 @@ def test_research_search_read_answer(tmp_path):
     assert any(p["page"] == 3 for p in run.passages)
 
 
-def test_research_malformed_retry_then_answer(tmp_path):
+def test_research_malformed_replies_retry_once_then_end(tmp_path):
+    """A reply that isn't a JSON action gets one retry; two in a row end the run as malformed, unless the
+    second is clearly prose, which is taken as the answer."""
     fb = FakeBackend(script=["I think I should search first.", '{"action":"answer","text":"Fine [[kr-cr]]."}'])
-    evs, _, _ = _run(fb, tmp_path)
+    evs, _, _ = _run(fb, tmp_path / "retry")
     assert evs[-1]["reason"] == "done" and evs[-1]["text"] == "Fine [[kr-cr]]."
     assert len(fb.prompts) == 2 and "wasn't one valid JSON action" in fb.prompts[1][0]
-
-
-def test_research_malformed_twice_ends(tmp_path):
     fb = FakeBackend(script=["{oops", "{still not json"])
-    evs, _, _ = _run(fb, tmp_path)
+    evs, _, _ = _run(fb, tmp_path / "twice")
     assert evs[-1]["reason"] == "malformed" and evs[-1]["text"] == "" and len(fb.prompts) == 2
     fb = FakeBackend(script=["nope", "The library says the temperature was about 4.2 eV, see [[kr-cr]] p. 3."])
-    evs, _, _ = _run(fb, tmp_path)
+    evs, _, _ = _run(fb, tmp_path / "prose")
     assert evs[-1]["reason"] == "done" and "4.2 eV" in evs[-1]["text"]  # clearly prose: accepted as the answer
 
 
-def test_research_step_cap(tmp_path):
+def test_research_stops_at_the_step_and_time_caps(tmp_path):
+    """The loop ends at max_steps (the last prompt says it is the last turn) and when the time budget runs out."""
     fb = FakeBackend(script=['{"action":"search","query":"a"}'] * 10)
-    evs, _, _ = _run(fb, tmp_path, max_steps=3)
+    evs, _, _ = _run(fb, tmp_path / "steps", max_steps=3)
     assert evs[-1]["reason"] == "max_turns" and evs[-1]["tool_calls"] == 3 and len(fb.prompts) == 3
     assert "last turn" in fb.prompts[-1][0]
-
-
-def test_research_time_cap(tmp_path):
     t = [0.0]
 
     def clock():
@@ -231,11 +235,13 @@ def test_research_time_cap(tmp_path):
         t[0] += 40  # each model call "takes" 40 s of a 100 s budget
         return '{"action":"search","query":"x"}'
     fb = FakeBackend(script=[slow] * 10)
-    evs, _, _ = _run(fb, tmp_path, budget=100, clock=clock, max_steps=10)
+    evs, _, _ = _run(fb, tmp_path / "time", budget=100, clock=clock, max_steps=10)
     assert evs[-1]["reason"] == "budget" and evs[-1]["tool_calls"] == 3
 
 
 def test_research_rejects_bad_actions_and_validates_remember(tmp_path):
+    """Unknown actions, too many pages or queries are tool errors; remember needs real sources and is capped
+    at MAX_REMEMBER findings per question."""
     fb = FakeBackend(script=[
         '{"action":"shell","cmd":"rm -rf /"}',
         '{"action":"read","id":"kr-cr","pages":[1,2,3,4]}',
@@ -262,19 +268,16 @@ def test_research_rejects_bad_actions_and_validates_remember(tmp_path):
     assert len(saved) == research.MAX_REMEMBER
 
 
-def test_extract_action_variants():
+def test_extract_action_finds_the_action_and_keeps_single_backslash_latex():
+    """The JSON action is found in a code fence, after other JSON, or with a raw newline inside. Agents often
+    write LaTeX in a JSON answer with one backslash: "\\alpha" is invalid JSON and "\\frac", "\\theta",
+    "\\nabla" would silently decode as a form feed, a tab and a newline; the answer keeps them as written."""
     from app.agents.research import extract_action
     assert extract_action('```json\n{"action":"search","query":"x"}\n```')["query"] == "x"
     assert extract_action('Here: {"note": 1} then {"action":"answer","text":"a {b} c"} bye')["text"] == "a {b} c"
     assert extract_action('{"action": "answer", "text": "line one\nline two"}')["text"] == "line one\nline two"
     assert extract_action("no json") is None and extract_action("") is None
-
-
-def test_research_answers_keep_latex_written_with_single_backslashes():
-    """Agents often write LaTeX in a JSON answer with one backslash: "\\alpha" is invalid JSON and "\\frac",
-    "\\theta", "\\nabla" would silently decode as a form feed, a tab and a newline."""
-    from app.agents.research import extract_action
-    raw = (r'{"action":"answer","text":"$\alpha + \frac{a}{b} = \theta \nabla$, $\nu \times \tau \rho \beta$'
+    raw =(r'{"action":"answer","text":"$\alpha + \frac{a}{b} = \theta \nabla$, $\nu \times \tau \rho \beta$'
            r'\nNext line \u00e9 \\gamma \"q\" \text{x} \right \tNot math"}')
     text = extract_action(raw)["text"]
     for cmd in ("\\alpha", "\\frac{a}{b}", "\\theta", "\\nabla", "\\nu", "\\times", "\\tau", "\\rho", "\\beta",
@@ -335,7 +338,10 @@ def fake_http():
     httpd.shutdown()
 
 
-def test_ollama_streams_without_tools(data_dir, fake_http, monkeypatch):
+def test_local_servers_detect_list_models_and_stream_without_tools(data_dir, fake_http, monkeypatch):
+    """Ollama and an OpenAI-compatible server on loopback (a proxy setting is ignored): detection, the model
+    list, streamed answers with our system prompt and the chosen model, no tools or functions offered, no
+    Authorization header, and a reply that tries to call a tool is stopped."""
     from app import agents
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")  # must be ignored for local servers
     b = agents.get("ollama")
@@ -352,10 +358,6 @@ def test_ollama_streams_without_tools(data_dir, fake_http, monkeypatch):
     assert b.ask("x") == "Hello there" and _Fake.seen[-1][1]["model"] == "qwen2.5:7b"
     with pytest.raises(agents.ToolGuardError):
         list(b.ask_stream("TOOLS PLEASE"))
-
-
-def test_openai_local_streams_without_tools(data_dir, fake_http):
-    from app import agents
     b = agents.get("openai-local")
     agents.set_active("openai-local", url=fake_http)
     assert b.base_url() == fake_http + "/v1"
@@ -369,20 +371,19 @@ def test_openai_local_streams_without_tools(data_dir, fake_http):
         list(b.ask_stream("TOOLS PLEASE"))
 
 
-@pytest.mark.parametrize("url", ["http://192.168.1.5:11434", "http://example.com", "http://127.0.0.1.nip.io:1234",
-                                 "file:///etc/passwd", "http://user:pw@127.0.0.1:1234", "http://0.0.0.0:11434",
-                                 "http://[::2]:1234", "ftp://127.0.0.1"])
-def test_local_servers_refuse_non_loopback(data_dir, url):
+def test_local_servers_refuse_non_loopback_and_report_a_server_that_is_down(data_dir):
+    """A local server URL must be plain http(s) on loopback: anything else is refused for both adapters.
+    A loopback server that isn't running shows as unavailable with a reason and asking it fails clearly."""
     from app import agents
-    for bid in ("ollama", "openai-local"):
-        with pytest.raises(agents.AgentError):
-            agents.set_active(bid, url=url)
+    for url in ("http://192.168.1.5:11434", "http://example.com", "http://127.0.0.1.nip.io:1234",
+                "file:///etc/passwd", "http://user:pw@127.0.0.1:1234", "http://0.0.0.0:11434",
+                "http://[::2]:1234", "ftp://127.0.0.1"):
+        for bid in ("ollama", "openai-local"):
+            with pytest.raises(agents.AgentError):
+                agents.set_active(bid, url=url)
+                pytest.fail(f"{bid} accepted {url}")
     from app.agents.localhttp import check_loopback
     assert check_loopback("http://[::1]:1234/v1/") == "http://[::1]:1234/v1"
-
-
-def test_local_server_down_is_reported(data_dir):
-    from app import agents
     agents.set_active("ollama", url="http://127.0.0.1:1")
     det = agents.get("ollama").detect()
     assert not det.available and det.note
@@ -393,14 +394,7 @@ def test_local_server_down_is_reported(data_dir):
 # ---------------------------------------------------------------- the server routes through the active backend
 @pytest.fixture()
 def server(tmp_path, monkeypatch, data_dir):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_MEMORY_WATCH", "0")
-    monkeypatch.setenv("RB_WATCH", "0")
-    monkeypatch.delenv("RB_FAKE_CLAUDE", raising=False)
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    srv = importlib.import_module("app.server")
+    srv = load_server(monkeypatch, tmp_path, fake_claude=False, RB_MEMORY_WATCH="0", RB_WATCH="0")
     from fastapi.testclient import TestClient
     with TestClient(srv.app) as c:
         yield srv, c
@@ -421,6 +415,8 @@ def _sse_events(text):
 
 
 def test_server_uses_active_backend(server):
+    """Choosing a backend over the API makes status, chat and streamed chat use it; unknown ids are 404 and
+    non-loopback local URLs 400; a backend that tries to call a tool is stopped in research and chat."""
     srv, c = server
     from app import agents
     fb = FakeBackend("fake", script=["A plain chat answer about plasma.", "Streamed answer.",
@@ -449,9 +445,28 @@ def test_server_uses_active_backend(server):
         assert c.put("/api/agents/active", json={"id": "ollama", "url": "http://10.0.0.1:11434"}).status_code == 400
     finally:
         agents.unregister("fake")
+    # a backend that tries to call a tool: research ends with a guard error, chat with a 502 naming the tool
+    from app.agents.base import ToolGuardError
+
+    class Guarded(FakeBackend):
+        def ask_stream(self, prompt, *, system="", timeout=180):
+            raise ToolGuardError("Stopped: it tried to call a tool.")
+            yield ""
+    g = Guarded("guarded")
+    agents.register(g)
+    try:
+        agents.set_active("guarded")
+        evs = _sse_events(c.post("/api/research/stream", json={"question": "q?"}).text)
+        assert evs[-1][0] == "error" and evs[-1][1]["guard"] is True
+        r = c.post("/api/chat", json={"question": "q?", "history": []})
+        assert r.status_code == 502 and "tool" in r.json()["detail"]
+    finally:
+        agents.unregister("guarded")
 
 
 def test_server_research_universal_loop(server):
+    """Research through the server with any backend: step labels, the cited source, the tool count, and at the
+    step cap a fallback answer written by the same backend under the no-tools system prompt."""
     srv, c = server
     from app import agents
     nid = c.post("/api/notes", json={"type": "note", "title": "Sheath notes",
@@ -491,30 +506,15 @@ def test_server_research_universal_loop(server):
         agents.unregister("fake")
 
 
-def test_server_research_guard_error(server):
+def test_status_without_any_agent_and_the_status_text(server, monkeypatch):
+    """With no AI available the status says none is set up and suggests a free one, with Claude only as the
+    stand-in; a chosen AI that is missing is still named. The status bar shows the name (and model) only, and
+    settings offer the AI choice with no API key needed."""
     _, c = server
-    from app import agents
-    from app.agents.base import ToolGuardError
-
-    class Guarded(FakeBackend):
-        def ask_stream(self, prompt, *, system="", timeout=180):
-            raise ToolGuardError("Stopped: it tried to call a tool.")
-            yield ""
-    g = Guarded("guarded")
-    agents.register(g)
-    try:
-        agents.set_active("guarded")
-        c.post("/api/notes", json={"type": "note", "title": "N", "body": "text"})
-        evs = _sse_events(c.post("/api/research/stream", json={"question": "q?"}).text)
-        assert evs[-1][0] == "error" and evs[-1][1]["guard"] is True
-        r = c.post("/api/chat", json={"question": "q?", "history": []})
-        assert r.status_code == 502 and "tool" in r.json()["detail"]
-    finally:
-        agents.unregister("guarded")
-
-
-def test_status_without_any_agent(server, monkeypatch):
-    _, c = server
+    js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "'Claude ready'" not in js and "st-model" in js  # name (+ model) only; the dot shows ready
+    s = (ROOT / "static" / "settings.js").read_text(encoding="utf-8")
+    assert "id: 'agent.choose'" in s and "It never needs an API key." in s
     from app import agents
     for b in agents.all_backends():
         monkeypatch.setattr(type(b), "detect", lambda self: agents.Detection(False, note="missing"))
@@ -530,19 +530,13 @@ def test_status_without_any_agent(server, monkeypatch):
     assert st["agent"]["none"] is False and st["agent"]["id"] == "codex"
 
 
-def test_status_text_in_app_js():
-    js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
-    assert "'Claude ready'" not in js and "st-model" in js  # name (+ model) only; the dot shows ready
-    s = (ROOT / "static" / "settings.js").read_text(encoding="utf-8")
-    assert "id: 'agent.choose'" in s and "It never needs an API key." in s
-
-
-def test_chat_about_one_paper(server):
+def test_chat_about_one_paper(server, monkeypatch):
     """Ask about this paper: the agent gets that paper (whole text when it fits) and your shareable notes on it,
-    not the rest of the library; private notes on it stay out; a private paper is refused; related is opt-in."""
+    not the rest of the library; private notes on it stay out; a private paper is refused; related is opt-in.
+    A paper too long to send whole goes as its best passages, plus the full page the student is on."""
     srv, c = server
     from app import agents
-    fb = FakeBackend("fake", script=["About the focus paper."] * 6)
+    fb = FakeBackend("fake", script=["About the focus paper."] * 6 + ["ok"] * 3)
     agents.register(fb)
     try:
         c.put("/api/agents/active", json={"id": "fake"})
@@ -587,20 +581,9 @@ def test_chat_about_one_paper(server):
         r = c.post("/api/chat", json={**q, "paper": focus["id"]})
         assert r.status_code == 403 and "private" in r.json()["detail"] and len(fb.prompts) == n
         assert c.post("/api/chat", json={**q, "paper": "nope-404"}).status_code == 404
-    finally:
-        agents.unregister("fake")
-
-
-def test_chat_about_a_long_paper_includes_the_page_being_read(server, monkeypatch):
-    """A paper too long to send whole goes as its best passages, plus the full page the student is on."""
-    srv, c = server
-    from app import agents
-    real = srv.budget.get
-    monkeypatch.setattr(srv.budget, "get", lambda name: 200 if name == "paper_full_chars" else real(name))
-    fb = FakeBackend("fake", script=["ok"] * 3)
-    agents.register(fb)
-    try:
-        c.put("/api/agents/active", json={"id": "fake"})
+        # a long paper: passages plus the page being read
+        real = srv.budget.get
+        monkeypatch.setattr(srv.budget, "get", lambda name: 200 if name == "paper_full_chars" else real(name))
         p = c.post("/api/notes", json={"type": "paper", "title": "Long krypton paper"}).json()
         pages = [f"[[page {i}]]\n" + (f"Filler text about topic {i}. " * 20) for i in range(1, 6)]
         pages[3] = "[[page 4]]\nThe zebra-marker sentence lives only on page four. " + "More words. " * 30
@@ -609,5 +592,97 @@ def test_chat_about_a_long_paper_includes_the_page_being_read(server, monkeypatc
         assert r.status_code == 200
         prompt = fb.prompts[-1][0]
         assert f"THE PAGE THEY ARE READING ([[{p['id']}]] p. 4)" in prompt and "zebra-marker" in prompt
+    finally:
+        agents.unregister("fake")
+
+
+# ---------------------------------------------------------------- AI usage budgets (app/budget.py)
+def test_budget_levels_history_trim_light_model_and_usage(data_dir):
+    """The usage level sets how much each feature may send (balanced by default, unknown levels refused);
+    history is trimmed to fit but keeps the latest exchange whole and the end of each cut message; the light
+    model is used only inside small jobs, for AIs that have one, and can be turned off; the usage estimate
+    counts the last days by purpose."""
+    from app import agents, budget
+    assert budget.small_model("claude") == ""
+    with budget.small_job():
+        assert agents.model_for("claude") == "haiku"
+        assert agents.model_for("codex") == agents.model_for("codex")  # no known light model: unchanged
+        assert budget.small_model("codex") == ""
+    budget.save(light_model=False)
+    with budget.small_job():
+        assert budget.small_model("claude") == ""
+    assert budget.level() == "balanced"
+    assert budget.get("paper_full_chars") == 24_000
+    budget.save("light")
+    assert budget.level() == "light" and budget.get("paper_full_chars") == 12_000
+    hist = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"start{i} " + "word " * 3000 + f"end{i}"} for i in range(30)]
+    out = budget.trim_history(hist)
+    # the latest exchange in full: the agent can read the end of its own last answer
+    assert out[-1]["content"] == hist[-1]["content"] and out[-2]["content"] == hist[-2]["content"]
+    assert 2 < len(out) <= 12 and sum(len(h["content"]) for h in out[:-2]) <= 20_000 + 700  # the last one cut keeps at least 600 characters
+    cut = [h for h in out if "[…]" in h["content"]]
+    assert all(h["content"].endswith(h["content"].rsplit(" ", 1)[-1]) and "end" in h["content"][-10:] for h in cut)
+    huge = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "x " * 30_000 + "the very end"}]
+    assert budget.trim_history(huge)[-1]["content"].endswith("the very end")
+    with pytest.raises(ValueError):
+        budget.save("unlimited")
+    budget.save("thorough")
+    assert budget.get("critique_full_chars") == 180_000
+    now = dt.datetime.now().astimezone()
+    log = [{"at": now.isoformat(), "purpose": "chat", "chars": 4000},
+           {"at": now.isoformat(), "purpose": "critique", "chars": 40000},
+           {"at": (now - dt.timedelta(days=30)).isoformat(), "purpose": "chat", "chars": 999999}]
+    u = budget.usage(log, days=7)
+    assert u["tokens"] == 11000 and u["requests"] == 2 and len(u["by_day"]) == 7
+    assert u["by_purpose"][0] == {"purpose": "critique", "tokens": 10000, "requests": 1}
+
+
+PARA = ("Electron cross-field transport in the near plume exceeds the classical value by an order of magnitude, "
+        "and the breathing mode modulates the ionization front at 10 to 30 kHz. ")
+
+
+def test_paper_chat_and_critique_respect_the_level(server):
+    """A long paper goes as passages at balanced and whole at thorough; a critique at light sends the opening,
+    passages near the summary and the end; the same critique again is cached unless refreshed or the summary
+    changed; the usage endpoint reports the level and the requests; an unknown level is a 400."""
+    srv, c = server
+    from app import agents
+    fb = FakeBackend("fake", script=["ok"] * 10)
+    agents.register(fb)
+    try:
+        c.put("/api/agents/active", json={"id": "fake"})
+        p = c.post("/api/notes", json={"type": "paper", "title": "Journal length paper",
+                                       "summary": "Transport is anomalous near the exit."}).json()
+        text = "\n".join(f"[[page {i}]]\n" + PARA * 20 for i in range(1, 13))  # ~45k characters
+        srv.store.text_path(p["id"]).write_text(text, encoding="utf-8")
+        q = {"question": "What drives transport?", "history": [], "paper": p["id"]}
+        # balanced: too long to send whole, so passages
+        assert c.post("/api/chat", json=q).status_code == 200
+        assert "FULL TEXT of" not in fb.prompts[-1][0] and "PASSAGES FROM THE FOCUS PAPER" in fb.prompts[-1][0]
+        # thorough: sent whole (the old behaviour)
+        c.put("/api/ai-usage", json={"level": "thorough"})
+        c.post("/api/chat", json=q)
+        assert "FULL TEXT of" in fb.prompts[-1][0]
+        # critique of a long paper at light: opening, passages near the summary, end
+        c.put("/api/ai-usage", json={"level": "light"})
+        r = c.post(f"/api/notes/{p['id']}/critique")
+        assert r.status_code == 200 and "cached" not in r.json()
+        sent = fb.prompts[-1][0]
+        assert "THE PAPER IS LONG" in sent and len(sent) < 30_000
+        n = len(fb.prompts)
+        # the same summary of the same paper: the last critique, nothing sent
+        r = c.post(f"/api/notes/{p['id']}/critique")
+        assert r.json()["cached"] is True and len(fb.prompts) == n
+        r = c.post(f"/api/notes/{p['id']}/critique/stream")
+        assert '"cached": true' in r.text and len(fb.prompts) == n
+        # ...unless asked again, or the summary changed
+        c.post(f"/api/notes/{p['id']}/critique?refresh=true")
+        assert len(fb.prompts) == n + 1
+        c.put(f"/api/notes/{p['id']}", json={"summary": "Transport is anomalous; spokes matter."})
+        c.post(f"/api/notes/{p['id']}/critique")
+        assert len(fb.prompts) == n + 2
+        u = c.get("/api/ai-usage").json()
+        assert u["level"] == "light" and u["usage"]["requests"] >= 4 and u["usage"]["tokens"] > 0
+        assert c.put("/api/ai-usage", json={"level": "max"}).status_code == 400
     finally:
         agents.unregister("fake")

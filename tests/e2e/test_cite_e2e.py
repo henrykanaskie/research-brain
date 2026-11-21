@@ -108,7 +108,10 @@ def wait_clip(page, needle, kind="text/plain", timeout=10.0):
     raise AssertionError(f"clipboard never contained {needle!r}: {clip}")
 
 
-def test_picker_copies_cite_citation_and_bibliography(server, page):
+def test_picker_copies_cite_citation_bibliography_and_bibtex(server, page):
+    """The Cite picker (Alt+C): \\cite{} keys saved with the papers and their files, an APS-to-APA bibliography as
+    html + plain text (the style becomes the default), an in-text citation, Mod+Enter for the primary format,
+    Esc to close, and Copy BibTeX with the entries themselves."""
     assert page.evaluate("RB.commands.conflicts()") == []
     assert page.evaluate("RB.commands.get('cite.pick').keys") == ["Alt+C"]
     page.evaluate("document.activeElement && document.activeElement.blur()")
@@ -172,8 +175,29 @@ def test_picker_copies_cite_citation_and_bibliography(server, page):
     expect(page.locator("#cite-picker")).to_have_count(0)
     _call(server["base"], "PUT", "/api/cite/settings", {"style": "american-physics-society"})
 
+    # Copy BibTeX puts the entries themselves on the clipboard, ready for a .bib file
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Alt+c")
+    expect(page.locator("#cite-picker")).to_be_visible()
+    page.locator("#cite-picker .ct-search").fill("hall")
+    expect(page.locator("#cite-picker .ct-list li[data-id]")).to_have_count(1)
+    page.locator("#cite-picker .ct-list li[data-id]").first.click()
+    page.locator("#cite-picker .ct-search").fill("neural")
+    page.locator("#cite-picker .ct-list li", has_text="Neural operators").click()
+    expect(page.locator("#cite-picker .ct-n").first).to_have_text("2 selected")
+    page.get_by_role("button", name="Copy BibTeX").click()
+    clip = wait_clip(page, "@")
+    text = clip["text/plain"]
+    assert text.count("\n@") + text.startswith("@") == 2, text
+    assert "{boeuf2018kinetic," in text and "{doe2024neural," in text
+    assert "title = {Kinetic simulations of {Hall} thruster plasma}" in text  # braces keep the capital H
+    expect(page.locator("#cite-picker")).to_have_count(0)
 
-def test_panel_cite_button_note_and_topic(server, page):
+
+def test_cite_menus_on_paper_note_topic_and_auto_export(server, page):
+    """The panel's Cite menu on a paper (reference, edited key, \\cite{}, .bib download), on a note (the papers it
+    links), the topic drawer's bibliography and .bib export, then Library settings > Citations: an auto-export
+    that refuses a relative path, writes the file, rewrites it when a paper changes, and leaves it when removed."""
     base, ids = server["base"], server["ids"]
     page.evaluate(f"window.__rb.openNote('{ids[2]}')")
     btn = page.locator("#panel .ct-btn")
@@ -228,8 +252,7 @@ def test_panel_cite_button_note_and_topic(server, page):
     bib = Path(dl.value.path()).read_text(encoding="utf-8")
     assert "@article{boeuf2018kinetic," in bib and "@inproceedings{wirz:grid," in bib
 
-
-def test_settings_citations_auto_export(server, page):
+    # Library settings > Citations: auto-export to a .bib file
     target = server["tmp"] / "thesis" / "references.bib"
     target.parent.mkdir(exist_ok=True)
     page.evaluate("window.__rbSettings.open('citations')")
@@ -258,23 +281,3 @@ def test_settings_citations_auto_export(server, page):
     sec.locator("#ls-auto-exports").get_by_role("button", name="Remove").click()
     expect(page.locator("#library-settings .ls-msg")).to_contain_text("left where it is")
     assert target.exists()
-
-
-def test_copy_bibtex(server, page):
-    """Copy BibTeX puts the entries themselves on the clipboard, ready for a .bib file."""
-    page.evaluate("document.activeElement && document.activeElement.blur()")
-    page.keyboard.press("Alt+c")
-    expect(page.locator("#cite-picker")).to_be_visible()
-    page.locator("#cite-picker .ct-search").fill("hall")
-    expect(page.locator("#cite-picker .ct-list li[data-id]")).to_have_count(1)
-    page.locator("#cite-picker .ct-list li[data-id]").first.click()
-    page.locator("#cite-picker .ct-search").fill("neural")
-    page.locator("#cite-picker .ct-list li", has_text="Neural operators").click()
-    expect(page.locator("#cite-picker .ct-n").first).to_have_text("2 selected")
-    page.get_by_role("button", name="Copy BibTeX").click()
-    clip = wait_clip(page, "@")
-    text = clip["text/plain"]
-    assert text.count("\n@") + text.startswith("@") == 2, text
-    assert "{boeuf2018kinetic," in text and "{doe2024neural," in text
-    assert "title = {Kinetic simulations of {Hall} thruster plasma}" in text  # braces keep the capital H
-    expect(page.locator("#cite-picker")).to_have_count(0)

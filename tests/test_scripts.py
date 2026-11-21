@@ -38,14 +38,33 @@ def _backup(vault, env):
     return subprocess.run(["bash", str(BACKUP), str(vault)], capture_output=True, text=True, env=env)
 
 
-@pytest.mark.parametrize("script", [BACKUP, INSTALL, ROOT / "run.sh"], ids=lambda p: p.name)
-def test_bash_syntax(script):
-    r = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
+def test_scripts_and_plist_templates_parse():
+    """The bash scripts pass `bash -n`, and both launchd plist templates parse as XML property lists with the
+    expected label, program, log path and schedule."""
+    for script in (BACKUP, INSTALL, ROOT / "run.sh"):
+        r = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+        assert r.returncode == 0, (script.name, r.stderr)
+
+    assert len(PLISTS) == 2
+    for plist in PLISTS:
+        data = plistlib.loads(plist.read_bytes())  # XML parse, same format plutil -lint checks
+        assert data["Label"] == plist.stem, plist.name
+        assert data["ProgramArguments"][0] == "/bin/bash", plist.name
+        assert "__HOME__/Library/Logs/" in data["StandardOutPath"], plist.name
+        if plist.stem.endswith(".server"):
+            assert data["RunAtLoad"] is True and data["KeepAlive"] == {"SuccessfulExit": False}
+            assert data["ProgramArguments"][1] == "__REPO__/run.sh"
+            assert data["StandardOutPath"].endswith("/research_brain.log")
+        else:
+            assert data["StartCalendarInterval"] == {"Hour": 2, "Minute": 30}, plist.name
+            assert data["ProgramArguments"][1:] == ["__REPO__/scripts/vault_backup.sh", "__VAULT__"], plist.name
 
 
 @needs_git
 def test_backup_inits_ignores_and_commits(tmp_path):
+    """The first backup makes a git repo with the ignore rules and commits notes and text as research_brain (no
+    AI attribution); no changes make no commit; edits, deletions and new notes make one more commit; a user's own
+    .gitignore lines are kept and the missing rules put back."""
     vault = tmp_path / "vault"
     for d in ("notes", "pdfs", "text", ".index", ".trash", "exports/2026"):
         (vault / d).mkdir(parents=True)
@@ -88,22 +107,18 @@ def test_backup_inits_ignores_and_commits(tmp_path):
     assert set(_git(vault, "ls-files").split()) == {".gitignore", "notes/a.md", "notes/b.md"}
     assert _git(vault, "status", "--porcelain") == ""
 
-
-@needs_git
-def test_backup_keeps_user_gitignore_and_restores_rules(tmp_path):
-    vault = tmp_path / "vault"
-    (vault / "notes").mkdir(parents=True)
-    (vault / "notes" / "a.md").write_text("x")
-    env = _env(tmp_path)
-    assert _backup(vault, env).returncode == 0
     (vault / ".gitignore").write_text("*.tmp\n")  # user trimmed it
     assert _backup(vault, env).returncode == 0
     ignore = (vault / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert ignore[0] == "*.tmp" and {"pdfs/", ".index/", ".trash/"} <= set(ignore)
 
 
-@needs_git
-def test_backup_vault_inside_another_repo_gets_its_own(tmp_path):
+def test_backup_missing_vault_fails_and_nested_vault_gets_its_own_repo(tmp_path):
+    """A vault that does not exist is an error; a vault inside another git repo gets a repo of its own."""
+    r = _backup(tmp_path / "nope", _env(tmp_path))
+    assert r.returncode != 0 and "no vault" in r.stderr
+    if not shutil.which("git"):
+        pytest.skip("git is not installed")
     outer = tmp_path / "outer"
     vault = outer / "vault"
     (vault / "notes").mkdir(parents=True)
@@ -115,28 +130,9 @@ def test_backup_vault_inside_another_repo_gets_its_own(tmp_path):
     assert _git(vault, "rev-parse", "--show-toplevel").strip() == str(vault.resolve())
 
 
-def test_backup_missing_vault_fails(tmp_path):
-    r = _backup(tmp_path / "nope", _env(tmp_path))
-    assert r.returncode != 0 and "no vault" in r.stderr
-
-
-@pytest.mark.parametrize("plist", PLISTS, ids=lambda p: p.name)
-def test_plist_templates_are_valid(plist):
-    assert len(PLISTS) == 2
-    data = plistlib.loads(plist.read_bytes())  # XML parse, same format plutil -lint checks
-    assert data["Label"] == plist.stem
-    assert data["ProgramArguments"][0] == "/bin/bash"
-    assert "__HOME__/Library/Logs/" in data["StandardOutPath"]
-    if plist.stem.endswith(".server"):
-        assert data["RunAtLoad"] is True and data["KeepAlive"] == {"SuccessfulExit": False}
-        assert data["ProgramArguments"][1] == "__REPO__/run.sh"
-        assert data["StandardOutPath"].endswith("/research_brain.log")
-    else:
-        assert data["StartCalendarInterval"] == {"Hour": 2, "Minute": 30}
-        assert data["ProgramArguments"][1:] == ["__REPO__/scripts/vault_backup.sh", "__VAULT__"]
-
-
 def test_install_launchd_dry_run(tmp_path):
+    """install_launchd.sh (dry run) writes both agents with escaped paths, the server serving the same vault the
+    backup snapshots, and --uninstall removes them."""
     home = tmp_path / "H & <me>"  # characters that need XML and sed escaping
     vault = tmp_path / "my|vault"
     env = dict(os.environ, HOME=str(home), RB_VAULT=str(vault), RB_LAUNCHD_DRY_RUN="1")

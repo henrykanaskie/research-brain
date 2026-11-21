@@ -1,6 +1,7 @@
 """The app's Content-Security-Policy (app/security.py) in a real browser, without Playwright's CSP bypass:
 the graph, a note with math and links, and the PDF viewer must work with no CSP violation, and an image
-from the internet written into a note must be blocked."""
+from the internet written into a note must be blocked. Its own server (no folder watching, no citation
+lookups on import); the browser fixture is in conftest.py."""
 from __future__ import annotations
 
 import io
@@ -15,8 +16,6 @@ try:
     from playwright.sync_api import expect
 except ImportError:  # pragma: no cover
     pytest.skip("playwright is not installed", allow_module_level=True)
-
-from test_e2e import browser  # noqa: E402,F401  (fixture used by name)
 
 WATCH = """
 window.__csp = [];
@@ -57,7 +56,9 @@ def srv(tmp_path_factory):
         yield s
 
 
-def test_app_and_viewer_run_under_csp(browser, srv):  # noqa: F811
+def test_app_and_viewer_run_under_csp(browser, srv):
+    """The graph, a note with math and links, and the PDF viewer run with no CSP violation; only the remote
+    image written into the note is blocked, and nothing else tries the network."""
     base = srv.base
     note = _post(base, "/api/notes", {"title": "CSP probe", "type": "note",
                                       "body": "Math $E = mc^2$ and $$\\int_0^1 x\\,dx$$, a [link](https://example.org), "

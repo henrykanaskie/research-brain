@@ -46,8 +46,13 @@ def _events(resp, until: float):
             return
 
 
-def test_external_edit_pushes_event_but_own_save_does_not(srv):
+def test_vault_watcher_events(srv):
+    """/api/events refuses a foreign Origin; an outside edit pushes notes-changed for that note within 2 s while
+    the app's own save pushes nothing; new and deleted files are reported too."""
     base, vault = srv
+    r = requests.get(base + "/api/events", headers={"Origin": "https://evil.example"}, timeout=5)
+    assert r.status_code == 403
+
     note = requests.post(base + "/api/notes", json={"type": "note", "title": "Watched note"}).json()
     with requests.get(base + "/api/events", stream=True, timeout=10,
                       headers={"Origin": base}) as r:  # the page's own origin must pass the guard
@@ -71,9 +76,6 @@ def test_external_edit_pushes_event_but_own_save_does_not(srv):
         assert time.monotonic() - t0 < 2.0
     assert requests.get(f"{base}/api/notes/{note['id']}").json()["body"] == "edited in Obsidian"
 
-
-def test_new_and_deleted_files_are_reported(srv):
-    base, vault = srv
     with requests.get(base + "/api/events", stream=True, timeout=10) as r:
         it = _events(r, time.monotonic() + 8)
         next(it)
@@ -94,19 +96,15 @@ def test_new_and_deleted_files_are_reported(srv):
     assert all(n["id"] != "dropped-in" for n in requests.get(base + "/api/graph").json()["nodes"])
 
 
-def test_foreign_origin_rejected(srv):
-    base, _ = srv
-    r = requests.get(base + "/api/events", headers={"Origin": "https://evil.example"}, timeout=5)
-    assert r.status_code == 403
-
-
 def _stream(base, path, body=None):
     with requests.post(base + path, json=body, stream=True, timeout=30, headers={"Origin": base}) as r:
         assert r.status_code == 200, r.text
         return list(_events(r, time.monotonic() + 20))
 
 
-def test_critique_stream_matches_stored_critique(srv):
+def test_streams_match_the_plain_endpoints(srv):
+    """The critique stream sends deltas then one done event shaped like POST .../critique and stored the same way
+    (errors before streaming are plain HTTP errors); the chat stream's done event matches POST /api/chat."""
     base, _ = srv
     n = requests.post(base + "/api/notes", json={"type": "paper", "title": "Stream me",
                                                   "summary": "A summary to critique."}).json()
@@ -128,9 +126,6 @@ def test_critique_stream_matches_stored_critique(srv):
     r = requests.post(f"{base}/api/notes/{empty['id']}/critique/stream")
     assert r.status_code == 400 and "summary" in r.json()["detail"]
 
-
-def test_chat_stream(srv):
-    base, _ = srv
     evs = _stream(base, "/api/chat/stream", {"question": "What is in my library?", "history": []})
     deltas = "".join(json.loads(d)["text"] for e, d in evs if e == "delta")
     done = next(json.loads(d) for e, d in evs if e == "done")
@@ -141,6 +136,7 @@ def test_chat_stream(srv):
 
 
 def test_stream_line_parser():
+    """Claude CLI stream-json lines become text (the result tops up missed deltas), and a login error is caught."""
     from app.claude_cli import parse_stream_line
     st = {}
     lines = [
@@ -181,6 +177,9 @@ def test_server_stops_promptly_with_open_event_streams(tmp_path):
 
 
 def test_event_stream_ends_when_bus_closes():
+    """Closing the bus ends every event stream and unsubscribes it. Quit on the Dock icon or the idle exit closes
+    it with server-stopped, which the stream sends before it ends, so the app's window closes itself instead of
+    staying open on a dead map (static/live.js)."""
     import asyncio
     from app import live
 
@@ -188,32 +187,14 @@ def test_event_stream_ends_when_bus_closes():
         async def is_disconnected(self):
             return False
 
-    async def go():
+    async def go(*close_args):
         bus = live.EventBus()
         gen = live.event_stream(bus, Req(), keepalive=30)
         assert "hello" in await gen.__anext__()
-        asyncio.get_running_loop().call_later(0.05, bus.close)
+        asyncio.get_running_loop().call_later(0.05, bus.close, *close_args)
         rest = [x async for x in gen]
         return rest, bus.count
     rest, count = asyncio.run(asyncio.wait_for(go(), 5))
     assert rest == [] and count == 0
-
-
-def test_open_pages_hear_that_the_server_stopped():
-    """Quit on the Dock icon or the idle exit: the stream sends server-stopped before it ends, so the app's
-    window closes itself instead of staying open on a dead map (static/live.js)."""
-    import asyncio
-    from app import live
-
-    class Req:
-        async def is_disconnected(self):
-            return False
-
-    async def go():
-        bus = live.EventBus()
-        gen = live.event_stream(bus, Req(), keepalive=30)
-        assert "hello" in await gen.__anext__()
-        asyncio.get_running_loop().call_later(0.05, bus.close, {"type": "server-stopped"})
-        return [x async for x in gen]
-    rest = asyncio.run(asyncio.wait_for(go(), 5))
+    rest, _ = asyncio.run(asyncio.wait_for(go({"type": "server-stopped"}), 5))
     assert len(rest) == 1 and rest[0].startswith("event: server-stopped\n")

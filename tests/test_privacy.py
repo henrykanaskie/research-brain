@@ -5,7 +5,6 @@ rotation; exports. No network, no real AI CLI.
 """
 from __future__ import annotations
 
-import importlib
 import json
 import random
 import sys
@@ -18,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.agents.base import Backend as _Backend, Detection as _Detection  # noqa: E402
+from rb_app import load_server  # noqa: E402
 
 IDEA = ("My novel idea is to drive the hollow cathode with a pulsed radio frequency waveform so the plume "
         "oscillation locks to the breathing mode and the anomalous electron transport drops by half")
@@ -49,7 +49,11 @@ def lib(tmp_path):
     privacy.configure(None)
 
 
-def test_defaults_inheritance_and_settings(lib):
+def test_defaults_inheritance_settings_upgrade_and_failing_closed(lib, monkeypatch):
+    """What is private by default (what you write, not papers), explicit flags, fragments inheriting from a
+    private paper, the flag in the note file, and the settings file in the library. A library saved with the
+    first defaults (attached notes and highlights shareable) gets the current ones; a choice you made is
+    kept. If the library can't be read, nothing is treated as shareable."""
     s, P = lib
     paper = s.create({"type": "paper", "title": "Hall thruster paper", "summary": "my summary"})
     note = s.create({"type": "note", "title": "Standalone idea", "body": "x"})
@@ -86,9 +90,31 @@ def test_defaults_inheritance_and_settings(lib):
     assert P.settings()["private_by_default"] == ["paper", "question"]
     with pytest.raises(ValueError):
         P.save_settings(private_by_default=["no spaces allowed"])
+    state = s.root / "state"
+    state.mkdir(exist_ok=True)
+    (state / "privacy.json").write_text(json.dumps({"private_by_default": ["note", "question"]}), encoding="utf-8")
+    P.configure(s)
+    assert P.settings()["private_by_default"] == ["fragment", "note", "question"]
+    P.save_settings(private_by_default=["note", "question"])  # chosen in settings: kept as chosen
+    P.configure(s)
+    assert P.settings()["private_by_default"] == ["note", "question"]
+    shared_idea = s.create({"type": "note", "title": "Shared idea", "private": False, "body": IDEA})
+    assert s.create({"type": "paper", "title": "A paper"})["id"]
+    P.refresh()
+    cloud = FakeBackend("c", "cli")
+    assert P.allow_ai(shared_idea["id"], cloud)
+    # the library can't be read: every note counts as private and nothing at all is sent
+    monkeypatch.setattr(s, "all", lambda: (_ for _ in ()).throw(OSError("disk went away")))
+    P.refresh()
+    assert not P.allow_ai(shared_idea["id"], cloud)
+    with pytest.raises(P.PrivacyError):
+        P.guard_prompt("Anything at all", cloud)
 
 
-def test_allow_ai_and_local_exception(lib):
+def test_allow_ai_local_exception_and_private_idea_cards(lib):
+    """Private notes are kept from every AI and filtered out of lists; with the local-AI exception on they
+    may go to a local server only. Private idea cards are fingerprinted by the guard too, not only filtered
+    by the cards code; once shared, the same text may go out."""
     s, P = lib
     note = s.create({"type": "note", "title": "Idea"})
     paper = s.create({"type": "paper", "title": "Paper"})
@@ -101,9 +127,25 @@ def test_allow_ai_and_local_exception(lib):
     P.guard_prompt(f"[[{note['id']}]] {IDEA}", local)  # the exception: no refusal
     with pytest.raises(P.PrivacyError):
         P.guard_prompt(f"[[{note['id']}]]", cloud)
+    from app import cards
+    shareable = s.create({"type": "paper", "title": "Shareable paper", "abstract": "Hall thruster plume.", "private": False})
+    cards.configure(s)
+    mine = cards.card_store().add(shareable["id"], {"kind": "claim", "text": IDEA}, origin="user", private=True)
+    P.refresh()
+    with pytest.raises(P.PrivacyError):
+        P.guard_prompt("Context: " + IDEA + ". Thanks.", FakeBackend())
+    # once shared, the same text may go out
+    cards.card_store().update(mine["id"], {"private": False})
+    P.refresh()
+    P.guard_prompt("Context: " + IDEA + ". Thanks.", FakeBackend())
 
 
-def test_guard_ids_and_copied_text(lib):
+def test_guard_ids_copied_text_linked_papers_and_stock_phrases(lib):
+    """guard_prompt refuses a private note's id (linked, bare or by title) and its copied text, case and
+    punctuation aside, and scrubs private links; ordinary prose, paraphrase, a few copied words and shared
+    boilerplate pass. A private note linking a paper does not block that paper: a link's words are the
+    linked paper's title (ids are slugs of titles), not the private note's own text, and fingerprinting
+    them made every prompt that named the paper look like a leak."""
     s, P = lib
     idea = s.create({"type": "note", "title": "Pulsed cathode idea", "body": IDEA})
     s.create({"type": "note", "title": "plasma", "body": "short"})  # one-word id: only [[plasma]] counts
@@ -129,33 +171,21 @@ def test_guard_ids_and_copied_text(lib):
         P.guard_prompt("[[plasma]]", cloud)
     assert P.scrub(f"a [[{idea['id']}|my idea]] and [[Pulsed cathode idea]] and [[other]]") == \
         "a [[a private note]] and [[a private note]] and [[other]]"
-
-
-def test_a_private_note_linking_a_paper_does_not_block_that_paper(lib):
-    """A link's words are the linked paper's title (ids are slugs of titles), not the private note's own
-    text: fingerprinting them made every prompt that named the paper look like a leak."""
-    s, P = lib
     paper = s.create({"type": "paper", "title": "A collisional-radiative model for krypton 2p levels in low-temperature plasmas",
                       "private": False})
     secret = s.create({"type": "note", "title": "Plan for the Kr CRM validation",
                        "body": f"Compare our model against [[{paper['id']}]]. " + IDEA})
     P.refresh()
-    cloud = FakeBackend()
     P.guard_prompt("FOCUS PAPER: A collisional-radiative model for krypton 2p levels in low-temperature plasmas. "
                    "The 826/758 ratio is the workhorse.", cloud)  # naming the paper is fine
     with pytest.raises(P.PrivacyError):
         P.guard_prompt("Context: " + IDEA, cloud)  # the note's own words still are not
     with pytest.raises(P.PrivacyError):
         P.guard_prompt(f"see [[{secret['id']}]]", cloud)
-
-
-def test_guard_ignores_shared_stock_phrases(lib):
-    s, P = lib
     stock = ("on the other hand it is not clear that this is the case and in this paper we "
              "propose a novel method for the problem as shown in the results")
     s.create({"type": "note", "title": "Stock", "body": stock})
     P.refresh()
-    cloud = FakeBackend()
     # a shareable paper that uses the same boilerplate: mostly stop words, never indexed
     P.guard_prompt("As is common, on the other hand it is not clear that this is the case and in this paper "
                    "we argue otherwise.", cloud)
@@ -164,6 +194,8 @@ def test_guard_ignores_shared_stock_phrases(lib):
 
 
 def test_guard_speed_2000_private_items(lib):
+    """With 2000 private notes the fingerprints build in under 30 s and a 50k-character prompt is checked in
+    under 20 ms."""
     s, P = lib
     rng = random.Random(7)
     vocab = [f"w{i}x" for i in range(5000)]
@@ -187,6 +219,8 @@ def _timed(fn):
 
 
 def test_audit_log_and_rotation(lib, monkeypatch):
+    """Each send is logged with ids (no titles or text) and which were private; the log rotates at its size
+    cap and reads newest first."""
     s, P = lib
     paper = s.create({"type": "paper", "title": "Paper"})
     note = s.create({"type": "note", "title": "Idea"})
@@ -206,6 +240,8 @@ def test_audit_log_and_rotation(lib, monkeypatch):
 
 
 def test_backend_wrapper_is_the_choke_point(lib):
+    """Every backend call goes through the guard, even one bypassing the server: private text or ids are
+    refused, private links scrubbed, nothing reaches the model on a refusal, and each send is logged once."""
     s, P = lib
     from app import agents
     idea = s.create({"type": "note", "title": "Idea", "body": IDEA})
@@ -233,16 +269,8 @@ def test_backend_wrapper_is_the_choke_point(lib):
 # ---------------------------------------------------------------- the server
 @pytest.fixture()
 def server(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("RB_AGENT", raising=False)
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_MEMORY_WATCH", "0")
-    monkeypatch.setenv("RB_WATCH", "0")
-    monkeypatch.delenv("RB_FAKE_CLAUDE", raising=False)
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    srv = importlib.import_module("app.server")
+    srv = load_server(monkeypatch, tmp_path, fake_claude=False, RB_DATA_DIR=tmp_path / "data", RB_AGENT=None,
+                      RB_MEMORY_WATCH="0", RB_WATCH="0")
     from fastapi.testclient import TestClient
     with TestClient(srv.app) as c:
         yield srv, c
@@ -279,9 +307,26 @@ def _library(c):
     return paper, idea, secret_paper
 
 
-def test_note_api_privacy_roundtrip_and_graph(server):
+def test_exports_note_api_privacy_roundtrip_and_graph(server):
+    """Exports leave private notes out by default (links to them scrubbed, exporting one by id refused)
+    unless asked. The privacy flag round-trips through the note API, the graph shows it and follows a
+    settings change, unknown notes are 404, and local search still finds private notes."""
     srv, c = server
     paper, idea, secret = _library(c)
+    c.put(f"/api/notes/{paper['id']}", json={"summary": f"See [[{idea['id']}|my idea]] and [[Pulsed cathode idea]]."})
+    r = c.post("/api/export", json={"ids": None})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["private_skipped"] == 2 and out["notes"] == 1
+    html = "".join(p.read_text(encoding="utf-8") for p in Path(out["path"]).rglob("*.html"))
+    assert "Pulsed cathode idea" not in html and "anomalous electron" not in html and "My unpublished draft" not in html
+    assert idea["id"] not in html and "a private note" in html
+    r = c.post("/api/export", json={"ids": [idea["id"]]})
+    assert r.status_code == 400 and "private" in r.json()["detail"]
+    r = c.post("/api/export", json={"ids": None, "include_private": True}).json()
+    assert r["notes"] == 3 and r["private_skipped"] == 0
+    html = "".join(p.read_text(encoding="utf-8") for p in Path(r["path"]).rglob("*.html"))
+    assert "Pulsed cathode idea" in html
     n = c.get(f"/api/notes/{idea['id']}").json()
     assert n["private"] is True and n["private_explicit"] is None
     assert c.get(f"/api/notes/{paper['id']}").json()["private"] is False
@@ -303,6 +348,8 @@ def test_note_api_privacy_roundtrip_and_graph(server):
 
 
 def test_ai_paths_refuse_or_filter_private(server):
+    """Critique, explain and review refuse private notes before sending; chat leaves them out, the guard
+    refuses a shareable note that copies one, private links are scrubbed, and the log records the sends."""
     srv, c = server
     paper, idea, secret = _library(c)
     fb = _use(srv, FakeBackend(script=["answer"] * 20))
@@ -342,6 +389,8 @@ def test_ai_paths_refuse_or_filter_private(server):
 
 
 def test_research_and_tools_never_see_private(server):
+    """Research never sends private notes (reading one looks like a missing note); every agent tool leaves
+    them out and remember refuses private sources or copied private text."""
     srv, c = server
     paper, idea, secret = _library(c)
     fb = _use(srv, FakeBackend(script=[
@@ -377,6 +426,8 @@ def test_research_and_tools_never_see_private(server):
 
 
 def test_local_ai_exception(server):
+    """With the local-AI exception on, a local server may get private notes (off by default), and the log
+    says so."""
     srv, c = server
     paper, idea, secret = _library(c)
     fb = _use(srv, FakeBackend("plocal", kind="local-server", script=["ok"] * 5))
@@ -392,64 +443,3 @@ def test_local_ai_exception(server):
     finally:
         from app import agents
         agents.unregister(fb.id)
-
-
-def test_exports_exclude_private_by_default(server):
-    srv, c = server
-    paper, idea, secret = _library(c)
-    c.put(f"/api/notes/{paper['id']}", json={"summary": f"See [[{idea['id']}|my idea]] and [[Pulsed cathode idea]]."})
-    r = c.post("/api/export", json={"ids": None})
-    assert r.status_code == 201, r.text
-    out = r.json()
-    assert out["private_skipped"] == 2 and out["notes"] == 1
-    html = "".join(p.read_text(encoding="utf-8") for p in Path(out["path"]).rglob("*.html"))
-    assert "Pulsed cathode idea" not in html and "anomalous electron" not in html and "My unpublished draft" not in html
-    assert idea["id"] not in html and "a private note" in html
-    r = c.post("/api/export", json={"ids": [idea["id"]]})
-    assert r.status_code == 400 and "private" in r.json()["detail"]
-    r = c.post("/api/export", json={"ids": None, "include_private": True}).json()
-    assert r["notes"] == 3 and r["private_skipped"] == 0
-    html = "".join(p.read_text(encoding="utf-8") for p in Path(r["path"]).rglob("*.html"))
-    assert "Pulsed cathode idea" in html
-
-
-def test_guard_covers_private_idea_cards(lib):
-    """Private idea cards are fingerprinted by the guard too, not only filtered by the cards code."""
-    s, P = lib
-    from app import cards
-    paper = s.create({"type": "paper", "title": "Shareable paper", "abstract": "Hall thruster plume.", "private": False})
-    cards.configure(s)
-    mine = cards.card_store().add(paper["id"], {"kind": "claim", "text": IDEA}, origin="user", private=True)
-    P.refresh()
-    with pytest.raises(P.PrivacyError):
-        P.guard_prompt("Context: " + IDEA + ". Thanks.", FakeBackend())
-    # once shared, the same text may go out
-    cards.card_store().update(mine["id"], {"private": False})
-    P.refresh()
-    P.guard_prompt("Context: " + IDEA + ". Thanks.", FakeBackend())
-
-
-def test_first_defaults_upgrade_and_a_failed_check_fails_closed(lib, monkeypatch):
-    """A library saved with the first defaults (attached notes and highlights shareable) gets the current ones;
-    a choice you made is kept. If the library can't be read, nothing is treated as shareable."""
-    s, P = lib
-    state = s.root / "state"
-    state.mkdir(exist_ok=True)
-    (state / "privacy.json").write_text(json.dumps({"private_by_default": ["note", "question"]}), encoding="utf-8")
-    P.configure(s)
-    assert P.settings()["private_by_default"] == ["fragment", "note", "question"]
-    P.save_settings(private_by_default=["note", "question"])  # chosen in settings: kept as chosen
-    P.configure(s)
-    assert P.settings()["private_by_default"] == ["note", "question"]
-    note = s.create({"type": "note", "title": "Shared idea", "private": False, "body": IDEA})
-    paper = s.create({"type": "paper", "title": "A paper"})
-    P.refresh()
-    cloud = FakeBackend("c", "cli")
-    assert P.allow_ai(note["id"], cloud)
-    # the library can't be read: every note counts as private and nothing at all is sent
-    monkeypatch.setattr(s, "all", lambda: (_ for _ in ()).throw(OSError("disk went away")))
-    P.refresh()
-    assert not P.allow_ai(note["id"], cloud)
-    with pytest.raises(P.PrivacyError):
-        P.guard_prompt("Anything at all", cloud)
-    assert paper["id"]

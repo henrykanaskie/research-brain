@@ -1,4 +1,4 @@
-"""Review (active recall / SM-2) and critique history.
+"""Review (active recall / SM-2), the recall check and critique history.
 
 Run:  .venv/bin/python -m pytest -q tests
 """
@@ -13,15 +13,12 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from rb_app import load_server, purge_app  # noqa: E402
+
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path)
     from fastapi.testclient import TestClient
     day = {"d": dt.date(2026, 11, 9)}
     monkeypatch.setattr(server.review_mod, "_today", lambda: day["d"])
@@ -125,8 +122,7 @@ def test_grading_and_persistence(env, tmp_path):
     assert st["kind"] == "summary" and st["reps"] == 2 and len(st["history"]) == 2
     assert st["history"][0]["grade"] == 4 and st["history"][0]["recalled"] == "something like aaa"
     # survives a fresh process
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
+    purge_app()
     server2 = importlib.import_module("app.server")
     server2.review_mod._today = lambda: dt.date(2026, 11, 16)
     from fastapi.testclient import TestClient
@@ -174,18 +170,16 @@ def test_stats_streak(env):
     assert c.get("/api/review/stats").json()["streak"] == 0
 
 
-def test_check_recall(env):
+# ---------------------------------------------------------------- recall check and critique history
+def test_recall_check_and_critique_history_and_migration(env):
+    """Checking a recall needs text and answers in one to three lines; each critique is kept with the summary
+    it saw, critiques can't be set through the API, and an old single critique migrates into the history."""
     c, server, day = env
     a = note(c, type="note", private=False, title="A", summary="aaa")["id"]
     assert c.post(f"/api/review/{a}/check", json={"recalled_text": ""}).status_code == 400
     r = c.post(f"/api/review/{a}/check", json={"recalled_text": "aa"})
     assert r.status_code == 200
     assert 1 <= len(r.json()["text"].splitlines()) <= 3
-
-
-# ---------------------------------------------------------------- critique history
-def test_critique_history(env):
-    c, server, day = env
     p = note(c, type="paper", title="P", summary="First take.")
     r1 = c.post(f"/api/notes/{p['id']}/critique").json()
     assert set(r1) >= {"text", "at"}
@@ -199,10 +193,7 @@ def test_critique_history(env):
     # critiques can't be set through the API
     c.put(f"/api/notes/{p['id']}", json={"critiques": []})
     assert len(c.get(f"/api/notes/{p['id']}").json()["critiques"]) == 2
-
-
-def test_critique_migration(env, tmp_path):
-    c, server, day = env
+    # an old single critique migrates into the history
     p = note(c, type="paper", title="Old", summary="s")
     path = server.store.note_path(p["id"])
     raw = path.read_text(encoding="utf-8")

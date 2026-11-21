@@ -83,23 +83,13 @@ def load_server(monkeypatch, vault=None):
 
 
 # ================================================================ data folder + legacy ./vault
-def test_user_data_dir_per_platform(monkeypatch, tmp_path):
-    from app import paths
-    monkeypatch.delenv("RB_DATA_DIR", raising=False)
-    monkeypatch.setattr(paths.Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.setattr(paths.sys, "platform", "darwin")
-    assert paths.user_data_dir() == tmp_path / "Library" / "Application Support" / "research_brain"
-    monkeypatch.setattr(paths.sys, "platform", "linux")
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    assert paths.user_data_dir() == tmp_path / "xdg" / "research_brain"
-    monkeypatch.delenv("XDG_DATA_HOME")
-    assert paths.user_data_dir() == tmp_path / ".local" / "share" / "research_brain"
-    monkeypatch.setattr(paths.sys, "platform", "win32")
-    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
-    assert paths.user_data_dir() == tmp_path / "Roaming" / "research_brain"
-
-
-def test_resolution_order(dirs, monkeypatch):
+def test_data_folder_per_platform_and_library_resolution_order(dirs, monkeypatch):
+    """app/paths.py run as a script prints the default vault; the vault comes from (weakest first) the default
+    profile, settings, RB_PROFILE, --profile, RB_VAULT, --vault, with bad profile names refused and per-profile
+    paths honoured; without RB_DATA_DIR the data folder follows each platform's convention."""
+    out = subprocess.run([sys.executable, str(ROOT / "app" / "paths.py")], capture_output=True, text=True,
+                         env=dict(os.environ))
+    assert out.returncode == 0 and out.stdout.strip() == str(dirs / "data" / "profiles" / "default")
     from app import paths
     data = dirs / "data"
     r = paths.resolve()
@@ -119,9 +109,25 @@ def test_resolution_order(dirs, monkeypatch):
     assert r.profile == "default" and any("invalid profile" in n for n in r.notices)
     paths.save_settings({"profile_paths": {"shared": str(dirs / "usb")}})
     assert paths.resolve(profile="shared").vault == dirs / "usb"
+    # the data folder on each platform, when RB_DATA_DIR doesn't set it
+    home = dirs / "home"
+    monkeypatch.delenv("RB_DATA_DIR", raising=False)
+    monkeypatch.setattr(paths.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(paths.sys, "platform", "darwin")
+    assert paths.user_data_dir() == home / "Library" / "Application Support" / "research_brain"
+    monkeypatch.setattr(paths.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / "xdg"))
+    assert paths.user_data_dir() == home / "xdg" / "research_brain"
+    monkeypatch.delenv("XDG_DATA_HOME")
+    assert paths.user_data_dir() == home / ".local" / "share" / "research_brain"
+    monkeypatch.setattr(paths.sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(home / "Roaming"))
+    assert paths.user_data_dir() == home / "Roaming" / "research_brain"
 
 
 def test_legacy_vault_kept_then_moved_safely(dirs, monkeypatch):
+    """A legacy ./vault is used (with a hint to move it) until moved; the move copies, renames the old folder
+    instead of deleting it, logs, and refuses when there's nothing to move or the destination holds files."""
     from app import paths
     legacy = dirs / "legacy-vault"
     (legacy / "notes").mkdir(parents=True)
@@ -143,38 +149,26 @@ def test_legacy_vault_kept_then_moved_safely(dirs, monkeypatch):
     assert "moved legacy vault" in (dirs / "data" / "storage.log").read_text(encoding="utf-8")
     with pytest.raises(paths.MoveError):
         paths.move_legacy_vault()  # nothing left to move
-
-
-def test_move_refuses_to_overwrite(dirs, monkeypatch):
-    from app import paths
-    legacy = dirs / "legacy-vault"
+    # a new legacy library while the destination already holds files: refused, both left as they are
     (legacy / "notes").mkdir(parents=True)
     (legacy / "notes" / "a.md").write_text("x")
-    dst = dirs / "data" / "profiles" / "default" / "notes"
-    dst.mkdir(parents=True)
-    (dst / "b.md").write_text("y")
-    with pytest.raises(paths.MoveError):
+    (dst / "notes" / "b.md").write_text("y")
+    with pytest.raises(paths.MoveError, match="already holds files"):
         paths.move_legacy_vault()
-    assert (legacy / "notes" / "a.md").exists() and (dst / "b.md").exists()
-
-
-def test_paths_script_prints_vault(dirs):
-    env = dict(os.environ)
-    out = subprocess.run([sys.executable, str(ROOT / "app" / "paths.py")], capture_output=True, text=True, env=env)
-    assert out.returncode == 0 and out.stdout.strip() == str(dirs / "data" / "profiles" / "default")
+    assert (legacy / "notes" / "a.md").exists() and (dst / "notes" / "b.md").exists()
 
 
 # ================================================================ migrations
-def test_new_vault_gets_current_schema(tmp_path):
+def test_schema_migrations_new_old_and_newer_vaults(tmp_path, monkeypatch):
+    """Every schema step is registered; a new vault gets the current schema without a backup; an old one is backed
+    up (notes only) then migrated once; a vault from a newer research_brain refuses to start."""
     from app import migrate
-    v = tmp_path / "v"
+    assert sorted(migrate.MIGRATIONS) == list(range(1, migrate.SCHEMA_VERSION + 1))
+    v = tmp_path / "new"
     res = migrate.run(v, log=lambda m: None)
     assert res["backup"] is None and migrate.read_meta(v)["schema"] == migrate.SCHEMA_VERSION
     assert not (v / "backups").exists()
-
-
-def test_old_vault_is_backed_up_then_migrated(tmp_path):
-    from app import migrate
+    # an old vault
     v = tmp_path / "v"
     for d in ("notes", "pdfs", ".index"):
         (v / d).mkdir(parents=True)
@@ -194,11 +188,8 @@ def test_old_vault_is_backed_up_then_migrated(tmp_path):
     assert (v / "PDFs" / "a.pdf").read_bytes() == b"%PDF big" and "notes" not in os.listdir(v)
     again = migrate.run(v, log=lambda m: None)  # idempotent, no second backup
     assert again["applied"] == [] and len(list((v / "backups").glob("*.zip"))) == 1
-
-
-def test_newer_schema_refuses_to_start(tmp_path, monkeypatch):
-    from app import migrate
-    v = tmp_path / "v"
+    # a vault from a newer version
+    v = tmp_path / "newer"
     (v / "state").mkdir(parents=True)
     (v / "state" / "meta.json").write_text(json.dumps({"schema": migrate.SCHEMA_VERSION + 5}))
     with pytest.raises(migrate.SchemaError, match="newer research_brain"):
@@ -208,11 +199,6 @@ def test_newer_schema_refuses_to_start(tmp_path, monkeypatch):
     with pytest.raises(Exception, match="newer research_brain"):
         importlib.import_module("app.server")
     fresh()
-
-
-def test_migration_steps_are_registered():
-    from app import migrate
-    assert sorted(migrate.MIGRATIONS) == list(range(1, migrate.SCHEMA_VERSION + 1))
 
 
 # ================================================================ profiles + API
@@ -243,14 +229,12 @@ def test_profiles_api_and_switch(dirs, monkeypatch):
     assert killed == [1]
 
 
-def test_pinned_vault_cannot_switch(dirs, monkeypatch):
-    c, _ = load_server(monkeypatch, vault=dirs / "pinned")
+def test_pinned_vault_cannot_switch_and_settings_and_ui_state(dirs, monkeypatch):
+    """A vault pinned by RB_VAULT can't switch profiles (409); settings validate the email and save mode; the UI
+    state merges keys (None removes one), is stored in state/ui.json and refuses bad keys and huge values."""
+    c, _ = load_server(monkeypatch, vault=dirs / "v")
     assert c.get("/api/library").json()["pinned"]
     assert c.post("/api/profiles/switch", json={"name": "default"}).status_code == 409
-
-
-def test_settings_and_ui_state(dirs, monkeypatch):
-    c, _ = load_server(monkeypatch, vault=dirs / "v")
     assert c.get("/api/settings").json() == {"unpaywall_email": "", "auto_open_access": True, "save_mode": "link"}
     assert c.put("/api/settings", json={"unpaywall_email": "not an email"}).status_code == 400
     s = c.put("/api/settings", json={"unpaywall_email": "me@uni.edu", "auto_open_access": False}).json()
@@ -313,10 +297,23 @@ def test_add_by_arxiv_fetches_open_access_pdf_in_background(dirs, monkeypatch):
     assert json.loads((dirs / "v" / "state" / "acquire.json").read_text(encoding="utf-8"))[nid]["state"] == "found"
 
 
-def test_semantic_scholar_then_unpaywall_and_metadata_only_fallback(dirs, monkeypatch):
+def test_acquisition_sources_fallbacks_and_ssrf_guard(dirs, monkeypatch):
+    """Downloads go through the SSRF guard (a private address is never opened); then Semantic Scholar's link,
+    then Unpaywall's (only with an email); with nothing found the paper stays metadata-only with a hint; an
+    existing PDF is never replaced and the same bytes aren't stored twice."""
     fresh()
-    from app import acquire
+    from app import acquire, urlfetch
     from app.store import Store
+    # the SSRF guard, with the real download path
+    guarded = Store(dirs / "guarded")
+    with monkeypatch.context() as mp:
+        mp.setattr(urlfetch, "resolve", lambda host: ["10.0.0.5"])  # a private address
+        opened = []
+        mp.setattr(urlfetch, "_open", lambda url: opened.append(url))
+        x = guarded.create({"type": "paper", "title": "X", "arxiv": "2401.00001"})
+        rec = acquire.acquire(guarded, x["id"], {"oa_pdf": "http://169.254.169.254/latest/meta-data"})
+        assert rec["state"] == "not-found" and not opened
+        assert all("private" in t["error"].lower() or "local" in t["error"].lower() for t in rec["tried"])
     store = Store(dirs / "v")
     web = FakeWeb()
     web.install(monkeypatch, acquire)
@@ -346,20 +343,6 @@ def test_semantic_scholar_then_unpaywall_and_metadata_only_fallback(dirs, monkey
     assert rec["state"] == "duplicate" and rec["same_as"] == n["id"] and not store.get(d["id"])["has_pdf"]
 
 
-def test_acquisition_uses_the_ssrf_guard(dirs, monkeypatch):
-    fresh()
-    from app import acquire, urlfetch
-    from app.store import Store
-    store = Store(dirs / "v")
-    monkeypatch.setattr(urlfetch, "resolve", lambda host: ["10.0.0.5"])  # a private address
-    opened = []
-    monkeypatch.setattr(urlfetch, "_open", lambda url: opened.append(url))
-    n = store.create({"type": "paper", "title": "X", "arxiv": "2401.00001"})
-    rec = acquire.acquire(store, n["id"], {"oa_pdf": "http://169.254.169.254/latest/meta-data"})
-    assert rec["state"] == "not-found" and not opened
-    assert all("private" in t["error"].lower() or "local" in t["error"].lower() for t in rec["tried"])
-
-
 def test_acquire_disabled_and_settings_off(dirs, monkeypatch):
     c, server = load_server(monkeypatch, vault=dirs / "v")  # conftest: RB_ACQUIRE=0
     r = c.post("/api/import/lookup", json={"query": "1706.03762"}).json()
@@ -371,7 +354,10 @@ def test_acquire_disabled_and_settings_off(dirs, monkeypatch):
 
 
 # ================================================================ PDF bytes from the extension
-def test_pdf_bytes_upload(dirs, monkeypatch):
+def test_pdf_bytes_from_the_extension(dirs, monkeypatch):
+    """PDF bytes posted by the extension: only real PDFs sent as application/pdf, metadata from the source URL,
+    the same bytes twice give the existing paper, a DOI attaches the PDF to a metadata-only paper, oversized
+    uploads (413) and foreign origins (403) are refused, and a non-http source URL is dropped."""
     c, server = load_server(monkeypatch, vault=dirs / "v")
     pdf = make_pdf("Attention Is All You Need", "Paywalled copy")
     url = "/api/import/pdf-bytes?source_url=https%3A%2F%2Farxiv.org%2Fpdf%2F1706.03762v7&title=Attention"
@@ -386,20 +372,14 @@ def test_pdf_bytes_upload(dirs, monkeypatch):
     again = c.post(url, content=pdf, headers={"Content-Type": "application/pdf"}).json()  # same sha256
     assert again["id"] == n["id"] and again["duplicate"] and again["existing"]
     assert len(list(server.store.pdf_dir.glob("*.pdf"))) == 1
-
-
-def test_pdf_bytes_attach_to_metadata_only_paper_by_doi(dirs, monkeypatch):
-    c, server = load_server(monkeypatch, vault=dirs / "v")
-    meta = c.post("/api/import/lookup", json={"query": HALL["doi"]}).json()
+    # attached to a metadata-only paper found by its DOI
+    meta =c.post("/api/import/lookup", json={"query": HALL["doi"]}).json()
     assert not meta["has_pdf"]
     r = c.post(f"/api/import/pdf-bytes?doi={HALL['doi']}&source_url=https://pubs.example.org/doi/pdf/x",
                content=make_pdf("Hall thruster plasma oscillations"), headers={"Content-Type": "application/pdf"})
     assert r.status_code == 201
     assert r.json()["id"] == meta["id"] and r.json()["has_pdf"] and r.json()["attached"]
-
-
-def test_pdf_bytes_limits_and_origin(dirs, monkeypatch):
-    c, server = load_server(monkeypatch, vault=dirs / "v")
+    # size limit and origin
     monkeypatch.setattr(server.storage_api, "UPLOAD_MAX_MB", 0)  # 0 MB: everything is too large
     h = {"Content-Type": "application/pdf"}
     assert c.post("/api/import/pdf-bytes", content=make_pdf(), headers=h).status_code == 413
@@ -425,7 +405,9 @@ def _vault(v: Path):
     (v / "backups" / "old.zip").write_bytes(b"PK")
 
 
-def test_zip_round_trip(tmp_path):
+def test_zip_round_trip_with_and_without_pdfs_and_photo_attachments(tmp_path):
+    """Export keeps the library (not caches, exports or backups), optionally without PDFs; import restores it into
+    an empty folder only; photos in attachments/ survive the round trip."""
     from app import vaultzip
     v = tmp_path / "v"
     _vault(v)
@@ -441,6 +423,15 @@ def test_zip_round_trip(tmp_path):
     assert res["manifest"]["format"] == "research_brain-vault"
     with pytest.raises(vaultzip.ZipImportError, match="isn't empty"):
         vaultzip.import_zip(tmp_path / "lib.zip", tmp_path / "new")
+    # photos captured on a phone live in vault/attachments/
+    v = tmp_path / "photos"
+    _vault(v)
+    (v / "attachments").mkdir()
+    (v / "attachments" / "x1.jpg").write_bytes(b"\xff\xd8\xff\xe0 jpeg")
+    vaultzip.export_zip(v, tmp_path / "photos.zip")
+    assert "attachments/x1.jpg" in zipfile.ZipFile(tmp_path / "photos.zip").namelist()
+    vaultzip.import_zip(tmp_path / "photos.zip", tmp_path / "photos-new")
+    assert (tmp_path / "photos-new" / "attachments" / "x1.jpg").read_bytes().startswith(b"\xff\xd8")
 
 
 def _zip(path, entries, symlink=None):
@@ -455,18 +446,17 @@ def _zip(path, entries, symlink=None):
     return path
 
 
-@pytest.mark.parametrize("bad", ["../evil.md", "notes/../../evil.md", "/abs/notes/a.md", "C:/x/notes/a.md",
-                                 "notes\\..\\..\\evil.md"])
-def test_zip_slip_is_refused(tmp_path, bad):
+def test_zip_import_refuses_slip_symlinks_and_bombs_and_unwraps_a_folder(tmp_path):
+    """Import refuses entries that escape the target (zip slip), symbolic links, archives with no library in
+    them and zip bombs; a library wrapped in one folder is unwrapped, skipping caches and code."""
     from app import vaultzip
-    z = _zip(tmp_path / "bad.zip", [("notes/a.md", "x"), (bad, "pwned")])
-    with pytest.raises(vaultzip.ZipImportError):
-        vaultzip.import_zip(z, tmp_path / "t")
-    assert not (tmp_path / "evil.md").exists() and not (tmp_path / "t").exists()
-
-
-def test_zip_symlink_unknown_dirs_wrapper_and_bomb(tmp_path, monkeypatch):
-    from app import vaultzip
+    for i, bad in enumerate(["../evil.md", "notes/../../evil.md", "/abs/notes/a.md", "C:/x/notes/a.md",
+                             "notes\\..\\..\\evil.md"]):
+        z = _zip(tmp_path / f"bad{i}.zip", [("notes/a.md", "x"), (bad, "pwned")])
+        with pytest.raises(vaultzip.ZipImportError):
+            vaultzip.import_zip(z, tmp_path / "t")
+            pytest.fail(f"zip slip entry {bad!r} was accepted")
+        assert not (tmp_path / "evil.md").exists() and not (tmp_path / "t").exists(), f"zip slip entry {bad!r}"
     with pytest.raises(vaultzip.ZipImportError, match="symbolic link"):
         vaultzip.import_zip(_zip(tmp_path / "s.zip", [("notes/a.md", "x")], symlink="notes/link.md"), tmp_path / "t1")
     with pytest.raises(vaultzip.ZipImportError, match="no papers, notes or questions"):
@@ -594,19 +584,6 @@ def test_extension_save_pdf_action():
     assert not re.search(r"XMLHttpRequest|WebSocket|sendBeacon|chrome\.runtime\.sendMessage", grab)
     m = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
     assert "grab_pdf.js" not in json.dumps(m.get("web_accessible_resources", []))
-
-
-def test_zip_includes_photo_attachments(tmp_path):
-    """Photos captured on a phone live in vault/attachments/ and must survive a backup round trip."""
-    from app import vaultzip
-    v = tmp_path / "v"
-    _vault(v)
-    (v / "attachments").mkdir()
-    (v / "attachments" / "x1.jpg").write_bytes(b"\xff\xd8\xff\xe0 jpeg")
-    vaultzip.export_zip(v, tmp_path / "lib.zip")
-    assert "attachments/x1.jpg" in zipfile.ZipFile(tmp_path / "lib.zip").namelist()
-    vaultzip.import_zip(tmp_path / "lib.zip", tmp_path / "new")
-    assert (tmp_path / "new" / "attachments" / "x1.jpg").read_bytes().startswith(b"\xff\xd8")
 
 
 def test_pdf_hash_index_survives_imports_at_the_same_time(tmp_path, monkeypatch):

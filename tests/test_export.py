@@ -1,6 +1,6 @@
 """POST /api/export: a self-contained, read-only HTML site under vault/exports/<timestamp>/."""
-import importlib
 import io
+import json
 import re
 import sys
 from html.parser import HTMLParser
@@ -11,15 +11,12 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from rb_app import load_server, purge_app  # noqa: E402
+
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path)
     from fastapi.testclient import TestClient
     return TestClient(server.app), server
 
@@ -65,7 +62,10 @@ def lib(env):
     return c, server, paper, note, secret, frag
 
 
-def test_export_selected_notes(lib):
+def test_export_selected_notes_and_a_lone_fragment(lib):
+    """Exporting chosen notes writes a timestamped site with only those notes: no critiques, no titles or text of
+    notes left out, raw HTML escaped, [[links]] resolved only to exported pages. A lone fragment gets its own
+    page; unknown ids, an empty list and a foreign Origin are refused."""
     c, server, paper, note, secret, frag = lib
     r = c.post("/api/export", json={"ids": [paper["id"], note["id"]], "include_pdfs": False})
     assert r.status_code == 201, r.text
@@ -89,7 +89,6 @@ def test_export_selected_notes(lib):
 
     npage = (site / "notes" / f"{note['id']}.html").read_text(encoding="utf-8")
     data = re.search(r'<script type="application/json" id="rb-data">(.*?)</script>', npage, re.S).group(1)
-    import json
     links = json.loads(data)["links"]
     assert links["Hall thruster breathing mode"] == {"href": f"{paper['id']}.html", "title": "Hall thruster breathing mode"}
     assert links["Secret draft"] == {} and links["Nowhere"] == {}  # rendered as plain text, title not leaked
@@ -101,9 +100,22 @@ def test_export_selected_notes(lib):
     assert json.loads(re.search(r'id="rb-data">(.*?)</script>', page, re.S).group(1))["links"]["Plasma notes"]["href"] \
         == f"{note['id']}.html"
 
+    # a lone fragment, and errors
+    out = c.post("/api/export", json={"ids": [frag["id"]]}).json()
+    site = Path(out["path"])
+    page = (site / "notes" / f"{frag['id']}.html").read_text(encoding="utf-8")
+    assert "Quote" in page and "p. 4, Eq. 7" in page
+    assert "Hall thruster breathing mode" not in page  # parent not exported
+    assert c.post("/api/export", json={"ids": ["no-such-note"]}).status_code == 404
+    assert c.post("/api/export", json={"ids": []}).status_code == 400
+    assert c.post("/api/export", json={"ids": None}, headers={"Origin": "https://evil.example"}).status_code == 403
 
-def test_export_is_self_contained(lib):
-    c, *_ = lib
+
+def test_export_all_is_self_contained_and_includes_pdfs(lib):
+    """Exporting everything gives a site whose scripts, styles, fonts and links are all local files; with PDFs
+    included the paper's PDF is copied and linked, the title is cleaned, fragments live on their parent's page,
+    and a second export in the same second gets its own folder."""
+    c, server, paper, note, secret, frag = lib
     site = Path(c.post("/api/export", json={"ids": None}).json()["path"])
     for html in site.rglob("*.html"):
         for tag, url in _refs(html.read_text(encoding="utf-8")):
@@ -118,9 +130,6 @@ def test_export_is_self_contained(lib):
         assert (site / "assets" / "katex" / font).is_file()
     assert (site / "assets" / "fonts" / "fonts.css").is_file()
 
-
-def test_export_all_and_pdfs(lib):
-    c, server, paper, note, secret, frag = lib
     pytest.importorskip("reportlab")
     from reportlab.pdfgen import canvas
     buf = io.BytesIO()
@@ -143,28 +152,10 @@ def test_export_all_and_pdfs(lib):
     assert not (again / "pdfs").exists()
 
 
-def test_export_lone_fragment_and_errors(lib):
-    c, server, paper, note, secret, frag = lib
-    out = c.post("/api/export", json={"ids": [frag["id"]]}).json()
-    site = Path(out["path"])
-    page = (site / "notes" / f"{frag['id']}.html").read_text(encoding="utf-8")
-    assert "Quote" in page and "p. 4, Eq. 7" in page
-    assert "Hall thruster breathing mode" not in page  # parent not exported
-    assert c.post("/api/export", json={"ids": ["no-such-note"]}).status_code == 404
-    assert c.post("/api/export", json={"ids": []}).status_code == 400
-    assert c.post("/api/export", json={"ids": None}, headers={"Origin": "https://evil.example"}).status_code == 403
-
-
 def test_rb_host_origin_is_allowed(tmp_path, monkeypatch):
     """With RB_HOST set to e.g. a Tailscale IP, the app opened at that address can still save;
     other origins (and other hosts) are still rejected; no Origin header (iOS Shortcuts) is allowed."""
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_HOST", "100.101.102.103")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path, RB_HOST="100.101.102.103")
     from fastapi.testclient import TestClient
     c = TestClient(server.app)
     body = {"type": "note", "title": "x"}
@@ -173,5 +164,4 @@ def test_rb_host_origin_is_allowed(tmp_path, monkeypatch):
     assert c.post("/api/notes", json=body, headers={"Origin": "http://100.101.102.103.evil.com"}).status_code == 403
     assert c.post("/api/notes", json=body, headers={"Origin": "https://evil.example"}).status_code == 403
     assert c.post("/api/clip", json={"quote": "from a phone", "page_title": "Phone inbox"}).status_code == 201
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
+    purge_app()

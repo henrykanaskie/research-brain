@@ -4,7 +4,6 @@ Run:  .venv/bin/python -m pytest -q tests/test_scale.py
 Latency budgets (warm, measured on the dev machine): GET /api/graph < 150 ms, GET /api/search < 30 ms.
 Set RB_SCALE_SLACK=2 to loosen them on a slow CI box.
 """
-import importlib
 import os
 import sqlite3
 import sys
@@ -16,6 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
+from rb_app import load_server  # noqa: E402
 from scale_data import write_library  # noqa: E402
 
 # shared CI runners (GitHub sets CI=true) are slower and vary from run to run; a computer of your own is held to the plain limits
@@ -23,12 +23,7 @@ SLACK = float(os.environ.get("RB_SCALE_SLACK", "2.5" if os.environ.get("CI") els
 
 
 def _load(vault: Path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(vault))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, vault.parent, vault=vault)
     from fastapi.testclient import TestClient
     return TestClient(server.app), server
 
@@ -71,7 +66,9 @@ def test_latency_at_2000_notes(big_vault, monkeypatch):
     assert empty_ms < 30 * SLACK
 
 
-def test_search_ranking_and_shape(small):
+def test_search_ranking_shape_and_deletes(small):
+    """Search ranks title over body, matches prefixes, authors and tags, leaves fragments out unless asked,
+    survives FTS syntax, lists recent notes for an empty query, and drops a deleted note from the index."""
     client, server = small
     s = server.store
     a = s.create({"type": "paper", "title": "Breathing mode oscillations", "tags": ["magnetohydro"], "authors": ["Q. Writer"]})
@@ -87,9 +84,19 @@ def test_search_ranking_and_shape(small):
     assert client.get("/api/search", params={"q": "magnetoh"}).json()[0]["id"] == a["id"]  # tags
     assert client.get("/api/search", params={"q": "\"(*"}).status_code == 200  # FTS syntax can't break it
     assert client.get("/api/search").json()[0]["id"] in (a["id"], b["id"])  # empty q: most recently updated
+    # a deleted note and its fragment leave the full-text index
+    n = server.store.create({"type": "note", "title": "Perihelion precession notes", "body": "mercury orbit"})
+    f = server.store.create({"type": "fragment", "parent": n["id"], "quote": "precession of the perihelion"})
+    assert client.get("/api/search", params={"q": "perihelion", "fragments": 1}).json()
+    assert client.delete(f"/api/notes/{n['id']}").json() == {"ok": True}
+    assert client.get("/api/search", params={"q": "perihelion", "fragments": 1}).json() == []
+    with sqlite3.connect(server.store.index_dir / "meta.sqlite") as c:
+        assert c.execute("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'perihelion'").fetchone()[0] == 0
 
 
-def test_external_edit_is_reflected(small):
+def test_external_edits_are_reflected_and_files_work_without_sqlite(small):
+    """Edits, new files and removals made outside the app show in search, notes and the graph; with SQLite
+    unusable the store falls back to reading the files."""
     client, server = small
     p = server.store.note_path("syn-00003")
     p.write_text(p.read_text(encoding="utf-8").replace("study 3", "study 3 zanzibarian"), encoding="utf-8")
@@ -102,6 +109,11 @@ def test_external_edit_is_reflected(small):
     ids = {n["id"] for n in server.store.all()}
     assert "hand-made" in ids and "syn-00004" not in ids
     assert client.get("/api/search", params={"q": "quixotic"}).json()[0]["id"] == "hand-made"
+    # without SQLite the store reads the files (40 notes + 6 fragments, one note removed and one added above)
+    server.store.meta.ok = False  # e.g. SQLite unusable on this machine
+    assert len(server.store.all()) == 46
+    assert client.get("/api/search", params={"q": "study"}).status_code == 200
+    assert server.store.find_duplicate(doi="10.1000/syn.1")["id"] == "syn-00001"
 
 
 def test_corrupt_db_is_rebuilt(tmp_path, monkeypatch):
@@ -126,22 +138,3 @@ def test_corrupt_db_is_rebuilt(tmp_path, monkeypatch):
     server.store.meta.conn.close()
     server.store.meta.conn = sqlite3.connect(":memory:", check_same_thread=False)  # tables gone
     assert len(client.get("/api/search", params={"q": "study"}).json()) > 0
-
-
-def test_delete_removes_from_fts(small):
-    client, server = small
-    n = server.store.create({"type": "note", "title": "Perihelion precession notes", "body": "mercury orbit"})
-    f = server.store.create({"type": "fragment", "parent": n["id"], "quote": "precession of the perihelion"})
-    assert client.get("/api/search", params={"q": "perihelion", "fragments": 1}).json()
-    assert client.delete(f"/api/notes/{n['id']}").json() == {"ok": True}
-    assert client.get("/api/search", params={"q": "perihelion", "fragments": 1}).json() == []
-    with sqlite3.connect(server.store.index_dir / "meta.sqlite") as c:
-        assert c.execute("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'perihelion'").fetchone()[0] == 0
-
-
-def test_falls_back_to_files_without_sqlite(small, monkeypatch):
-    client, server = small
-    server.store.meta.ok = False  # e.g. SQLite unusable on this machine
-    assert len(server.store.all()) == 46
-    assert client.get("/api/search", params={"q": "study"}).status_code == 200
-    assert server.store.find_duplicate(doi="10.1000/syn.1")["id"] == "syn-00001"

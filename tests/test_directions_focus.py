@@ -14,9 +14,12 @@ def _keep_two(c, q):
     return kept
 
 
-def test_directions_preview_controls_and_safeguards(server):
+def test_directions_for_questions_and_topics_preview_controls_and_safeguards(server):
+    """Research directions for a question: refused while private, a preview that sends nothing, unticked
+    sources and the answer left out unless ticked, logged like every AI call. For a topic: private members
+    are left out and an unknown topic is 404."""
     srv, c = server
-    from app import agents
+    from app import agents, topics as T
     ids = library(srv, c)
     q = add_question(c)
     c.put(f"/api/notes/{q['id']}", json={"answer": Q_ANSWER})
@@ -53,21 +56,11 @@ def test_directions_preview_controls_and_safeguards(server):
         log = (srv.store.root / "state" / "ai_log.jsonl").read_text(encoding="utf-8")
         assert "research directions" in log
         assert private is not None
-    finally:
-        agents.unregister(fb.id)
-
-
-def test_topic_directions_leave_private_notes_out(server):
-    srv, c = server
-    from app import agents, topics as T
-    ids = library(srv, c)
-    c.put(f"/api/notes/{ids['breathing']}", json={"summary": "Breathing mode: an ionization instability at 10-30 kHz."})
-    secret = c.post("/api/notes", json={"type": "note", "title": "My unpublished idea", "body": "Zanzibar quokka trick for thrusters"}).json()
-    t = T.create_topic(srv.store, "Oscillations", members=[ids["breathing"], secret["id"]])
-    fb = Recorder(replies=["## Gaps\n- x"])
-    agents.register(fb)
-    agents.set_active(fb.id)
-    try:
+        # topic directions leave private notes out
+        c.put(f"/api/notes/{ids['breathing']}", json={"summary": "Breathing mode: an ionization instability at 10-30 kHz."})
+        secret = c.post("/api/notes", json={"type": "note", "title": "My unpublished idea", "body": "Zanzibar quokka trick for thrusters"}).json()
+        t = T.create_topic(srv.store, "Oscillations", members=[ids["breathing"], secret["id"]])
+        fb.replies = ["## Gaps\n- x"]
         pv = c.post(f"/api/topics/{t['slug']}/directions", json={"dry": True}).json()
         assert [s["id"] for s in pv["used"]] == [ids["breathing"]]
         assert any(s["id"] == secret["id"] and s["why"] == "private" for s in pv["left_out"])

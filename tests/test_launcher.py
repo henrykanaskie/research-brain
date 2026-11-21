@@ -31,28 +31,21 @@ class _Stopped:
         return 1
 
 
-def test_open_says_at_once_when_the_server_stops_while_starting(monkeypatch, tmp_path):
-    """The server stopped while starting: no waiting minutes for an answer that can't come."""
+def test_open_when_the_server_stops_while_starting(monkeypatch, tmp_path):
+    """The server stopped while starting: say so at once instead of waiting minutes for an answer that can't
+    come, unless another research brain holds the port and is still starting there: that one is waited for."""
     from app import launcher
     monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: _Stopped())
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
     asked = []
     monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: asked.append(1) is not None)
     monkeypatch.setattr(launcher, "_port_busy", lambda port: False)
-    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: _Stopped())
-    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
     assert launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799") is False
     assert len(asked) < 5
-
-
-def test_open_keeps_waiting_when_another_server_holds_the_port(monkeypatch, tmp_path):
-    """serve stops at once when the port is taken: a research brain that is still starting there is waited for."""
-    from app import launcher
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
     answers = iter([False] * 6 + [True])
     monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: next(answers, True))
     monkeypatch.setattr(launcher, "_port_busy", lambda port: True)
-    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: _Stopped())
-    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
     assert launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799") is True
 
 
@@ -69,7 +62,11 @@ def test_serve_hands_its_output_to_the_server_on_windows(monkeypatch):
     assert kw["stdout"] == kw["stderr"] == cli.subprocess.DEVNULL
 
 
-def test_open_reuses_a_running_server(monkeypatch):
+def test_open_reuses_a_running_server_or_starts_one_that_quits_when_closed(monkeypatch, tmp_path):
+    """cmd_open opens a window on a server already running; otherwise it starts a detached `serve
+    --quit-when-closed --no-open` (with the profile) and waits for it; it starts one only after a stopping
+    server has let go of the port; nothing answering means not running; and that server is told to quit
+    by itself once idle."""
     from app import launcher
     opened, started = [], []
     monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: True)
@@ -78,9 +75,7 @@ def test_open_reuses_a_running_server(monkeypatch):
     assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 0
     assert opened == ["http://127.0.0.1:8799/?app=1"] and started == []
 
-
-def test_open_starts_a_server_that_quits_when_closed(monkeypatch, tmp_path):
-    from app import launcher
+    # nothing running: a server is started
     monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
     calls = {"status": 0}
 
@@ -97,9 +92,73 @@ def test_open_starts_a_server_that_quits_when_closed(monkeypatch, tmp_path):
     assert "serve" in args and "--quit-when-closed" in args and "--no-open" in args and args[-2:] == ["--profile", "lab"]
     assert kw.get("start_new_session") or kw.get("creationflags")  # detached from the launcher
 
+    # a server still stopping holds the port: wait for it
+    busy = iter([True, True, True, False])
+    monkeypatch.setattr(launcher, "_port_busy", lambda port: next(busy, False))
+    monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: False)
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
+    order = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: order.append("started") or _Running())
+    launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799")
+    assert order == ["started"] and next(busy, "done") == "done"  # started only after the port was free
 
-def test_app_window_prefers_a_chromium_browser(monkeypatch):
-    from app import launcher
+    # the real status check says "not running" when nothing answers on the port
+    monkeypatch.undo()
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+    assert launcher._status_ok(f"http://127.0.0.1:{free}", timeout=0.5) is False
+    # and "running" when /api/status answers
+    import http.server
+    import threading
+
+    class Status(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200 if self.path == "/api/status" else 404)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *a):
+            pass
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), Status)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        assert launcher._status_ok(f"http://127.0.0.1:{httpd.server_port}") is True
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    # the server started that way quits on its own once its windows are gone (RB_IDLE_EXIT, unless already set)
+    from app import cli
+    children = []
+
+    class Child:
+        def __init__(self, args, env=None, **kw):
+            children.append(env)
+
+        def wait(self, *a):
+            return 0
+
+        def poll(self):
+            return 0
+    monkeypatch.delenv("RB_IDLE_EXIT", raising=False)
+    monkeypatch.setenv("RB_VAULT", str(tmp_path / "serve-vault"))  # cmd_serve sets it; restored afterwards
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "serve-data"))
+    monkeypatch.setattr(cli.subprocess, "Popen", Child)
+    monkeypatch.setattr(cli, "_port_in_use", lambda host, port: False)
+    monkeypatch.setattr(cli.signal, "signal", lambda *a: None)
+    monkeypatch.setattr(cli, "_claude_hint", lambda: None)
+    a = types.SimpleNamespace(host="127.0.0.1", port=free, vault=str(tmp_path / "serve-vault"), profile="",
+                              no_open=True, quit_when_closed=True, log_level="warning")
+    assert cli.cmd_serve(a) == 0
+    assert children and children[0]["RB_IDLE_EXIT"] == "180"
+
+
+def test_the_window_is_the_native_mac_one_a_chromium_app_or_the_browser(monkeypatch):
+    """RB_APP_WINDOW=browser (the fixture) switches the native window off; open_window prefers a Chromium app
+    window and falls back to the browser with RB_APP_WINDOW=0; cmd_open uses the native Mac window when it can."""
+    from app import launcher, macwindow
+    assert not macwindow.available()  # RB_APP_WINDOW=browser (the fixture) switches it off
     runs = []
     monkeypatch.setattr(launcher, "_chromium", lambda: "/usr/bin/chromium")
     monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: runs.append(args))
@@ -107,11 +166,58 @@ def test_app_window_prefers_a_chromium_browser(monkeypatch):
     monkeypatch.setenv("RB_APP_WINDOW", "0")
     monkeypatch.setattr(launcher.webbrowser, "open", lambda u: runs.append(["browser", u]))
     assert launcher.open_window("http://127.0.0.1:1") == "browser"
+    monkeypatch.setenv("RB_APP_WINDOW", "browser")
+    monkeypatch.setattr(macwindow, "available", lambda: True)
+    ran = []
+    monkeypatch.setattr(macwindow, "run", lambda url, start: ran.append((url, start)) or 0)
+    monkeypatch.setattr(launcher, "open_window", lambda url: pytest.fail("no Chrome window on a Mac"))
+    assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 0
+    assert ran[0][0] == "http://127.0.0.1:8799" and callable(ran[0][1])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pretends to be Linux (os.name), which pathlib can't do on Windows")
+def test_a_failed_start_says_so_without_a_terminal(monkeypatch, tmp_path):
+    """From the Start menu or app menu there's no terminal: a failed start shows a dialog instead of nothing."""
+    from app import launcher
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("RB_NO_ALERT", raising=False)
+    monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: False)
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
+    monkeypatch.setattr(launcher.sys, "platform", "linux")
+    monkeypatch.setattr(launcher.os, "name", "posix")
+    monkeypatch.setattr(launcher.sys, "stderr", None)  # what pythonw and a menu launch give you
+    monkeypatch.setattr(launcher.shutil, "which", lambda n: "/usr/bin/zenity" if n == "zenity" else None)
+    shown = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **k: shown.append(cmd) or _Running())
+    assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 1
+    dialog = shown[-1]
+    assert dialog[:2] == ["zenity", "--error"] and "app.log" in dialog[-1]
 
 
 def test_install_app_entries(monkeypatch, tmp_path):
-    from app import launcher
+    """With the native window the Mac app's executable becomes `research-brain open` (exec): one Dock icon, which
+    is the window itself. Linux gets an app-menu entry; without the native window the Mac app bundle shows errors
+    instead of doing nothing; removing touches only RB_MAC_APP_DIR."""
+    from app import launcher, macwindow
     monkeypatch.setattr(launcher, "_command", lambda: "/opt/rb/bin/research-brain")
+    # native window: the executable is the window
+    real_available = macwindow.available
+    monkeypatch.setenv("RB_MAC_APP_DIR", str(tmp_path / "Native"))
+    monkeypatch.setattr(macwindow, "available", lambda: True)
+    monkeypatch.setattr(launcher, "_mac_register", lambda app: None)
+    assert "Keep in Dock" in launcher._mac_app(False)
+    app = tmp_path / "Native" / "research brain.app" / "Contents"
+    plist = (app / "Info.plist").read_text(encoding="utf-8")
+    assert "<key>CFBundleExecutable</key><string>research-brain</string>" in plist
+    assert "LSUIElement" not in plist and "local.research-brain.launcher" in plist
+    exe = app / "MacOS" / "research-brain"
+    script = exe.read_text(encoding="utf-8")
+    assert 'exec "$RB" open >>"$LOG" 2>&1' in script and 'RB="/opt/rb/bin/research-brain"' in script
+    if os.name != "nt":
+        assert os.access(exe, os.X_OK)
+        r = subprocess.run(["sh", str(exe)], capture_output=True, env=dict(os.environ, RB_NO_ALERT="1"), timeout=20)
+        assert r.returncode == 1  # the command isn't there: says so, doesn't hang
+    monkeypatch.setattr(macwindow, "available", real_available)  # RB_APP_WINDOW=browser: off again
     # Linux: an app-menu entry that runs `open`, no terminal
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
     out = launcher._linux_desktop(False)
@@ -183,7 +289,9 @@ def test_server_stops_after_its_windows_close(tmp_path):
             p.kill()
 
 
-def test_quit_endpoint_stops_the_server(client, monkeypatch):  # noqa: F811
+def test_quit_stops_the_server_and_a_stopping_server_says_so(client, monkeypatch):  # noqa: F811
+    """POST /api/quit (JSON only, never a form post another website could send) raises SIGINT. Quit stops the
+    server in the background: until it's gone it answers 503, so an app opened again right away doesn't attach to it."""
     import signal
     import time as _t
     hits = []
@@ -196,19 +304,25 @@ def test_quit_endpoint_stops_the_server(client, monkeypatch):  # noqa: F811
     assert hits == [signal.SIGINT]
     # not as a form post (what another website could send without asking)
     assert client.post("/api/quit", data={"x": "1"}).status_code in (400, 403, 415, 422)
+    from app import server
+    server.STOPPING[0] = True
+    try:
+        r = client.get("/api/status")
+    finally:
+        server.STOPPING[0] = False
+    assert r.status_code == 503 and r.json()["stopping"]
 
 
-def test_mac_applet_source_starts_in_background_and_quits_with_the_server():
+def test_mac_applet_starts_in_background_quits_with_the_server_and_really_compiles(tmp_path, monkeypatch):
+    """The AppleScript applet source (quoting, reopen/idle/quit handlers, /api/quit); on macOS, osacompile builds
+    an applet that stays open with the brain icon (RB_APP_WINDOW=browser: the AppleScript app, used without pywebview)."""
     from app import launcher
     src = launcher._mac_applet_source('/opt/my "rb"/research-brain', 8765)
     assert 'property rbCmd : "/opt/my \\"rb\\"/research-brain"' in src
     assert "on reopen" in src and "on idle" in src and "continue quit" in src
     assert "/api/quit" in src and "http://127.0.0.1:8765" in src and "</dev/null >/dev/null 2>&1 &" in src
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="osacompile is part of macOS")
-def test_mac_applet_really_compiles(tmp_path, monkeypatch):
-    from app import launcher  # (RB_APP_WINDOW=browser: the AppleScript app, used without pywebview)
+    if sys.platform != "darwin":
+        pytest.skip("osacompile is part of macOS")
     monkeypatch.setenv("RB_MAC_APP_DIR", str(tmp_path))
     monkeypatch.setattr(launcher, "_command", lambda: "/opt/rb/bin/research-brain")
     monkeypatch.setattr(launcher, "_mac_register", lambda app: None)  # don't register a test app with Spotlight
@@ -226,10 +340,12 @@ def test_mac_applet_really_compiles(tmp_path, monkeypatch):
     assert "/opt/rb/bin/research-brain" in src
 
 
-def test_package_never_imports_itself_as_app():
+def test_the_package_imports_only_relatively_and_under_its_installed_name(tmp_path):
     """Installed, app/ is the research_brain package, so `from app import x` inside it only works from a
-    checkout: the server the Mac app starts died on import and the app never opened."""
+    checkout: the server the Mac app starts died on import and the app never opened. Also runs what
+    `research-brain open` runs: research_brain.server, with no `app` package around."""
     import ast
+    import shutil
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent / "app"
     bad = []
@@ -239,12 +355,6 @@ def test_package_never_imports_itself_as_app():
                 [node.module or ""] if isinstance(node, ast.ImportFrom) and node.level == 0 else []
             bad += [f"{f.relative_to(root)}:{node.lineno}" for n in names if n == "app" or n.startswith("app.")]
     assert bad == []
-
-
-def test_server_imports_under_its_installed_name(tmp_path):
-    """What `research-brain open` runs: uvicorn research_brain.server:app, with no `app` package around."""
-    import shutil
-    from pathlib import Path
     repo = Path(__file__).resolve().parent.parent
     pkg = tmp_path / "research_brain"
     shutil.copytree(repo / "app", pkg, ignore=shutil.ignore_patterns("__pycache__"))
@@ -274,8 +384,11 @@ def test_windows_shortcut_has_the_brain_icon_and_no_console(monkeypatch, tmp_pat
     assert "icon.ico'" in ps and (launcher.paths.app_root() / "static" / "icons" / "icon.ico").is_file()
 
 
-def test_windows_icon_is_a_real_ico_with_the_sizes_windows_uses():
+def test_icons_are_a_real_windows_ico_and_a_rounded_mac_png():
+    """icon.ico holds PNGs in the sizes Windows uses. The Dock wants a rounded square with a transparent margin
+    (Apple's 824-in-1024 grid); the full-bleed web icon showed as a sharp square."""
     import struct
+    import zlib
     from pathlib import Path
     data = (Path(__file__).resolve().parent.parent / "static" / "icons" / "icon.ico").read_bytes()
     reserved, kind, count = struct.unpack_from("<HHH", data)
@@ -286,65 +399,24 @@ def test_windows_icon_is_a_real_ico_with_the_sizes_windows_uses():
         assert data[off:off + 8] == b"\x89PNG\r\n\x1a\n" and off + size <= len(data)
         sizes.add(w or 256)
     assert {16, 32, 48, 256} <= sizes
+    data = (Path(__file__).resolve().parent.parent / "static" / "icons" / "icon-mac.png").read_bytes()
+    w, h, depth, color = struct.unpack(">IIBB", data[16:26])
+    assert data[:8] == b"\x89PNG\r\n\x1a\n" and (w, h, depth, color) == (1024, 1024, 8, 6)  # 8-bit RGBA
+    raw, pos = b"", 8
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        if kind == b"IDAT":
+            raw += data[pos + 8:pos + 8 + n]
+        pos += 12 + n
+    first = zlib.decompress(raw)[:1 + 4 * w]  # filter byte + the top row
+    assert first[0] == 0 and first[1 + 3] == 0 and first[1 + 4 * 512 + 3] == 0  # the top edge is transparent
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="pretends to be Linux (os.name), which pathlib can't do on Windows")
-def test_a_failed_start_says_so_without_a_terminal(monkeypatch, tmp_path):
-    """From the Start menu or app menu there's no terminal: a failed start shows a dialog instead of nothing."""
-    from app import launcher
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("RB_NO_ALERT", raising=False)
-    monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: False)
-    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
-    monkeypatch.setattr(launcher.sys, "platform", "linux")
-    monkeypatch.setattr(launcher.os, "name", "posix")
-    monkeypatch.setattr(launcher.sys, "stderr", None)  # what pythonw and a menu launch give you
-    monkeypatch.setattr(launcher.shutil, "which", lambda n: "/usr/bin/zenity" if n == "zenity" else None)
-    shown = []
-    monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **k: shown.append(cmd) or _Running())
-    assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 1
-    dialog = shown[-1]
-    assert dialog[:2] == ["zenity", "--error"] and "app.log" in dialog[-1]
-
-
-def test_open_uses_the_native_mac_window_when_it_can(monkeypatch):
-    from app import launcher, macwindow
-    monkeypatch.setattr(macwindow, "available", lambda: True)
-    ran = []
-    monkeypatch.setattr(macwindow, "run", lambda url, start: ran.append((url, start)) or 0)
-    monkeypatch.setattr(launcher, "open_window", lambda url: pytest.fail("no Chrome window on a Mac"))
-    assert launcher.cmd_open(types.SimpleNamespace(port=8799, profile="")) == 0
-    assert ran[0][0] == "http://127.0.0.1:8799" and callable(ran[0][1])
-
-
-def test_native_window_switch():
-    from app import macwindow
-    assert not macwindow.available()  # RB_APP_WINDOW=browser (the fixture) switches it off
-
-
-def test_mac_app_becomes_the_window(monkeypatch, tmp_path):
-    """With the native window, the app's executable becomes `research-brain open` (exec): one Dock icon,
-    which is the window itself, and Quit closes it."""
-    from app import launcher, macwindow
-    monkeypatch.setenv("RB_MAC_APP_DIR", str(tmp_path))
-    monkeypatch.setattr(macwindow, "available", lambda: True)
-    monkeypatch.setattr(launcher, "_command", lambda: "/opt/rb/bin/research-brain")
-    monkeypatch.setattr(launcher, "_mac_register", lambda app: None)
-    assert "Keep in Dock" in launcher._mac_app(False)
-    app = tmp_path / "research brain.app" / "Contents"
-    plist = (app / "Info.plist").read_text(encoding="utf-8")
-    assert "<key>CFBundleExecutable</key><string>research-brain</string>" in plist
-    assert "LSUIElement" not in plist and "local.research-brain.launcher" in plist
-    exe = app / "MacOS" / "research-brain"
-    script = exe.read_text(encoding="utf-8")
-    assert 'exec "$RB" open >>"$LOG" 2>&1' in script and 'RB="/opt/rb/bin/research-brain"' in script
-    if os.name != "nt":
-        assert os.access(exe, os.X_OK)
-        r = subprocess.run(["sh", str(exe)], capture_output=True, env=dict(os.environ, RB_NO_ALERT="1"), timeout=20)
-        assert r.returncode == 1  # the command isn't there: says so, doesn't hang
-
-
-def test_window_messages_from_the_page(monkeypatch):
+def test_window_messages_from_the_page_and_text_selection(monkeypatch):
+    """The page's messages to the Mac window: keep-clear areas, opening only http(s) links, dictation on and off,
+    and closing with unsaved edits only once the page says so. pywebview blocks text selection on the whole page
+    unless the window asks for it."""
+    from pathlib import Path
     from app import macwindow
     opened = []
     monkeypatch.setattr(macwindow.webbrowser, "open", lambda u: opened.append(u))
@@ -377,6 +449,10 @@ def test_window_messages_from_the_page(monkeypatch):
             break
         time.sleep(0.01)
     assert h.may_close and destroyed == [1]
+    src = (Path(__file__).resolve().parent.parent / "app" / "macwindow.py").read_text()
+    call = src[src.index("webview.create_window("):]
+    call = call[:call.index(")\n")]
+    assert "text_select=True" in call
 
 
 def test_window_header_drags_except_on_its_buttons(monkeypatch):
@@ -413,56 +489,3 @@ def test_window_header_drags_except_on_its_buttons(monkeypatch):
     assert press(150, 300) is not None                         # the map
     assert press(150, 26, w=window(full_screen=True)) is not None
     assert len(did) == n
-
-
-def test_mac_icon_is_a_rounded_icon_not_a_square():
-    """The Dock wants a rounded square with a transparent margin (Apple's 824-in-1024 grid); the full-bleed
-    web icon showed as a sharp square."""
-    import struct
-    import zlib
-    from pathlib import Path
-    data = (Path(__file__).resolve().parent.parent / "static" / "icons" / "icon-mac.png").read_bytes()
-    w, h, depth, color = struct.unpack(">IIBB", data[16:26])
-    assert data[:8] == b"\x89PNG\r\n\x1a\n" and (w, h, depth, color) == (1024, 1024, 8, 6)  # 8-bit RGBA
-    raw, pos = b"", 8
-    while pos < len(data):
-        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
-        if kind == b"IDAT":
-            raw += data[pos + 8:pos + 8 + n]
-        pos += 12 + n
-    first = zlib.decompress(raw)[:1 + 4 * w]  # filter byte + the top row
-    assert first[0] == 0 and first[1 + 3] == 0 and first[1 + 4 * 512 + 3] == 0  # the top edge is transparent
-
-
-def test_a_stopping_server_says_so(client):  # noqa: F811
-    """Quit stops the server in the background: until it's gone it answers 503, so an app opened again
-    right away doesn't attach to it."""
-    from app import server
-    server.STOPPING[0] = True
-    try:
-        r = client.get("/api/status")
-    finally:
-        server.STOPPING[0] = False
-    assert r.status_code == 503 and r.json()["stopping"]
-
-
-def test_open_waits_for_a_stopping_server_to_let_go(monkeypatch, tmp_path):
-    from app import launcher
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path))
-    busy = iter([True, True, True, False])
-    monkeypatch.setattr(launcher, "_port_busy", lambda port: next(busy, False))
-    monkeypatch.setattr(launcher, "_status_ok", lambda url, timeout=1.0: False)
-    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
-    order = []
-    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: order.append("started") or _Running())
-    launcher._start_server(types.SimpleNamespace(port=8799, profile=""), "http://127.0.0.1:8799")
-    assert order == ["started"] and next(busy, "done") == "done"  # started only after the port was free
-
-
-def test_mac_window_lets_you_select_text():
-    """pywebview blocks text selection on the whole page unless the window asks for it."""
-    from pathlib import Path
-    src = (Path(__file__).resolve().parent.parent / "app" / "macwindow.py").read_text()
-    call = src[src.index("webview.create_window("):]
-    call = call[:call.index(")\n")]
-    assert "text_select=True" in call

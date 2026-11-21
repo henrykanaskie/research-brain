@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from test_api import client  # noqa: F401  (fixture)
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
@@ -26,6 +28,8 @@ def rel(store, nid):
 
 
 def test_each_kind_has_its_folder_and_a_readable_file(store):
+    """Papers, notes, questions and highlights go to their own folders under readable names (made safe for every
+    file system), with only the non-empty fields in the front matter."""
     p = store.create({"type": "paper", "title": "Helium line ratios", "year": 1996, "authors": ["A. One", "B. Two"]})
     n = store.create({"type": "note", "title": "My idea: plasma / CRM?"})
     q = store.create({"type": "question", "title": "Why are cross sections useful?"})
@@ -40,9 +44,16 @@ def test_each_kind_has_its_folder_and_a_readable_file(store):
     assert "links:" not in text and "doi:" not in text and "abstract:" not in text  # empty fields left out
     got = store.get(p["id"])
     assert got["links"] == [] and got["doi"] == "" and got["authors"] == ["A. One", "B. Two"]
+    from app.layout import safe_name
+    assert safe_name('a/b\\c:d*e?f"g<h>i|j#k^l[m]') == "a b c d e f g h i j k l m"
+    assert safe_name("  ...  ") == "Untitled" and safe_name("CON") == "CON note"
+    long = safe_name("word " * 40)
+    assert len(long) <= 90 and not long.endswith(" ")
 
 
 def test_renaming_moves_the_file_and_the_highlights_follow(store):
+    """Renaming moves the file (and the paper's highlights folder) and keeps ids and links; a case-only rename
+    is one file; your own subfolders are kept on a rename; deleting the last highlight tidies its folder."""
     p = store.create({"type": "paper", "title": "Old title", "year": 2020})
     f = store.create({"type": "fragment", "title": "p.1", "parent": p["id"], "quote": "a passage", "page": 1})
     n = store.create({"type": "note", "title": "Linked note"})
@@ -56,15 +67,17 @@ def test_renaming_moves_the_file_and_the_highlights_follow(store):
     store.update(p["id"], {"title": "new title"})  # only the case changes (one file on macOS and Windows)
     assert store.note_path(p["id"]).name == "new title (2020).md" and store.get(p["id"])["title"] == "new title"
     assert len(list((store.docs / "Papers").glob("*.md"))) == 1
-
-
-def test_your_own_subfolders_are_kept(store):
     n = store.create({"type": "note", "title": "Filed away"})
     sub = store.docs / "Notes" / "Thesis"
     sub.mkdir()
     store.note_path(n["id"]).replace(sub / "Filed away.md")
     store.update(n["id"], {"title": "Filed and renamed"})
     assert rel(store, n["id"]) == "Notes/Thesis/Filed and renamed.md"
+    p = store.create({"type": "paper", "title": "P"})
+    f = store.create({"type": "fragment", "title": "p.1", "parent": p["id"], "quote": "q", "page": 1})
+    folder = store.note_path(f["id"]).parent
+    store.delete(f["id"])
+    assert not folder.exists() and store.exists(p["id"])
 
 
 def test_files_made_outside_the_app(store):
@@ -76,22 +89,12 @@ def test_files_made_outside_the_app(store):
     a = store.create({"type": "note", "title": "Original"})
     (store.notes_dir / "Original copy.md").write_text(store.note_path(a["id"]).read_text(encoding="utf-8"))
     assert store.note_path(a["id"]).name == "Original.md" and len(store.all()) == 2
-
-
-def test_deleting_tidies_an_empty_highlights_folder(store):
-    p = store.create({"type": "paper", "title": "P"})
-    f = store.create({"type": "fragment", "title": "p.1", "parent": p["id"], "quote": "q", "page": 1})
-    folder = store.note_path(f["id"]).parent
-    store.delete(f["id"])
-    assert not folder.exists() and store.exists(p["id"])
-
-
-def test_safe_names():
-    from app.layout import safe_name
-    assert safe_name('a/b\\c:d*e?f"g<h>i|j#k^l[m]') == "a b c d e f g h i j k l m"
-    assert safe_name("  ...  ") == "Untitled" and safe_name("CON") == "CON note"
-    long = safe_name("word " * 40)
-    assert len(long) <= 90 and not long.endswith(" ")
+    # hidden files and folders (an editor's or the system's, such as .obsidian or ._ copies) are never notes
+    (store.notes_dir / ".hidden").mkdir()
+    (store.notes_dir / ".hidden" / "secret.md").write_text("---\nid: secret\ntitle: Secret\n---\n", encoding="utf-8")
+    (store.notes_dir / "._Original.md").write_text("---\nid: dotted\ntitle: Dotted\n---\n", encoding="utf-8")
+    ids = set(store.layout.scan())
+    assert "secret" not in ids and "dotted" not in ids and a["id"] in ids
 
 
 def test_the_documents_folder(tmp_path, monkeypatch):
@@ -137,9 +140,10 @@ def _old_library(v: Path) -> dict:
     return files
 
 
-def test_migration_keeps_every_file_and_its_text(tmp_path, monkeypatch):
+def test_migration_keeps_every_file_and_its_text_and_resumes_when_interrupted(tmp_path, monkeypatch):
     """Regression: on a case-insensitive disk notes/ and Notes/ are one folder; an early version of this
-    migration took files for their own copies and deleted them."""
+    migration took files for their own copies and deleted them. A migration cut off part way resumes on the
+    next run without duplicates."""
     monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
     from app import migrate
     v = tmp_path / "lib"
@@ -161,11 +165,8 @@ def test_migration_keeps_every_file_and_its_text(tmp_path, monkeypatch):
     assert s.get("an-idea")["links"] == ["plasma-paper-1996"] and s.get("plasma-paper-1996")["has_pdf"]
     assert migrate.run(v, log=lambda m: None)["applied"] == []
 
-
-def test_an_interrupted_migration_resumes(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
-    from app import migrate
-    v = tmp_path / "lib"
+    # a power cut part way through: the next run finishes it
+    v = tmp_path / "lib2"
     _old_library(v)
     calls = {"n": 0}
     real = Path.unlink
@@ -180,20 +181,22 @@ def test_an_interrupted_migration_resumes(tmp_path, monkeypatch):
         migrate.run(v, log=lambda m: None)
     monkeypatch.setattr(Path, "unlink", real)
     assert migrate.run(v, log=lambda m: None)["applied"] == [2]
-    from app.store import Store
     s = Store(v)
     assert len(s.all()) == 5 and len(list((v / "Notes").glob("An idea*.md"))) == 1  # no duplicates
 
 
-from test_api import client  # noqa: E402,F401  (fixture)
-
-
-def test_library_settings_show_the_documents_folder(client):  # noqa: F811
+def test_library_settings_and_obsidian_style_links(client):  # noqa: F811
+    """Library settings show the documents folder with counts per kind; [[Title (1996)]] (a paper's file name,
+    how Obsidian links) finds the paper in the app too."""
     client.post("/api/notes", json={"type": "paper", "title": "A paper"})
     client.post("/api/notes", json={"type": "question", "title": "A question"})
     d = client.get("/api/documents-folder").json()
     assert d["papers"] == 1 and d["questions"] == 1 and d["notes"] == 0
     assert (Path(d["folder"]) / "Papers" / "A paper.md").exists()
+    p = client.post("/api/notes", json={"type": "paper", "title": "Helium ratios", "year": 1996}).json()
+    n = client.post("/api/notes", json={"type": "note", "title": "Linker", "body": "see [[Helium ratios (1996)]]"}).json()
+    links = client.get("/api/graph").json()["links"]
+    assert any(l["kind"] == "mention" and {l["source"], l["target"]} == {n["id"], p["id"]} for l in links)
 
 
 @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git not installed")
@@ -213,19 +216,14 @@ def test_backup_covers_the_documents_folder(tmp_path, monkeypatch):
     assert "Notes/Backed up.md" in files and not any(f.startswith("PDFs/") for f in files)
 
 
-def test_obsidian_style_links_by_file_name_resolve(client):  # noqa: F811
-    """[[Title (1996)]] (a paper's file name, how Obsidian links) finds the paper in the app too."""
-    p = client.post("/api/notes", json={"type": "paper", "title": "Helium ratios", "year": 1996}).json()
-    n = client.post("/api/notes", json={"type": "note", "title": "Linker", "body": "see [[Helium ratios (1996)]]"}).json()
-    links = client.get("/api/graph").json()["links"]
-    assert any(l["kind"] == "mention" and {l["source"], l["target"]} == {n["id"], p["id"]} for l in links)
-
-
-def test_files_vanishing_for_a_moment_dont_empty_the_library(store, monkeypatch):
-    """iCloud Drive (or a folder being moved) can hide every file for a moment: the notes stay until a later
-    scan confirms they're gone. Deleting a few is immediate."""
+def test_deleted_notes_go_at_once_but_files_vanishing_for_a_moment_dont_empty_the_library(store, monkeypatch):
+    """Deleting a few notes is immediate. iCloud Drive (or a folder being moved) can hide every file for a moment:
+    the notes stay until a later scan confirms they're gone."""
     import shutil
-    ids = [store.create({"type": "note", "title": f"Note {i}"})["id"] for i in range(8)]
+    first = [store.create({"type": "note", "title": f"Note {i}"})["id"] for i in range(8)]
+    os.remove(store.note_path(first[0]))
+    assert len(store.all()) == 7
+    ids = first[1:] + [store.create({"type": "note", "title": "Note 8"})["id"]]
     assert len(store.all()) == 8
     if not store._meta_ok():
         pytest.skip("no SQLite index here")
@@ -243,9 +241,3 @@ def test_files_vanishing_for_a_moment_dont_empty_the_library(store, monkeypatch)
     assert len(store.all()) == 8
     clock[0] += 10
     assert store.all() == []
-
-
-def test_deleting_a_few_notes_is_immediate(store):
-    ids = [store.create({"type": "note", "title": f"Note {i}"})["id"] for i in range(8)]
-    os.remove(store.note_path(ids[0]))
-    assert len(store.all()) == 7

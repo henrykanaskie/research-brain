@@ -114,10 +114,21 @@ def no_hscroll(page, what):
     assert not wide, f"{what}: content wider than its view: {wide}"
 
 
-@pytest.mark.parametrize("device", PHONES)
-def test_tab_bar_navigation(browser, pw, server, device):
-    c = context(browser, pw, server, device)
-    page = open_app(c, server)
+def test_phone_tab_bar_note_sheet_and_touch_targets(browser, pw, server):
+    """On each phone, in one page: the tab bar walks Library, Graph, Add, Ask and back with no sideways scroll and
+    To read triage works; a note opens as a full-width sheet with 17px reading text and swipes closed; every touch
+    target is at least 44px and there is no keyboard UI (gesture tips instead of shortcuts)."""
+    for device in PHONES:
+        c = context(browser, pw, server, device)
+        page = open_app(c, server)
+        _tab_bar_navigation(page, server, device)
+        _note_opens_as_sheet_and_swipes_closed(page, device)
+        _touch_targets_and_no_keyboard_ui(page, device)
+        assert not page.errors and not c.external, (device, page.errors, c.external)
+        c.close()
+
+
+def _tab_bar_navigation(page, server, device):
     tabs = page.locator("#m-tabs .m-tab")
     expect(tabs).to_have_count(5)
     expect(page.locator("#m-library")).to_be_visible()
@@ -126,25 +137,25 @@ def test_tab_bar_navigation(browser, pw, server, device):
     # desktop chrome is out of the way
     expect(page.locator("#search-input")).to_be_hidden()
     expect(page.locator("#btn-chat")).to_be_hidden()
-    no_hscroll(page, "library")
+    no_hscroll(page, f"{device} library")
 
     page.locator(".m-tab[data-tab=graph]").tap()
     expect(page.locator("#m-library")).to_be_hidden()
     expect(page.locator("#graph canvas").first).to_be_visible()
     expect(page.locator("#m-title")).to_have_text("Graph")
-    no_hscroll(page, "graph")
+    no_hscroll(page, f"{device} graph")
 
     page.locator(".m-tab[data-tab=add]").tap()
     expect(page.locator("#m-add")).to_be_visible()
     expect(page.locator("#m-link")).to_be_visible()
-    no_hscroll(page, "add")
+    no_hscroll(page, f"{device} add")
 
     page.locator(".m-tab[data-tab=ask]").tap()
     expect(page.locator("#chat")).to_be_visible()
     box = page.locator("#chat").bounding_box()
     vw = page.viewport_size["width"]
-    assert box["x"] == 0 and abs(box["width"] - vw) < 2
-    no_hscroll(page, "ask")
+    assert box["x"] == 0 and abs(box["width"] - vw) < 2, (device, box)
+    no_hscroll(page, f"{device} ask")
 
     page.locator(".m-tab[data-tab=library]").tap()
     expect(page.locator("#chat")).to_be_hidden()
@@ -157,16 +168,11 @@ def test_tab_bar_navigation(browser, pw, server, device):
     expect(page.locator(".m-row")).to_have_count(1)
     expect(page.locator(".toast", has_text="Parked for later")).to_be_visible()
     kr = [n for n in call(server["base"], "GET", "/api/graph")["nodes"] if n["title"].startswith("Krypton")][0]
-    assert kr["status"] == "later"
+    assert kr["status"] == "later", device
     call(server["base"], "PUT", f"/api/notes/{kr['id']}", {"status": "to-read"})
-    assert not page.errors and not c.external
-    c.close()
 
 
-@pytest.mark.parametrize("device", PHONES)
-def test_note_opens_as_sheet_and_swipes_closed(browser, pw, server, device):
-    c = context(browser, pw, server, device)
-    page = open_app(c, server)
+def _note_opens_as_sheet_and_swipes_closed(page, device):
     page.locator(".m-chip[data-f='all']").tap()
     page.locator(".m-row-main", has_text="A very long title").tap()
     panel = page.locator("#panel")
@@ -177,12 +183,12 @@ def test_note_opens_as_sheet_and_swipes_closed(browser, pw, server, device):
     page.wait_for_function("""(() => { const r = document.querySelector('#panel').getBoundingClientRect();
         return Math.abs(r.bottom - innerHeight) < 2 && r.width > 0; })()""", timeout=5000)
     box = panel.bounding_box()
-    assert box["x"] == 0 and abs(box["width"] - vw) < 2 and box["y"] < 60 and abs(box["y"] + box["height"] - vh) < 2
+    assert box["x"] == 0 and abs(box["width"] - vw) < 2 and box["y"] < 60 and abs(box["y"] + box["height"] - vh) < 2, (device, box)
     # the title isn't clipped
     page.wait_for_function("(() => { const t = document.querySelector('.title-input'); return t.scrollHeight <= t.clientHeight + 2; })()", timeout=5000)
     # reading text: 17px STIX; display maths scrolls inside itself
-    assert page.evaluate("getComputedStyle(document.querySelector('#panel .md') || document.querySelector('#panel .field')).fontSize") == "17px"
-    no_hscroll(page, "note sheet")
+    assert page.evaluate("getComputedStyle(document.querySelector('#panel .md') || document.querySelector('#panel .field')).fontSize") == "17px", device
+    no_hscroll(page, f"{device} note sheet")
     # drag the sheet's top edge down: it closes
     head = page.locator("#panel .panel-head").bounding_box()
     x, y = head["x"] + head["width"] / 2, head["y"] + 10
@@ -193,8 +199,34 @@ def test_note_opens_as_sheet_and_swipes_closed(browser, pw, server, device):
     page.mouse.up()
     expect(panel).to_be_hidden()
     expect(page.locator(".reopen-tab")).to_be_hidden()
-    assert not page.errors
-    c.close()
+    assert not page.errors, (device, page.errors)
+
+
+def _touch_targets_and_no_keyboard_ui(page, device):
+    assert page.evaluate("document.body.classList.contains('rb-touch')"), device
+
+    def small(sel):
+        return page.evaluate(f"""[...document.querySelectorAll({sel!r})].filter(e => e.offsetParent || getComputedStyle(e).position === 'fixed')
+            .map(e => e.getBoundingClientRect()).filter(r => r.width && (r.height < 44 || r.width < 44)).length""")
+    for sel in ("#m-tabs .m-tab", ".m-row-main", "#m-search"):
+        assert small(sel) == 0, (device, sel)
+    page.locator(".m-tab[data-tab=add]").tap()
+    assert small(".m-cap > .btn, .m-cap-item, #m-link") == 0, device
+    page.locator(".m-tab[data-tab=library]").tap()
+    page.locator(".m-row-main").first.tap()
+    expect(page.locator("#panel")).to_be_visible()
+    # the panel opens with a short animation: the close button must reach its full touch size (a second
+    # measurement afterwards could catch a slow machine mid-animation, so this wait is the check)
+    page.wait_for_function("""() => { const r = document.querySelector('#btn-panel-close').getBoundingClientRect();
+      return r.width >= 44 && r.height >= 44; }""", timeout=5000)
+    page.locator("#btn-panel-close").tap()
+    # no keyboard hints anywhere; the View menu offers gesture tips instead of shortcuts
+    assert page.evaluate("[...document.querySelectorAll('kbd')].filter(k => k.offsetParent).length") == 0, device
+    page.locator("#btn-view-menu").tap()
+    expect(page.locator("#btn-shortcuts")).to_be_hidden()
+    expect(page.locator("#btn-tips")).to_be_visible()
+    page.locator("#btn-tips").tap()
+    expect(page.locator(".m-tips")).to_contain_text("Tap a dot to select it")
 
 
 def test_share_target_saves_a_link(browser, pw, server):
@@ -243,50 +275,19 @@ def test_review_with_touch(browser, pw, server):
     c.close()
 
 
-@pytest.mark.parametrize("device", PHONES)
-def test_touch_targets_and_no_keyboard_ui(browser, pw, server, device):
-    c = context(browser, pw, server, device)
-    page = open_app(c, server)
-    assert page.evaluate("document.body.classList.contains('rb-touch')")
-
-    def small(sel):
-        return page.evaluate(f"""[...document.querySelectorAll({sel!r})].filter(e => e.offsetParent || getComputedStyle(e).position === 'fixed')
-            .map(e => e.getBoundingClientRect()).filter(r => r.width && (r.height < 44 || r.width < 44)).length""")
-    assert small("#m-tabs .m-tab") == 0
-    assert small(".m-row-main") == 0
-    assert small("#m-search") == 0
-    page.locator(".m-tab[data-tab=add]").tap()
-    assert small(".m-cap > .btn, .m-cap-item, #m-link") == 0
-    page.locator(".m-tab[data-tab=library]").tap()
-    page.locator(".m-row-main").first.tap()
-    expect(page.locator("#panel")).to_be_visible()
-    # the panel opens with a short animation: the close button must reach its full touch size (a second
-    # measurement afterwards could catch a slow machine mid-animation, so this wait is the check)
-    page.wait_for_function("""() => { const r = document.querySelector('#btn-panel-close').getBoundingClientRect();
-      return r.width >= 44 && r.height >= 44; }""", timeout=5000)
-    page.locator("#btn-panel-close").tap()
-    # no keyboard hints anywhere; the View menu offers gesture tips instead of shortcuts
-    assert page.evaluate("[...document.querySelectorAll('kbd')].filter(k => k.offsetParent).length") == 0
-    page.locator("#btn-view-menu").tap()
-    expect(page.locator("#btn-shortcuts")).to_be_hidden()
-    expect(page.locator("#btn-tips")).to_be_visible()
-    page.locator("#btn-tips").tap()
-    expect(page.locator(".m-tips")).to_contain_text("Tap a dot to select it")
-    c.close()
-
-
-def test_ipad_layout(browser, pw, server):
+def test_ipad_layout_and_desktop_layout_unchanged_at_1440(browser, pw, server):
+    """An iPad-sized touch screen gets the tab bar and a centred note column; a 1440px desktop keeps the desktop
+    chrome, the 52px top bar, the right-hand panel with 15/16px text and its keyboard hints."""
     c = context(browser, pw, server, viewport={"width": 820, "height": 1180}, has_touch=True, is_mobile=True, device_scale_factor=2)
     page = open_app(c, server)
     expect(page.locator("#m-tabs")).to_be_visible()
     page.locator(".m-row-main").first.tap()
     box = page.locator("#panel").bounding_box()
-    assert box["width"] <= 762 and box["x"] > 20  # a centred column, the field shows at its sides
+    assert box["width"] <= 762 and box["x"] > 20, box  # a centred column, the field shows at its sides
     no_hscroll(page, "ipad note")
     c.close()
 
-
-def test_desktop_layout_unchanged_at_1440(browser, pw, server):
+    # the desktop at 1440px
     c = context(browser, pw, server, viewport={"width": 1440, "height": 900})
     page = open_app(c, server)
     assert not page.evaluate("document.body.classList.contains('rb-m')")

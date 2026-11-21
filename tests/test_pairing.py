@@ -6,14 +6,13 @@ revoking locks the device out; paired devices can't reach the computer-only endp
 """
 from __future__ import annotations
 
-import importlib
 import json
-import sys
 import time
 import urllib.request
 
 import pytest
 
+from rb_app import load_server, purge_app
 from rb_testserver import run_server
 
 PHONE = ("100.101.102.7", 51000)
@@ -22,23 +21,14 @@ NAME = "my-mac.tail1234.ts.net"
 
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("RB_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("RB_FAKE_CLAUDE", "1")
-    monkeypatch.setenv("RB_EMBEDDER", "tfidf")
-    monkeypatch.setenv("RB_MEMORY_WATCH", "0")
-    monkeypatch.setenv("RB_WATCH", "0")
-    monkeypatch.setenv("RB_ALLOWED_HOSTS", NAME)
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
-    server = importlib.import_module("app.server")
+    server = load_server(monkeypatch, tmp_path, RB_DATA_DIR=tmp_path / "data", RB_MEMORY_WATCH="0", RB_WATCH="0",
+                         RB_ALLOWED_HOSTS=NAME)
     from fastapi.testclient import TestClient
     laptop = TestClient(server.app)  # in-process client: counts as this computer
     phone = TestClient(server.app, base_url=f"http://{NAME}", client=PHONE)
     other = TestClient(server.app, base_url=f"http://{NAME}", client=("100.101.102.9", 51000))
     yield laptop, phone, other, server
-    for m in [m for m in sys.modules if m.startswith("app")]:
-        del sys.modules[m]
+    purge_app()
 
 
 def pair(laptop, phone, name="Test phone"):
@@ -49,6 +39,8 @@ def pair(laptop, phone, name="Test phone"):
 
 
 def test_unpaired_device_gets_401(env):
+    """This computer needs no pairing; an unpaired device gets 401 (a pairing page for documents) for the API,
+    the page, the app code and PDFs, while what the pairing page itself needs stays open."""
     laptop, phone, *_ = env
     assert laptop.get("/api/graph").status_code == 200        # this computer: no pairing needed
     r = phone.get("/api/graph")
@@ -67,8 +59,11 @@ def test_unpaired_device_gets_401(env):
     assert phone.get("/manifest.webmanifest").status_code == 200
 
 
-def test_pairing_code_works_once(env):
-    laptop, phone, other, _ = env
+def test_pairing_codes_work_once_are_rate_limited_and_expire(env, monkeypatch):
+    """A pairing code pairs one device (a strict HttpOnly cookie, the token stored hashed outside the vault) and
+    is refused the second time; too many wrong codes from one client are a 429 even for a good code; and a code
+    past its lifetime is refused."""
+    laptop, phone, other, server = env
     start = laptop.post("/api/pair/start").json()
     assert start["expires_in"] == 600
     assert any(u["pair_url"].startswith(f"https://{NAME}/pair?code=") for u in start["urls"])
@@ -87,58 +82,56 @@ def test_pairing_code_works_once(env):
     devs = laptop.get("/api/devices").json()["devices"]
     assert [d["name"] for d in devs] == ["Pixel"]
     assert "hash" not in devs[0]
-    from app import paths
+    from app import pairing, paths
     raw = json.dumps(paths.load_settings())
     token = phone.cookies.get("rb_device")
     assert token and token not in raw
 
+    # rate limit: a client of its own, so only its failures count against it
+    from fastapi.testclient import TestClient
+    guesser = TestClient(server.app, base_url=f"http://{NAME}", client=("100.101.102.11", 51000))
+    for _ in range(pairing.FAIL_PER_CLIENT):
+        assert guesser.post("/api/pair/claim", json={"code": "wrong"}).status_code == 400
+    good = laptop.post("/api/pair/start").json()["code"]
+    assert guesser.post("/api/pair/claim", json={"code": good}).status_code == 429
 
-def test_pairing_code_expires(env, monkeypatch):
-    laptop, phone, *_ = env
-    from app import pairing
+    # expiry, on a device that never paired
+    late = TestClient(server.app, base_url=f"http://{NAME}", client=("100.101.102.12", 51000))
     code = laptop.post("/api/pair/start").json()["code"]
     real = time.monotonic
     monkeypatch.setattr(pairing.time, "monotonic", lambda: real() + pairing.CODE_TTL + 5)
-    r = phone.post("/api/pair/claim", json={"code": code})
+    r = late.post("/api/pair/claim", json={"code": code})
     assert r.status_code in (400, 410)
-    assert phone.get("/api/graph").status_code == 401
+    assert late.get("/api/graph").status_code == 401
 
 
-def test_revoke_locks_device_out(env):
+def test_paired_device_cannot_manage_computer_and_can_be_revoked(env):
+    """A paired device can read settings but not pair others, list devices, write auto-exports, switch agents
+    or export the vault; revoking it from the computer locks it out, and a device can unpair itself."""
     laptop, phone, *_ = env
     pair(laptop, phone)
     assert phone.get("/api/graph").status_code == 200
-    did = laptop.get("/api/devices").json()["devices"][0]["id"]
-    assert laptop.delete(f"/api/devices/{did}").status_code == 200
-    assert phone.get("/api/graph").status_code == 401
-    assert laptop.get("/api/devices").json()["devices"] == []
-
-
-def test_paired_device_cannot_manage_computer(env):
-    laptop, phone, *_ = env
-    pair(laptop, phone)
     assert phone.post("/api/pair/start").status_code == 403
     assert phone.get("/api/devices").status_code == 403
     assert phone.post("/api/cite/auto-exports", json={"path": "/tmp/x.bib"}).status_code == 403
     assert phone.put("/api/agents/active", json={"id": "claude"}).status_code == 403
     assert phone.get("/api/vault/export").status_code == 403
     assert phone.get("/api/settings").status_code == 200  # reading is fine
+    # revoked from the computer
+    did = laptop.get("/api/devices").json()["devices"][0]["id"]
+    assert laptop.delete(f"/api/devices/{did}").status_code == 200
+    assert phone.get("/api/graph").status_code == 401
+    assert laptop.get("/api/devices").json()["devices"] == []
     # the phone can unpair itself
+    pair(laptop, phone)
     assert phone.post("/api/device/forget").status_code == 200
     assert laptop.get("/api/devices").json()["devices"] == []
 
 
-def test_claims_are_rate_limited(env):
-    laptop, phone, *_ = env
-    from app import pairing
-    for _ in range(pairing.FAIL_PER_CLIENT):
-        assert phone.post("/api/pair/claim", json={"code": "wrong"}).status_code == 400
-    good = laptop.post("/api/pair/start").json()["code"]
-    assert phone.post("/api/pair/claim", json={"code": good}).status_code == 429
-
-
-def test_photo_capture_from_phone(env):
-    laptop, phone, *_ = env
+def test_phone_photo_capture_and_shortcut_token(env):
+    """A paired phone uploads a photo as a note with its attachment (PNG only, content checked); a Shortcut token
+    lets a device clip with a Bearer header, a wrong token is a 401, and the token can't make more tokens."""
+    laptop, phone, other, _ = env
     pair(laptop, phone)
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
     r = phone.post("/api/capture/photo?title=Whiteboard%20equation", content=png, headers={"Content-Type": "image/png"})
@@ -151,8 +144,21 @@ def test_photo_capture_from_phone(env):
     assert phone.post("/api/capture/photo", content=png, headers={"Content-Type": "text/plain"}).status_code == 415
     assert laptop.get("/attachments/..%2Fnotes").status_code == 404
 
+    r = laptop.post("/api/devices/token", json={"name": "iOS Shortcut"})
+    assert r.status_code == 201
+    tok = r.json()["token"]
+    body = {"quote": "Bohm criterion", "url": "", "page_title": "Phone inbox", "note": ""}
+    assert other.post("/api/clip", json=body).status_code == 401
+    ok = other.post("/api/clip", json=body, headers={"Authorization": f"Bearer {tok}"})
+    assert ok.status_code == 201, ok.text
+    assert other.post("/api/clip", json=body, headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert phone.post("/api/devices/token", json={}, headers={"Authorization": f"Bearer {tok}"}).status_code == 403
 
-def test_is_local_rules():
+
+def test_what_counts_as_this_computer(tmp_path):
+    """is_local: a loopback peer with a loopback Host, or the server's own address, is this computer; a ts.net
+    Host or proxy headers are not. On a real socket loopback works unpaired, and the same socket with a proxy's
+    Host and headers needs pairing."""
     from app.pairing import is_local
     loop = {"client": ("127.0.0.1", 1), "server": ("127.0.0.1", 8765)}
     assert is_local(loop, {"host": "127.0.0.1:8765"})
@@ -167,9 +173,6 @@ def test_is_local_rules():
     assert not is_local({"client": ("100.64.0.2", 2), "server": ("100.64.0.1", 8765)}, {"host": "100.64.0.1:8765"})
     assert not is_local({"client": ("0.0.0.0", 2), "server": ("0.0.0.0", 8765)}, {"host": "x"})
 
-
-def test_live_server_loopback_and_proxied(tmp_path):
-    """A real socket: loopback works unpaired; the same socket with a proxy's Host/headers needs pairing."""
     vault = tmp_path / "vault"
     with run_server(vault, env={"RB_ALLOWED_HOSTS": NAME, "RB_WATCH": "0", "RB_MEMORY_WATCH": "0"}) as srv:
         with urllib.request.urlopen(srv.base + "/api/graph", timeout=10) as r:
@@ -182,19 +185,6 @@ def test_live_server_loopback_and_proxied(tmp_path):
         with pytest.raises(urllib.error.HTTPError) as e:
             urllib.request.urlopen(req, timeout=10)
         assert e.value.code == 401
-
-
-def test_shortcut_token(env):
-    laptop, phone, other, _ = env
-    r = laptop.post("/api/devices/token", json={"name": "iOS Shortcut"})
-    assert r.status_code == 201
-    tok = r.json()["token"]
-    body = {"quote": "Bohm criterion", "url": "", "page_title": "Phone inbox", "note": ""}
-    assert other.post("/api/clip", json=body).status_code == 401
-    ok = other.post("/api/clip", json=body, headers={"Authorization": f"Bearer {tok}"})
-    assert ok.status_code == 201, ok.text
-    assert other.post("/api/clip", json=body, headers={"Authorization": "Bearer nope"}).status_code == 401
-    assert phone.post("/api/devices/token", json={}, headers={"Authorization": f"Bearer {tok}"}).status_code == 403
 
 
 def test_qr_encoder_decodes(tmp_path):
