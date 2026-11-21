@@ -40,6 +40,16 @@
   .bk-acts { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
   .bk-acts .bk-status { margin-right: auto; color: var(--ink-2); font-size: 13px; font-variant-numeric: tabular-nums; }
   .bk-bar { height: 2px; background: var(--rule); margin: 0 0 12px; }
+  .bk-sub { font: 600 13px/1.3 var(--sans); color: var(--ink-2); margin: 10px 0 4px; }
+  .bk-sections { width: 100%; min-height: 84px; resize: vertical; font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); box-sizing: border-box; margin: 2px 0 6px; }
+  .bk-group { border-bottom: 1px solid var(--rule); padding: 6px 0; }
+  .bk-group > .bk-ghead { display: grid; grid-template-columns: minmax(0, 1fr) 44px 110px; gap: 8px; align-items: center; }
+  .bk-group .n { text-align: right; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .bk-group details { font-size: 13px; color: var(--ink-2); margin: 3px 0 0; }
+  .bk-group details summary { cursor: pointer; }
+  .bk-group details li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bk-group ul { margin: 4px 0 2px; padding-left: 18px; }
+  .bk-note { color: var(--ink-2); font-size: 13px; line-height: 1.5; margin: 8px 0 0; }
   .bk-bar i { display: block; height: 100%; width: 0; background: var(--ink-2); transition: width .2s; }
   `;
   document.head.appendChild(h('style', { id: 'rb-bulk-style', text: CSS }));
@@ -95,11 +105,13 @@
     const go = h('button', { class: 'btn btn-primary', type: 'button', text: `Import ${pdfs.length}` });
     const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => { stop = true; d.close(); } });
     let stop = false;
+    const conn = connectBox(pdfs.length > 1);
     d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' }, opts.map(([v, label], i) => h('label', null, radios[i], label))),
+      pdfs.length > 1 ? h('div', { class: 'bk-opts' }, conn.row) : null,
       h('div', { class: 'bk-bar' }, bar), h('div', { class: 'bk-acts' }, status, cancel, go));
     go.addEventListener('click', async () => {
       const m = (radios.find((r) => r.checked) || radios[0]).value;
-      go.disabled = true; radios.forEach((r) => { r.disabled = true; }); d.setBusy(true);
+      go.disabled = true; radios.forEach((r) => { r.disabled = true; }); conn.box.disabled = true; d.setBusy(true);
       cancel.textContent = 'Stop'; cancel.onclick = () => { stop = true; status.textContent = 'Stopping…'; };
       const res = { added: 0, dup: 0, failed: [], ids: [] };
       // a long one can go on in the background, with the gauge in the corner
@@ -138,6 +150,13 @@
           window.dispatchEvent(new CustomEvent('rb:topics-changed'));
         } catch (e) { status.textContent = `${done} Couldn’t sort them into topics: ${e.message}`; }
         finally { cancel.disabled = false; }
+      }
+      if (conn.box.checked && res.ids.length > 1 && !stop) {
+        const line = h('p', { class: 'bk-note' });
+        status.closest('.bk-acts').before(line);
+        const job = await findConnections({ ids: res.ids }, (j) => { line.textContent = connectText(j); }, d.card);
+        const u = undoLinksButton(job, line);
+        if (u) line.append(' ', u);
       }
     });
   }
@@ -243,7 +262,14 @@
     if (!pv.pdfs) { d.card.append(h('div', { class: 'bk-acts' }, h('button', { class: 'btn', type: 'button', text: 'Close', onclick: d.close }))); return; }
     if (pv.online) d.card.append(h('p', { text: `${pv.online === pv.pdfs ? 'All of them are' : `${pv.online} of them are`} online only${pv.cloud ? ` in ${pv.cloud}` : ''}, and stay that way: nothing is downloaded now. Each is named from its file name and its details are looked up online; its text is read the first time you open it.` }));
     if (pv.known) d.card.append(h('p', { text: `${pv.known} of them are already in your library and stay as they are.` }));
-    d.card.append(h('p', { text: 'Each folder becomes a topic. Change a name, or clear it to leave that folder out of topics.' }));
+    const byFolder = h('input', { type: 'radio', name: 'bk-ltopic', value: 'folders' });
+    const byAI = h('input', { type: 'radio', name: 'bk-ltopic', value: 'ai' });
+    (nFolders > 1 ? byFolder : byAI).checked = true;  // subfolders: keep them; one flat folder: let the AI sort it
+    const conn = connectBox(pv.pdfs > 1);
+    d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' },
+      h('label', null, byFolder, nFolders > 1 ? 'A topic for each folder (change a name below, or clear it to leave that folder out of topics)' : `One topic for the folder (its name below)`),
+      h('label', null, byAI, 'Let the AI sort them into topics by what they’re about, whatever folder they’re in (it reads each paper’s title and opening, and reuses your topics where they fit)')),
+      pv.pdfs > 1 ? h('div', { class: 'bk-opts' }, conn.row) : null);
     const topics = new Set((pv.topics || []).map((t) => t.toLowerCase()));
     const inputs = new Map();
     const notes = new Map();
@@ -280,19 +306,28 @@
     const bar = h('i');
     const go = h('button', { class: 'btn btn-primary', type: 'button', text: `Add ${pv.pdfs - pv.known} PDF${pv.pdfs - pv.known === 1 ? '' : 's'}` });
     const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => d.close() });
-    d.card.append(list, h('div', { class: 'bk-acts bk-acts-l' }, suggest, reset), h('div', { class: 'bk-bar' }, bar), h('div', { class: 'bk-acts' }, status, cancel, go));
+    const nameTools = h('div', { class: 'bk-acts bk-acts-l' }, suggest, reset);
+    const onMode = () => { list.hidden = nameTools.hidden = byAI.checked; };
+    byFolder.addEventListener('change', onMode); byAI.addEventListener('change', onMode); onMode();
+    d.card.append(list, nameTools, h('div', { class: 'bk-bar' }, bar), h('div', { class: 'bk-acts' }, status, cancel, go));
     go.addEventListener('click', async () => {
+      const ai = byAI.checked, connect = conn.box.checked && pv.pdfs > 1;
       const names = {};
-      for (const [dir, inp] of inputs) names[dir] = inp.value.trim();
+      for (const [dir, inp] of inputs) names[dir] = ai ? '' : inp.value.trim();  // the AI files them instead
       go.disabled = true; suggest.disabled = true; inputs.forEach((i) => { i.disabled = true; });
+      byFolder.disabled = byAI.disabled = conn.box.disabled = true;
       let job;
       try { job = (await api('POST', '/api/linked-folders', { path: pv.path, names })).job; }
       catch (e) { status.textContent = e.message; go.disabled = false; suggest.disabled = false; inputs.forEach((i) => { i.disabled = false; }); return; }
       document.dispatchEvent(new CustomEvent('rb:linked-changed'));  // Library settings lists it now
       cancel.textContent = 'Close (keeps going)';
       cancel.onclick = () => { d.close(); watchImports(); };
+      let watched = false;
       while (job && (job.state === 'running' || job.state === 'paused')) {
-        if (!d.card.isConnected) { watchImports(); return; }  // closed: the gauge in the corner follows it from here
+        if (!d.card.isConnected && !watched) {  // closed: the gauge in the corner follows it from here
+          watched = true; watchImports();
+          if (!ai && !connect) return;  // nothing more to do when it's done
+        }
         bar.style.width = job.total ? `${Math.round((job.done / job.total) * 100)}%` : '0%';
         status.textContent = job.state === 'paused' ? job.message : job.total ? `${job.done} of ${job.total}${job.current ? `: ${job.current.split('/').pop()}` : ''}` : 'Looking through the folders…';
         await new Promise((r) => setTimeout(r, 900));
@@ -312,7 +347,182 @@
       go.hidden = true; cancel.textContent = 'Done'; cancel.onclick = d.close;
       rb.refreshGraph();
       window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+      if (!job || job.state === 'error' || job.state === 'stopped') return;
+      const line = h('p', { class: 'bk-note' });
+      if (ai || connect) status.closest('.bk-acts').before(line);
+      if (ai) {
+        line.textContent = 'Sorting them into topics…';
+        try {
+          const r = await api('POST', '/api/topics/auto-sort', { folder: job.folder });
+          const list2 = (r.topics || []).map((t) => `${t.name} (${t.count}${t.new ? ', new' : ''})`).join(', ');
+          line.textContent = r.sorted ? `Sorted into ${plural(r.topics.length, 'topic')}${r.by === 'regions' ? ' by similarity (no AI answer)' : ''}: ${list2}.` : (r.note || '');
+          rb.refreshGraph();
+          window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+        } catch (e) { line.textContent = `Couldn’t sort them into topics: ${e.message}`; }
+        if (!d.card.isConnected && line.textContent) toast(line.textContent, 'ok');
+      }
+      if (connect) {
+        const line2 = h('p', { class: 'bk-note' });
+        line.after(line2);
+        const cj = await findConnections({ folder: job.folder }, (j) => { line2.textContent = connectText(j); }, d.card);
+        const u = undoLinksButton(cj, line2);
+        if (u) line2.append(' ', u);
+      }
     });
+  }
+
+  // ---------------------------------------------------------------- AI connection analysis (app/connect_api.py)
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || `${one}s`)}`;
+  function connectText(j) {
+    if (!j) return '';
+    if (j.state === 'waiting') return 'Waiting for another connection check to finish…';
+    if (j.state === 'running') return j.batches ? `Finding connections: ${j.done_batches} of ${j.batches} batches read, ${plural(j.linked, 'link')} so far…` : 'Finding connections…';
+    if (j.state === 'error') return `Couldn’t find connections: ${j.message}`;
+    if (j.undone != null && !j.links.length) return `Took back ${plural(j.undone, 'link')}.`;
+    const bits = [j.linked ? `Linked ${plural(j.linked, 'pair')} of papers that belong together` : (j.message || `The AI found no new connections among ${plural(j.checked, 'likely pair')}`)];
+    if (j.left) bits.push(`${j.left} more likely pairs are left: run it again to check them`);
+    return bits.join('. ') + (j.state === 'stopped' ? ' (stopped).' : '.');
+  }
+  /** Start a connection analysis over `body` ({ids} | {folder} | {topics, unsorted}) and follow it; show(job)
+   *  on every change. When the dialog it reports to is gone, the result comes as a toast. Resolves with the job. */
+  async function findConnections(body, show, where) {
+    let job;
+    try { job = await api('POST', '/api/links/ai-connect', body); }
+    catch (e) { const j = { state: 'error', message: e.message }; show(j); return j; }
+    while (job.state === 'waiting' || job.state === 'running') {
+      show(job);
+      await new Promise((r) => setTimeout(r, 1200));
+      try { job = await api('GET', `/api/links/ai-connect/jobs/${job.id}`); } catch { break; }
+    }
+    show(job);
+    rb.refreshGraph();
+    if (where && !where.isConnected) toast(connectText(job), job.state === 'error' ? 'error' : 'ok');
+    return job;
+  }
+  function undoLinksButton(job, status) {
+    if (!job || !job.id || !job.linked) return null;
+    const b = h('button', { class: 'btn btn-text', type: 'button', text: 'Undo links', title: 'Take back the links it just made',
+      onclick: async () => {
+        b.disabled = true;
+        try { const j = await api('POST', `/api/links/ai-connect/jobs/${job.id}/undo`); status.textContent = connectText(j); b.remove(); rb.refreshGraph(); }
+        catch (e) { status.textContent = e.message; b.disabled = false; }
+      } });
+    return b;
+  }
+  const connectBox = (checked = true) => {
+    const box = h('input', { type: 'checkbox' });
+    box.checked = checked;
+    return { box, row: h('label', null, box, 'Have the AI find connections between them: it reads the papers that look alike and links the ones that really belong together, so they sit together on the map') };
+  };
+
+  // ---------------------------------------------------------------- reorganizing topics (POST /api/topics/reorganize*)
+  async function reorganizeDialog(opts = {}) {
+    let topics;
+    try { topics = await api('GET', '/api/topics'); } catch (e) { toastErr(e, 'Could not load your topics'); return; }
+    const d = dialog('Reorganize topics', 'Your AI reads each paper’s title and opening and groups the papers by what they’re about, not by how they’re filed now. You see the new topics before anything changes, and can undo it after. Private papers aren’t sent and stay where they are.');
+    const only = opts.topics ? new Set(opts.topics) : null;
+    const tBoxes = topics.map((t) => { const b = h('input', { type: 'checkbox', value: t.slug }); b.checked = !only || only.has(t.slug); return [b, t]; });
+    const noTopic = h('input', { type: 'checkbox' }); noTopic.checked = !only;
+    const pickAll = h('input', { type: 'checkbox', 'aria-label': 'All topics' });
+    const syncAll = () => { pickAll.checked = tBoxes.every(([b]) => b.checked) && noTopic.checked; };
+    pickAll.addEventListener('change', () => { tBoxes.forEach(([b]) => { b.checked = pickAll.checked; }); noTopic.checked = pickAll.checked; });
+    tBoxes.forEach(([b]) => b.addEventListener('change', syncAll)); noTopic.addEventListener('change', syncAll); syncAll();
+    const scope = h('div', { class: 'bk-list' },
+      h('label', { class: 'bk-folder' }, pickAll, h('span', { text: 'Everything' })),
+      tBoxes.map(([b, t]) => h('label', { class: 'bk-item' }, b, h('span', { class: 't', text: t.name }), h('span', { class: 'why', text: String(t.count) }))),
+      h('label', { class: 'bk-item' }, noTopic, h('span', { class: 't', text: 'Papers with no topic' })));
+    const free = h('input', { type: 'radio', name: 'bk-reorg', value: 'free' }); free.checked = true;
+    const named = h('input', { type: 'radio', name: 'bk-reorg', value: 'named' });
+    const sections = h('textarea', { class: 'bk-sections', 'aria-label': 'Your sections', spellcheck: 'true', placeholder: 'One section per line, for example:\nSheath physics\nHall thruster erosion\nDiagnostics' });
+    sections.hidden = true;
+    const onMode = () => { sections.hidden = !named.checked; if (named.checked) sections.focus(); };
+    free.addEventListener('change', onMode); named.addEventListener('change', onMode);
+    const conn = connectBox(true);
+    const step1 = h('div', null,
+      h('div', { class: 'bk-sub', text: 'Which papers' }), scope,
+      h('div', { class: 'bk-sub', text: 'Topics' }),
+      h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' },
+        h('label', null, free, 'Let the AI choose the topics'),
+        h('label', null, named, 'Use my own sections (the AI puts each paper in the one it fits best)')),
+      sections,
+      h('div', { class: 'bk-opts' }, conn.row));
+    const status = h('span', { class: 'bk-status' });
+    const bar = h('i');
+    const go = h('button', { class: 'btn btn-primary', type: 'button', text: 'Suggest topics' });
+    const back = h('button', { class: 'btn', type: 'button', text: 'Back', hidden: true });
+    const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => d.close() });
+    const step2 = h('div', { class: 'bk-list', hidden: true });
+    const notes = h('div');
+    d.card.append(step1, step2, notes, h('div', { class: 'bk-bar' }, bar), h('div', { class: 'bk-acts' }, status, cancel, back, go));
+    let plan = null, inputs = [];
+    const busy = (b) => { d.setBusy(b); go.disabled = b; back.disabled = b; cancel.disabled = b; };
+
+    back.addEventListener('click', () => { plan = null; step2.hidden = true; step1.hidden = false; notes.replaceChildren(); back.hidden = true; go.textContent = 'Suggest topics'; status.textContent = ''; });
+    go.addEventListener('click', async () => {
+      if (!plan) return suggest();
+      return apply();
+    });
+
+    async function suggest() {
+      const body = { topics: tBoxes.filter(([b]) => b.checked).map(([, t]) => t.slug), unsorted: noTopic.checked,
+        names: named.checked ? sections.value.split('\n') : [] };
+      if (named.checked && !sections.value.trim()) { status.textContent = 'Write the sections you want, one per line.'; sections.focus(); return; }
+      if (!body.topics.length && !body.unsorted) { status.textContent = 'Tick some papers to reorganize.'; return; }
+      busy(true); status.textContent = 'Asking your AI to group the papers… (this can take a minute)';
+      try { plan = await api('POST', '/api/topics/reorganize/plan', body); }
+      catch (e) { status.textContent = e.message; busy(false); return; }
+      busy(false);
+      inputs = plan.groups.map((g) => {
+        const inp = h('input', { type: 'text', class: 'bk-name', value: g.name, 'aria-label': `Name for ${g.name}`, spellcheck: 'true' });
+        return [inp, g];
+      });
+      step2.replaceChildren(...inputs.map(([inp, g]) => h('div', { class: 'bk-group' },
+        h('div', { class: 'bk-ghead' }, inp, h('span', { class: 'n', text: String(g.count) }), h('span', { class: 'why', text: g.topic ? 'joins your topic' : 'new topic' })),
+        g.papers.length ? h('details', null, h('summary', { text: 'Papers' }), h('ul', null, g.papers.map((p) => h('li', { title: p.title, text: p.title })))) : null)));
+      const bits = [];
+      if (plan.by === 'regions') bits.push(h('p', { class: 'bk-note', text: 'Your AI didn’t give a usable answer, so these groups come from the map’s regions (text similarity).' }));
+      if (plan.unplaced.length) bits.push(h('details', { class: 'bk-note' }, h('summary', { text: `${plural(plan.unplaced.length, 'paper')} fit none of these and will have no topic` }),
+        h('ul', null, plan.unplaced.map((p) => h('li', { text: p.title })))));
+      if (plan.removed.length) bits.push(h('p', { class: 'bk-note', text: `Left empty, so they go to the trash: ${plan.removed.join(', ')}.` }));
+      bits.push(h('p', { class: 'bk-note', text: `Rename any topic you like. ${plural(plan.ids.length, 'paper')} will be moved.` }));
+      notes.replaceChildren(...bits);
+      step1.hidden = true; step2.hidden = false; back.hidden = false; go.textContent = 'Reorganize';
+      status.textContent = `${plural(plan.groups.length, 'topic')}.`;
+    }
+
+    async function apply() {
+      const groups = inputs.map(([inp, g]) => ({ name: inp.value.trim() || g.name, ids: g.ids }));
+      busy(true); status.textContent = 'Reorganizing…';
+      let r;
+      try { r = await api('POST', '/api/topics/reorganize', { groups, ids: plan.ids, replace: plan.replace }); }
+      catch (e) { status.textContent = e.message; busy(false); return; }
+      inputs.forEach(([inp]) => { inp.disabled = true; });
+      rb.refreshGraph();
+      window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+      const made = `Filed ${plural(r.moved, 'paper')} into ${plural(r.topics.length, 'topic')}${r.deleted.length ? `; ${r.deleted.join(', ')} went to the trash` : ''}.`;
+      status.textContent = made;
+      go.hidden = true; back.hidden = true;
+      const undo = h('button', { class: 'btn btn-text', type: 'button', text: 'Undo', title: 'Put every topic back the way it was', onclick: async () => {
+        undo.disabled = true;
+        try {
+          await api('POST', '/api/topics/reorganize/undo', { token: r.undo });
+          status.textContent = 'Your topics are back the way they were.'; undo.remove();
+          rb.refreshGraph(); window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+        } catch (e) { status.textContent = e.message; undo.disabled = false; }
+      } });
+      cancel.before(undo);
+      cancel.textContent = 'Done'; cancel.disabled = false; d.setBusy(false); cancel.onclick = d.close;
+      if (conn.box.checked && plan.ids.length > 1) {
+        const line = h('p', { class: 'bk-note' });
+        notes.replaceChildren(line);
+        const job = await findConnections({ ids: plan.ids }, (j) => {
+          line.textContent = connectText(j);
+          bar.style.width = j.batches ? `${Math.round((j.done_batches / j.batches) * 100)}%` : '0%';
+        }, d.card);
+        const u = undoLinksButton(job, line);
+        if (u) line.after(h('div', { class: 'bk-acts bk-acts-l' }, u));
+      } else notes.replaceChildren();
+    }
   }
 
   // ---------------------------------------------------------------- the import gauge: long imports, bottom right
@@ -476,7 +686,9 @@
   setInterval(watchImports, 60000);      // and the app's own checks every few minutes
 
   window.__rbBulk = { pickFolder: () => picker.click(), pickBookmarks: () => bmInput.click(), parseBookmarks, folderDialog, bookmarksDialog,
-    pickLinkFolder, linkDialog, tray, watchImports };
+    pickLinkFolder, linkDialog, tray, watchImports, reorganize: reorganizeDialog, findConnections };
+  const reorgBtn = document.getElementById('btn-reorganize');
+  if (reorgBtn) reorgBtn.addEventListener('click', () => reorganizeDialog());
   const C = window.RB && window.RB.commands;
   if (C && C.register) {
     C.register({ id: 'import.folder', title: 'Import a folder of PDFs', group: 'Add', description: 'Add every PDF in a folder; its subfolders can become topics.',
@@ -484,6 +696,10 @@
     C.register({ id: 'import.linkFolder', title: 'Add folders of papers (keep them where they are)', group: 'Add',
       description: 'Link a folder you keep PDFs in, such as one in OneDrive: nothing is copied, and each subfolder becomes a topic.',
       aliases: ['onedrive', 'link folder', 'watch folder', 'subfolders', 'in place', 'dropbox', 'icloud'], run: () => pickLinkFolder() });
+    C.register({ id: 'topics.reorganize', title: 'Reorganize topics', group: 'Library',
+      description: 'Your AI regroups papers by what they’re about (or into sections you name), shows you the new topics first, and can link papers that belong together.',
+      aliases: ['reorganize', 'reorganise', 'regroup', 'recluster', 'cluster', 'sections', 'rearrange topics', 'find connections', 'link similar papers'],
+      run: () => reorganizeDialog() });
     C.register({ id: 'import.bookmarks', title: 'Import browser bookmarks', group: 'Add', description: 'Add papers from a bookmarks export; each bookmark folder becomes a topic.',
       aliases: ['bookmarks', 'favorites', 'chrome', 'firefox', 'safari'], run: () => bmInput.click() });
   }

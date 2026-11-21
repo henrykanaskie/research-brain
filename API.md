@@ -928,3 +928,26 @@ writes to `/api/profiles*`, `/api/settings`, `/api/agents/active`, `/api/privacy
   script and stops research brain; the script starts it again. 409 when up to date, already installing, or
   this copy can't update itself (a source checkout: `reason`); 502 when the download fails.
 - `POST /api/update/ack` `{}` → `{"ok": true}`: the app has shown `result`.
+
+## ADDED: Reorganizing topics and AI connection analysis
+
+- `POST /api/topics/auto-sort` also takes `{"folder": "<linked folder id>"}`: every paper in that folder of papers.
+- `POST /api/topics/reorganize/plan` body `{"topics": [slug], "unsorted"?, "ids"?, "names"?: [section]}` →
+  `{"by": "ai"|"regions", "ids", "replace", "removed": [topic name], "unplaced": [{id, title}],
+  "groups": [{"name", "ids", "count", "topic": slug|null, "papers": [{id, title}]}]}`. Nothing changes yet. The AI
+  groups the papers in those topics (and, with `unsorted`, the papers in no topic) by content, ignoring how they're
+  filed now; with `names` (one per item, or split on new lines and `;`) only those sections are used, exactly as
+  written, and papers that fit none are `unplaced`. Without a usable AI answer and no `names`: the map's regions.
+  Private papers are never sent. 400 with fewer than two papers.
+- `POST /api/topics/reorganize` body `{"groups": [{"name", "ids"}], "ids", "replace": [slug]}` →
+  `{"topics": [{name, slug, count, new}], "deleted": [name], "moved", "undo": token}`: takes `ids` out of the
+  `replace` topics, files each group (a group named like an existing topic joins it), and trashes replaced topics
+  left empty. Every topic file is copied to `.trash/topics-before-reorganize-<token>/` first.
+- `POST /api/topics/reorganize/undo` body `{"token"}` → `{"ok", "topics"}`: every topic back as it was.
+- `POST /api/links/ai-connect` body `{"ids"?, "folder"?, "topics"?, "unsorted"?}` → a job `{"id", "state":
+  "waiting"|"running"|"done"|"stopped"|"error", "papers", "pairs", "checked", "left", "linked", "batches",
+  "done_batches", "links": [{a, b, why, a_title, b_title}], "message"}`. Each paper's 4 most similar papers among
+  the chosen ones become candidate pairs; the AI judges them in batches of 60 (at most 25 batches a run, `left`
+  waits for the next) and the pairs it keeps become manual links. Every pair asked about is remembered in
+  `.index/ai-links.json`, so a run never asks twice and a link you remove isn't put back. One job at a time.
+- `GET /api/links/ai-connect/jobs/{job}`, `POST .../stop`, `POST .../undo` (→ the job with `"undone": n`).

@@ -3542,6 +3542,63 @@ SORT_INSTRUCTION = (
 class SortTopicsIn(BaseModel):
     ids: list[str] = []
     unsorted: bool = False  # every paper that isn't in a topic yet, instead of `ids`
+    folder: str = ""        # every paper in this folder of papers (app/linked.py), instead of `ids`
+
+
+def _topic_members(slugs=None) -> dict[str, list[str]]:
+    """slug -> members, for these topics (all of them when slugs is None)."""
+    out = {}
+    for t in topics_mod.list_topics(store):
+        if slugs is not None and t["slug"] not in slugs:
+            continue
+        try:
+            out[t["slug"]] = topics_mod.get_topic(store, t["slug"])["members"]
+        except (KeyError, topics_mod.TopicError):
+            continue
+    return out
+
+
+def _paper_pool(ids=(), folder: str = "", topics=(), unsorted: bool = False) -> list[str]:
+    """The papers the AI may see among: `ids`, every paper in a folder of papers, every paper in some topics,
+    and (unsorted) every paper in no topic. Fragments and notes are left out."""
+    by_id = _ai_visible(index()["by_id"])
+    want: list[str] = list(ids or [])
+    if folder:
+        want += list(store.links.files_in(folder))
+    if topics:
+        for mem in _topic_members(set(topics)).values():
+            want += mem
+    if unsorted:
+        in_topic = {m for mem in _topic_members().values() for m in mem}
+        want += [i for i, n in by_id.items() if n["type"] == "paper" and i not in in_topic]
+    return [i for i in dict.fromkeys(want) if i in by_id and by_id[i]["type"] == "paper"]
+
+
+def _sort_rows(ids: list[str], by_id: dict, budget: int = 90000) -> str:
+    """Each paper as [[id]] title (year) and the start of its abstract or text, sharing `budget` characters."""
+    room = max(160, budget // max(1, len(ids)))
+    rows = []
+    for i in ids:
+        n = by_id[i]
+        text = (n.get("abstract") or "").strip() or _fulltext(i)[:2000]
+        text = " ".join(text.split())[:room]
+        rows.append(f"[[{i}]] {n['title']}" + (f" ({n['year']})" if n.get("year") else "") + (f"\n{text}" if text else ""))
+    return "\n\n".join(rows)
+
+
+def _region_groups(ids: list[str]) -> list[tuple[str, list[str]]]:
+    """Without a usable AI answer: the map's regions (local text similarity) as the groups."""
+    g = _graph_data()
+    cl = {c["id"]: c for c in g["clusters"]}
+    want = set(ids)
+    buckets: dict[str, list[str]] = {}
+    for n in g["nodes"]:
+        if n["id"] in want:
+            c = cl.get(n["cluster"])
+            name = (c.get("label") if c else "") or "Unsorted"
+            name = name[:1].upper() + name[1:]
+            buckets.setdefault(name, []).append(n["id"])
+    return list(buckets.items())
 
 
 def _parse_sort(text: str, allowed: set) -> list[tuple[str, list[str]]]:
@@ -3568,32 +3625,15 @@ def _parse_sort(text: str, allowed: set) -> list[tuple[str, list[str]]]:
 def api_topics_auto_sort(body: SortTopicsIn):
     """Put papers into topics: the AI agent groups them by what they're about (reusing your topics where they fit);
     without an agent, the map's own regions do. Private papers are never sent."""
-    idx = index()
-    by_id = _ai_visible(idx["by_id"])
-    if body.unsorted:
-        in_topic = set()
-        for t in topics_mod.list_topics(store):
-            try:
-                in_topic.update(topics_mod.get_topic(store, t["slug"])["members"])
-            except (KeyError, topics_mod.TopicError):
-                continue
-        ids = [i for i, n in by_id.items() if n["type"] == "paper" and i not in in_topic]
-    else:
-        ids = [i for i in dict.fromkeys(body.ids) if i in by_id and by_id[i]["type"] == "paper"]
+    by_id = _ai_visible(index()["by_id"])
+    ids = _paper_pool(body.ids, body.folder, (), body.unsorted)
     if len(ids) < 2:
         return {"topics": [], "sorted": 0, "by": "", "note": "Nothing to sort (it takes at least two papers)."}
     existing = {t["name"].casefold(): t for t in topics_mod.list_topics(store)}
     groups, by = [], "ai"
     try:
-        room = max(160, 90000 // len(ids))
-        rows = []
-        for i in ids:
-            n = by_id[i]
-            text = (n.get("abstract") or "").strip() or _fulltext(i)[:2000]
-            text = " ".join(text.split())[:room]
-            rows.append(f"[[{i}]] {n['title']}" + (f" ({n['year']})" if n.get("year") else "") + (f"\n{text}" if text else ""))
         context = ("EXISTING TOPICS: " + ("; ".join(t["name"] for t in existing.values()) or "(none)")
-                   + "\n\nPAPERS:\n\n" + "\n\n".join(rows))
+                   + "\n\nPAPERS:\n\n" + _sort_rows(ids, by_id))
         groups = _parse_sort(_ask(SORT_INSTRUCTION, context, "topic sorting", sources=ids), set(ids))
         if not groups:
             raise ValueError("no usable answer")
@@ -3601,16 +3641,7 @@ def api_topics_auto_sort(body: SortTopicsIn):
         # no agent, or an answer that couldn't be used: the map's regions (local text similarity) instead
         print(f"[research_brain] AI topic sorting fell back to regions: {e!r}")
         by = "regions"
-        g = _graph_data()
-        cl = {c["id"]: c for c in g["clusters"]}
-        buckets: dict[str, list[str]] = {}
-        for n in g["nodes"]:
-            if n["id"] in ids:
-                c = cl.get(n["cluster"])
-                name = (c.get("label") if c else "") or "Unsorted"
-                name = name[:1].upper() + name[1:]
-                buckets.setdefault(name, []).append(n["id"])
-        groups = list(buckets.items())
+        groups = _region_groups(ids)
     out, placed = [], 0
     for name, members in groups:
         t = existing.get(name.casefold())
@@ -3628,6 +3659,188 @@ def api_topics_auto_sort(body: SortTopicsIn):
         placed += len(members)
         out.append({"name": name, "slug": slug, "count": len(members), "new": new})
     return {"topics": out, "sorted": placed, "by": by}
+
+
+# ---------------------------------------------------------------- reorganizing topics
+# Two steps, so nothing changes until you've seen it: /plan asks the AI for new groups of the chosen papers
+# (by content, ignoring how they're grouped now; or into your own section names), then /reorganize files them,
+# taking those papers out of the topics being replaced and putting the old topic files aside so it can be undone.
+REORG_INSTRUCTION = (
+    "Group the student's PAPERS (below) into research topics by what they are about. Each paper is listed with "
+    "its id in [[...]], its title and the start of its text. Ignore how the papers are grouped now: CURRENT TOPICS "
+    "only shows the names in use, and you may keep one where it still names a group well. Name each topic in 2 to 5 "
+    "plain words, the way a researcher would label a folder. Every paper goes in exactly one topic. Aim for a "
+    "handful of coherent topics (papers in a topic should share a problem, method or phenomenon), not one per paper "
+    "and not one for everything. Reply with JSON only, no other text: "
+    '{"topics": [{"name": "Topic name", "ids": ["paper-id", "paper-id"]}]}')
+REORG_NAMED_INSTRUCTION = (
+    "Sort the student's PAPERS (below) into the SECTIONS they chose. Each paper is listed with its id in [[...]], its "
+    "title and the start of its text. Use only these sections, with each name written exactly as given. Put every "
+    "paper in the one section it fits best. A paper that fits none of them at all goes under \"none\". Reply with "
+    'JSON only, no other text: {"topics": [{"name": "Section name", "ids": ["paper-id"]}], "none": ["paper-id"]}')
+
+
+class ReorgPlanIn(BaseModel):
+    topics: list[str] = []    # slugs: their papers are regrouped, and these topics are replaced
+    unsorted: bool = False    # also every paper in no topic
+    ids: list[str] = []       # also these papers
+    names: list[str] = []     # your own section names: the papers go into these only
+
+
+class ReorgGroup(BaseModel):
+    name: str
+    ids: list[str] = []
+
+
+class ReorgApplyIn(BaseModel):
+    groups: list[ReorgGroup]
+    ids: list[str] = []       # every paper being reorganized (those in no group end up in no replaced topic)
+    replace: list[str] = []   # topics these papers are taken out of first
+
+
+class ReorgUndoIn(BaseModel):
+    token: str
+
+
+def _clean_names(names) -> list[str]:
+    out: dict[str, str] = {}
+    for x in names or []:
+        for part in re.split(r"[\n;]+", str(x)):
+            n = " ".join(part.split()).strip(" ,-*•")[:120]
+            if n and n.casefold() not in out:
+                out[n.casefold()] = n
+    return list(out.values())[:40]
+
+
+@app.post("/api/topics/reorganize/plan")
+def api_topics_reorganize_plan(body: ReorgPlanIn):
+    """New groups for the chosen papers, for you to look over before anything changes. Private papers are never
+    sent (and stay in their topics)."""
+    by_id = _ai_visible(index()["by_id"])
+    all_topics = topics_mod.list_topics(store)
+    known = {t["slug"]: t for t in all_topics}
+    replace = [s for s in dict.fromkeys(body.topics) if s in known]
+    ids = _paper_pool(body.ids, "", replace, body.unsorted)
+    if len(ids) < 2:
+        raise HTTPException(400, "Choose at least two papers to reorganize (a topic with papers in it, or the papers "
+                                 "with no topic).")
+    names = _clean_names(body.names)
+    by = "ai"
+    if names:
+        context = "SECTIONS:\n" + "\n".join(f"- {n}" for n in names) + "\n\nPAPERS:\n\n" + _sort_rows(ids, by_id)
+        text = _ask(REORG_NAMED_INSTRUCTION, context, "topic sorting", sources=ids)
+        canon = {n.casefold(): n for n in names}
+        got: dict[str, list[str]] = {n: [] for n in names}
+        for name, members in _parse_sort(text, set(ids)):
+            n = canon.get(name.casefold())
+            if n:
+                got[n] += [m for m in members if m not in got[n]]
+        if not any(got.values()):
+            raise HTTPException(502, "The AI's answer couldn't be used. Try again.")
+        groups = list(got.items())
+    else:
+        try:
+            context = ("CURRENT TOPICS: " + ("; ".join(t["name"] for t in all_topics) or "(none)")
+                       + "\n\nPAPERS:\n\n" + _sort_rows(ids, by_id))
+            groups = _parse_sort(_ask(REORG_INSTRUCTION, context, "topic sorting", sources=ids), set(ids))
+            if not groups:
+                raise ValueError("no usable answer")
+        except (HTTPException, ValueError) as e:
+            print(f"[research_brain] AI reorganizing fell back to regions: {e!r}")
+            by, groups = "regions", _region_groups(ids)
+    placed = {m for _, mem in groups for m in mem}
+    unplaced = [i for i in ids if i not in placed]
+    by_name = {t["name"].casefold(): t for t in all_topics}
+    members = _topic_members(set(replace))
+    pool, everything = set(ids), index()["by_id"]
+    group_names = {n.casefold() for n, _ in groups}
+    removed = [known[s]["name"] for s in replace  # replaced topics that would be left empty, and go
+               if known[s]["name"].casefold() not in group_names
+               and not [m for m in members.get(s, []) if m in everything and m not in pool]]
+    return {"by": by, "ids": ids, "replace": replace, "removed": removed,
+            "unplaced": [{"id": i, "title": by_id[i]["title"]} for i in unplaced],
+            "groups": [{"name": n, "ids": mem, "count": len(mem), "topic": (by_name.get(n.casefold()) or {}).get("slug"),
+                        "papers": [{"id": m, "title": by_id[m]["title"]} for m in mem]} for n, mem in groups]}
+
+
+def _topics_snapshot() -> tuple[str, Path]:
+    import datetime as _dt
+    import uuid as _uuid
+    token = _dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + _uuid.uuid4().hex[:6]
+    dest = Path(store.trash_dir) / f"topics-before-reorganize-{token}"
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in topics_mod.topics_dir(store).glob("*.md"):
+        shutil.copy2(f, dest / f.name)
+    return token, dest
+
+
+@app.post("/api/topics/reorganize")
+def api_topics_reorganize(body: ReorgApplyIn):
+    """File the papers as planned: out of the replaced topics, into the groups (a group named like a topic you
+    have joins it). Replaced topics left empty go to the trash. Every topic file is put aside first (undo)."""
+    by_id = index()["by_id"]
+    known = {t["slug"]: t for t in topics_mod.list_topics(store)}
+    pool = {i for i in body.ids if i in by_id and by_id[i]["type"] == "paper"}
+    groups: dict[str, tuple[str, list[str]]] = {}
+    for g in body.groups:
+        name = " ".join(g.name.split())[:120]
+        mem = [i for i in g.ids if i in by_id and by_id[i]["type"] == "paper"]
+        if not name:
+            continue
+        key = name.casefold()
+        prev = groups.get(key, (name, []))
+        groups[key] = (prev[0], prev[1] + [m for m in mem if m not in prev[1]])
+        pool.update(mem)
+    if not groups:
+        raise HTTPException(400, "There are no topics to make.")
+    with topics_mod._lock:
+        token, _ = _topics_snapshot()
+        replace = [s for s in dict.fromkeys(body.replace) if s in known]
+        for s in replace:
+            topics_mod.remove_notes(store, s, pool)
+        existing = {t["name"].casefold(): t for t in topics_mod.list_topics(store)}
+        out, used = [], set()
+        for key, (name, mem) in groups.items():
+            t = existing.get(key)
+            try:
+                if t:
+                    topics_mod.add_notes(store, t["slug"], mem)
+                    out.append({"name": t["name"], "slug": t["slug"], "count": len(mem), "new": False})
+                    used.add(t["slug"])
+                else:
+                    made = topics_mod.create_topic(store, name, members=mem)
+                    out.append({"name": made["name"], "slug": made["slug"], "count": len(mem), "new": True})
+            except topics_mod.TopicError as e:
+                print(f"[research_brain] couldn't file papers under {name!r}: {e}")
+        deleted = []
+        for s in replace:
+            if s in used:
+                continue
+            try:
+                if not [m for m in topics_mod.get_topic(store, s)["members"] if m in by_id]:
+                    topics_mod.delete_topic(store, s)
+                    deleted.append(known[s]["name"])
+            except (KeyError, topics_mod.TopicError):
+                continue
+    return {"topics": out, "deleted": deleted, "moved": len(pool), "undo": token}
+
+
+@app.post("/api/topics/reorganize/undo")
+def api_topics_reorganize_undo(body: ReorgUndoIn):
+    """Put every topic back the way it was before that reorganizing (topics made since then go too)."""
+    if not re.fullmatch(r"[0-9-]+-[0-9a-f]{6}", body.token or ""):
+        raise HTTPException(400, "That can't be undone.")
+    src = Path(store.trash_dir) / f"topics-before-reorganize-{body.token}"
+    if not src.is_dir():
+        raise HTTPException(404, "That can't be undone any more.")
+    with topics_mod._lock:
+        d = topics_mod.topics_dir(store)
+        _topics_snapshot()  # what it looked like after, in case
+        for f in d.glob("*.md"):
+            f.unlink()
+        for f in src.glob("*.md"):
+            shutil.copy2(f, d / f.name)
+    return {"ok": True, "topics": len(list(d.glob("*.md")))}
 
 
 @app.get("/api/topics/suggest")
@@ -4551,6 +4764,13 @@ from . import linked_api  # noqa: E402
 linked_api.install(app, store=store, import_one=_import_linked, file_in_topic=_file_in_topic,
                    ask=lambda i, c, p: _ask(i, c, p), publish=event_bus.publish, read_later=_read_linked_now,
                    held=held_bytes)
+
+
+# ---------------------------------------------------------------- AI connection analysis (app/connect_api.py)
+from . import connect_api  # noqa: E402
+connect_api.install(app, store=store, index=index, ask=lambda i, c, p, src: _ask(i, c, p, src), visible=_ai_visible,
+                    fulltext=_fulltext, publish=event_bus.publish,
+                    pool=lambda ids, folder, topics, unsorted: _paper_pool(ids, folder, topics, unsorted))
 
 
 # ---------------------------------------------------------------- privacy: settings, audit log, lock (app/privacy_api.py)

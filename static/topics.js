@@ -457,7 +457,10 @@
         }));
       } catch (e) { toastErr(e); } finally { go.disabled = false; }
     } });
-    sec.append(h('div', { class: 'td-tools' }, go), body);
+    const reorg = h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Reorganize…',
+      title: 'Let your AI regroup papers into topics by what they’re about, or into sections you name, and link papers that belong together',
+      onclick: () => window.__rbBulk && window.__rbBulk.reorganize() });
+    sec.append(h('div', { class: 'td-tools' }, go, reorg), body);
     return sec;
   }
 
@@ -520,7 +523,10 @@
         refreshBtn, ...(window.__rbCite ? window.__rbCite.topicTools(slug) : []),
         h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Suggest directions…', id: 'td-directions',
           title: 'Ask your AI agent for gaps, hypotheses and experiments from this topic’s papers. You see exactly what would be sent first; private notes never go.',
-          onclick: () => window.__rbDirections && window.__rbDirections.open('topic', slug, ((T.list || []).find((x) => x.slug === slug) || {}).name || slug) })),
+          onclick: () => window.__rbDirections && window.__rbDirections.open('topic', slug, ((T.list || []).find((x) => x.slug === slug) || {}).name || slug) }),
+        h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Split up…',
+          title: 'Let your AI break this topic into smaller topics by what its papers are about, or into sections you name',
+          onclick: () => window.__rbBulk && window.__rbBulk.reorganize({ topics: [slug] }) })),
       qb,
       h('div', { class: 'td-sec' },
         h('div', { class: 'sec-head' }, h('span', { class: 'sec-title' }, 'Papers', h('span', { class: 'n', text: String(d.count) }))),
