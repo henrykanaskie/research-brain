@@ -39,6 +39,9 @@ def fake_ask(instruction, context, purpose="ask", sources=None):
     rest = [i for i, t in papers if "heath" not in t]
     if "SECTIONS:" in context:
         return json.dumps({{"topics": [{{"name": "Plasma physics", "ids": sheath}}], "none": rest}})
+    if "never make a new one" in instruction:  # only into existing topics: the sheath papers go to the first one
+        first = re.search(r"^- (.+)$", context, re.M).group(1)
+        return json.dumps({{"topics": [{{"name": first, "ids": sheath}}], "none": rest}})
     return json.dumps({{"topics": [{{"name": "Plasma sheaths", "ids": sheath}}, {{"name": "Language models", "ids": rest}}]}})
 
 srv._ask = fake_ask
@@ -95,14 +98,18 @@ def test_reorganize_by_content_then_into_your_sections(server, browser):
     page.goto(base + "/")
     page.wait_for_function("window.__rb && window.__rb.S.nodes.size >= 4")
 
+    sent = []
+    page.on("request", lambda r: sent.append(json.loads(r.post_data)) if r.url.endswith("/reorganize/plan") else None)
     page.locator("#btn-reorganize").click()
     card = page.locator(".bk-card[aria-label='Reorganize topics']")
     expect(card).to_be_visible()
     expect(card.locator(".bk-item")).to_have_count(3)  # two topics and "Papers with no topic"
     if shots:
         page.screenshot(path=f"{shots}/reorganize-1.png")
+    card.locator(".bk-count").fill("2")
     card.get_by_role("button", name="Suggest topics").click()
     expect(card.locator(".bk-group")).to_have_count(2)
+    assert sent[-1]["count"] == 2
     expect(card).to_contain_text("Left empty, so they go to the trash: Folder A, Folder B")
     card.locator(".bk-group .bk-name").first.fill("Sheath physics")
     card.locator(".bk-group details summary").first.click()
@@ -160,8 +167,11 @@ def test_a_folder_of_papers_sorted_by_content_and_linked(server, browser, tmp_pa
     card = page.locator(".bk-card[aria-label='Add “Research”']")
     expect(card).to_be_visible()
     expect(card.locator(".bk-link")).to_be_visible()  # two folders: a topic for each, by default
+    expect(card.locator(".bk-count")).to_be_hidden()
     card.get_by_text("Let the AI sort them into topics").click()
     expect(card.locator(".bk-link")).to_be_hidden()
+    expect(card.get_by_text("Only into my existing topics (2)")).to_be_visible()  # Plasma physics, Optics
+    card.locator(".bk-count").fill("2")
     card.get_by_role("button", name="Add 4 PDFs").click()
     expect(card).to_contain_text("Sorted into 2 topics", timeout=60_000)
     expect(card).to_contain_text("Linked 1 pair", timeout=60_000)
@@ -171,3 +181,34 @@ def test_a_folder_of_papers_sorted_by_content_and_linked(server, browser, tmp_pa
     assert {"Plasma sheaths", "Language models"} <= names and not {"A", "B"} & names
     expect(page.locator(".toast.error")).to_have_count(0)
     assert not errors, errors
+
+
+def test_a_copied_in_folder_sorted_only_into_existing_topics(server, browser):
+    import base64
+    from test_api import make_pdf
+    base = server["base"]
+    pdfs = {"Inbox/sheath-probe.pdf": make_pdf("Sheath around a Langmuir probe", "probe sheath " * 30),
+            "Inbox/optics.pdf": make_pdf("Adaptive optics for telescopes", "mirror wavefront " * 30)}
+    page = browser.new_page(viewport={"width": 1400, "height": 900}, bypass_csp=True)
+    page.set_default_timeout(20_000)
+    page.goto(base + "/")
+    page.wait_for_function("!!(window.__rbBulk && window.__rbBulk.folderDialog)")
+    page.evaluate("""(files) => window.__rbBulk.folderDialog(Object.entries(files).map(([rel, b64]) => {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const f = new File([bytes], rel.split('/').pop(), { type: 'application/pdf' });
+        Object.defineProperty(f, 'webkitRelativePath', { value: rel });
+        return f; }))""", {k: base64.b64encode(v).decode() for k, v in pdfs.items()})
+    card = page.locator(".bk-card[aria-label='Import “Inbox”']")
+    expect(card).to_be_visible()
+    only = card.get_by_text("Only into my existing topics")
+    expect(only).to_be_visible()  # a flat folder: the AI sorts it, and you have topics
+    before = {t["name"]: t["count"] for t in _call(base, "GET", "/api/topics")}
+    only.click()
+    expect(card.locator(".bk-count")).to_be_disabled()
+    card.locator("input[type=checkbox]").last.uncheck()  # no connections
+    card.get_by_role("button", name="Import 2").click()
+    expect(card).to_contain_text("1 paper fit none of your topics", timeout=60_000)
+    after = {t["name"]: t["count"] for t in _call(base, "GET", "/api/topics")}
+    assert set(after) == set(before)  # no new topic
+    first = sorted(before)[0]
+    assert after[first] == before[first] + 1

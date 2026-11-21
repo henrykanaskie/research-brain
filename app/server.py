@@ -3530,6 +3530,21 @@ def api_topic_create(body: TopicIn):
 
 
 # ---------------------------------------------------------------- sorting papers into topics
+SORT_EXISTING_INSTRUCTION = (
+    "Sort the student's PAPERS (below) into their EXISTING TOPICS. Each paper is listed with its id in [[...]], its "
+    "title and the start of its text. Use only those topics, with each name written exactly as given; never make a "
+    "new one. Put every paper in the one topic it fits best. A paper that fits none of them at all goes under "
+    '\"none\". Reply with JSON only, no other text: {"topics": [{"name": "Topic name", "ids": ["paper-id"]}], "none": ["paper-id"]}')
+
+
+def _count_rule(count: int, reused: str = "") -> str:
+    """The extra sentence that asks for a set number of topics."""
+    if count <= 0:
+        return ""
+    return (f" Make exactly {count} topic{'s' if count != 1 else ''}{reused}, so that each paper fits its topic "
+            "as well as that number allows; this overrides any other advice on how many topics to make.")
+
+
 SORT_INSTRUCTION = (
     "Sort the student's PAPERS (below) into research topics. Each paper is listed with its id in [[...]], its title "
     "and the start of its text. EXISTING TOPICS lists topics they already have: put a paper in one of those (use its "
@@ -3543,6 +3558,8 @@ class SortTopicsIn(BaseModel):
     ids: list[str] = []
     unsorted: bool = False  # every paper that isn't in a topic yet, instead of `ids`
     folder: str = ""        # every paper in this folder of papers (app/linked.py), instead of `ids`
+    count: int = 0          # how many topics to sort them into (0: the AI decides)
+    existing_only: bool = False  # only into topics you already have; papers that fit none stay without one
 
 
 def _topic_members(slugs=None) -> dict[str, list[str]]:
@@ -3630,11 +3647,29 @@ def api_topics_auto_sort(body: SortTopicsIn):
     if len(ids) < 2:
         return {"topics": [], "sorted": 0, "by": "", "note": "Nothing to sort (it takes at least two papers)."}
     existing = {t["name"].casefold(): t for t in topics_mod.list_topics(store)}
+    count = max(0, min(40, body.count))
     groups, by = [], "ai"
+    if body.existing_only:
+        if not existing:
+            raise HTTPException(400, "You have no topics yet to sort them into.")
+        context = "EXISTING TOPICS:\n" + "\n".join(f"- {t['name']}" for t in existing.values()) \
+            + "\n\nPAPERS:\n\n" + _sort_rows(ids, by_id)
+        found = _parse_sort(_ask(SORT_EXISTING_INSTRUCTION, context, "topic sorting", sources=ids), set(ids))
+        groups = [(existing[n.casefold()]["name"], mem) for n, mem in found if n.casefold() in existing]
+        if not groups:
+            raise HTTPException(502, "The AI's answer couldn't be used. Try again.")
+        out = []
+        for name, members in groups:
+            t = existing[name.casefold()]
+            topics_mod.add_notes(store, t["slug"], members)
+            out.append({"name": t["name"], "slug": t["slug"], "count": len(members), "new": False})
+        placed = sum(len(m) for _, m in groups)
+        return {"topics": out, "sorted": placed, "by": "ai", "unplaced": len(ids) - placed}
     try:
         context = ("EXISTING TOPICS: " + ("; ".join(t["name"] for t in existing.values()) or "(none)")
                    + "\n\nPAPERS:\n\n" + _sort_rows(ids, by_id))
-        groups = _parse_sort(_ask(SORT_INSTRUCTION, context, "topic sorting", sources=ids), set(ids))
+        instruction = SORT_INSTRUCTION + _count_rule(count, " in all (existing topics you reuse count toward them)")
+        groups = _parse_sort(_ask(instruction, context, "topic sorting", sources=ids), set(ids))
         if not groups:
             raise ValueError("no usable answer")
     except (HTTPException, ValueError) as e:
@@ -3685,6 +3720,7 @@ class ReorgPlanIn(BaseModel):
     unsorted: bool = False    # also every paper in no topic
     ids: list[str] = []       # also these papers
     names: list[str] = []     # your own section names: the papers go into these only
+    count: int = 0            # how many topics the AI makes (0: it decides; not with `names`)
 
 
 class ReorgGroup(BaseModel):
@@ -3742,7 +3778,8 @@ def api_topics_reorganize_plan(body: ReorgPlanIn):
         try:
             context = ("CURRENT TOPICS: " + ("; ".join(t["name"] for t in all_topics) or "(none)")
                        + "\n\nPAPERS:\n\n" + _sort_rows(ids, by_id))
-            groups = _parse_sort(_ask(REORG_INSTRUCTION, context, "topic sorting", sources=ids), set(ids))
+            instruction = REORG_INSTRUCTION + _count_rule(max(0, min(40, body.count)))
+            groups = _parse_sort(_ask(instruction, context, "topic sorting", sources=ids), set(ids))
             if not groups:
                 raise ValueError("no usable answer")
         except (HTTPException, ValueError) as e:

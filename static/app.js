@@ -798,7 +798,6 @@
     const weight = Math.log2(1 + words / 40) + 0.6 * Math.log2(1 + opens) + 0.25 * Math.sqrt(d) + 0.35 * Math.sqrt(parts);
     return Math.min(7, 1.5 + 1.05 * weight);
   }
-  const highDegree = (n) => n.type !== 'fragment' && (Number(n.degree) || 0) >= Math.max(3, S.degreeCut || 0);
 
   // ---------- focus / fade ----------
   /** neighbours of the selected node (manual, part, and visible similar links) */
@@ -1238,7 +1237,7 @@
   /** citations are directed: a small arrowhead just outside the cited paper's soma */
   function drawCiteArrow(l, g, ctx, k, st) {
     const chord = g.total;
-    const r = nodeRadius(l.target) * (k > 1.5 ? Math.sqrt(1.5 / k) : 1) + 1.5 / k;
+    const r = drawnRadius(l.target, k) + 1.5 / k;
     if (chord < r * 3) return;
     const t = Math.max(0.5, 1 - r / chord);
     const p = bz(g, t), d = bzD(g, t), dl = Math.hypot(d.x, d.y) || 1;
@@ -2287,7 +2286,12 @@
   }
 
   /** the radius a node is drawn at for zoom k: zooming in reveals structure rather than inflating dots */
-  function drawnRadius(n, k) { return nodeRadius(n) * (k > 1.5 ? Math.sqrt(1.5 / k) : 1); }
+  // never smaller than a readable dot on screen: zoomed out to fit a big library, a paper with little text
+  // would otherwise shrink below a pixel
+  const MIN_DOT_PX = 2.4, MIN_FRAG_PX = 1;
+  function drawnRadius(n, k) {
+    return Math.max(nodeRadius(n) * (k > 1.5 ? Math.sqrt(1.5 / k) : 1), (n.type === 'fragment' ? MIN_FRAG_PX : MIN_DOT_PX) / k);
+  }
 
   /** Where each attached note's red dot sits on its paper's ring. A note that links somewhere faces
    *  that link (snapped to 45 degrees), so its trace leaves outward instead of crossing the paper;
@@ -2417,11 +2421,10 @@
     if (alpha > 0.05 && S.dots) S.dots.push(n);
     n.__outer = outer;
     const match = S.search && S.matches.has(n.id);
-    const regionsShowing = S.regionLabels && S.regionLabels.length && k <= 3.0;  // node labels defer to tags when zoomed out
     const must = hov || sel || match;
-    let show;
-    if (n.type === 'fragment') show = hov || sel;
-    else show = must || k >= 4.2 || (!regionsShowing && highDegree(n) && k >= 0.75);
+    // every paper and note offers its name; drawLabels keeps the ones that have room (clear of region tags,
+    // other names and dots), the most connected first
+    const show = n.type === 'fragment' ? (hov || sel) : true;
     // titles are drawn after every dot (drawLabels), so no dot is painted over one and none sits on a dot
     if (show && alpha > 0.3 && S.labelJobs) S.labelJobs.push({ n, alpha, outer, sel, hov, must });
     ctx.restore();
@@ -2500,7 +2503,12 @@
     const taken = (S.labelBoxes = S.labelBoxes || []);
     for (const r of S.regionLabels || []) if (r.box) taken.push(r.box);
     jobs.sort((a, b) => (a.must - b.must) || ((Number(b.n.degree) || 0) - (Number(a.n.degree) || 0)));
-    const plain = jobs.filter((j) => !j.must), top = jobs.filter((j) => j.must);
+    // names that only fit squeezed in aren't worth it: a plain name needs this much clear space around it
+    const pad = 2 * px;
+    // only dots on screen (or just off it) compete for room
+    const v0 = fg.screen2GraphCoords(-60, -30), v1 = fg.screen2GraphCoords(graphEl.clientWidth + 60, graphEl.clientHeight + 30);
+    const onScreen = (n) => n.x >= v0.x && n.x <= v1.x && n.y >= v0.y && n.y <= v1.y;
+    const plain = jobs.filter((j) => !j.must && onScreen(j.n)), top = jobs.filter((j) => j.must);
     for (const j of [...plain, ...top]) {
       const { n, outer, sel, must } = j;
       const alpha = j.alpha * (1 - cardP(n.id));
@@ -2511,18 +2519,31 @@
       ctx.font = big ? `italic 500 ${fs}px "Newsreader", Georgia, serif`
         : `500 ${fs}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
       if ('fontStretch' in ctx) ctx.fontStretch = big ? 'normal' : 'semi-condensed';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.textBaseline = 'top';
       const label = big ? truncate(n.title || n.id, 72) : mapLabel(n);
-      const y = n.y + outer + (sel ? 15 : big ? 8 : 4) * px;
-      const w = ctx.measureText(label).width, box = [n.x - w / 2 - 4 * px, y - 2 * px, n.x + w / 2 + 4 * px, y + fs + 2 * px];
-      if (!must && (taken.some((b) => boxesMeet(box, b)) || dotsUnder(G, box, n))) { ctx.restore(); continue; }
+      const w = ctx.measureText(label).width, gap = 4 * px;
+      // where the name can go: under the dot, else beside it, else above it (a name you asked for: always under)
+      const below = { x: n.x, y: n.y + outer + (sel ? 15 : big ? 8 : 4) * px, align: 'center' };
+      const spots = must ? [below] : [below,
+        { x: n.x + outer + gap, y: n.y - fs / 2, align: 'left' },
+        { x: n.x - outer - gap, y: n.y - fs / 2, align: 'right' },
+        { x: n.x, y: n.y - outer - gap - fs, align: 'center' }];
+      let at = null, box = null;
+      for (const sp of spots) {
+        const x0 = sp.align === 'center' ? sp.x - w / 2 : sp.align === 'left' ? sp.x : sp.x - w;
+        const b = [x0 - 4 * px, sp.y - 2 * px, x0 + w + 4 * px, sp.y + fs + 2 * px];
+        const roomy = [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
+        if (must || !(taken.some((t) => boxesMeet(roomy, t)) || dotsUnder(G, roomy, n))) { at = sp; box = b; break; }
+      }
+      if (!at) { ctx.restore(); continue; }
       taken.push(box);
+      ctx.textAlign = at.align;
       ctx.globalAlpha = alpha;
-      if (big) glowText(ctx, label, n.x, y, 14);
+      if (big) glowText(ctx, label, at.x, at.y, 14);
       ctx.lineWidth = (big ? 5 : 3.5) * px; ctx.lineJoin = 'round'; ctx.strokeStyle = rgba(C.ground, 0.92);
-      ctx.strokeText(label, n.x, y);
+      ctx.strokeText(label, at.x, at.y);
       ctx.fillStyle = big ? C.ink : C.ink2;
-      ctx.fillText(label, n.x, y);
+      ctx.fillText(label, at.x, at.y);
       ctx.restore();
     }
   }

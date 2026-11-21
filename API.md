@@ -931,7 +931,10 @@ writes to `/api/profiles*`, `/api/settings`, `/api/agents/active`, `/api/privacy
 
 ## ADDED: Reorganizing topics and AI connection analysis
 
-- `POST /api/topics/auto-sort` also takes `{"folder": "<linked folder id>"}`: every paper in that folder of papers.
+- `POST /api/topics/auto-sort` also takes `{"folder": "<linked folder id>"}`: every paper in that folder of papers;
+  `"count": n` asks for exactly n topics in all (0: the AI decides); `"existing_only": true` sorts only into the
+  topics you have (never a new one; 400 with none), and the answer adds `"unplaced"`: how many fit none.
+- `POST /api/topics/reorganize/plan` also takes `"count": n` (exactly n topics; ignored with `names`).
 - `POST /api/topics/reorganize/plan` body `{"topics": [slug], "unsorted"?, "ids"?, "names"?: [section]}` →
   `{"by": "ai"|"regions", "ids", "replace", "removed": [topic name], "unplaced": [{id, title}],
   "groups": [{"name", "ids", "count", "topic": slug|null, "papers": [{id, title}]}]}`. Nothing changes yet. The AI

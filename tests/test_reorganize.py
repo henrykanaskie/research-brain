@@ -175,3 +175,32 @@ def test_sorting_a_folder_of_papers_by_content(client, server, monkeypatch):
         {"topics": [{"name": "Plasma sheaths", "ids": [ids[0], ids[2]]}, {"name": "Language models", "ids": [ids[1], ids[3]]}]}))
     r = client.post("/api/topics/auto-sort", json={"folder": "f1"}).json()
     assert r["sorted"] == 4 and all(f"[[{i}]]" in seen["c"] for i in ids)
+
+
+def test_a_number_of_topics_is_asked_for(client, server, monkeypatch):
+    ids, a, b = library(client)
+    seen = []
+    monkeypatch.setattr(server, "_ask", lambda i, c, *x, **k: seen.append(i) or json.dumps(
+        {"topics": [{"name": "Everything", "ids": ids}]}))
+    client.post("/api/topics/reorganize/plan", json={"topics": [a, b], "count": 3})
+    assert "Make exactly 3 topics" in seen[-1]
+    client.post("/api/topics/reorganize/plan", json={"topics": [a, b]})
+    assert "Make exactly" not in seen[-1]
+    client.post("/api/topics/auto-sort", json={"ids": ids, "count": 1})
+    assert "Make exactly 1 topic in all" in seen[-1]
+
+
+def test_import_sorts_only_into_your_existing_topics(client, server, monkeypatch):
+    ids, a, b = library(client)
+    new = [paper(client, "Bohm sheath at a probe", "sheath probe"), paper(client, "Tokenizers", "language tokens")]
+    seen = {}
+
+    def fake_ask(instruction, context, purpose="ask", sources=None):
+        seen.update(instruction=instruction, context=context)
+        return json.dumps({"topics": [{"name": "folder a", "ids": [new[0]]}, {"name": "Brand new", "ids": [new[1]]}],
+                           "none": []})
+    monkeypatch.setattr(server, "_ask", fake_ask)
+    r = client.post("/api/topics/auto-sort", json={"ids": new, "existing_only": True}).json()
+    assert "never make a new one" in seen["instruction"] and "- Folder A\n- Folder B" in seen["context"]
+    assert r == {"topics": [{"name": "Folder A", "slug": a, "count": 1, "new": False}], "sorted": 1, "by": "ai", "unplaced": 1}
+    assert new[0] in members(server, a) and {t["name"] for t in client.get("/api/topics").json()} == {"Folder A", "Folder B"}
