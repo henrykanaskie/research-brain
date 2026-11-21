@@ -1670,14 +1670,17 @@ def test_sections_sit_close_their_papers_evenly_spaced_and_clean_up_tidies_the_m
     hub = ids["Language"][0]
     sx, sy = page.evaluate("(id) => { const fg = window.__rb.fg, n = window.__rb.S.nodes.get(id); const p = fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }", hub)
     box = page.locator("#graph").bounding_box()
-    page.mouse.move(box["x"] + sx, box["y"] + sy)
+    # like a real pointer (and the other hover tests): off the map first, then a short glide onto the dot
+    page.mouse.move(5, box["y"] + 5)
+    page.wait_for_timeout(300)
+    page.mouse.move(box["x"] + sx, box["y"] + sy, steps=6)
     page.wait_for_function("(id) => window.__rb.S.hover === id", arg=hub)
     page.wait_for_timeout(600)
     lit = page.evaluate("""(id) => { const S = window.__rb.S, mine = new Set([id]);
       for (const l of S.links) { if (!window.__rb.fg.linkVisibility()(l)) continue;
         const a = l.source.id, b = l.target.id; if (a === id) mine.add(b); if (b === id) mine.add(a); }
       const far = [...S.nodes.values()].filter(n => !mine.has(n.id) && n.type !== 'fragment');
-      return { mine: mine.size, near: [...mine].map(i => S.nodes.get(i).__a), far: far.map(n => n.__a) }; }""", hub)
+      return { hover: S.hover, mine: mine.size, near: [...mine].map(i => S.nodes.get(i).__a), far: far.map(n => n.__a) }; }""", hub)
     assert lit["mine"] > 1 and min(lit["near"]) > 0.9 and max(lit["far"]) < 0.5, lit
     page.mouse.move(box["x"] + 5, box["y"] + 5)
 

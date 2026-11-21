@@ -844,9 +844,13 @@
   const nodeHidden = (id) => !!(S.hidden && S.hidden.has(id));
   /** The dot whose connections light up: the one under the pointer, else the one you clicked (selected). */
   function activeId() {
-    if (S.hover && !S.dragging && S.nodes.has(S.hover) && !nodeHidden(S.hover)) {
-      const n = S.nodes.get(S.hover);
-      if (n.type !== 'fragment') return S.hover;
+    // S.lit: the dot you last pointed at, kept while the pointer stays on or near it. The hit test alone
+    // (S.hover) can drop for a frame with the pointer still (the dots' slow float, a hover card opening),
+    // and the highlight would then flicker off under a pointer that hasn't moved.
+    const hov = S.hover || S.lit;
+    if (hov && !S.dragging && S.nodes.has(hov) && !nodeHidden(hov)) {
+      const n = S.nodes.get(hov);
+      if (n.type !== 'fragment') return hov;
     }
     return S.selected && S.nodes.has(S.selected) ? S.selected : null;
   }
@@ -2231,7 +2235,7 @@
       .linkHoverPrecision(6)
       // no tooltip on a trace: hovering highlights it and shows the pointer; a click explains the link
       .linkLabel(() => '')
-      .onNodeHover((n) => { S.hover = n ? n.id : null; S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
+      .onNodeHover((n) => { S.hover = n ? n.id : null; if (n) S.lit = n.id; S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
@@ -3340,6 +3344,15 @@
       relayout({ alpha: 1, ms: 900, fit: true });
     } } });
   }
+  // the lit dot stays lit until the pointer is clearly off it (or leaves the map)
+  graphEl.addEventListener('pointermove', (e) => {
+    if (!S.lit || S.hover === S.lit || !fg) return;
+    const n = S.nodes.get(S.lit), r = graphEl.getBoundingClientRect();
+    const p = n && Number.isFinite(n.x) ? fg.graph2ScreenCoords(n.x, n.y) : null;
+    const reach = n ? drawnRadius(n, S.k || 1) * (S.k || 1) + 8 : 0;  // px: the dot plus a little
+    if (!p || Math.hypot(e.clientX - r.left - p.x, e.clientY - r.top - p.y) > reach) { S.lit = null; S.focusCache = null; kick(260); }
+  });
+  graphEl.addEventListener('pointerleave', () => { if (S.lit) { S.lit = null; S.focusCache = null; kick(260); } });
   { const b = document.getElementById('btn-cleanup'); if (b) b.addEventListener('click', () => cleanUp()); }
   /** Dragging a dot moves that dot and nothing else: its lines stretch to follow it, but no other paper is
    *  carried along (its attached highlights, drawn on its ring, go with it). */
