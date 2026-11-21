@@ -117,11 +117,15 @@ def _start_server(a, url: str) -> bool:
     if a.profile:
         args += ["--profile", a.profile]
     with open(log, "ab") as out:
-        subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                         cwd=str(paths.PKG_DIR.parent), **_detached())
+        proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                cwd=str(paths.PKG_DIR.parent), **_detached())
     for _ in range(480):
         if _status_ok(url, 0.5):
             return True
+        # it stopped (what it said is in app.log): say so now, not minutes later, unless it stopped because
+        # another research brain holds the port (that one may still be starting)
+        if proc.poll() is not None and not _port_busy(a.port):
+            return _status_ok(url, 1.0)
         time.sleep(0.25)
     return False
 

@@ -66,6 +66,24 @@ def _open_when_ready(url: str) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
+def _std(stream):
+    """The OS handle behind sys.stdout / sys.stderr, for a child to write to; DEVNULL when there is none."""
+    try:
+        stream.flush()
+        return stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        return subprocess.DEVNULL
+
+
+def _quiet_child() -> dict:
+    """How serve starts the server on Windows when opened as an app (`open`, from the Start menu): no console
+    window, and this process's output (app.log) handed on explicitly. Opened with pythonw, the server gets no
+    stdout or stderr otherwise, stops while it starts, and says nothing: the window waited on a server that
+    was gone ("research brain is starting" for minutes, with no CPU use)."""
+    return {"creationflags": 0x08000000, "stdin": subprocess.DEVNULL,
+            "stdout": _std(sys.stdout), "stderr": _std(sys.stderr)}
+
+
 def cmd_serve(a) -> int:
     host, port = a.host, a.port
     if a.vault:
@@ -112,7 +130,7 @@ def cmd_serve(a) -> int:
                 env.setdefault("RB_IDLE_EXIT", "180")
             args = [sys.executable, "-m", "uvicorn", f"{__package__ or 'app'}.server:app", "--host", host, "--port", str(port),
                     "--log-level", a.log_level]
-            quiet = {"creationflags": 0x08000000} if os.name == "nt" and getattr(a, "quit_when_closed", False) else {}
+            quiet = _quiet_child() if os.name == "nt" and getattr(a, "quit_when_closed", False) else {}
             child = subprocess.Popen(args, env=env, cwd=str(paths.PKG_DIR.parent), **quiet)  # no console window when opened as an app
             if first and not a.no_open:
                 _open_when_ready(url)
