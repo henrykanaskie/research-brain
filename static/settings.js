@@ -74,6 +74,10 @@
   .ls-scan-list { list-style: none; margin: 4px 0 6px; padding: 0; max-height: 200px; overflow: auto; font: 12.5px/1.6 var(--sans); }
   .ls-scan-list .m { color: var(--ink-3); }
   .ls-check { display: flex; gap: 6px; align-items: center; }
+  .ls-check:has(> input[type=radio]) { padding: 5px 8px; margin-left: -9px; margin-right: -9px; border: 1px solid transparent; border-radius: 3px; color: var(--ink-2); }
+  .ls-check:has(> input[type=radio]):hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+  .ls-check:has(> input[type=radio]:checked) { color: var(--ink); font-weight: 500; border-color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .ls-check:has(> input[type=radio]) + .ls-check:has(> input[type=radio]) { margin-top: 2px; }
   .ls-notes summary { font: 12.5px var(--sans); color: var(--ink-2); cursor: pointer; }
   .ls-agents { list-style: none; margin: 6px 0 0; padding: 0; }
   .ls-agents li { padding: 8px 0; border-bottom: 1px solid var(--rule); font: 13px/1.45 var(--sans); }
@@ -81,6 +85,9 @@
   .ls-agents .top { display: flex; align-items: center; gap: 8px; }
   .ls-agents input[type=radio] { accent-color: var(--ink); margin: 0; }
   .ls-agents .nm { color: var(--ink); font-weight: 500; }
+  .ls-agents li:has(input[type=radio]:checked) { box-shadow: inset 2px 0 0 var(--ink); padding-left: 10px; background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .ls-agents li:has(input[type=radio]:checked) .nm { font-weight: 600; }
+  .ls-agents li:has(input[type=radio]:checked) .nm::after { content: "In use"; margin-left: 8px; font: 500 11.5px var(--sans); color: var(--ink); border: 1px solid var(--ink); border-radius: 3px; padding: 1px 5px; }
   .ls-agents .st { font-size: 11.5px; }
   .ls-agents .st.ok { color: var(--moss); }
   .ls-agents .st.warn { color: var(--ochre); }

@@ -364,7 +364,7 @@
     return box;
   }
   function drawVisuals(root) {
-    for (const code of root.querySelectorAll('.msg-body:not(.chat-live) pre > code.language-mermaid, .msg-body:not(.chat-live) pre > code.language-svg')) {
+    for (const code of root.querySelectorAll('.msg-body:not(.chat-live) pre > code.language-mermaid, .msg-body:not(.chat-live) pre > code.language-svg, .ai-sum-body pre > code.language-mermaid, .ai-sum-body pre > code.language-svg')) {
       const pre = code.parentElement, src = code.textContent.trim();
       if (!src) continue;
       if (code.classList.contains('language-svg')) {
@@ -3757,6 +3757,7 @@
       out.push(det);
     }
 
+    if (n.type === 'paper') out.push(renderAiSummary(n));
     out.push(renderSummary(n));
     out.push(renderBodyEditor(n, 'Notes', 'Your notes. Markdown, $inline$ and $$display$$ math. Type [[ to link another note.'));
     out.push(section('Tags', null, renderTags(n)));
@@ -3819,6 +3820,103 @@
     wrap.__refresh = setBtnState;
     setBtnState();
     return wrap;
+  }
+
+  // ---------- AI summary of a paper (app/ai_summary.py) ----------
+  // A thorough explainer of the paper, written by the active AI with diagrams where it can draw them. Kept in the
+  // sidebar once written (fetched when the paper opens), apart from your own summary below it, which stays yours.
+  const aiSums = new Map();  // paper id -> {text, at, agent, source} (text '' = none yet)
+  function renderAiSummary(n) {
+    const wrap = h('details', { class: 'disclose section ai-sum', id: 'ai-sum-sec', 'data-id': n.id });
+    const body = h('div', { class: 'ai-sum-slot' });
+    wrap.append(h('summary', null, h('span', { class: 'sec-title', text: 'AI summary' })), body);
+    wrap.__refresh = () => paintAiSummary(wrap, n);
+    wrap.addEventListener('toggle', () => { if (wrap.open) paintAiSummary(wrap, n); });
+    paintAiSummary(wrap, n);
+    if (!aiSums.has(n.id)) {
+      api('GET', `/api/notes/${encodeURIComponent(n.id)}/ai-summary`)
+        .then((r) => { aiSums.set(n.id, r || { text: '' }); if (wrap.isConnected) { if (r && r.text) wrap.open = true; paintAiSummary(wrap, n); } })
+        .catch(() => {});
+    } else if ((aiSums.get(n.id) || {}).text) wrap.open = true;
+    return wrap;
+  }
+  function paintAiSummary(wrap, n) {
+    const slot = $('.ai-sum-slot', wrap);
+    if (!slot) return;
+    const op = S.ops.get('aisum:' + n.id);
+    const rec = aiSums.get(n.id);
+    const kids = [];
+    if (op && op.live) {
+      kids.push(h('div', { class: 'machine streaming', 'aria-live': 'polite' },
+        h('div', { class: 'machine-head' }, h('span', { text: `${ai()}'s summary, writing…` })),
+        h('div', { class: 'md ai-sum-live', html: partialMD(op.live) })));
+    } else if (op) {
+      kids.push(h('div', { class: 'machine' }, working(`${ai()} is reading the paper`, op.start)));
+    } else if (rec && rec.text) {
+      const note = rec.source === 'abstract' ? 'from the abstract only' : rec.source === 'digest' ? 'from the main parts of a long paper' : '';
+      const copy = h('button', { class: 'btn btn-text msg-copy', type: 'button', text: 'Copy', title: 'Copy the summary as Markdown',
+        onclick: () => { navigator.clipboard.writeText(rec.text).then(() => toast('Copied', 'ok'), () => toast('Couldn’t copy', 'error')); } });
+      const md = mdEl(rec.text, 'md ai-sum-body');
+      kids.push(h('div', { class: 'machine' },
+        h('div', { class: 'machine-head' },
+          h('span', { title: fmtDate(rec.at), text: `${rec.agent || ai()}'s summary, ${ago(rec.at)}` }),
+          note ? h('span', { text: note }) : null, copy),
+        md));
+      drawVisuals(md);
+    }
+    const busy = !!op;
+    const has = !!(rec && rec.text);
+    const btn = h('button', { class: 'btn' + (has ? '' : ' btn-primary') + ' needs-claude' + (busy ? ' busy' : ''), type: 'button', disabled: busy,
+      title: has ? `Ask ${ai()} to write it again from the paper` : `${ai()} reads the paper and writes a full summary, with diagrams where they help`,
+      onclick: () => runAiSummary(n.id, has) }, has ? 'Write again' : 'Write an AI summary');
+    const acts = [btn];
+    if (has && !busy) acts.push(h('button', { class: 'btn btn-text', type: 'button', text: 'Remove', title: 'Delete this AI summary',
+      onclick: async () => {
+        try { await api('DELETE', `/api/notes/${encodeURIComponent(n.id)}/ai-summary`); aiSums.set(n.id, { text: '' }); paintAiSummary(wrap, n); }
+        catch (e) { toastErr(e, 'Couldn’t remove it'); }
+      } }));
+    if (!has && !busy) acts.push(h('span', { class: 'hint', text: n.has_text === false && !n.abstract ? 'Attach the PDF first: there is no text to read yet.' : 'It reads the whole paper; long ones take a minute or two.' }));
+    slot.replaceChildren(...kids, h('div', { class: 'actions' }, ...acts));
+    applyClaude(wrap);
+  }
+  async function runAiSummary(id, fresh = false) {
+    const key = 'aisum:' + id;
+    if (S.ops.has(key)) return;
+    const sec = () => { const s = $('#ai-sum-sec', pbody); return s && s.dataset.id === id ? s : null; };
+    const btn = sec() && $('.needs-claude', sec());
+    if (claudeBlocked(btn)) return;
+    S.ops.set(key, { start: Date.now() });
+    const op = S.ops.get(key);
+    const refresh = () => { const s = sec(); if (s) { s.open = true; s.__refresh(); } };
+    refresh();
+    const live = streamRenderer((text) => { op.live = text; const box = sec() && $('.ai-sum-live', sec()); if (box) box.innerHTML = partialMD(text); });
+    const path = `/api/notes/${encodeURIComponent(id)}/ai-summary`;
+    try {
+      let r;
+      try {
+        r = await apiStream(`${path}/stream${fresh ? '?refresh=true' : ''}`, undefined, (t) => {
+          if (!op.live) { op.live = t; refresh(); }
+          live.push(t);
+        });
+        live.flush();
+      } catch (e) {
+        live.cancel();
+        if (e.claude) throw e;
+        console.warn('AI summary streaming failed, retrying without streaming:', e);
+        op.live = '';
+        refresh();
+        r = await api('POST', `${path}${fresh ? '?refresh=true' : ''}`);
+      }
+      aiSums.set(id, r);
+      if (r.cached) toast("The paper hasn't changed since this summary was written, so it is shown again. Nothing was sent.", 'info',
+        { action: { label: 'Write again', fn: () => runAiSummary(id, true) } });
+      else if (!sec()) toast('AI summary ready', 'ok', { action: { label: 'Open', fn: () => openNote(id) } });
+    } catch (e) {
+      toastErr(e, 'AI summary failed');
+    } finally {
+      S.ops.delete(key);
+      refresh();
+    }
   }
 
   function renderCritique(box, n, liveSummary) {
@@ -3906,8 +4004,8 @@
     const autosizeBody = () => { ta.style.height = 'auto'; ta.style.height = Math.max(220, Math.min(ta.scrollHeight + 2, 900)) + 'px'; };
     const set = (m) => {
       S.bodyMode[n.id] = m;
-      bEdit.classList.toggle('on', m === 'edit');
-      bPrev.classList.toggle('on', m === 'preview');
+      bEdit.classList.toggle('on', m === 'edit'); bEdit.setAttribute('aria-pressed', String(m === 'edit'));
+      bPrev.classList.toggle('on', m === 'preview'); bPrev.setAttribute('aria-pressed', String(m === 'preview'));
       editWrap.hidden = m !== 'edit';
       prev.hidden = m !== 'preview';
       if (m === 'preview') {
@@ -6032,7 +6130,7 @@
     const root = document.documentElement;
     if (mode === 'light' || mode === 'dark') root.dataset.theme = mode; else delete root.dataset.theme;
     LS.set('theme', mode === 'light' || mode === 'dark' ? mode : null);
-    for (const b of $$('.theme button')) b.classList.toggle('on', b.dataset.theme === (mode || 'system'));
+    for (const b of $$('.theme button')) { const on = b.dataset.theme === (mode || 'system'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
     readTokens();
     kick(300);
   }

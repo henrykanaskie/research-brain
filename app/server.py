@@ -3247,6 +3247,96 @@ def api_critique_stream(nid: str, refresh: bool = False):
                              media_type="text/event-stream", headers=SSE_HEADERS)
 
 
+# ---------------------------------------------------------------- AI summary of a paper (app/ai_summary.py)
+from . import ai_summary as ai_summary_mod  # noqa: E402  (kept with its endpoints)
+
+# a deleted paper's AI summary goes with it (a paper added again later, with the same id, starts fresh)
+store.listen(lambda kind, nid: kind == "deleted" and ai_summary_mod.delete(store.root, nid))
+# GET    /api/notes/{id}/ai-summary          the stored one, or {"text": ""}
+# POST   /api/notes/{id}/ai-summary/stream   write it (SSE like the critique); an unchanged paper shows the
+#                                            stored one without sending anything unless ?refresh=true
+# DELETE /api/notes/{id}/ai-summary
+def _ai_summary_view(rec: dict | None, cached: bool = False) -> dict:
+    if not rec:
+        return {"text": ""}
+    return {"text": rec["text"], "at": rec.get("at"), "agent": rec.get("agent", ""), "source": rec.get("source", ""),
+            **({"cached": True} if cached else {})}
+
+
+def _ai_summary_prompt(n: dict) -> tuple[str, str, str]:
+    """(instruction, context, source) for summarising paper n. Raises 400/403 before anything is sent."""
+    if n["type"] != "paper":
+        raise HTTPException(400, "An AI summary is for a paper")
+    _refuse_private(n)
+    text = _fulltext_needed(n["id"])
+    cap = min(budget.get("critique_full_chars"), CLAUDE_CONTEXT_CHARS)
+    if text and len(text) > cap:
+        body, source = ai_summary_mod.digest(text, cap), "digest"
+    elif text:
+        body, source = f"FULL PAPER TEXT (page markers [[page N]]):\n{text}", "full"
+    elif (n.get("abstract") or "").strip():
+        body, source = f"ABSTRACT ONLY (no PDF attached):\n{n['abstract']}", "abstract"
+    else:
+        raise HTTPException(400, "This paper has no text or abstract to summarise yet. Attach its PDF first.")
+    agent = _ai_agent()
+    # a small local model rarely writes diagram code that draws; the big hosted agents do
+    diagrams = not (agent is not None and getattr(agent, "kind", "") == "local-server")
+    context = (f"PAPER: {n['title']}\nAuthors: {', '.join(n['authors'][:12])} {n['year'] or ''}\n"
+               + (f"Venue: {n['venue']}\n" if n.get("venue") else "") + f"\n{body}")
+    return ai_summary_mod.instruction(diagrams, source == "abstract"), context, source
+
+
+def _same_ai_summary(n: dict, refresh: bool) -> dict | None:
+    rec = ai_summary_mod.load(store.root, n["id"])
+    if refresh or not rec or rec.get("paper_chars") != len(_fulltext(n["id"]) or ""):
+        return None
+    return _ai_summary_view(rec, cached=True)
+
+
+def _save_ai_summary(nid: str, text: str, source: str) -> dict:
+    if not text.strip():
+        raise HTTPException(502, "The AI's answer was empty. Try again.")
+    agent = _ai_agent()
+    rec = ai_summary_mod.save(store.root, nid, text, agent=getattr(agent, "name", "") or "",
+                              paper_chars=len(_fulltext(nid) or ""), source=source)
+    return _ai_summary_view(rec)
+
+
+@app.get("/api/notes/{nid}/ai-summary")
+def api_ai_summary_get(nid: str):
+    _get(nid)
+    return _ai_summary_view(ai_summary_mod.load(store.root, nid))
+
+
+@app.post("/api/notes/{nid}/ai-summary")
+def api_ai_summary(nid: str, refresh: bool = False):
+    n = _get(nid)
+    hit = _same_ai_summary(n, refresh)
+    if hit:
+        return hit
+    instruction, context, source = _ai_summary_prompt(n)
+    return _save_ai_summary(nid, _ask(instruction, context, "ai summary", [nid]), source)
+
+
+@app.post("/api/notes/{nid}/ai-summary/stream")
+def api_ai_summary_stream(nid: str, refresh: bool = False):
+    n = _get(nid)
+    hit = _same_ai_summary(n, refresh)
+    if hit:
+        return StreamingResponse(iter([live.sse("delta", {"text": hit["text"]}), live.sse("done", hit)]),
+                                 media_type="text/event-stream", headers=SSE_HEADERS)
+    instruction, context, source = _ai_summary_prompt(n)
+    return StreamingResponse(_claude_sse(instruction, context, lambda text: _save_ai_summary(nid, text, source),
+                                         "ai summary", [nid]),
+                             media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@app.delete("/api/notes/{nid}/ai-summary")
+def api_ai_summary_delete(nid: str):
+    _get(nid)
+    return {"ok": ai_summary_mod.delete(store.root, nid)}
+
+
 # ---------------------------------------------------------------- General: ask the agent anything
 # Only your question and this conversation go along, plus whatever you attach (papers, notes, questions,
 # topics; never private ones). Attachments with web search need a one-time confirmation (privacy setting
