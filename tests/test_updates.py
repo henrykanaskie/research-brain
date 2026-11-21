@@ -276,3 +276,50 @@ def test_update_api_from_a_checkout(client):
     assert d["current"] and d["can_install"] is False and "git pull" in d["reason"] and d["system"]
     assert client.post("/api/update/install", json={}).status_code == 409
     assert client.post("/api/update/ack", json={}).json() == {"ok": True}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="runs the sh script")
+def test_uv_install_works_from_a_folder_with_a_space(upd, tmp_path):
+    """uv 0.12 splits a -c path at spaces ("File not found: .../Library/Application"), and the Mac data folder
+    is ~/Library/Application Support: the update names constraints.txt relatively and runs from its folder."""
+    import subprocess
+    lab = tmp_path / "Shared Drive" / "lab"
+    lab.mkdir(parents=True)
+    (lab / "research_brain-9.0.0-py3-none-any.whl").write_bytes(b"PK")
+    (lab / "constraints.txt").write_text("numpy==2.5.3\n", encoding="utf-8")
+    info = {"version": "9.0.0", "wheel": str(lab / "research_brain-9.0.0-py3-none-any.whl"), "source": str(lab)}
+    cmd = upd.install_command(info, "uv")
+    assert not any(" " in c for c in cmd[cmd.index("-c") + 1:cmd.index("-c") + 2])
+    assert upd.install_cwd(info) == str(lab)
+    # a stand-in uv that, like uv 0.12, fails when the -c path has a space or doesn't exist from where it runs
+    fake = tmp_path / "uv"
+    fake.write_text('#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = -c ]; then shift; case "$1" in *" "*) '
+                    'echo "error: File not found"; exit 2;; esac; [ -f "$1" ] || { echo "error: File not found"; exit 2; }; '
+                    'fi; shift; done; echo installed\n')
+    fake.chmod(0o755)
+    upd.update_dir().mkdir(parents=True)
+    sh = tmp_path / "run.sh"
+    sh.write_text(upd.script([str(fake), *cmd[1:]], pids=[], port=1, relaunch=["true"], cwd=str(tmp_path),
+                             windows=False, install_dir=upd.install_cwd(info)))
+    (tmp_path / "curl").write_text("#!/bin/sh\nexit 0\n")  # research brain "answers" at once
+    (tmp_path / "curl").chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    subprocess.run(["/bin/sh", str(sh)], timeout=30, check=True, env=env)
+    assert (upd.update_dir() / "exit-code").read_text().strip() == "0"
+    assert "installed" in (upd.update_dir() / "update.log").read_text()
+    # no space: the full path, run from anywhere
+    plain = _folder(tmp_path)
+    upd.set_source(str(plain))
+    assert upd.install_cwd(upd.fetch()) is None
+
+
+def test_pipx_quotes_a_constraints_path_with_a_space(upd, tmp_path):
+    import shlex
+    lab = tmp_path / "Shared Drive"
+    lab.mkdir()
+    (lab / "constraints.txt").write_text("numpy==2.5.3\n", encoding="utf-8")
+    info = {"version": "9.0.0", "wheel": str(lab / "research_brain-9.0.0-py3-none-any.whl"), "source": str(lab)}
+    cmd = upd.install_command(info, "pipx")
+    if sys.version_info >= (3, 12):
+        args = cmd[cmd.index("--pip-args") + 1]
+        assert shlex.split(args) == ["-c", str(lab / "constraints.txt")]  # how pipx splits --pip-args
