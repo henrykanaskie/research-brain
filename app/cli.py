@@ -279,10 +279,10 @@ def cmd_update(a) -> int:
         # to a new window that starts after this one exits.
         line = subprocess.list2cmdline(cmd)
         subprocess.Popen(["cmd", "/c", f"timeout /t 2 /nobreak >nul & {line} & echo. & echo Done. Start it with: research-brain & pause"],
-                         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
+                         cwd=updates.install_cwd(info), creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
         print("Updating in a new window…")
         return 0
-    r = subprocess.run(cmd)
+    r = subprocess.run(cmd, cwd=updates.install_cwd(info))
     if r.returncode == 0:
         print(f"Updated to {info['version']}. Start it with: research-brain")
     return r.returncode

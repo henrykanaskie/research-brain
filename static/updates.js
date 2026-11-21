@@ -208,8 +208,9 @@
         if (r.ok) {
           const d = await r.json();
           // back: a different version answers (an update can finish before the first look), or it went away
-          // and the installer is done (a failed update starts the old version again)
-          if (!d.installing && (d.current !== from || down)) { location.reload(); return; }
+          // and the installer is done (a failed update starts the old version again), or the installer has
+          // finished and left a result (a fast failure restarts the old version before the first look)
+          if (!d.installing && (d.current !== from || down || d.result)) { location.reload(); return; }
         } else down = true;
       } catch { down = true; }
       await sleep(1500);

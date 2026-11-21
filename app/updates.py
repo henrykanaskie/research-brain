@@ -241,11 +241,27 @@ def install_command(info: dict, how: str | None = None) -> list[str] | None:
     if pinned_ok and folder and Path(folder).is_dir() and (Path(folder) / "constraints.txt").is_file():
         cons = ["-c", str(Path(folder) / "constraints.txt")]
     if how == "uv":
+        if cons and _spaced(cons[1]):
+            cons[1] = "constraints.txt"  # uv splits a -c path at spaces: run it from that folder (install_cwd)
         return ["uv", "tool", "install", "--force", "--python", "3.12", *cons, spec]
     if how == "pipx":
-        return ["pipx", "install", "--force", *(["--pip-args", f"-c {cons[1]}"] if cons else []), spec]
+        return ["pipx", "install", "--force", *(["--pip-args", f'-c "{cons[1]}"'] if cons else []), spec]
     if how in ("venv", "pip"):
         return [sys.executable, "-m", "pip", "install", "--upgrade", *cons, spec]
+    return None
+
+
+def _spaced(path: str) -> bool:
+    return any(c.isspace() for c in path)
+
+
+def install_cwd(info: dict) -> str | None:
+    """Where to run install_command from: the folder holding constraints.txt when its path has a space
+    (~/Library/Application Support on a Mac, a shared "OneDrive - Company" folder), which uv 0.12 splits
+    when it's given to -c, so the command names it relatively. None: anywhere."""
+    folder = info.get("source") or ""
+    if folder and Path(folder).is_dir() and (Path(folder) / "constraints.txt").is_file() and _spaced(folder):
+        return str(Path(folder))
     return None
 
 
@@ -475,7 +491,7 @@ def reopen_command(port: int) -> list[str]:
 
 
 def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str], cwd: str, windows: bool,
-           reopen: list[str] | None = None) -> str:
+           reopen: list[str] | None = None, install_dir: str | None = None) -> str:
     """The script that waits for research brain to stop, installs, and starts it again. reopen (Windows): the
     window that closed for the update, opened again once research brain answers."""
     d = update_dir()
@@ -486,6 +502,8 @@ def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str
         lines = ["@echo off", "rem research brain update (app/updates.py): wait, install, start again"]
         for i, pid in enumerate(pids):
             lines += [f":w{i}", f'tasklist /FI "PID eq {pid}" /NH 2>nul | findstr /C:" {pid} " >nul && (ping -n 2 127.0.0.1 >nul & goto w{i})']
+        if install_dir:
+            lines.append(f'cd /d "{install_dir}"')
         lines += [f'echo == updating >> "{log}"', f'{q(install)} >> "{log}" 2>&1', f'>"{code}" echo %ERRORLEVEL%',
                   f'cd /d "{cwd}"', f'start "" /B {q(relaunch)} >> "{applog}" 2>&1',
                   "set n=0", ":up", f"curl -fs -o NUL {hb} && goto done", "set /a n+=1", "if %n% GEQ 120 goto done",
@@ -499,6 +517,8 @@ def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str
         # server, and stays open) still answers kill -0: count it as gone ("Z" in ps)
         lines.append(f"n=0; while kill -0 {pid} 2>/dev/null && [ \"$(ps -o stat= -p {pid} 2>/dev/null | cut -c1)\" != Z ]"
                      " && [ $n -lt 1200 ]; do sleep 0.5; n=$((n+1)); done")
+    if install_dir:
+        lines.append(f"cd {_sh([install_dir])}")
     lines += [f"echo \"== $(date)\" >> {_sh([str(log)])}", f"{_sh(install)} >> {_sh([str(log)])} 2>&1",
               f"echo $? > {_sh([str(code)])}", f"cd {_sh([cwd])}",
               f"nohup {_sh(relaunch)} >> {_sh([str(applog)])} 2>&1 < /dev/null &",
@@ -535,7 +555,7 @@ def start_install(info: dict, *, port: int, pids: list[int]) -> dict:
         reopen = reopen_command(port)
     path = d / ("run-update.cmd" if windows else "run-update.sh")
     path.write_text(script(cmd, pids=pids, port=port, relaunch=relaunch_command(port), cwd=str(paths.PKG_DIR.parent),
-                           windows=windows, reopen=reopen), encoding="utf-8")
+                           windows=windows, reopen=reopen, install_dir=install_cwd(info)), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k not in ("RB_RESTART_FILE", "RB_PORT")}
     try:
         if windows:
