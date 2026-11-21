@@ -747,8 +747,7 @@ body.panel-open .legend { max-width: calc(100vw - var(--panel-w) - 112px); }
 body.chat-open .legend { max-width: calc(100vw - var(--chat-w) - 112px); }
 body.panel-open.chat-open .legend { max-width: calc(100vw - var(--panel-w) - var(--chat-w) - 112px); }
 body.panel-open.chat-open .legend-count { display: none; }
-/* Library settings: the title stays in view while the long card scrolls */
-html .ls-card .modal-title { position: sticky; top: -20px; z-index: 1; background: var(--sheet); margin: -20px -22px 8px; padding: 20px 22px 10px; }
+/* Library settings: Done stays in view while the long card scrolls (the title, search and tabs: .ls-top, static/settings.js) */
 html .ls-card .modal-actions { position: sticky; bottom: -16px; background: var(--sheet); margin: 16px -22px -16px; padding: 12px 22px 16px; border-top: 1px solid var(--rule); }
 
 /* =====================================================================
