@@ -214,10 +214,11 @@ def main():
         hwnd = 0
         for _ in range(60):
             hwnd = u.FindWindowW(None, "research brain")
-            if hwnd:
+            if hwnd and u.IsWindowVisible(hwnd):
                 break
             time.sleep(0.5)
-        assert hwnd and u.IsWindowVisible(hwnd), "no window titled research brain"
+        seen = DATA / "window.log"
+        assert hwnd and u.IsWindowVisible(hwnd), ("no visible window titled research brain", bool(hwnd), seen.read_text(encoding="utf-8", errors="replace")[-1500:] if seen.exists() else "")
         # a new Windows 11 account's first-run screen covers everything on GitHub's machines
         subprocess.run(["taskkill", "/F", "/IM", "WWAHost.exe", "/IM", "UserOOBEBroker.exe", "/IM", "CloudExperienceHostBroker.exe"], capture_output=True)
         for _ in range(8):  # it loads the map
@@ -413,6 +414,8 @@ def main():
         assert not bad, bad[:6]
 
     (SHOTS / "app.log").write_text(log_tail(4000), encoding="utf-8")
+    if (DATA / "window.log").exists():
+        shutil.copy(DATA / "window.log", SHOTS / "window.log")
     try:
         close_app()
     except AssertionError:

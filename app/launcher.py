@@ -130,7 +130,23 @@ def _start_server(a, url: str) -> bool:
     return False
 
 
+def _window_log() -> None:
+    """Opened from the Windows Start menu (pythonw) this process has no output, so what goes wrong with the window was
+    said to nobody: keep it in window.log beside app.log (the last start's, and the one before)."""
+    if sys.stderr is not None:
+        return
+    try:
+        f = paths.user_data_dir() / "window.log"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if f.exists():
+            os.replace(f, f.with_name("window-before.log"))
+        sys.stderr = sys.stdout = open(f, "a", encoding="utf-8", errors="backslashreplace", buffering=1)
+    except OSError:  # another window has it open: it hands over to that one anyway
+        pass
+
+
 def cmd_open(a) -> int:
+    _window_log()
     url = f"http://127.0.0.1:{a.port}"
     from . import macwindow, winwindow
     if winwindow.available():  # Windows: research brain's own window on WebView2 (app/winwindow.py)
