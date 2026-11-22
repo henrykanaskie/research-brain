@@ -169,8 +169,13 @@ jobs:
       fail-fast: false
       matrix:
         # "odd": installed under a user folder the code page can't spell, as for a user called Łukasz
-        home: [plain, odd]
-    runs-on: windows-latest
+        include:
+          - { os: windows-latest, home: plain }   # Windows Server, Intel/AMD
+          - { os: windows-latest, home: odd }
+          - { os: windows-11-arm, home: plain }   # Windows 11 itself (GitHub has it on Arm only)
+          - { os: windows-11-arm, home: odd }
+    name: windows-installed (${{ matrix.os }}, ${{ matrix.home }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -181,6 +186,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade build playwright reportlab
+          python -m playwright install ffmpeg   # for the video of the run
           python -m build --wheel
           V=$(python -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('app/__init__.py').read()).group(1))")
           W=$(basename dist/*.whl)
@@ -212,5 +218,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-installed-${{ matrix.home }}
+          name: windows-installed-${{ matrix.os }}-${{ matrix.home }}
           path: C:\rb-shots

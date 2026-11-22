@@ -172,11 +172,26 @@ def processes() -> list[dict]:
 
 
 def main():
-    print("python", sys.version, "\nhome", HOME, flush=True)
+    import platform
+    print("windows", platform.platform(), platform.machine(), "\npython", sys.version, "\nhome", HOME, flush=True)
 
     @check("opens from the Start menu, with spaces and non-code-page characters in its folders")
     def _():
         return open_app()
+
+    @check("its window is on the screen (a picture of the desktop is kept)")
+    def _():
+        import ctypes
+        hwnd = 0
+        for _ in range(60):
+            hwnd = ctypes.windll.user32.FindWindowW(None, "research brain")
+            if hwnd:
+                break
+            time.sleep(0.5)
+        time.sleep(8)  # it loads the map
+        from PIL import ImageGrab
+        ImageGrab.grab(all_screens=True).save(SHOTS / "desktop.png")
+        assert hwnd and ctypes.windll.user32.IsWindowVisible(hwnd), "no window titled research brain"
 
     @check("runs under pythonw, as installed")
     def _():
@@ -314,7 +329,8 @@ def main():
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
             b = pw.chromium.launch(channel="msedge")
-            pg = b.new_page(viewport={"width": 1400, "height": 860}, bypass_csp=True)
+            ctx = b.new_context(viewport={"width": 1400, "height": 860}, bypass_csp=True, record_video_dir=str(SHOTS), record_video_size={"width": 1400, "height": 860})
+            pg = ctx.new_page()
             errs: list[str] = []
             pg.on("pageerror", lambda e: errs.append(str(e)))
             pg.add_init_script("localStorage.setItem('rb.tour.done','true')")
@@ -335,6 +351,7 @@ def main():
                 pg.wait_for_selector(".textLayer span", timeout=30000)
             finally:
                 pg.screenshot(path=str(SHOTS / "viewer.png"))
+            ctx.close()  # the video is written now
             assert not errs, errs[:3]
             b.close()
 
