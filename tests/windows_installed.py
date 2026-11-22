@@ -207,7 +207,7 @@ def main():
     def _():
         return open_app()
 
-    @check("its own window is there and drawn, not blank")
+    @check("its own window is there, and greets you")
     def _():
         import ctypes
         u = ctypes.windll.user32
@@ -221,20 +221,22 @@ def main():
         assert hwnd and u.IsWindowVisible(hwnd), ("no visible window titled research brain", bool(hwnd), seen.read_text(encoding="utf-8", errors="replace")[-1500:] if seen.exists() else "")
         # a new Windows 11 account's first-run screen covers everything on GitHub's machines
         subprocess.run(["taskkill", "/F", "/IM", "WWAHost.exe", "/IM", "UserOOBEBroker.exe", "/IM", "CloudExperienceHostBroker.exe"], capture_output=True)
-        for _ in range(8):  # it loads the map
+        t0, before, middle = time.time(), None, 0
+        while time.time() - t0 < 60:  # until the greeting of a new library is drawn and nothing changes any more
             time.sleep(3)
             u.ShowWindow(hwnd, 5); u.SetForegroundWindow(hwnd)
             img = window_picture(hwnd)
             img.save(SHOTS / "window.png")
-            small = img.convert("RGB").resize((160, 120))
-            common, n = max(small.getcolors(160 * 120))  # how much of it is one colour
-            colours = len(small.getcolors(160 * 120))
-            if colours > 60 and common < 160 * 120 * 0.97:
+            w, h = img.size
+            middle = len(img.crop((w // 5, h // 3, 4 * w // 5, 4 * h // 5)).getcolors(w * h))  # (an empty map is one colour)
+            now = img.resize((160, 120)).tobytes()
+            if middle > 40 and now == before:
                 break
+            before = now
         from PIL import ImageGrab
         ImageGrab.grab(all_screens=True).save(SHOTS / "desktop.png")
-        assert colours > 60 and common < 160 * 120 * 0.97, f"the window is blank: {colours} colours, {100 * common // (160 * 120)}% of it {n}"
-        return f"{img.size[0]}x{img.size[1]}, {colours} colours"
+        assert middle > 40, f"the window never showed the new library's greeting ({middle} colours in the middle of it)"
+        return f"{w}x{h}, settled after {time.time() - t0:.0f} s"
 
     @check("runs under pythonw, as installed")
     def _():
