@@ -993,6 +993,7 @@
     const rf = fg.d3Force('regions');
     if (rf && rf.relayout) rf.relayout();
     solveLayout(alpha);
+    plan.gen++; planLabels();  // names take their places for where the dots are going, once
     const to = new Map();
     for (const n of nodes) if (Number.isFinite(n.x) && Number.isFinite(n.y)) to.set(n, [n.x, n.y]);
     for (const [n, p] of from) { n.x = p[0]; n.y = p[1]; }
@@ -1036,7 +1037,7 @@
     for (const n of S.nodes.values()) {
       if (n === S.dragNode || !Number.isFinite(n.x)) continue;
       const h = strHash(n.type === 'fragment' && n.parent ? n.parent : n.id);
-      const p1 = 9 + (h % 5), p2 = 13 + ((h >> 3) % 6), ph = (h % 628) / 100, A = 0.32 * ramp;
+      const p1 = 9 + (h % 5), p2 = 13 + ((h >> 3) % 6), ph = (h % 628) / 100, A = Math.min(0.32, 0.8 / (S.k || 1)) * ramp;  // under a pixel at any zoom
       const dx = A * (0.7 * Math.sin((2 * Math.PI * t) / p1 + ph) + 0.3 * Math.sin((2 * Math.PI * t) / p2 + 2 * ph));
       const dy = A * (0.7 * Math.cos((2 * Math.PI * t) / p2 + ph) + 0.3 * Math.sin((2 * Math.PI * t) / p1 + 3 * ph));
       n.x += dx; n.y += dy; n.__flx = dx; n.__fly = dy; floatShifted.push(n);
@@ -1336,7 +1337,6 @@
     if (st.dash) ctx.setLineDash([3 / k, 2.5 / k]);
     ctx.stroke();
     if (st.dash) ctx.setLineDash([]);
-    if (S.drawnTraces && l.kind !== 'part' && linkResting(l)) S.drawnTraces.push(g.pts);  // names keep off these (drawLabels)
     // tiny vias where the trace bends
     if (k > 5 && l.kind !== 'part') {
       const vr = 0.7 / k;
@@ -1395,8 +1395,8 @@
     if (!use.length) use = mem;
     let x0 = Infinity, x1 = -Infinity, top = Infinity, bottom = -Infinity;
     for (const n of use) {
-      const [x, y] = at(n), r = nodeRadius(n);
-      x0 = Math.min(x0, x - r); x1 = Math.max(x1, x + r); top = Math.min(top, y - r); bottom = Math.max(bottom, y + r);
+      const [x, y] = at(n);  // their centres: a dot's drawn size changes with the zoom, and the name would creep
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
     }
     return { x: (x0 + x1) / 2, x0, x1, top, bottom };
   }
@@ -1429,76 +1429,189 @@
     }
     return lines;
   }
-  const TITLE_PX = 15, TITLE_MAX_W = 190, TITLE_GAP = 13;  // screen pixels
+  const TITLE_PX = 15, TITLE_MAX_W = 190, TITLE_GAP = 20;  // screen pixels; the gap is from the top dot's centre
+  const TITLE_FONT = `italic 500 ${TITLE_PX}px "Newsreader", Georgia, serif`, TITLE_LINE = TITLE_PX * 1.18;
+  const NUM_FONT = '500 10px "Archivo", -apple-system, "Segoe UI", sans-serif', NUM_GAP = 5;
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  /** A section's name broken into lines and measured, in screen pixels: the same at every zoom. */
+  function titleText(label, size) {
+    const c = measureCtx;
+    c.font = TITLE_FONT;
+    if ('fontStretch' in c) c.fontStretch = 'normal';
+    const lines = wrapWords(c, regionName(label), TITLE_MAX_W, 2), widths = lines.map((t) => c.measureText(t).width);
+    c.font = NUM_FONT;
+    const num = String(size), wNum = c.measureText(num).width, last = lines.length - 1;
+    const w = Math.max(...widths.map((x, i) => (i === last ? x + NUM_GAP + wNum : x)));
+    return { key: label + '|' + size, lines, widths, num, wNum, w, h: lines.length * TITLE_LINE };
+  }
+  /** Draw in screen pixels: type keeps one size and crisp, even spacing whatever the zoom (text scaled along with
+   *  the map is re-spaced at every zoom step, and shimmers). draw() gets (x, y) on the map -> [x, y] on screen. */
+  function onScreenPx(ctx, draw) {
+    const tf = ctx.getTransform(), d = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+    try { draw((x, y) => [(tf.a * x + tf.e) / d, (tf.d * y + tf.f) / d]); } finally { ctx.restore(); }
+  }
+  let labelDt = 0, labelClock = 0;  // time since the last frame, for names fading in and out
+  const easeTo = (v, t) => (reducedMotion() || Math.abs(t - v) < 0.01 ? t : v + (t - v) * (1 - Math.exp(-labelDt / 70)));
   /** Section names: the display face, centred right above the section's papers, two even lines at most, with the
-   *  paper count small after it. The map's own colour sits behind the words, so no line runs through them. A name
-   *  that would cover a dot or another name goes under its section instead. Pointing at it (or at a dot in the
+   *  paper count small after it. A name is fixed to its section: one size, one place and the same line breaks at
+   *  every zoom and wherever you pan. Where two would overlap (zoomed far out) the smaller section's fades out. The
+   *  map's own colour sits behind the words, so no line runs through them. Pointing at it (or at a dot in the
    *  section) draws a red rule under it; click to focus the section. */
   function drawRegionLabels(ctx, k) {
     if (!S.regionLabels) return;
     const focused = S.focusCluster;
     const hoverNode = S.hover && S.nodes.get(S.hover);
     const hot = S.hoverRegion != null ? S.hoverRegion : hoverNode ? hoverNode.cluster : null;
-    const px = 1 / k;
-    // zoomed out on a big library the names shrink a little; they are never louder than the papers
-    const fsPx = Math.max(12, Math.min(TITLE_PX, 6.5 * k)), fs = fsPx * px, lineH = fs * 1.18;
-    const nameFont = `italic 500 ${fs}px "Newsreader", Georgia, serif`;
-    const numFont = `500 ${10 * px}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
-    const vtl = fg.screen2GraphCoords(0, 0), vbr = fg.screen2GraphCoords(graphEl.clientWidth, graphEl.clientHeight);
-    const rest = [];
-    for (const n of S.dots || []) rest.push([...atRest(n), n.__outer || 2]);
-    const covers = (b) => {
-      let c = 0;
-      for (const [x, y, r] of rest) { const cx = Math.max(b[0], Math.min(x, b[2])), cy = Math.max(b[1], Math.min(y, b[3])); if ((cx - x) ** 2 + (cy - y) ** 2 < r * r) c++; }
-      return c;
-    };
-    const placed = [];
-    ctx.save();
-    for (const r of S.regionLabels) {
-      r.box = null;
-      if (focused != null) continue;  // the focus bar names the region
-      ctx.font = nameFont;
-      const maxW = Math.max(r.x1 - r.x0 + 40 * px, TITLE_MAX_W * px);
-      const lines = wrapWords(ctx, regionName(r.label), maxW, 2), widths = lines.map((t) => ctx.measureText(t).width);
-      ctx.font = numFont;
-      const num = String(r.size), wNum = ctx.measureText(num).width, numGap = 5 * px;
-      const last = lines.length - 1, wName = Math.max(...widths.map((w, i) => (i === last ? w + numGap + wNum : w)));
-      const blockH = lines.length * lineH, gap = TITLE_GAP * px;
-      const x0 = r.x - wName / 2;
-      // on screen when any of it or its papers is; a section cut by the window's top or side keeps its name in view
-      if (Math.max(r.x1, x0 + wName) < vtl.x || Math.min(r.x0, x0) > vbr.x || r.bottom < vtl.y || r.top - gap - blockH > vbr.y) continue;
-      const bx = (x) => Math.max(vtl.x + 8 * px, Math.min(x, vbr.x - 8 * px - wName));
-      let best = null;
-      for (const [i, y] of [[0, r.top - gap - blockH], [1, r.bottom + gap + 14 * px], [2, r.top - gap - blockH * 2]]) {
-        const X = bx(x0), box = [X - 4 * px, y - 2 * px, X + wName + 4 * px, y + blockH + 3 * px];
-        if (placed.some((p) => boxesMeet(box, p))) continue;
-        const under = covers(box) + (i === 1 ? 0.5 : 0);
-        if (!best || under < best.under) best = { y, X, box, under };
-        if (best.under < 0.5) break;
+    const W = graphEl.clientWidth, H = graphEl.clientHeight, px = 1 / k;
+    onScreenPx(ctx, (at) => {
+      for (const r of S.regionLabels) {
+        r.box = null;
+        if (focused != null) continue;  // the focus bar names the region
+        const key = r.label + '|' + r.size;
+        let t = plan.titles.get(r.cid);
+        if (!t || t.key !== key) plan.titles.set(r.cid, t = { ...titleText(r.label, r.size), minK: t ? t.minK : 0, a: t ? t.a : 1 });
+        t.shown = k >= t.minK * (t.shown ? 0.97 : 1);
+        const isHot = hot != null && r.cid === hot, dimmed = !isHot && (S.selected || S.search || hot != null || S.lit);
+        const want = !t.shown ? 0 : dimmed ? 0.4 : 1, solid = easeTo(t.solid ?? (t.shown ? 1 : 0), t.shown ? 1 : 0);
+        t.a = easeTo(t.a ?? want, want); t.solid = solid;
+        if (t.a !== want || t.solid !== (t.shown ? 1 : 0)) kick(60);
+        if (t.a < 0.02) continue;
+        const [cx, top] = at(r.x, r.top), y0 = top - TITLE_GAP - t.h, x0 = cx - t.w / 2;
+        if (x0 > W || x0 + t.w < 0 || y0 > H || y0 + t.h < 0) continue;  // off screen
+        r.box = [r.x - (t.w / 2 + 4) * px, r.top - (TITLE_GAP + t.h + 2) * px, r.x + (t.w / 2 + 4) * px, r.top - (TITLE_GAP - 3) * px];
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = rgba(C.ground, 0.95);
+        const last = t.lines.length - 1;
+        t.lines.forEach((line, i) => {
+          const w = t.widths[i], full = i === last ? w + NUM_GAP + t.wNum : w, tx = cx - full / 2, base = y0 + (i + 0.8) * TITLE_LINE;
+          ctx.font = TITLE_FONT;
+          if ('fontStretch' in ctx) ctx.fontStretch = 'normal';
+          ctx.globalAlpha = t.solid;  // the backing stays solid when the name dims, so a lit line never strikes it out
+          glowText(ctx, line, tx, base, 8);
+          ctx.strokeText(line, tx, base);
+          ctx.globalAlpha = t.a;
+          ctx.fillStyle = C.ink; ctx.fillText(line, tx, base);
+          if (i === last) {
+            ctx.font = NUM_FONT;
+            ctx.strokeText(t.num, tx + w + NUM_GAP, base);
+            ctx.fillStyle = C.ink3; ctx.fillText(t.num, tx + w + NUM_GAP, base);
+            if (isHot) { ctx.fillStyle = C.red; ctx.fillRect(tx, base + 4, w, 1.2); }
+          }
+        });
       }
-      if (!best || best.box[3] < vtl.y || best.box[1] > vbr.y) continue;
-      placed.push(best.box); r.box = best.box;
-      const cx = best.X + wName / 2, isHot = hot != null && r.cid === hot;
-      const dimmed = !isHot && (S.selected || S.search || hot != null || S.lit);
-      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-      lines.forEach((t, i) => {
-        const w = widths[i], full = i === last ? w + numGap + wNum : w, tx = cx - full / 2, base = best.y + (i + 0.8) * lineH;
-        ctx.font = nameFont;
-        ctx.globalAlpha = 1;  // the backing stays solid when the name dims, so a lit line never strikes it out
-        glowText(ctx, t, tx, base, 8);
-        ctx.lineJoin = 'round'; ctx.lineWidth = 4 * px; ctx.strokeStyle = rgba(C.ground, 0.95);
-        ctx.strokeText(t, tx, base);
-        ctx.globalAlpha = dimmed ? 0.4 : 1;
-        ctx.fillStyle = C.ink; ctx.fillText(t, tx, base);
-        if (i === last) {
-          ctx.font = numFont;
-          ctx.strokeText(num, tx + w + numGap, base);
-          ctx.fillStyle = C.ink3; ctx.fillText(num, tx + w + numGap, base);
-          if (isHot) { ctx.fillStyle = C.red; ctx.fillRect(tx, base + 4 * px, w, 1.2 * px); }
-        }
-      });
+    });
+  }
+
+  // ---------- where every name goes, decided once per layout ----------
+  // Names used to find a free spot again on every frame, so they slid, changed sides, rewrapped and blinked while you
+  // panned and zoomed. Now each one gets its place once, when the layout (or what's on the map) changes: a section's
+  // name above its papers, a paper's on the side of its dot that's clearest at the whole-map view. Panning changes
+  // nothing. Zooming only lets a name in or out, at one fixed zoom of its own: the one from which it no longer
+  // overlaps a more important name or a dot.
+  const plan = { titles: new Map(), key: null, gen: 0 };
+  const planKey = () => [S.links, S.nodes, S.clusters, S.labelMode, S.hidden, S.lines, S.threshold, S.showSim, S.showCites, plan.gen];
+  const planStale = () => { const a = plan.key, b = planKey(); return !a || a.some((v, i) => v !== b[i]); };
+  /** the names need placing again (a dot or a section was dropped somewhere else, the fonts loaded) */
+  function replanLabels() { plan.gen++; kick(60); }
+  if (document.fonts) {
+    const again = () => replanLabels();
+    if (document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', again);
+    document.fonts.ready.then(again);
+  }
+  const LABEL_PX = 10.5, LABEL_FONT = `500 ${LABEL_PX}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
+  function labelWidth(text) {
+    measureCtx.font = LABEL_FONT;
+    if ('fontStretch' in measureCtx) measureCtx.fontStretch = 'semi-condensed';
+    return measureCtx.measureText(text).width;
+  }
+  /** a dot's edge in screen pixels at zoom k, with its ring of notes */
+  const outerPx = (n, k) => drawnRadius(n, k) * k + (markCount(n) ? 4.6 : 0);
+  /** The four places for a name of width w around a dot of radius o (px): under, right, left, above.
+   *  Each is [left, top] from the dot's centre. */
+  const labelSpots = (w, o) => [[-w / 2, o + 4], [o + 4, -LABEL_PX / 2], [-o - 4 - w, -LABEL_PX / 2], [-w / 2, -o - 4 - LABEL_PX]];
+  /** The largest zoom at which two boxes overlap (Infinity: always), each [x0, y0, x1, y1] px around its own point. */
+  function overlapUntil(ax, ay, a, bx, by, b) {
+    let lo = 0, hi = Infinity;
+    // they overlap along x while m < dx * k < M, and the same along y (written out: this runs for every pair of names)
+    const dx = bx - ax, m = a[0] - b[2], M = a[2] - b[0];
+    if (dx > 1e-9) { lo = m / dx; hi = M / dx; } else if (dx < -1e-9) { lo = M / dx; hi = m / dx; } else if (m >= 0 || M <= 0) return 0;
+    if (lo < 0) lo = 0;
+    if (lo >= hi) return 0;
+    const dy = by - ay, p = a[1] - b[3], q = a[3] - b[1];
+    if (dy > 1e-9) { lo = Math.max(lo, p / dy); hi = Math.min(hi, q / dy); } else if (dy < -1e-9) { lo = Math.max(lo, q / dy); hi = Math.min(hi, p / dy); } else if (p >= 0 || q <= 0) return 0;
+    if (lo >= hi) return 0;
+    return hi;
+  }
+  function planLabels() {
+    plan.key = planKey();
+    const rf = fg && fg.d3Force('regions');
+    const dots = [];
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of S.nodes.values()) {
+      if (n.type === 'fragment' || !Number.isFinite(n.x) || nodeHidden(n.id)) continue;
+      const [x, y] = atRest(n);
+      dots.push({ n, x, y });
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
     }
-    ctx.restore();
+    if (!dots.length) return;
+    // the zoom that shows the whole map
+    const W = graphEl.clientWidth || 1200, H = graphEl.clientHeight || 800;
+    const k = Math.max(0.12, Math.min(8, (W - 180) / Math.max(x1 - x0, 1e-6), (H - 180) / Math.max(y1 - y0, 1e-6)));
+    for (const d of dots) { d.o = outerPx(d.n, k); d.box = [-d.o, -d.o, d.o, d.o]; d.sx = d.x * k; d.sy = d.y * k; }
+    // section names first, the biggest sections before the rest
+    const placed = [];  // {x, y (map), box (px around it), minK}
+    const groups = [...cloudMembers()].map(([cid, mem]) => ({ cid, mem, info: (S.clusters || []).find((c) => c.id === cid) }))
+      .filter((g) => g.info && g.info.label && g.mem.length > 1).sort((a, b) => b.mem.length - a.mem.length || a.cid - b.cid);
+    const old = plan.titles;
+    plan.titles = new Map();
+    for (const g of groups) {
+      const t = titleText(g.info.label, g.mem.length), b = sectionSpan(g.mem, rf && rf.regionAt ? rf.regionAt(g.cid) : null), was = old.get(g.cid);
+      const box = [-t.w / 2 - 4, -TITLE_GAP - t.h - 2, t.w / 2 + 4, -TITLE_GAP + 3];
+      let minK = 0;
+      for (const q of placed) { const u = overlapUntil(b.x, b.top, box, q.x, q.y, q.box); if (u > q.minK) minK = Math.max(minK, u); }
+      placed.push({ x: b.x, y: b.top, box, minK });
+      plan.titles.set(g.cid, { ...t, minK, a: was && was.a, solid: was && was.solid, shown: was && was.shown });
+    }
+    // the resting lines, in pixels at that zoom, for the sides that keep off them
+    const traces = [];
+    for (const l of S.links || []) {
+      if (l.kind === 'part' || typeof l.source !== 'object' || !linkResting(l)) continue;
+      const g = linkGeom(l);
+      if (!g) continue;
+      const P = g.pts.map((v) => v * k);
+      let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+      for (let i = 0; i < P.length; i += 2) { a = Math.min(a, P[i]); c = Math.max(c, P[i]); b = Math.min(b, P[i + 1]); d = Math.max(d, P[i + 1]); }
+      traces.push({ P, box: [a, b, c, d] });
+    }
+    // then the papers' and notes' names, the best connected first
+    const items = dots.slice().sort((a, b) => ((Number(b.n.degree) || 0) - (Number(a.n.degree) || 0)) || (a.n.id < b.n.id ? -1 : 1));
+    const atK = (q) => [q.x * k + q.box[0], q.y * k + q.box[1], q.x * k + q.box[2], q.y * k + q.box[3]];
+    const taken = placed.filter((q) => k >= q.minK).map(atK);
+    const PAD = 2;  // clear space around a name
+    for (const d of items) {
+      const n = d.n, text = mapLabel(n), w = labelWidth(text), was = n.__lab;
+      let best = null;
+      labelSpots(w, d.o).forEach(([lx, ly], side) => {
+        const box = [lx - 4 - PAD, ly - 2 - PAD, lx + w + 4 + PAD, ly + LABEL_PX + 2 + PAD];
+        const b = [d.sx + box[0], d.sy + box[1], d.sx + box[2], d.sy + box[3]];
+        let cost = side * 0.1 - (was && was.side === side ? 0.6 : 0);  // it keeps the side it has unless another is clearly better
+        for (const t of taken) if (boxesMeet(b, t)) cost += 10;
+        for (const m of dots) {
+          if (m === d || m.sx < b[0] - m.o || m.sx > b[2] + m.o || m.sy < b[1] - m.o || m.sy > b[3] + m.o) continue;
+          cost += 10;
+        }
+        for (const t of traces) if (boxesMeet(b, t.box) && traceThrough(t.P, b)) cost += 1;
+        if (!best || cost < best.cost) best = { side, box, cost, b };
+      });
+      let minK = 0;
+      for (const q of placed) { const u = overlapUntil(d.x, d.y, best.box, q.x, q.y, q.box); if (u > q.minK && u > minK) minK = u; }
+      for (const m of dots) { if (m === d) continue; const u = overlapUntil(d.x, d.y, best.box, m.x, m.y, m.box); if (u > minK) minK = u; }
+      n.__lab = { text, w, side: best.side, minK, shown: was && was.shown, a: was && was.a };
+      placed.push({ x: d.x, y: d.y, box: best.box, minK });
+      if (k >= minK) taken.push(best.b);
+    }
   }
   function regionTagClick(e) {
     const r = labelHit(e);
@@ -2405,7 +2518,10 @@
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
       .onRenderFramePre((ctx, k) => {
         S.k = k; S.partLayout = new Map(); S.frame = (S.frame || 0) + 1;
-        S.labelBoxes = []; S.labelJobs = []; S.dots = []; S.drawnTraces = [];
+        S.labelJobs = [];
+        { const now = performance.now(); labelDt = Math.min(100, now - labelClock); labelClock = now; }
+        // names get new places only when the map has changed and is at rest (a layout in motion planned them already)
+        if (!motion.tween && !S.dragging && S.dragRegion == null && planStale()) planLabels();
         const moving = stepAlphas();
         if (stepCards(ctx, k) || moving) kick(60);
         applyFloat();
@@ -2416,7 +2532,6 @@
       })
       .onRenderFramePost((ctx, k) => {
         try {
-          S.dotG = dotGrid(k);
           drawRegionLabels(ctx, k);
           drawLabels(ctx, k);
           drawPulses(ctx, k);
@@ -2729,46 +2844,16 @@
       ctx.strokeStyle = C.ink2; ctx.lineWidth = 0.6 * px; ctx.stroke();
     }
 
-    // where this dot is, so titles and region tags can stay off it (drawLabels, drawRegionLabels)
-    if (alpha > 0.05 && S.dots) S.dots.push(n);
     n.__outer = outer;
     const match = S.search && S.matches.has(n.id);
     const must = hov || sel || match;
-    // every paper and note offers its name; drawLabels keeps the ones that have room (clear of region tags,
-    // other names and dots), the most connected first
+    // every paper and note offers its name; drawLabels shows the ones with room at this zoom (planLabels)
     const show = n.type === 'fragment' ? (hov || sel) : true;
     // titles are drawn after every dot (drawLabels), so no dot is painted over one and none sits on a dot
     if (show && alpha > 0.3 && S.labelJobs) S.labelJobs.push({ n, alpha, outer, sel, hov, must });
     ctx.restore();
   }
 
-  /** Dots on screen this frame, in a grid, for "does this box cover a dot?" */
-  function dotGrid(k) {
-    const cell = 40 / k, grid = new Map();
-    for (const n of S.dots || []) {
-      const key = Math.floor(n.x / cell) + ',' + Math.floor(n.y / cell);
-      let b = grid.get(key); if (!b) grid.set(key, b = []);
-      b.push(n);
-    }
-    return { cell, grid };
-  }
-  /** How many dots (other than `except`) a box [x0, y0, x1, y1] covers. */
-  function dotsUnder(G, box, except) {
-    if (!G) return 0;
-    let c = 0;
-    const gx0 = Math.floor(box[0] / G.cell) - 1, gx1 = Math.floor(box[2] / G.cell) + 1;
-    const gy0 = Math.floor(box[1] / G.cell) - 1, gy1 = Math.floor(box[3] / G.cell) + 1;
-    for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
-      const b = G.grid.get(gx + ',' + gy); if (!b) continue;
-      for (const n of b) {
-        if (n === except) continue;
-        const r = n.__outer || 2;
-        const cx = Math.max(box[0], Math.min(n.x, box[2])), cy = Math.max(box[1], Math.min(n.y, box[3]));
-        if ((cx - n.x) ** 2 + (cy - n.y) ** 2 < r * r) c++;
-      }
-    }
-    return c;
-  }
   const boxesMeet = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
   /** A soft glow of the ground colour behind text (no box edges): covers the lines passing between words. */
   function glowText(ctx, text, x, y, blur) {
@@ -2805,91 +2890,68 @@
     return mode === 'authorTitle' ? truncate(`${ay} · ${n.title || ''}`, 46) : ay;
   }
 
-  /** How many of the resting lines run through a box [x0, y0, x1, y1]. */
-  function tracesThrough(b) {
-    let c = 0;
-    for (const P of S.drawnTraces || []) {
-      for (let i = 0; i + 3 < P.length; i += 2) {
-        // the part of the segment inside the box (Liang and Barsky)
-        const x = P[i], y = P[i + 1], dx = P[i + 2] - x, dy = P[i + 3] - y;
-        let t0 = 0, t1 = 1, hit = true;
-        for (const [p, q] of [[-dx, x - b[0]], [dx, b[2] - x], [-dy, y - b[1]], [dy, b[3] - y]]) {
-          if (p === 0) { if (q < 0) { hit = false; break; } continue; }
-          const t = q / p;
-          if (p < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
-          if (t0 > t1) { hit = false; break; }
-        }
-        if (hit) { c++; break; }
+  /** Whether a trace runs through a box [x0, y0, x1, y1]. */
+  function traceThrough(P, b) {
+    for (let i = 0; i + 3 < P.length; i += 2) {
+      // the part of the segment inside the box (Liang and Barsky)
+      const x = P[i], y = P[i + 1], dx = P[i + 2] - x, dy = P[i + 3] - y;
+      let t0 = 0, t1 = 1, hit = true;
+      for (const [p, q] of [[-dx, x - b[0]], [dx, b[2] - x], [-dy, y - b[1]], [dy, b[3] - y]]) {
+        if (p === 0) { if (q < 0) { hit = false; break; } continue; }
+        const t = q / p;
+        if (p < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+        if (t0 > t1) { hit = false; break; }
       }
+      if (hit) return true;
     }
-    return c;
+    return false;
   }
 
-  /** Titles under dots: after every dot is drawn. Ordinary titles only where they cover no other dot, no
-   *  region tag and no other title (the better-connected first); the hovered, selected and search-matched
-   *  ones always, on top. */
+  /** Names beside their dots, after every dot is drawn: each in the place planLabels gave it, fading in from its own
+   *  zoom. The hovered and search-matched ones show at any zoom, in their place; the selected one's full title
+   *  always, under its dot. A name stays put while its dot floats, and moves only with a dot that steps aside. */
   function drawLabels(ctx, k) {
     const jobs = S.labelJobs || [];
     if (!jobs.length) return;
-    const px = 1 / k, G = S.dotG;
-    const taken = (S.labelBoxes = S.labelBoxes || []);
-    for (const r of S.regionLabels || []) if (r.box) taken.push(r.box);
-    jobs.sort((a, b) => (a.must - b.must) || ((Number(b.n.degree) || 0) - (Number(a.n.degree) || 0)));
-    // names that only fit squeezed in aren't worth it: a plain name needs this much clear space around it
-    const pad = 2 * px;
-    // only dots on screen (or just off it) compete for room
-    const v0 = fg.screen2GraphCoords(-60, -30), v1 = fg.screen2GraphCoords(graphEl.clientWidth + 60, graphEl.clientHeight + 30);
-    const onScreen = (n) => n.x >= v0.x && n.x <= v1.x && n.y >= v0.y && n.y <= v1.y;
-    const plain = jobs.filter((j) => !j.must && onScreen(j.n)), top = jobs.filter((j) => j.must);
-    for (const j of [...plain, ...top]) {
-      const { n, outer, sel, must } = j;
-      const alpha = j.alpha * (1 - cardP(n.id));
-      if (alpha < 0.02) continue;
-      const big = sel;
-      const fs = (big ? 14 : 10.5) * px;
-      ctx.save();
-      ctx.font = big ? `italic 500 ${fs}px "Newsreader", Georgia, serif`
-        : `500 ${fs}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
-      if ('fontStretch' in ctx) ctx.fontStretch = big ? 'normal' : 'semi-condensed';
-      ctx.textBaseline = 'top';
-      const label = big ? truncate(n.title || n.id, 72) : mapLabel(n);
-      const w = ctx.measureText(label).width, gap = 4 * px;
-      // where the name can go: under the dot, else beside it, else above it (a name you asked for: always under)
-      const below = { x: n.x, y: n.y + outer + (sel ? 15 : big ? 8 : 4) * px, align: 'center' };
-      const spots = must ? [below] : [below,
-        { x: n.x + outer + gap, y: n.y - fs / 2, align: 'left' },
-        { x: n.x - outer - gap, y: n.y - fs / 2, align: 'right' },
-        { x: n.x, y: n.y - outer - gap - fs, align: 'center' }];
-      let at = null, box = null, fewest = Infinity;
-      // the first free spot no resting line runs through, else the free one with the fewest
-      for (const sp of spots) {
-        const x0 = sp.align === 'center' ? sp.x - w / 2 : sp.align === 'left' ? sp.x : sp.x - w;
-        const b = [x0 - 4 * px, sp.y - 2 * px, x0 + w + 4 * px, sp.y + fs + 2 * px];
-        const roomy = [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
-        if (must) { at = sp; box = b; break; }
-        if (taken.some((t) => boxesMeet(roomy, t)) || dotsUnder(G, roomy, n)) continue;
-        const hits = tracesThrough(b);
-        // it keeps the spot it had while that's as good, so a name never flips back and forth as the dots float
-        const cost = hits - (n.__spot === spots.indexOf(sp) ? 0.5 : 0);
-        if (cost < fewest) { fewest = cost; at = sp; box = b; }
-        if (cost <= 0 && n.__spot === undefined) break;
-      }
-      if (!at) { ctx.restore(); continue; }
-      if (!must) n.__spot = spots.indexOf(at);
-      taken.push(box);
-      ctx.textAlign = at.align;
-      ctx.globalAlpha = alpha;
-      if (big) glowText(ctx, label, at.x, at.y, 14);
-      else {  // the map's own colour right behind the words: a line that has to pass there doesn't strike them out
+    jobs.sort((a, b) => a.must - b.must);
+    const W = graphEl.clientWidth, H = graphEl.clientHeight;
+    onScreenPx(ctx, (at) => {
+      for (const { n, alpha, outer, sel, must } of jobs) {
+        const text = mapLabel(n);
+        if (!n.__lab || n.__lab.text !== text) n.__lab = { side: 0, minK: 0, ...n.__lab, text, w: labelWidth(text) };
+        const L = n.__lab;
+        L.shown = k >= L.minK * (L.shown ? 0.97 : 1);
+        const want = L.shown || must ? 1 : 0;
+        L.a = easeTo(L.a ?? want, want);
+        if (L.a !== want) kick(60);
+        const a = alpha * L.a * (1 - cardP(n.id));
+        if (a < 0.02) continue;
+        const [x, y] = at(n.x - (floatOn ? n.__flx || 0 : 0), n.y - (floatOn ? n.__fly || 0 : 0));
+        const o = outer * k;
+        ctx.globalAlpha = a;
+        ctx.textBaseline = 'top'; ctx.lineJoin = 'round'; ctx.strokeStyle = rgba(C.ground, 0.92);
+        if (sel) {
+          ctx.font = 'italic 500 14px "Newsreader", Georgia, serif';
+          if ('fontStretch' in ctx) ctx.fontStretch = 'normal';
+          ctx.textAlign = 'center'; ctx.lineWidth = 5;
+          const title = truncate(n.title || n.id, 72), ty = y + o + 15;
+          glowText(ctx, title, x, ty, 14);
+          ctx.strokeText(title, x, ty);
+          ctx.fillStyle = C.ink; ctx.fillText(title, x, ty);
+          continue;
+        }
+        const [lx, ly] = labelSpots(L.w, o)[L.side], tx = x + lx, ty = y + ly;
+        if (tx > W || tx + L.w < 0 || ty > H || ty + LABEL_PX < 0) continue;
+        ctx.font = LABEL_FONT;
+        if ('fontStretch' in ctx) ctx.fontStretch = 'semi-condensed';
+        ctx.textAlign = 'left'; ctx.lineWidth = 3.5;
+        // the map's own colour right behind the words: a line that has to pass there doesn't strike them out
         ctx.fillStyle = C.ground;
-        ctx.fillRect(box[0] + 3 * px, box[1] + px, box[2] - box[0] - 6 * px, box[3] - box[1] - 2 * px);
+        ctx.fillRect(tx - 1, ty - 1, L.w + 2, LABEL_PX + 2);
+        ctx.strokeText(text, tx, ty);
+        ctx.fillStyle = C.ink2; ctx.fillText(text, tx, ty);
       }
-      ctx.lineWidth = (big ? 5 : 3.5) * px; ctx.lineJoin = 'round'; ctx.strokeStyle = rgba(C.ground, 0.92);
-      ctx.strokeText(label, at.x, at.y);
-      ctx.fillStyle = big ? C.ink : C.ink2;
-      ctx.fillText(label, at.x, at.y);
-      ctx.restore();
-    }
+    });
   }
 
   // ---------- the hover card: a small sheet that pops out of a dot with its title and authors ----------
@@ -3111,7 +3173,7 @@
     }
     S.shifted = shifted;
     // the card is a box other titles stay out of
-    for (const c of open) if (c.p > 0.3) S.labelBoxes.push([c.L.x0, c.L.y0, c.L.x0 + c.L.w, c.L.y0 + c.L.h]);
+
     applyShift();
     return moving;
   }
@@ -3492,6 +3554,7 @@
     n.__pinRel = [Math.round((x - a.x) * 10) / 10, Math.round((y - a.y) * 10) / 10];
     pins[n.id] = n.__pinRel;
     savePins();
+    plan.gen++;
     // nothing moves after you drop a dot: it, and the dots that trailed it, stay exactly where they are
     kick(60);
   }
@@ -3624,14 +3687,12 @@
   function stopFit() { if (fitAnim) { cancelAnimationFrame(fitAnim.raf); fitAnim = null; } }
   /** Each section's name, for framing the map: where its papers end up and the name's size on screen. */
   function sectionNames(posOf) {
-    const rf = fg.d3Force('regions'), out = [], c = document.createElement('canvas').getContext('2d');
-    c.font = `italic 500 ${TITLE_PX}px "Newsreader", Georgia, serif`;
+    const rf = fg.d3Force('regions'), out = [];
     for (const [cid, mem] of cloudMembers()) {
       const info = (S.clusters || []).find((x) => x.id === cid);
       if (!info || !info.label || mem.length < 2) continue;
-      const b = sectionSpan(mem, rf && rf.regionAt ? rf.regionAt(cid) : null, posOf);
-      const lines = wrapWords(c, regionName(info.label), TITLE_MAX_W, 2);
-      out.push({ x: b.x, top: b.top, w: Math.max(...lines.map((t) => c.measureText(t).width)) + 24, h: lines.length * TITLE_PX * 1.18 });
+      const b = sectionSpan(mem, rf && rf.regionAt ? rf.regionAt(cid) : null, posOf), t = titleText(info.label, mem.length);
+      out.push({ x: b.x, top: b.top, w: t.w, h: t.h });
     }
     return out;
   }
@@ -6300,7 +6361,7 @@
       // the drag ends a click that force-graph would otherwise see on the map
       S.swallowClick = performance.now();
       traceGrid.frame = -1;
-      kick(80);
+      replanLabels();
     };
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);

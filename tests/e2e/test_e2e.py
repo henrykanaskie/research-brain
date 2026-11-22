@@ -1222,6 +1222,45 @@ def test_map_draws_few_lines_until_you_point(ctx, server):
     page.evaluate("() => window.__rb.setLines('few')")
 
 
+def test_map_names_hold_still(ctx, server):
+    """Panning and zooming move no name against its dot or section: no jumping to another side, sliding along the
+    window's edge, rewrapping or resizing. Panning lets no name in or out either, and zooming in only lets names in."""
+    clear_vault(server)
+    for w in ("alpha", "beta", "gamma", "delta", "epsilon", "zeta"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Hall thruster oscillations {w}", "abstract": PLASMA.format(w=w)})
+    for w in ("one", "two", "three", "four"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": f"Cool dwarf atmospheres {w}", "abstract": STARS.format(w=w)})
+    page = open_app(ctx, server)
+    page.wait_for_function("(window.__rb.S.stops || 0) >= 1 && (window.__rb.S.regionLabels || []).filter((r) => r.box).length >= 2", timeout=30000)
+    page.evaluate("""() => { const draw = CanvasRenderingContext2D.prototype.fillText; window.__drawn = null;
+      CanvasRenderingContext2D.prototype.fillText = function (t, x, y) {
+        if (window.__drawn && this.canvas.isConnected && this.globalAlpha > 0.5) { const m = this.getTransform(), d = devicePixelRatio;
+          window.__drawn.push([t, (m.a * x + m.e) / d, (m.d * y + m.f) / d, this.measureText(t).width * m.a / d]); }
+        return draw.apply(this, arguments); }; }""")
+    frame = """async ([k, dx]) => { const {S, fg} = window.__rb, wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      window.__c0 = window.__c0 || fg.centerAt(); fg.zoom(k); fg.centerAt(window.__c0.x + dx, window.__c0.y);
+      window.__rb.kick(900); await wait(500); window.__drawn = []; await wait(120);
+      const last = {}; for (const t of window.__drawn) last[t[0]] = t; window.__drawn = null;
+      const out = {};
+      for (const n of S.nodes.values()) { const t = last[window.__rb.mapLabel(n)]; if (!t) continue;
+        const p = fg.graph2ScreenCoords(n.x, n.y); out[n.id] = [t[1] - p.x, t[2] - p.y, t[3]]; }
+      const names = new Set([...S.nodes.values()].map((n) => window.__rb.mapLabel(n)));
+      for (const r of S.regionLabels) for (const t of Object.values(last)) if (!names.has(t[0]) && r.label.toLowerCase().startsWith(t[0].toLowerCase().slice(0, 6))) {
+        const p = fg.graph2ScreenCoords(r.x, r.top); out['section ' + r.cid + t[0]] = [t[1] - p.x, t[2] - p.y, t[3]]; }
+      return out; }"""
+    k0 = page.evaluate("window.__rb.fg.zoom()")
+    still = lambda a, b, tol: [(i, a[i], b[i]) for i in a if i in b and any(abs(p - q) > tol for p, q in zip(a[i], b[i]))]
+    pan = [page.evaluate(frame, [k0, dx]) for dx in (0, 6, 12, -8)]
+    assert any(i.startswith("section") for i in pan[0]), pan[0]
+    for f in pan[1:]:
+        assert not still(pan[0], f, 1.0), still(pan[0], f, 1.0)
+        assert set(f) == set(pan[0])
+    zoom = [page.evaluate(frame, [k0 * z, 0]) for z in (0.5, 0.7, 0.85, 1.0)]
+    for a, b in zip(zoom, zoom[1:]):
+        assert not still(a, b, 4.0), still(a, b, 4.0)  # a dot's own edge grows a little; nothing else
+        assert set(a) <= set(b)
+
+
 def test_sections_drag_and_add_into(ctx, server):
     """Sections on the map: drawn as clouds, dragged as a whole by their name tag (only that section moves, and
     it stays where you drop it), and a paper added "into a section" joins it."""

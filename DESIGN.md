@@ -115,7 +115,9 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
 - Regions: Newsreader italic names (12 to 15px), right above the section's own papers, two even lines at most, with
   the member count in small Archivo after the name. The ground colour sits behind the words so no trace runs through
   them; a red rule appears under the name on hover. No outlines or fills.
-- Paper names take the free spot around their dot that the fewest resting traces cross.
+- Names hold still. Every name gets its place once per layout (planLabels): a section's above its papers, a paper's on the
+  side of its dot the fewest resting traces cross. Panning changes nothing; zooming only fades a name in or out, at one
+  zoom of its own. Names are drawn in screen pixels at one size, and stay put while their dots float (under a pixel).
 - Selection: a hairline reticle (circle and four ticks); the label switches to Newsreader italic.
 - Motion: one signal per click along the traces, optional quiet ambient signals; off under
   prefers-reduced-motion.
