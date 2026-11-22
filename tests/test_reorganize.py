@@ -289,3 +289,25 @@ def test_every_section_is_joined_by_its_similarity_tree(client):
             reach.add(x)
             todo += [l["target"] if l["source"] == x else l["source"] for l in inside if x in (l["source"], l["target"])]
         assert reach == mem
+
+
+def test_similarity_lines_stay_inside_sections_except_for_close_twins(client):
+    """A line between two sections is kept only when the pair is as alike as the closest papers inside a
+    section; such lines are marked `across`. Lines inside a section are unchanged."""
+    ids = []
+    for name, words in [("Sheaths", "sheath wall bohm presheath floating potential"),
+                        ("Language", "transformer attention token language model scaling"),
+                        ("Proteins", "protein folding amino acid structure energy")]:
+        mem = []
+        w = words.split()
+        for j in range(5):
+            t = " ".join(w[j:] + w[:j])
+            mem.append(paper(client, f"{t} {j}", t + " " + t))
+        client.post("/api/topics", json={"name": name, "members": mem})
+        ids += mem
+    g = client.get("/api/graph").json()
+    cl = {n["id"]: n["cluster"] for n in g["nodes"]}
+    tree = [l for l in g["similar"] if l.get("tree")]
+    across = [l for l in g["similar"] if cl[l["source"]] >= 0 and cl[l["target"]] >= 0 and cl[l["source"]] != cl[l["target"]]]
+    assert tree and len(across) <= max(1, len(tree) // 10), (len(tree), len(across))
+    assert all(l.get("across") for l in across)

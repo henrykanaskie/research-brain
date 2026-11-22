@@ -1284,11 +1284,25 @@ def _similar_edges(idx: dict, cluster_of: dict[str, int]) -> list[dict]:
                 better = (~inside) & (s > key)
                 key[better] = s[better]
                 parent[better] = u
+    # a line between two sections only for the uncommon pair that is as alike as the closest papers inside a
+    # section (the strongest tenth of the sections' own tree lines, compared the same way): the lines stay
+    # within sections, except where a paper really has a twin elsewhere
+    across = [(a, b) for (a, b) in best if (a, b) not in tree and cluster_of.get(a, -1) >= 0
+              and cluster_of.get(b, -1) >= 0 and cluster_of.get(a) != cluster_of.get(b)]
+    if across and tree and m is not None:
+        def dsim(a, b):
+            return float(D[pos[a]] @ D[pos[b]]) if a in pos and b in pos else -1.0
+        bar = float(np.quantile([dsim(a, b) for a, b in tree], 0.9))
+        for a, b in across:
+            if dsim(a, b) < bar:
+                del best[(a, b)]
     out = []
     for (a, b), s in best.items():
         e = {"source": a, "target": b, "score": round(s, 4)}
         if (a, b) in tree:
             e["tree"] = True
+        elif cluster_of.get(a, -1) >= 0 and cluster_of.get(b, -1) >= 0 and cluster_of.get(a) != cluster_of.get(b):
+            e["across"] = True
         out.append(e)
     return out
 

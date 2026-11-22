@@ -1271,11 +1271,13 @@
   }
 
   // ---------- regions ----------
-  // No outlines or fills: the layout's grouping shows the structure; each region only gets its name,
-  // placed just above its members.
+  // No outlines or fills: the layout's grouping shows the structure. Each section gets a header pinned to the
+  // top of its section (where the layout reserves a band for it), so it never drifts with the dots or jumps
+  // to dodge them, and its papers sit under it.
   function drawRegions(ctx, k) {
     S.regionLabels = [];
     if (!S.clusters || !S.clusters.length) return;
+    const rf = fg && fg.d3Force('regions');
     const groups = new Map();
     for (const n of S.nodes.values()) {
       if (n.cluster === undefined || n.cluster < 0 || n.x === undefined || n.type === 'fragment' || nodeHidden(n.id)) continue;
@@ -1286,87 +1288,88 @@
       if (mem.length < 2) continue;
       const info = S.clusters.find((c) => c.id === cid);
       if (!info || !info.label) continue;
-      let cx = 0, minY = Infinity, maxY = -Infinity;
-      for (const n of mem) { cx += n.x; minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); }
-      S.regionLabels.push({ cid, x: cx / mem.length, y: minY - 22 / Math.max(k, 0.3), cy: maxY, label: info.label, size: mem.length });
+      const a = rf && rf.regionAt ? rf.regionAt(cid) : null;
+      let x, top, r;
+      if (a && Number.isFinite(a.x)) { x = a.x; top = a.y - a.r; r = a.r; }
+      else {  // no layout yet: above its papers
+        let cx = 0, minY = Infinity, minX = Infinity, maxX = -Infinity;
+        for (const n of mem) { cx += n.x; minY = Math.min(minY, n.y); minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x); }
+        x = cx / mem.length; top = minY; r = Math.max(10, (maxX - minX) / 2);
+      }
+      S.regionLabels.push({ cid, x, top, r, label: info.label, size: mem.length });
     }
     S.regionLabels.sort((a, b) => b.size - a.size);
   }
   function regionName(label) { return label ? label.charAt(0).toUpperCase() + label.slice(1) : ''; }
-  /** Region names are small tags (sheet ground, hairline frame) placed above each region, so they stay
-   *  readable over the traces. Hovering a tag, or any dot in the region, frames it in ink; clicking
-   *  a tag focuses that region. When zoomed in past the tags, the region shows in the dot's tooltip. */
-  const tagHeld = new Map();  // where each region's tag was last drawn, held still while a hover card is open
+  /** Words into at most `max` lines no wider than `w` (the last one cut with an ellipsis if it must be). */
+  function wrapWords(ctx, text, w, max) {
+    const words = String(text).split(/\s+/).filter(Boolean), lines = [];
+    let cur = '';
+    for (let i = 0; i < words.length; i++) {
+      const t = cur ? cur + ' ' + words[i] : words[i];
+      if (!cur || ctx.measureText(t).width <= w) { cur = t; continue; }
+      lines.push(cur); cur = words[i];
+      if (lines.length === max - 1) { cur = words.slice(i).join(' '); break; }
+    }
+    if (cur) lines.push(cur);
+    const last = lines.length - 1;
+    if (last >= 0 && ctx.measureText(lines[last]).width > w) {
+      let t = lines[last];
+      while (t.length > 1 && ctx.measureText(t + '…').width > w) t = t.slice(0, -1);
+      lines[last] = t.trimEnd() + '…';
+    }
+    return lines;
+  }
+  /** Section headers: the name in the display face, centred over the section and wrapped to its width (two
+   *  lines at most), then a short red rule with the paper count beside it, like a label on a specimen drawer.
+   *  They sit in the band the layout keeps above each section, scale with the map (within readable limits),
+   *  and stay put: hovering a dot in the section, or the header, draws the rule full width. Click to focus. */
   function drawRegionLabels(ctx, k) {
     if (!S.regionLabels) return;
     const focused = S.focusCluster;
-    // tags stay at every zoom (they are few, and kept inside the view), so you always know where you are
-    const fade = 1;
     const hoverNode = S.hover && S.nodes.get(S.hover);
     const hot = S.hoverRegion != null ? S.hoverRegion : hoverNode ? hoverNode.cluster : null;
-    ctx.save();
-    ctx.textBaseline = 'middle';
-    const placed = [], px = 1 / k, small = graphEl.clientWidth < 600 ? 0.82 : 1;
-    const fs = 15.5 * small * px, padX = 8 * small * px, h = 24 * small * px, lh = h + 4 * px;
-    // keep tags inside the visible plate
-    const vtl = fg.screen2GraphCoords(0, 0), vbr = fg.screen2GraphCoords(graphEl.clientWidth, graphEl.clientHeight);
+    const px = 1 / k;
+    // type is about 7.5 map units, so it grows and shrinks with the sections, held between 12 and 18 px on screen
+    const fsPx = Math.max(12, Math.min(18, 7.5 * k)), fs = fsPx * px, lineH = fs * 1.12;
     const nameFont = `italic 500 ${fs}px "Newsreader", Georgia, serif`;
-    const numFont = `500 ${10.5 * small * px}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
+    const numFont = `500 ${Math.max(8.5, fsPx * 0.62) * px}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
+    const vtl = fg.screen2GraphCoords(0, 0), vbr = fg.screen2GraphCoords(graphEl.clientWidth, graphEl.clientHeight);
+    ctx.save();
     for (const r of S.regionLabels) {
       r.box = null;
-      if (focused != null) continue; // the focus bar names the region; no tag on top of it
-      const text = regionName(r.label), num = String(r.size);
-      ctx.font = nameFont; const wName = ctx.measureText(text).width;
-      ctx.font = numFont; const wNum = ctx.measureText(num).width;
-      const gap = 7 * px, w = padX + wName + gap + wNum + padX;
-      // only regions that are on screen get a tag; a tag above the view slides down to its top edge
-      if (r.x < vtl.x || r.x > vbr.x || r.y > vbr.y || (r.cy !== undefined && r.cy < vtl.y)) continue;
-      const margin = 8 * px, heldTag = cardsOpen() ? tagHeld.get(r.cid) : null;
-      const x0 = heldTag ? heldTag.x0 : Math.max(vtl.x + margin, Math.min(r.x - w / 2, vbr.x - margin - w));
-      if (r.y - h / 2 < vtl.y + margin) r.y = vtl.y + margin + h / 2;
-      // candidate spots: just above the region, just below it, then further out; the first that covers no
-      // dot and no other tag wins, else the one covering the fewest dots (a tag never hides a paper if it can help it)
-      const below = (r.cy !== undefined ? r.cy : r.y) + 22 * px;
-      const cands = [r.y, below, r.y - lh, below + lh, r.y - 2 * lh, below + 2 * lh, r.y - 3 * lh];
-      let best = null;
-      // while a hover card is open, tags hold still (the dots it moved aside would otherwise send them elsewhere)
-      const held = heldTag ? heldTag.y : null;
-      if (held != null) best = { y: held, under: 0, box: [x0, held - h / 2, x0 + w, held + h / 2] };
-      for (const cy of held != null ? [] : cands) {
-        if (cy - h / 2 < vtl.y + margin || cy + h / 2 > vbr.y - margin) continue;
-        const box = [x0, cy - h / 2, x0 + w, cy + h / 2];
-        if (placed.some((p) => boxesMeet(box, p))) continue;
-        const under = dotsUnder(S.dotG, [box[0] - 2 * px, box[1] - 2 * px, box[2] + 2 * px, box[3] + 2 * px]);
-        if (!best || under < best.under) best = { y: cy, under, box };
-        if (!under) break;
-      }
-      if (!best) { tagHeld.delete(r.cid); continue; }
-      const y = best.y;
-      placed.push(best.box);
-      r.y = y; tagHeld.set(r.cid, { x0, y });
-      const isHot = hot != null && r.cid === hot, isFocus = focused != null && r.cid === focused;
-      const dimmed = !isHot && !isFocus && (S.selected || S.search);
-      const a = fade * (dimmed ? 0.5 : 1);
-      r.box = [x0, y - h / 2, x0 + w, y + h / 2];
-      // No box: the name sits on the map in the display face with a soft halo of the ground colour (it reads
-      // over traces without hiding anything), centred on its real glyph height, with a short red rule under
-      // it like the logo's red dot. The rule runs the whole name when the region is hovered or focused.
-      ctx.globalAlpha = a;
-      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      if (focused != null) continue;  // the focus bar names the region
       ctx.font = nameFont;
-      const mN = ctx.measureText(text);
-      const asc = mN.actualBoundingBoxAscent || fs * 0.72, desc = mN.actualBoundingBoxDescent || fs * 0.2;
-      const base = y + (asc - desc) / 2 - 2 * px;  // optical centre, nudged up for the rule below
-      glowText(ctx, text, x0 + padX, base, 14);
-      ctx.lineJoin = 'round'; ctx.lineWidth = 5 * px; ctx.strokeStyle = rgba(C.ground, 0.9);
-      ctx.strokeText(text, x0 + padX, base);
-      ctx.fillStyle = C.ink; ctx.fillText(text, x0 + padX, base);
+      const maxW = Math.max(2 * r.r + 2 * SECTION_SIDE * 0.6, 90 * px);
+      const lines = wrapWords(ctx, regionName(r.label), maxW, 2);
+      const wName = Math.max(...lines.map((t) => ctx.measureText(t).width));
+      const ruleGap = 5 * px, ruleH = 9 * px;  // the rule-and-count line under the name
+      const bottom = r.top - 3 * px;            // just above the section's papers
+      const blockH = lines.length * lineH + ruleGap + ruleH;
+      const y0 = bottom - blockH;
+      const x0 = r.x - wName / 2;
+      if (x0 > vbr.x || x0 + wName < vtl.x || bottom < vtl.y || y0 > vbr.y) continue;  // off screen
+      r.box = [x0 - 4 * px, y0 - 2 * px, x0 + wName + 4 * px, bottom + 2 * px];
+      const isHot = hot != null && r.cid === hot;
+      const dimmed = !isHot && (S.selected || S.search);
+      ctx.globalAlpha = dimmed ? 0.45 : 1;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.lineJoin = 'round'; ctx.lineWidth = 4.5 * px; ctx.strokeStyle = rgba(C.ground, 0.92);
+      lines.forEach((t, i) => {
+        const base = y0 + (i + 0.8) * lineH;
+        ctx.strokeText(t, r.x, base);
+        ctx.fillStyle = C.ink; ctx.fillText(t, r.x, base);
+      });
+      // the rule and the count, centred together under the name
       ctx.font = numFont;
-      ctx.strokeText(num, x0 + padX + wName + gap, base);
-      ctx.fillStyle = C.ink3; ctx.fillText(num, x0 + padX + wName + gap, base);
-      const ruleY = base + desc + 4 * px, ruleW = isHot || isFocus ? wName : Math.min(18 * px, wName);
-      ctx.fillStyle = isHot || isFocus ? C.red : rgba(C.red, 0.85);
-      ctx.fillRect(x0 + padX, ruleY, ruleW, (isFocus ? 1.6 : 1.1) * px);
+      const num = String(r.size), wNum = ctx.measureText(num).width;
+      const ruleW = isHot ? Math.max(wName - wNum - 6 * px, 14 * px) : 14 * px;
+      const rowW = ruleW + 5 * px + wNum, rx = r.x - rowW / 2, ry = y0 + lines.length * lineH + ruleGap + ruleH / 2;
+      ctx.fillStyle = isHot ? C.red : rgba(C.red, 0.85);
+      ctx.fillRect(rx, ry - 0.6 * px, ruleW, (isHot ? 1.5 : 1.1) * px);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.strokeText(num, rx + ruleW + 5 * px, ry);
+      ctx.fillStyle = C.ink3; ctx.fillText(num, rx + ruleW + 5 * px, ry);
     }
     ctx.restore();
   }
@@ -1971,9 +1974,16 @@
   }
   /** Pull the sections in toward the middle until each one sits a set gap from its neighbours, never further:
    *  the related-regions layout says which sections sit side by side, and this keeps that arrangement but
-   *  closes the empty space it leaves between unrelated ones (which made the map spread out). Sections you
-   *  dragged stay where you put them; the others pack around them. */
+   *  closes the empty space it leaves between unrelated ones (which made the map spread out). Each section is
+   *  a box, not a circle: its papers' disc, room either side for their titles, and a band on top for its name,
+   *  so neither titles nor names run into the next section. Sections you dragged stay where you put them; the
+   *  others pack around them. */
   const REGION_GAP = 2 * 9 + 16;  // two cloud margins (CLOUD_PAD) and clear space between them: clouds never touch
+  const SECTION_SIDE = 40;        // graph units each side of a section's disc for its papers' titles
+  const SECTION_HEAD = 20;        // graph units above it for its name
+  const GAP_X = 16, GAP_Y = 10;   // clear space between two sections' boxes
+  /** a section's box: centre and half sizes (the name band on top shifts its centre up) */
+  const sectionBox = (a) => ({ cx: a.x, cy: a.y - SECTION_HEAD / 2, hw: a.r + SECTION_SIDE, hh: a.r + SECTION_HEAD / 2 });
   function compactRegions(anchors) {
     const all = [...anchors.values()];
     if (all.length < 2) return;
@@ -1985,20 +1995,26 @@
         for (let i = 0; i < all.length; i++) {
           const a = all[i];
           for (let j = i + 1; j < all.length; j++) {
-            const b = all[j], want = a.r + b.r + REGION_GAP;
-            let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
-            if (d >= want - 0.01) continue;
-            if (d < 1e-6) { dx = 1; dy = 0.3; d = Math.hypot(dx, dy); }
-            const over = want - d, wa = a.mine ? 0 : b.mine ? 1 : 0.5;
+            const b = all[j];
             if (a.mine && b.mine) continue;
-            a.x -= (dx / d) * over * wa; a.y -= (dy / d) * over * wa;
-            b.x += (dx / d) * over * (1 - wa); b.y += (dy / d) * over * (1 - wa);
+            const A = sectionBox(a), B = sectionBox(b);
+            const dx = B.cx - A.cx, dy = B.cy - A.cy;
+            const ox = A.hw + B.hw + GAP_X - Math.abs(dx), oy = A.hh + B.hh + GAP_Y - Math.abs(dy);
+            if (ox <= 0.01 || oy <= 0.01) continue;
+            // apart along the axis that needs the shorter move for the boxes' shape (a wide box would otherwise
+            // always be pushed up or down, and the sections would stack into one tall column)
+            const wa = a.mine ? 0 : b.mine ? 1 : 0.5;
+            let mx = 0, my = 0;
+            if (ox / (A.hw + B.hw) < oy / (A.hh + B.hh)) mx = (dx === 0 ? 1 : Math.sign(dx)) * ox; else my = (dy === 0 ? 1 : Math.sign(dy)) * oy;
+            a.x -= mx * wa; a.y -= my * wa;
+            b.x += mx * (1 - wa); b.y += my * (1 - wa);
             moved = true;
           }
         }
         if (!moved) return;
       }
     };
+    clear(80);  // first make room, from where the related-regions layout put them
     // the middle the free sections gather round: the papers' centre of mass, as packRegions left it
     let cx = 0, cy = 0, w = 0;
     for (const a of free) { const k = a.r * a.r; cx += a.x * k; cy += a.y * k; w += k; }
@@ -2009,11 +2025,12 @@
         const dx = cx - a.x, dy = cy - a.y, d = Math.hypot(dx, dy);
         if (d < 1e-6) continue;
         const step = Math.min(d, d * pull + 1.5);
-        a.x += (dx / d) * step; a.y += (dy / d) * step * 1.25;  // a little more vertically: the screen is wider than tall
+        // pulled in harder from above and below: the map spreads out sideways, the shape of a screen
+        a.x += (dx / d) * step * 0.6; a.y += (dy / d) * step * 1.4;
       }
       clear(6);
     }
-    clear(60);
+    clear(80);
   }
   function packRegions(ids, sizes, now = new Map()) {
     const GAP = 2 * 9 + 16;  // two cloud margins (CLOUD_PAD) and clear space between them: clouds never touch
