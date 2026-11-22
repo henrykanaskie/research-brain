@@ -87,3 +87,14 @@ There are no native app bundles, so there's nothing to sign or notarize: people 
 and a Python command. A double-click app (PyApp or Briefcase) would need an Apple Developer ID and a
 Windows code-signing service to avoid Gatekeeper and SmartScreen warnings. Worth it only for people who
 won't use a terminal.
+
+## How updating from the app works
+
+`POST /api/update/install` (the Update button) downloads the release, tries it out beside the installed one with uv, and
+only then stops research brain. On a Mac or Linux a shell script installs it and starts research brain again; on Windows
+`app/update_run.py` does, run by the Python underneath research brain's own. It waits for (and after 25 s ends) anything
+still run from the folder being replaced, tries again when a file was in use, puts the old version back if the new one
+doesn't run or doesn't answer within two minutes, and opens the window again if it was open. `update/updating.json` names
+its process, so an update that died blocks nothing. `update/update.log` in the data folder says what happened, and
+`window.log` what went wrong with the Windows window. A release is published only after `tests/windows_update.py` and
+`tests/windows_speed.py` pass on Windows Server and Windows 11 (the windows-update job).
