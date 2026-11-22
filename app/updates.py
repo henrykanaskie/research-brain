@@ -17,11 +17,13 @@ The app asks at most once a day (cached in the data folder; GET /api/update, app
 shows "Update" in the top bar when there's a newer version. RB_UPDATE_CHECK=0 turns it off.
 
 Installing from the app (POST /api/update/install): the wheel and constraints.txt are downloaded first,
-into the data folder's `update/`, then a small shell script (a .cmd on Windows) is started on its own and
-research brain stops. The script waits for research brain's processes to end (Windows can't replace a
+into the data folder's `update/`, and with uv the new version is tried out beside this one (try_out): one that can't
+be installed or doesn't start is found out while this one still runs. Then a small shell script (on Windows
+app/update_run.py) is started on its own and research brain stops. It waits for research brain's processes to end (Windows can't replace a
 running research-brain.exe, and nothing should run from a half-replaced install), reinstalls with whatever
 installed this one (uv, pipx or the private virtualenv from install.sh), and starts research brain again.
-While it runs, `update/updating.json` exists, and `research-brain open` (app/launcher.py) waits for it
+While it runs, `update/updating.json` exists (with the installer's process: one that died, with the computer
+switched off in the middle, say, is seen to have died and blocks nothing), and `research-brain open` (app/launcher.py) waits for it
 instead of starting the old, half-replaced copy. The next start reads how it went (`last_result`).
 `research-brain update` does the same from a terminal. A source checkout is told to `git pull` instead.
 """
@@ -317,7 +319,63 @@ def in_progress() -> dict | None:
         return None
     if dt.datetime.now(dt.timezone.utc) - started > STALE:
         return None
-    return m
+    pid = m.get("pid")
+    if isinstance(pid, int) and pid > 0:
+        return m if _is_installer(pid, started) else None
+    if pid is None and m.get("starting"):  # its installer is being started right now
+        return m if dt.datetime.now(dt.timezone.utc) - started < dt.timedelta(seconds=30) else None
+    return m if _old_script_running() else None  # left by a version that didn't say which process
+
+
+def _is_installer(pid: int, started: dt.datetime) -> bool:
+    """Is the installer that wrote the marker still running (and not another program given its number since)?"""
+    if not _alive(pid):
+        return False
+    if os.name == "nt":
+        born = _born(pid)
+        return born is None or abs((born - started).total_seconds()) < 300
+    try:
+        out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, errors="replace", timeout=5).stdout
+        return "run-update" in out or not out
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
+def _born(pid: int) -> dt.datetime | None:
+    import ctypes
+    k = ctypes.windll.kernel32
+    k.OpenProcess.restype = ctypes.c_void_p
+    h = k.OpenProcess(0x1000, False, pid)
+    if not h:
+        return None
+    try:
+        t = [ctypes.c_ulonglong() for _ in range(4)]
+        if not k.GetProcessTimes(ctypes.c_void_p(h), *(ctypes.byref(x) for x in t)):
+            return None
+        return dt.datetime(1601, 1, 1, tzinfo=dt.timezone.utc) + dt.timedelta(microseconds=t[0].value // 10)
+    finally:
+        k.CloseHandle(ctypes.c_void_p(h))
+
+
+_old_script: list = [0.0, False]  # when last asked, and the answer: asking Windows takes a second
+
+
+def _old_script_running() -> bool:
+    import time
+    if time.monotonic() - _old_script[0] < 5 and _old_script[0]:
+        return _old_script[1]
+    try:
+        if os.name == "nt":
+            r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                "@(Get-CimInstance Win32_Process -Filter \"Name='cmd.exe'\" | ? { $_.CommandLine -match 'run-update' }).Count"],
+                               capture_output=True, text=True, errors="replace", timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            found = r.stdout.strip() not in ("", "0")
+        else:
+            found = subprocess.run(["pgrep", "-f", "run-update.sh"], capture_output=True, timeout=5).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        found = True  # can't tell: wait, as before
+    _old_script[:] = [time.monotonic(), found]
+    return found
 
 
 def wait_while_updating(limit: float = STALE.total_seconds()) -> bool:
@@ -415,7 +473,8 @@ def prepare(info: dict) -> dict:
     if not re.fullmatch(r"research_brain-[\w.+-]+\.whl", name):
         raise UpdateError(f"Unexpected file name in latest.json: {name}")
     for old in d.glob("*.whl"):
-        old.unlink(missing_ok=True)
+        if not old.name.startswith(f"research_brain-{__version__}-"):  # this version's is kept, to put it back if need be
+            old.unlink(missing_ok=True)
     local = d / name
     if "://" in wheel:
         _download(wheel, local)
@@ -509,28 +568,11 @@ def reopen_command(port: int) -> list[str]:
     return cmd
 
 
-def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str], cwd: str, windows: bool,
-           reopen: list[str] | None = None, install_dir: str | None = None) -> str:
-    """The script that waits for research brain to stop, installs, and starts it again. reopen (Windows): the
-    window that closed for the update, opened again once research brain answers."""
+def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str], cwd: str, install_dir: str | None = None) -> str:
+    """The script (Mac, Linux) that waits for research brain to stop, installs, and starts it again."""
     d = update_dir()
     log, code, marker, applog = d / "update.log", d / "exit-code", _marker(), paths.user_data_dir() / "app.log"
     hb = f"http://127.0.0.1:{port}/api/heartbeat"
-    if windows:
-        from subprocess import list2cmdline as q
-        lines = ["@echo off", "chcp 65001 >nul",  # this file is UTF-8: folders the old code page can't spell
-                 "rem research brain update (app/updates.py): wait, install, start again"]
-        for i, pid in enumerate(pids):
-            lines += [f":w{i}", f'tasklist /FI "PID eq {pid}" /NH 2>nul | findstr /C:" {pid} " >nul && (ping -n 2 127.0.0.1 >nul & goto w{i})']
-        if install_dir:
-            lines.append(f'cd /d "{install_dir}"')
-        lines += [f'echo == updating >> "{log}"', f'{q(install)} >> "{log}" 2>&1', f'>"{code}" echo %ERRORLEVEL%',
-                  f'cd /d "{cwd}"', f'start "" /B {q(relaunch)} >> "{applog}" 2>&1',
-                  "set n=0", ":up", f"curl -fs -o NUL {hb} && goto done", "set /a n+=1", "if %n% GEQ 120 goto done",
-                  "ping -n 2 127.0.0.1 >nul", "goto up", ":done", f'del /q "{marker}"']
-        if reopen:
-            lines.append(f'start "" /B {q(reopen)} >> "{applog}" 2>&1')
-        return "\r\n".join(lines) + "\r\n"
     lines = ["#!/bin/sh", "# research brain update (app/updates.py): wait, install, start again"]
     for pid in pids:
         # a process that has ended but whose parent hasn't collected it yet (the Mac window started this
@@ -546,6 +588,63 @@ def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str
               f"  if command -v curl >/dev/null 2>&1; then curl -fs -o /dev/null {hb} && break; else sleep 5; break; fi",
               "  sleep 0.5; n=$((n+1)); done", f"rm -f {_sh([str(marker)])}"]
     return "\n".join(lines) + "\n"
+
+
+def _console_python() -> str:
+    exe = Path(sys.executable)
+    c = exe.with_name("python.exe")
+    return str(c) if exe.name.lower() == "pythonw.exe" and c.exists() else str(exe)
+
+
+def _base_python() -> str:
+    """The Python research brain's environment was made from: the update doesn't touch it."""
+    for p in (Path(sys.base_prefix) / "pythonw.exe", Path(sys.base_prefix) / "python.exe", Path(getattr(sys, "_base_executable", "") or "")):
+        if p.name and p.is_file():
+            return str(p)
+    raise UpdateError("Couldn't find Python to run the update with. Run the newer installer instead.")
+
+
+def previous_command(how: str) -> list[str] | None:
+    """Puts this version back, from its GitHub release, if the new one turns out not to run."""
+    if not parse(__version__):
+        return None
+    name = f"research_brain-{__version__}-py3-none-any.whl"
+    kept = update_dir() / name
+    wheel = str(kept) if kept.is_file() else release_file(__version__, name)
+    cmd = install_command({"version": __version__, "wheel": wheel}, how)
+    if cmd and how in ("uv", "pipx"):
+        cmd[0] = find_program(how) or cmd[0]
+    return cmd
+
+
+def try_out(info: dict, how: str) -> None:
+    """Install the new version beside this one and ask it its version, before anything is stopped or replaced. uv keeps
+    what it downloads, so the update itself is then quick and needs no internet. Raises UpdateError when it clearly
+    can't be installed here; anything unclear doesn't stand in the way of updating."""
+    uv = find_program("uv") if how == "uv" else None
+    if not uv:
+        return
+    cons = ["-c", "constraints.txt"] if (Path(info.get("source") or "") / "constraints.txt").is_file() and Path(info["source"]).is_dir() else []
+    cmd = [uv, "tool", "run", "--isolated", "--python", uv_python(), *cons, "--from", info["wheel"], "research-brain", "--version"]
+    try:
+        r = subprocess.run(cmd, cwd=info["source"] if cons else None, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired as e:
+        raise UpdateError("Downloading the update took longer than 10 minutes. Try again with a better connection.") from e
+    except OSError:
+        return
+    said = (r.stderr or "") + (r.stdout or "")
+    if r.returncode == 0 and info["version"] in said:
+        return
+    try:
+        (update_dir() / "try-out.log").write_text(said, encoding="utf-8")
+    except OSError:
+        pass
+    if re.search(r"error sending request|Failed to (download|fetch)|dns error|timed out|Connect", said):
+        raise UpdateError("Couldn't download what the update needs. Check the internet connection and try again.")
+    if re.search(r"No solution found|Failed to build|Failed to install|Traceback \(most recent", said):
+        last = next((ln.strip() for ln in reversed(said.splitlines()) if ln.strip()), "")
+        raise UpdateError(f"{info['version']} can't be installed on this computer, so nothing was changed. {last[:300]}")
 
 
 def start_install(info: dict, *, port: int, pids: list[int]) -> dict:
@@ -566,25 +665,35 @@ def start_install(info: dict, *, port: int, pids: list[int]) -> dict:
     now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     state = {"from": __version__, "to": info["version"], "started": now}
     paths.write_json_atomic(d / "pending.json", state)
-    paths.write_json_atomic(_marker(), state)
+    paths.write_json_atomic(_marker(), {**state, "starting": True})
     windows = _windows()
     reopen = None
     win = window_pid() if windows else None
     if win is not None:  # the window closes itself for the update (it watches in_progress()) and comes back after
         pids = [*pids, win] if win not in pids else pids
         reopen = reopen_command(port)
-    path = d / ("run-update.cmd" if windows else "run-update.sh")
-    path.write_text(script(cmd, pids=pids, port=port, relaunch=relaunch_command(port), cwd=str(paths.PKG_DIR.parent),
-                           windows=windows, reopen=reopen, install_dir=install_cwd(info)), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k not in ("RB_RESTART_FILE", "RB_PORT")}
+    (d / "update.log").unlink(missing_ok=True)
     try:
         if windows:
-            # a hidden console (not DETACHED_PROCESS), so the server it starts again gets no window either
-            subprocess.Popen(["cmd", "/c", str(path)], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, close_fds=True, creationflags=0x00000200 | 0x08000000)
+            job = {"from": __version__, "to": info["version"], "pids": pids, "port": port, "install": cmd, "cwd": install_cwd(info),
+                   "folder": sys.prefix if sys.prefix != sys.base_prefix else "", "marker": str(_marker()),
+                   "applog": str(paths.user_data_dir() / "app.log"), "home": str(Path.home()),
+                   "check": [_console_python(), "-m", f"{__package__ or 'app'}.cli", "--version"],
+                   "serve": relaunch_command(port), "open": reopen, "previous": previous_command(how)}
+            paths.write_json_atomic(d / "job.json", job)
+            run = d / "update_run.py"
+            shutil.copyfile(Path(__file__).with_name("update_run.py"), run)
+            proc = subprocess.Popen([_base_python(), "-I", "-S", str(run), str(d / "job.json")], env=env, cwd=str(d),
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    close_fds=True, creationflags=0x00000200 | 0x08000000)
         else:
-            subprocess.Popen(["/bin/sh", str(path)], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+            path = d / "run-update.sh"
+            path.write_text(script(cmd, pids=pids, port=port, relaunch=relaunch_command(port), cwd=str(paths.PKG_DIR.parent),
+                                   install_dir=install_cwd(info)), encoding="utf-8")
+            proc = subprocess.Popen(["/bin/sh", str(path)], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, start_new_session=True)
+        paths.write_json_atomic(_marker(), {**state, "pid": int(getattr(proc, "pid", 0) or 0) or None, "starting": True})
     except OSError as e:
         _marker().unlink(missing_ok=True)
         (d / "pending.json").unlink(missing_ok=True)

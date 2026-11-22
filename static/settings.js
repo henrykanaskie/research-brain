@@ -822,7 +822,8 @@
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k || !k.startsWith('rb.') || !SYNC.test(k.slice(3))) continue;
-        try { out[k.slice(3)] = JSON.parse(localStorage.getItem(k)); } catch { /* not ours */ }
+        // (null is "not set", which the server doesn't keep: sent, it looked unsaved and was sent again every 3 seconds)
+        try { const v = JSON.parse(localStorage.getItem(k)); if (v !== null) out[k.slice(3)] = v; } catch { /* not ours */ }
       }
     } catch { /* storage blocked */ }
     const S = rb() && rb().S;

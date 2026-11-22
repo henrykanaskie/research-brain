@@ -133,7 +133,7 @@ def _start_server(a, url: str) -> bool:
 def _window_log() -> None:
     """Opened from the Windows Start menu (pythonw) this process has no output, so what goes wrong with the window was
     said to nobody: keep it in window.log beside app.log (the last start's, and the one before)."""
-    if sys.stderr is not None:
+    if os.name != "nt" or (sys.stderr is not None and Path(sys.executable).name.lower() != "pythonw.exe"):
         return
     try:
         f = paths.user_data_dir() / "window.log"

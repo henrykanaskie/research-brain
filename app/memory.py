@@ -462,15 +462,21 @@ class Memory:
             return
 
         def loop():
-            pending, since = None, 0.0
-            while not self._stop.wait(interval):
+            from .meta import one_look
+            pending, since, wait = None, 0.0, interval
+            while not self._stop.wait(wait):
                 try:
-                    k = key_fn()
+                    t0 = time.monotonic()
+                    with one_look():
+                        k = key_fn()
+                    # working out the key looks at the whole library: with a large one, less often (2% of the time)
+                    wait = min(60.0, max(interval, 50 * (time.monotonic() - t0)))
                     if k == self._core_key:
                         pending = None
                         continue
                     if k != pending:
                         pending, since = k, time.monotonic()
+                        wait = interval
                         continue
                     if time.monotonic() - since >= debounce:
                         self.refresh_core(k, build)

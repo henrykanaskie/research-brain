@@ -163,7 +163,7 @@ def test_the_update_script_waits_installs_and_starts_research_brain_again(upd, t
     d.mkdir(parents=True)
     upd.paths.write_json_atomic(d / "updating.json", {"from": "1.0.0", "to": "9.0.0", "started": "2999-01-01T00:00:00+00:00"})
     sh = d / "run-update.sh"
-    sh.write_text(upd.script(install, pids=[slow.pid], port=port, relaunch=relaunch, cwd=str(tmp_path), windows=False))
+    sh.write_text(upd.script(install, pids=[slow.pid], port=port, relaunch=relaunch, cwd=str(tmp_path)))
     t0 = time.monotonic()
     proc = subprocess.Popen(["/bin/sh", str(sh)])
     try:
@@ -178,23 +178,127 @@ def test_the_update_script_waits_installs_and_starts_research_brain_again(upd, t
         subprocess.run(["pkill", "-f", f"http.server {port}"], check=False)
 
 
-def test_windows_script_waits_for_each_process_and_reopens_the_window(upd):
-    """The .cmd script waits for every pid with tasklist (never `timeout`, which fails without a console), records
-    the exit code, starts research brain again and, when a window was open, reopens it after the update."""
-    text = upd.script(["C:\\uv.exe", "tool", "install", "x.whl"], pids=[11, 22], port=8765, windows=True,
-                      relaunch=["C:\\py\\python.exe", "-m", "research_brain.cli", "serve", "--no-open"], cwd="C:\\app")
-    assert 'tasklist /FI "PID eq 11"' in text and 'tasklist /FI "PID eq 22"' in text
-    assert "echo %ERRORLEVEL%" in text and 'start "" /B' in text and text.endswith("\r\n")
-    assert "timeout /t" not in text  # timeout fails without a console window
-    reopen = ["C:\\py\\pythonw.exe", "-m", "research_brain.cli", "open", "--port", "8765"]
-    kw = dict(port=8765, windows=True, relaunch=["C:\\py\\python.exe", "-m", "research_brain.cli", "serve"], cwd="C:\\app")
-    install = ["C:\\uv.exe", "tool", "install", "x.whl"]
-    text = upd.script(install, pids=[11, 33], reopen=reopen, **kw)
-    lines = text.split("\r\n")
-    marker = next(i for i, l in enumerate(lines) if l.startswith("del /q "))
-    assert 'tasklist /FI "PID eq 33"' in text
-    assert lines[marker + 1].startswith('start "" /B ') and "research_brain.cli open --port 8765" in lines[marker + 1]
-    assert "cli open" not in upd.script(install, pids=[11], **kw)  # no window: the same script as before
+def _job(tmp_path, **kw):
+    """A job for app/update_run.py whose 'research brain' is a tiny web server answering /api/heartbeat."""
+    import socket
+    with socket.socket() as k:
+        k.bind(("127.0.0.1", 0))
+        port = k.getsockname()[1]
+    web = tmp_path / "web"
+    (web / "api").mkdir(parents=True, exist_ok=True)
+    (web / "api" / "heartbeat").write_text("{}")
+    d = tmp_path / "update"
+    d.mkdir(exist_ok=True)
+    (d / "updating.json").write_text("{}")
+    job = {"from": "1.0.0", "to": "9.0.0", "pids": [], "port": port, "cwd": str(tmp_path), "folder": "", "home": str(tmp_path),
+           "marker": str(d / "updating.json"), "applog": str(tmp_path / "app.log"), "open": None, "previous": None,
+           "install": [sys.executable, "-c", f"open({str(tmp_path / 'installed')!r}, 'a').write('new '); print('installing')"],
+           "check": [sys.executable, "-c", "pass"],
+           "serve": [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", str(web)], **kw}
+    (d / "job.json").write_text(json.dumps(job))
+    return d, job
+
+
+def _run_job(d, limit=90):
+    import subprocess
+    from pathlib import Path
+    import app.update_run as ur
+    return subprocess.run([sys.executable, "-I", "-S", str(Path(ur.__file__)), str(d / "job.json")], timeout=limit)
+
+
+def _stop(job):
+    import subprocess
+    import urllib.request
+    if os.name == "nt":
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-NetTCPConnection -LocalPort {job['port']} -State Listen -ErrorAction SilentlyContinue | % {{ Stop-Process -Id $_.OwningProcess -Force }}"], check=False)
+    else:
+        subprocess.run(["pkill", "-f", f"http.server {job['port']}"], check=False)
+
+
+def test_the_windows_updater_waits_installs_starts_and_clears_the_marker(tmp_path):
+    """app/update_run.py (it runs anywhere): waits for research brain to end, installs, says how it went, starts it (its
+    window when that was open) and clears the marker."""
+    import subprocess
+    import time
+    slow = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"])
+    opened = tmp_path / "opened"
+    d, job = _job(tmp_path, pids=[slow.pid])
+    try:
+        import threading
+        threading.Thread(target=slow.wait, daemon=True).start()  # collected when it ends, as Windows does by itself
+        t0 = time.monotonic()
+        _run_job(d)
+        assert time.monotonic() - t0 > 1.5 and (tmp_path / "installed").read_text() == "new "
+        assert (d / "exit-code").read_text().strip() == "0" and not (d / "updating.json").exists()
+        assert "installing" in (d / "update.log").read_text() and not opened.exists()
+    finally:
+        slow.kill()
+        _stop(job)
+
+
+def test_the_windows_updater_ends_what_will_not_stop_and_puts_the_old_version_back(tmp_path):
+    """A process that won't end doesn't hold the update up for ever; a new version that doesn't run, or an install that
+    fails and leaves nothing that runs, is replaced by the old one; research brain is started and the marker cleared
+    whatever happens."""
+    import subprocess
+    import app.update_run as ur
+    stuck = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+    said = []
+    try:
+        ur.stop_all({"pids": [stuck.pid], "folder": ""}, said.append, patience=1)
+        assert stuck.wait(10) != 0 and any("ending" in x for x in said)
+    finally:
+        stuck.kill()
+    ok = tmp_path / "works"
+    back = [sys.executable, "-c", f"open({str(tmp_path / 'installed')!r}, 'a').write('old '); open({str(ok)!r}, 'w')"]
+    check = [sys.executable, "-c", f"import os, sys; sys.exit(0 if os.path.exists({str(ok)!r}) else 1)"]
+    for install, want in ((None, "97"), ([sys.executable, "-c", "import sys; sys.exit(2)"], "2"), (["no-such-installer-rb"], "95")):
+        for f in (ok, tmp_path / "installed"):
+            f.unlink(missing_ok=True)
+        d, job = _job(tmp_path, previous=back, check=check, **({"install": install} if install else {}))
+        try:
+            _run_job(d)
+            assert (d / "exit-code").read_text().strip() == want and (tmp_path / "installed").read_text().endswith("old ")
+            assert not (d / "updating.json").exists() and ur.answers(job, 10)
+        finally:
+            _stop(job)
+
+
+def test_an_update_that_died_blocks_nothing(upd, monkeypatch):
+    """The marker names the installer's process: once that has ended (the computer was switched off, antivirus stopped
+    it), research brain opens at once. A marker from an older version, without one, counts only while its script runs."""
+    import subprocess
+    d = upd.update_dir()
+    d.mkdir(parents=True)
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(timespec="seconds")
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    upd.paths.write_json_atomic(d / "updating.json", {"from": "1", "to": "2", "started": now, "pid": p.pid, "starting": True})
+    assert upd.in_progress() is None
+    upd.paths.write_json_atomic(d / "updating.json", {"from": "1", "to": "2", "started": now})
+    monkeypatch.setattr(upd, "_old_script_running", lambda: False)
+    assert upd.in_progress() is None
+    monkeypatch.setattr(upd, "_old_script_running", lambda: True)
+    assert upd.in_progress()["to"] == "2"
+    upd.paths.write_json_atomic(d / "updating.json", {"from": "1", "to": "2", "started": now, "pid": None, "starting": True})
+    assert upd.in_progress()["to"] == "2"  # its installer is being started this moment
+
+
+def test_a_version_that_cannot_be_installed_here_is_refused_before_anything_stops(upd, monkeypatch, tmp_path):
+    import types
+    upd.update_dir().mkdir(parents=True)
+    monkeypatch.setattr(upd, "find_program", lambda n: "uv")
+    info = {"version": "9.0.0", "wheel": "w.whl", "source": str(tmp_path)}
+    said = {"code": 0, "out": "research-brain 9.0.0", "err": ""}
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=said["code"], stdout=said["out"], stderr=said["err"]))
+    upd.try_out(info, "uv")
+    upd.try_out(info, "pipx")  # only uv can
+    for err, words in (("error: Failed to build `x`\nlast line", "can't be installed on this computer"), ("error sending request for url", "internet")):
+        said.update(code=1, out="", err=err)
+        with pytest.raises(upd.UpdateError, match=words):
+            upd.try_out(info, "uv")
+    said.update(code=2, out="", err="error: unexpected argument '--isolated'")  # an old uv: unclear, so go ahead
+    upd.try_out(info, "uv")
 
 
 def test_window_pid_only_for_a_running_window(upd):
@@ -232,9 +336,10 @@ def test_start_install_marks_it_running_reports_once_and_reopens_the_window(upd,
     upd.start_install(info, port=8765, pids=[123])
     assert started and upd.in_progress()["to"] == "9.0.0" and upd.last_result() is None  # still running
     if os.name == "nt":
-        assert 'tasklist /FI "PID eq 123"' in (d / "run-update.cmd").read_text()
+        assert json.loads((d / "job.json").read_text(encoding="utf-8"))["pids"] == [123]
     else:
         assert "kill -0 123" in (d / "run-update.sh").read_text()
+    upd.paths.write_json_atomic(d / "updating.json", {**json.loads((d / "updating.json").read_text()), "pid": None})
     # research brain waits for it instead of starting the half-replaced copy
     assert upd.wait_while_updating(limit=0.6) is True
     (d / "updating.json").unlink()
@@ -254,8 +359,8 @@ def test_start_install_marks_it_running_reports_once_and_reopens_the_window(upd,
     monkeypatch.setattr(upd, "_windows", lambda: True)
     info = {"version": "9.0.0", "wheel": str(d / "w.whl"), "source": str(d)}
     upd.start_install(info, port=8765, pids=[123])
-    text = (d / "run-update.cmd").read_text(encoding="utf-8")
-    assert 'tasklist /FI "PID eq 4321"' in text and "cli open --port 8765" in text
+    job = json.loads((d / "job.json").read_text(encoding="utf-8"))
+    assert 4321 in job["pids"] and job["open"][-4:] == ["app.cli", "open", "--port", "8765"] and (d / "update_run.py").is_file()
 
 
 def test_update_api_from_a_checkout(client):
@@ -289,7 +394,7 @@ def test_uv_install_works_from_a_folder_with_a_space(upd, tmp_path):
     upd.update_dir().mkdir(parents=True)
     sh = tmp_path / "run.sh"
     sh.write_text(upd.script([str(fake), *cmd[1:]], pids=[], port=1, relaunch=["true"], cwd=str(tmp_path),
-                             windows=False, install_dir=upd.install_cwd(info)))
+                             install_dir=upd.install_cwd(info)))
     (tmp_path / "curl").write_text("#!/bin/sh\nexit 0\n")  # research brain "answers" at once
     (tmp_path / "curl").chmod(0o755)
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}

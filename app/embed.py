@@ -111,10 +111,14 @@ class Embedder:
                 texts = [docs[i] or i for i in ids]
                 vec = TfidfVectorizer(stop_words="english", sublinear_tf=True, ngram_range=(1, 2),
                                       min_df=1, max_df=0.9 if len(ids) > 5 else 1.0)
+                # a save changes one text of a thousand: the others' word counts are kept from last time
+                old = getattr(self, "_counts", {})
+                vec.memo = {t: old[t] for t in texts if t in old}
                 try:
                     m = vec.fit_transform(texts)
                 except ValueError:  # empty vocabulary
                     return ids, np.zeros((len(ids), 1), dtype=np.float32)
+                self._counts, vec.memo = vec.memo, None
                 self._tfidf = vec
                 return ids, m.toarray().astype(np.float32)  # rows already L2-normalised
             changed = False

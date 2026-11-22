@@ -18,6 +18,8 @@ can't be used at all, the Store falls back to reading the files.
 from __future__ import annotations
 
 import hashlib
+import contextlib
+import contextvars
 import json
 import os
 import re
@@ -33,6 +35,20 @@ BM25_WEIGHTS = (10.0, 2.0, 1.0, 1.5, 1.0, 4.0, 4.0)
 SELF_WRITE_TTL = 2.0  # seconds a write made by the app itself is remembered (to ignore its watcher event)
 
 _TOKEN_RE = re.compile(r"[\w][\w\-']*", re.UNICODE)
+
+
+# One look at the folder per request: answering one asks for the notes from half a dozen places, and each used to walk
+# every file again (slow on Windows). Set by one_look(); forgotten after 2 s, and as soon as anything is written.
+_look: contextvars.ContextVar = contextvars.ContextVar("rb_look", default=None)
+
+
+@contextlib.contextmanager
+def one_look():
+    token = _look.set({"gen": None, "at": 0.0})
+    try:
+        yield
+    finally:
+        _look.reset(token)
 
 
 class MetaIndex:
@@ -249,6 +265,9 @@ class MetaIndex:
         """Bring rows in line with the files. Returns ids that changed (added, edited or removed)."""
         if not self.ok and not force:
             return []
+        look = _look.get()
+        if look is not None and not force and only is None and look.get("gen") == self.gen and time.monotonic() - look["at"] < 2:
+            return []  # this request (or background check) has looked at the folder already
         with self.lock:
             try:
                 disk = self._scan()
@@ -294,6 +313,8 @@ class MetaIndex:
                 self._external.update(ids)  # changed on disk by someone other than Store.save/delete
                 if ids or assets_changed:
                     self.gen += 1
+                if look is not None and only is None:
+                    look.update(gen=self.gen, at=time.monotonic())
                 return ids
             except sqlite3.DatabaseError as e:
                 self._recover(e)

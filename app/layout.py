@@ -123,6 +123,16 @@ class Layout:
             except OSError:
                 continue
             dirs[d] = m
+            if os.name == "nt":
+                # a listing on Windows comes with every file's time and size; asking file by file is many times slower
+                # (each is also looked at by the antivirus)
+                got = self._list_windows(d)
+                if got is None:
+                    continue
+                new_listing[d] = (m, [f for f, _ in got[0]], got[1])
+                yield from got[0]
+                stack.extend(reversed(got[1]))
+                continue
             cached = listing.get(d)
             # a folder's mtime only proves "nothing changed" once it is older than the clock's granularity
             # (about 15 ms on Windows, 1-2 s on some network and FAT drives): two changes in one tick share
@@ -155,6 +165,27 @@ class Layout:
             stack.extend(reversed(subs))
         with self.lock:
             self._listing = new_listing
+
+    @staticmethod
+    def _list_windows(d: str):
+        """([(note file, its stat)], [subfolders]) of one folder, from one listing."""
+        try:
+            with os.scandir(d) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except OSError:
+            return None
+        files, subs = [], []
+        for e in entries:
+            if e.name.startswith("."):
+                continue
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    subs.append(e.path)
+                elif e.name.endswith(".md"):
+                    files.append((e.path, e.stat() if e.is_symlink() else e.stat(follow_symlinks=False)))
+            except OSError:
+                continue
+        return files, subs
 
     def _dirs_changed(self) -> bool:
         """Whether a file was added, removed or renamed since the last scan (any scanned folder's mtime moved)."""

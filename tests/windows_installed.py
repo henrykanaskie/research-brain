@@ -29,7 +29,9 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 BASE = "http://127.0.0.1:8765"
 SHOTS = Path(os.environ.get("RB_SHOT_DIR") or tempfile.mkdtemp(prefix="rb-shots-"))
 SHOTS.mkdir(parents=True, exist_ok=True)
-HOME = Path(tempfile.mkdtemp(prefix="rb-win-")) / "Émile Łukasz 研究" / "OneDrive - Oregon State University"
+HOME = Path(tempfile.mkdtemp(prefix="rb-win-"))
+if os.environ.get("RB_TEST_PLAIN") != "1":  # (versions before 1.0.65 can't open in such a folder)
+    HOME = HOME / "Émile Łukasz 研究" / "OneDrive - Oregon State University"
 DATA, DOCS, FOLDER = HOME / "AppData Roaming" / "research_brain", HOME / "Documents" / "research brain", HOME / "Papers to follow"
 SYMBOLS = "Electron density n\u2091 \u2248 10\u00b9\u2079 m\u207b\u00b3, \u03c3\u2217 of the Bohm criterion \u2264 \u03bb_D"
 failed: list[str] = []
@@ -129,11 +131,14 @@ def log_tail(n=60) -> str:
     return "\n".join(f.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]) if f.exists() else "(no app.log)"
 
 
-def open_app(timeout=120):
+def open_app(timeout=120, updates=False):
     for k, v in {"RB_DATA_DIR": DATA, "RB_DOCUMENTS_DIR": DOCS}.items():
         Path(v).mkdir(parents=True, exist_ok=True)
         os.environ[k] = str(v)
-    os.environ.update(RB_METADATA="off", RB_UPDATE_CHECK="0", RB_REGION_AI="0", RB_NO_ALERT="1")
+    os.environ.update(RB_METADATA="off", RB_REGION_AI="0", RB_NO_ALERT="1")
+    os.environ.pop("RB_UPDATE_CHECK", None)
+    if not updates:
+        os.environ["RB_UPDATE_CHECK"] = "0"
     for k in [k for k in os.environ if k.startswith("PYTHON")]:
         del os.environ[k]
     os.startfile(str(shortcut()))  # noqa: S606  (the Start menu entry itself: pythonw, no console)

@@ -114,6 +114,7 @@ class CountVectorizer:
         self._token = re.compile(token_pattern)
         self._stop = ENGLISH_STOP_WORDS if stop_words == "english" else frozenset(stop_words or ())
         self.vocabulary_: dict[str, int] = {}
+        self.memo: dict[str, Counter] | None = None  # text -> its counts, kept by a caller that fits nearly the same texts again
 
     def _analyze(self, doc: str) -> list[str]:
         tokens = self._token.findall(doc.lower() if self.lowercase else doc)
@@ -128,7 +129,15 @@ class CountVectorizer:
         return out
 
     def _counts(self, texts) -> list[Counter]:
-        return [Counter(self._analyze(t or "")) for t in texts]
+        if self.memo is None:
+            return [Counter(self._analyze(t or "")) for t in texts]
+        out = []
+        for t in texts:
+            c = self.memo.get(t)
+            if c is None:
+                c = self.memo[t] = Counter(self._analyze(t or ""))
+            out.append(c)
+        return out
 
     def _fit_vocabulary(self, counts: list[Counter]) -> np.ndarray:
         """Learn the vocabulary (sorted, document-frequency limits applied); returns each term's df."""
@@ -150,14 +159,16 @@ class CountVectorizer:
 
     def _matrix(self, counts: list[Counter]) -> Rows:
         vocab = self.vocabulary_
-        indptr, indices, data = [0], [], []
-        for c in counts:
-            row = sorted((vocab[t], k) for t, k in c.items() if t in vocab)
-            indices += [i for i, _ in row]
-            data += [k for _, k in row]
-            indptr.append(len(indices))
-        return Rows(np.asarray(data, dtype=np.float64), np.asarray(indices, dtype=np.int64),
-                    np.asarray(indptr, dtype=np.int64), len(vocab))
+        sizes = np.fromiter((len(c) for c in counts), dtype=np.int64, count=len(counts))
+        total, get = int(sizes.sum()), vocab.get
+        indices = np.fromiter((get(t, -1) for c in counts for t in c), dtype=np.int64, count=total)
+        data = np.fromiter((k for c in counts for k in c.values()), dtype=np.float64, count=total)
+        rows = np.repeat(np.arange(len(counts)), sizes)
+        known = indices >= 0
+        indices, data, rows = indices[known], data[known], rows[known]
+        order = np.lexsort((indices, rows))  # by row, and by term in each
+        indptr = np.concatenate(([0], np.cumsum(np.bincount(rows, minlength=len(counts))))).astype(np.int64)
+        return Rows(data[order], indices[order], indptr, len(vocab))
 
     def fit_transform(self, texts) -> Rows:
         counts = self._counts(texts)

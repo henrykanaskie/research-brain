@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from . import access as access_mod, agents, papers as papers_mod, apikeys, budget, citations, claude_cli, diskspace, locate as locate_mod, metadata, openalex, scholar, security
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
+from .meta import one_look
 from .pdftext import extract, guess_title
 from .store import FrontmatterError, Store, normalize_selector, now_iso
 
@@ -84,7 +85,8 @@ async def origin_guard(request: Request, call_next):
     origin = request.headers.get("origin")
     if origin and not ALLOWED_ORIGIN_RE.match(origin):
         return JSONResponse({"detail": f"Origin {origin} not allowed"}, status_code=403)
-    return await call_next(request)
+    with one_look():  # the notes folder is looked at once per request (app/meta.py)
+        return await call_next(request)
 
 
 @app.middleware("http")
@@ -291,6 +293,25 @@ _index_lock = threading.Lock()
 _index_cache: dict = {"sig": None}
 
 
+_text_memo: dict[str, tuple] = {}  # paper id -> (its text file's time and size, what the index uses of it)
+
+
+def _indexed_text(n: dict) -> str:
+    """The part of a paper's text the index uses, read again only when its file changes: reading every paper's file on
+    every save took a second or two on Windows, where each one is also looked at by the antivirus."""
+    if n.get("abstract") or not n.get("has_text"):  # (with an abstract the text isn't used: embed.note_text)
+        return ""
+    try:
+        s = store.text_path(n["id"]).stat()
+    except (KeyError, OSError):
+        return ""
+    key = (s.st_mtime_ns, s.st_size)
+    hit = _text_memo.get(n["id"])
+    if hit is None or hit[0] != key:
+        hit = _text_memo[n["id"]] = (key, _fulltext(n["id"])[:2000])
+    return hit[1]
+
+
 def index() -> dict:
     """Embeddings + top-k neighbours for every note, recomputed only when notes change."""
     with _index_lock:
@@ -299,7 +320,9 @@ def index() -> dict:
             return _index_cache
         notes = store.all()
         by_id = {n["id"]: n for n in notes}
-        docs = {n["id"]: note_text(n, _fulltext(n["id"]) if n["type"] == "paper" else "") for n in notes}
+        docs = {n["id"]: note_text(n, _indexed_text(n) if n["type"] == "paper" else "") for n in notes}
+        for gone in _text_memo.keys() - by_id.keys():
+            _text_memo.pop(gone, None)
         ids, m = embedder.matrix(docs)
         neighbours: dict[str, list[tuple[str, float]]] = {i: [] for i in ids}
         if m is not None and len(ids) > 1:
@@ -309,9 +332,12 @@ def index() -> dict:
             sims = np.where(roots[:, None] == roots[None, :], -1.0, sims)  # a note's own family isn't "similar"
             k = min(8, len(ids) - 1)
             top = np.argpartition(-sims, k - 1, axis=1)[:, :k] if k < len(ids) else np.tile(np.arange(len(ids)), (len(ids), 1))
-            for r, i in enumerate(ids):
-                order = top[r][np.argsort(-sims[r, top[r]], kind="stable")][:8]
-                neighbours[i] = [(ids[c], float(min(1.0, sims[r, c]))) for c in order if sims[r, c] > 0.01]
+            best = np.take_along_axis(sims, top, axis=1)
+            order = np.argsort(-best, axis=1, kind="stable")[:, :8]
+            cols = np.take_along_axis(top, order, axis=1).tolist()
+            vals = np.minimum(1.0, np.take_along_axis(best, order, axis=1)).tolist()
+            for i, cs, vs in zip(ids, cols, vals):
+                neighbours[i] = [(ids[c], v) for c, v in zip(cs, vs) if v > 0.01]
         _index_cache.update(sig=sig, ids=ids, m=m, by_id=by_id, neighbours=neighbours)
         return _index_cache
 
@@ -1051,7 +1077,7 @@ STOPPING = [False]
 def api_status():
     if STOPPING[0]:
         return JSONResponse({"stopping": True}, status_code=503)
-    return {**_agent_status(), "embedder": embedder.kind, "notes": len(store.all()), "vault": str(VAULT),
+    return {**_agent_status(), "embedder": embedder.kind, "notes": store.count(), "vault": str(VAULT),
             "disk": diskspace.status(Path(store.pdf_dir), store.docs, VAULT)}  # free space: the app warns when low
 
 

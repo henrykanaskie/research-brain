@@ -497,6 +497,13 @@ class Store:
             except Exception as e:
                 print(f"[research_brain] store listener failed: {e!r}")
 
+    def count(self) -> int:
+        """How many notes there are, without copying them all (asked every 30 s)."""
+        if self.meta is not None and self.meta.ok:
+            self.meta.sync()
+            return len(self.meta.notes)
+        return len(self.all())
+
     def all(self) -> list[dict]:
         if self._meta_ok():
             return self.meta.all()

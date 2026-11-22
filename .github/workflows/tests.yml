@@ -220,3 +220,57 @@ jobs:
         with:
           name: windows-installed-${{ matrix.os }}-${{ matrix.home }}
           path: C:\rb-shots
+
+  # Updating, and speed with a large library, on the installed app: for releases, by hand, and on windows-* branches.
+  # Made-up releases (tests/fake_releases.py) are offered to it: one that updates, one that can't be installed, one that
+  # installs but doesn't start; updates are killed half way and files kept in use. It must open every time.
+  windows-update:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/windows')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, home: plain }
+          - { os: windows-latest, home: odd }
+          - { os: windows-11-arm, home: plain }
+    name: windows-update (${{ matrix.os }}, ${{ matrix.home }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install playwright reportlab pillow build pyyaml
+      - name: Made-up releases
+        shell: bash
+        run: python tests/fake_releases.py "C:/rb releases"
+      - name: A user folder with characters outside the code page
+        if: matrix.home == 'odd'
+        shell: bash
+        run: |
+          mkdir -p "/c/Users/Łukasz 研究/AppData/Roaming/Microsoft/Windows/Start Menu/Programs" "/c/Users/Łukasz 研究/AppData/Local"
+          { echo "UV_TOOL_DIR=C:\\Users\\Łukasz 研究\\AppData\\Roaming\\uv\\tools"
+            echo "UV_TOOL_BIN_DIR=C:\\Users\\Łukasz 研究\\.local\\bin"
+            echo "APPDATA=C:\\Users\\Łukasz 研究\\AppData\\Roaming"; } >> "$GITHUB_ENV"
+      - name: Install this version (its installer gets uv itself)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File "C:\rb releases\own\install.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed" }
+      - name: Updating
+        shell: powershell
+        working-directory: C:\
+        env: { RB_SHOT_DIR: 'C:\rb-shots' }
+        run: python "$env:GITHUB_WORKSPACE\tests\windows_update.py" local "C:\rb releases"
+      - name: Speed
+        if: success() || failure()
+        shell: powershell
+        working-directory: C:\
+        env: { RB_SHOT_DIR: 'C:\rb-shots' }
+        run: python "$env:GITHUB_WORKSPACE\tests\windows_speed.py"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-update-${{ matrix.os }}-${{ matrix.home }}
+          path: C:\rb-shots

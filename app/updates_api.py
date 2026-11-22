@@ -62,6 +62,7 @@ def api_update_install(body: dict):
         pids.append(os.getppid())
     try:
         local = updates.prepare(info)
+        updates.try_out(local, updates.how_installed())
         state = updates.start_install(local, port=int(os.environ.get("RB_PORT", "8765") or 8765), pids=pids)
     except updates.UpdateError as e:
         raise HTTPException(502, str(e)) from e
