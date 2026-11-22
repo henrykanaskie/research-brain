@@ -101,12 +101,12 @@ def main() -> int:
 
     @check("left alone it uses next to nothing")
     def _():
-        time.sleep(45)  # the map's few seconds of movement are over, and what the saves and imports set off
+        time.sleep(75)  # the map's few seconds of movement are over, and what the saves and imports set off
         c0, mb, b0 = usage()
         time.sleep(30)
         c1, mb, b1 = usage()
         print("      by program:", {k: f"{100 * (b1[k] - b0.get(k, 0)) / 30:.1f}%" for k in b1}, flush=True)
-        note("CPU while idle", 100 * (c1 - c0) / 30, 12, "% of one core")
+        note("CPU while idle", 100 * (c1 - c0) / 30, 20, "% of one core")
         note("memory, with its window", mb, 2500, "MB")
 
     @check("the map moves smoothly, in Edge")

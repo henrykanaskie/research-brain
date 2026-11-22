@@ -525,3 +525,25 @@ def test_auto_export_validates_paths_and_rewrites_on_change(server, tmp_path):
     eid = next(x["id"] for x in client.get("/api/cite/auto-exports").json()["exports"] if x["scope"] == "topic:greek")
     assert client.delete(f"/api/cite/auto-exports/{eid}").json()["ok"]
     assert len(client.get("/api/cite/auto-exports").json()["exports"]) == 1
+
+
+def test_an_export_file_that_is_busy_is_written_soon_after(tmp_path, monkeypatch):
+    """The .bib file is open in another program (Windows won't replace it then): it isn't left out of date until the
+    next change to the library."""
+    from app import cite_api
+    class Busy(cite_api.AutoExporter):
+        INTERVAL = 0.05
+    runs = []
+    class FakeStore:
+        rev = 1
+    ex = Busy(FakeStore(), tmp_path)
+    monkeypatch.setattr(ex, "run_all", lambda: runs.append(1) or [{"busy": len(runs) < 3}])
+    ex.start()
+    try:
+        t0 = time.time()
+        while len(runs) < 3 and time.time() - t0 < 5:
+            time.sleep(0.02)
+        time.sleep(0.4)
+        assert len(runs) == 3  # tried again until it could be written, and no more after that
+    finally:
+        ex.stop()

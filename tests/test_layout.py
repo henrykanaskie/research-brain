@@ -241,3 +241,29 @@ def test_deleted_notes_go_at_once_but_files_vanishing_for_a_moment_dont_empty_th
     assert len(store.all()) == 8
     clock[0] += 10
     assert store.all() == []
+
+
+def test_an_outside_edit_is_always_seen_at_once(tmp_path):
+    """Notes changed by another program (Obsidian, OneDrive, git), by replacing the file or writing into it, are seen by
+    the very next look, however quickly one follows the other (on Windows the folder's own listing is used, which must
+    not lag behind the files)."""
+    import time
+    from app.store import Store
+    s = Store(tmp_path / "vault")
+    ids = [s.create({"type": "paper", "title": f"Paper number {i}"})["id"] for i in range(5)]
+    s.all()
+    for i in range(120):
+        nid = ids[i % 5]
+        p = s.note_path(nid)
+        text = p.read_text(encoding="utf-8")
+        new = text.rstrip("\n").split("\n\nMARK")[0] + f"\n\nMARK {i:04d}\n"  # (the same length every time)
+        if i % 2:
+            tmp = p.with_name(f".{p.name}.tmp")
+            tmp.write_text(new, encoding="utf-8")
+            os.replace(tmp, p)
+        else:
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(new)
+        got = {n["id"]: n for n in s.all()}[nid]
+        assert f"MARK {i:04d}" in got["body"], (i, got["body"][-60:])
+        time.sleep(0.002)

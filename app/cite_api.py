@@ -30,7 +30,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from . import bibexport, cite, paths
+from . import bibexport, cite, fsio, paths
 
 router = APIRouter()
 ctx = SimpleNamespace(store=None, vault=None, note_refs=None, exporter=None)
@@ -460,7 +460,7 @@ def write_atomic(target: Path, text: str) -> None:
             os.chmod(tmp, mode)
         if os.path.islink(target):
             raise PathError("The export file has become a symbolic link; not writing.")
-        os.replace(tmp, target)
+        fsio.replace(tmp, target)  # on Windows a file your LaTeX editor or OneDrive has open this instant: wait for it
     except BaseException:
         try:
             os.unlink(tmp)
@@ -523,7 +523,9 @@ class AutoExporter:
                 sig = (self.store.rev, self._pokes, self._topics_sig())
                 if sig != self._last_sig:
                     self._last_sig = sig
-                    self.run_all()
+                    done = self.run_all()
+                    if any(x.get("busy") for x in done):  # a file couldn't be written just now: try again soon
+                        self._last_sig = None
             except Exception as e:  # never let the thread die
                 print(f"[research_brain] auto-export failed: {e!r}")
 
@@ -560,13 +562,13 @@ class AutoExporter:
             if old != text:
                 write_atomic(target, text)
                 st["written"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
-            st.update(error="", entries=len(ents), checked=time.time())
+            st.update(error="", entries=len(ents), checked=time.time(), busy=False)
         except HTTPException as ex:
             st.update(error=str(ex.detail), checked=time.time())
         except (PathError, OSError) as ex:
             st.update(error=str(ex) if isinstance(ex, PathError) else f"Couldn't write the file: {ex.strerror or ex}",
-                      checked=time.time())
-        return {**e, **self.public_status(e)}
+                      checked=time.time(), busy=isinstance(ex, PermissionError))
+        return {**e, **self.public_status(e), "busy": bool(st.get("busy"))}
 
     def public_status(self, e: dict) -> dict:
         st = self.status.get(e["id"], {})
