@@ -855,7 +855,7 @@
     // S.lit: the dot you last pointed at, kept while the pointer stays on or near it. The hit test alone
     // (S.hover) can drop for a frame with the pointer still (the dots' slow float, a hover card opening),
     // and the highlight would then flicker off under a pointer that hasn't moved.
-    const hov = S.hover || S.lit;
+    const hov = S.lit || S.hover;
     if (hov && !S.dragging && S.nodes.has(hov) && !nodeHidden(hov)) {
       const n = S.nodes.get(hov);
       if (n.type !== 'fragment') return hov;
@@ -905,12 +905,14 @@
   }
   const linkResting = (l) => linkShown(l) && (S.lines === 'all' || restingLines().has(l));
   const inHotSection = (l) => {
-    if (S.hoverRegion == null) return false;
+    const cid = S.litRegion ?? (S.lit ? null : S.hoverRegion);
+    if (cid == null) return false;
     const a = S.nodes.get(lid(l.source)), b = S.nodes.get(lid(l.target));
-    return !!(a && b && (a.cluster === S.hoverRegion || b.cluster === S.hoverRegion));
+    return !!(a && b && (a.cluster === cid || b.cluster === cid));
   };
   /** drawn now: a resting line, or one of the dot (or section) you're pointing at, clicked or dragging */
-  const linkDrawn = (l) => linkShown(l) && (linkResting(l) || touchesActive(l) || inHotSection(l)
+  const explained = (l) => !!S.explain && S.explain.key === linkKey(lid(l.source), lid(l.target));  // its explanation is open
+  const linkDrawn = (l) => linkShown(l) && (linkResting(l) || touchesActive(l) || inHotSection(l) || explained(l)
     || !!(S.dragNode && (lid(l.source) === S.dragNode.id || lid(l.target) === S.dragNode.id)));
   /** drawn now, or still fading out */
   const linkOnMap = (l) => linkShown(l) && (linkDrawn(l) || l.__v > 0.01);
@@ -1298,7 +1300,11 @@
     const lit = touchesActive(l);  // a connection of the dot under the pointer (or the one you clicked)
     let dim = lit ? 1 : Math.min(fa, fb);
     if (S.search) dim = Math.min(fa, fb);
-    const hov = S.hoverLink === l || lit;
+    const focus = S.hoverLink || (S.explain && !$('#explain').hidden ? 'explained' : null);
+    const mine = focus && (S.hoverLink ? S.hoverLink === l : explained(l));
+    if (lit && focus && !mine) dim *= 0.3;  // one of them is pointed at (or explained): the others step back
+    if (mine) dim = 1;
+    const hov = mine || S.hoverLink === l || lit;
     if (l.__v !== undefined) dim *= l.__v;
     // long fibres recede a little, like depth in tissue
     const len = Math.hypot(b.x - a.x, b.y - a.y) || 0;
@@ -1429,20 +1435,34 @@
     }
     return lines;
   }
-  const TITLE_PX = 15, TITLE_MAX_W = 190, TITLE_GAP = 20;  // screen pixels; the gap is from the top dot's centre
-  const TITLE_FONT = `italic 500 ${TITLE_PX}px "Newsreader", Georgia, serif`, TITLE_LINE = TITLE_PX * 1.18;
-  const NUM_FONT = '500 10px "Archivo", -apple-system, "Segoe UI", sans-serif', NUM_GAP = 5;
+  // Screen pixels. A section's name is set in two sizes: the words that lead up to it small and upright, and what it's
+  // about large in the display italic ("Ab Initio" / "Collision Theory"). Under it runs a trace from the logo: along
+  // the name, a 45-degree bend, and a ring over the section's papers.
+  const LEAD_PX = 13.5, HEAD_PX = 23, LEAD_LINE = 16, HEAD_LINE = 25, TITLE_MAX_W = 230;
+  const TITLE_GAP = 35;  // from the top dot's centre up to the bottom of the words: the trace's room
+  const LEAD_FONT = `400 ${LEAD_PX}px "Newsreader", Georgia, serif`, HEAD_FONT = `italic 500 ${HEAD_PX}px "Newsreader", Georgia, serif`;
+  const NUM_FONT = '600 10px "Archivo", -apple-system, "Segoe UI", sans-serif', NUM_GAP = 5;
+  const RING_R = 2.6, RING_AT = 17;  // the ring at the trace's end, and how far above the top dot's centre it sits
   const measureCtx = document.createElement('canvas').getContext('2d');
   /** A section's name broken into lines and measured, in screen pixels: the same at every zoom. */
   function titleText(label, size) {
-    const c = measureCtx;
-    c.font = TITLE_FONT;
+    const c = measureCtx, words = regionName(label).split(/\s+/).filter(Boolean);
     if ('fontStretch' in c) c.fontStretch = 'normal';
-    const lines = wrapWords(c, regionName(label), TITLE_MAX_W, 2), widths = lines.map((t) => c.measureText(t).width);
+    // what it's about: the last word, with the one before it when the last is short ("Collision Theory"), but never
+    // starting on a joining word ("ML Surrogates for" / "CRMs")
+    const n = words.length, small = /^(a|an|and|as|at|by|for|from|in|of|on|or|the|to|using|via|with)$/i;
+    let cut = Math.max(0, n - 1);
+    if (n > 1 && words[n - 1].length <= 6 && !small.test(words[n - 2]) && words[n - 2].length <= 10) cut = n - 2;
+    const lines = [];
+    c.font = LEAD_FONT;
+    if (cut > 0) for (const t of wrapWords(c, words.slice(0, cut).join(' '), TITLE_MAX_W, 2)) lines.push({ t, w: c.measureText(t).width, head: false });
+    c.font = HEAD_FONT;
+    const [t] = wrapWords(c, regionName(words.slice(cut).join(' ')), TITLE_MAX_W, 1);
+    lines.push({ t: t || '', w: c.measureText(t || '').width, head: true });
     c.font = NUM_FONT;
-    const num = String(size), wNum = c.measureText(num).width, last = lines.length - 1;
-    const w = Math.max(...widths.map((x, i) => (i === last ? x + NUM_GAP + wNum : x)));
-    return { key: label + '|' + size, lines, widths, num, wNum, w, h: lines.length * TITLE_LINE };
+    const num = String(size), wNum = c.measureText(num).width;
+    const w = Math.max(...lines.map((x) => (x.head ? x.w + NUM_GAP + wNum : x.w)));
+    return { key: label + '|' + size, lines, num, wNum, w, h: (lines.length - 1) * LEAD_LINE + HEAD_LINE };
   }
   /** Draw in screen pixels: type keeps one size and crisp, even spacing whatever the zoom (text scaled along with
    *  the map is re-spaced at every zoom step, and shimmers). draw() gets (x, y) on the map -> [x, y] on screen. */
@@ -1462,8 +1482,8 @@
   function drawRegionLabels(ctx, k) {
     if (!S.regionLabels) return;
     const focused = S.focusCluster;
-    const hoverNode = S.hover && S.nodes.get(S.hover);
-    const hot = S.hoverRegion != null ? S.hoverRegion : hoverNode ? hoverNode.cluster : null;
+    const hoverNode = (S.lit && S.nodes.get(S.lit)) || (S.hover && S.nodes.get(S.hover));
+    const hot = S.litRegion != null ? S.litRegion : hoverNode ? hoverNode.cluster : S.hoverRegion != null ? S.hoverRegion : null;
     const W = graphEl.clientWidth, H = graphEl.clientHeight, px = 1 / k;
     onScreenPx(ctx, (at) => {
       for (const r of S.regionLabels) {
@@ -1479,27 +1499,50 @@
         if (t.a !== want || t.solid !== (t.shown ? 1 : 0)) kick(60);
         if (t.a < 0.02) continue;
         const [cx, top] = at(r.x, r.top), y0 = top - TITLE_GAP - t.h, x0 = cx - t.w / 2;
-        if (x0 > W || x0 + t.w < 0 || y0 > H || y0 + t.h < 0) continue;  // off screen
-        r.box = [r.x - (t.w / 2 + 4) * px, r.top - (TITLE_GAP + t.h + 2) * px, r.x + (t.w / 2 + 4) * px, r.top - (TITLE_GAP - 3) * px];
-        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-        ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = rgba(C.ground, 0.95);
-        const last = t.lines.length - 1;
-        t.lines.forEach((line, i) => {
-          const w = t.widths[i], full = i === last ? w + NUM_GAP + t.wNum : w, tx = cx - full / 2, base = y0 + (i + 0.8) * TITLE_LINE;
-          ctx.font = TITLE_FONT;
+        if (x0 > W || x0 + t.w < 0 || y0 > H || top < 0) continue;  // off screen
+        r.box = [r.x - (t.w / 2 + 4) * px, r.top - (TITLE_GAP + t.h + 2) * px, r.x + (t.w / 2 + 4) * px, r.top - (RING_AT - RING_R - 2) * px];
+        t.hot = easeTo(t.hot || 0, isHot ? 1 : 0);
+        if (t.hot !== (isHot ? 1 : 0)) kick(60);
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+        // the words, left-aligned over the section's middle
+        let y = y0;
+        for (const line of t.lines) {
+          const base = y + (line.head ? HEAD_LINE * 0.78 : LEAD_LINE * 0.78);
+          y += line.head ? HEAD_LINE : LEAD_LINE;
+          ctx.font = line.head ? HEAD_FONT : LEAD_FONT;
           if ('fontStretch' in ctx) ctx.fontStretch = 'normal';
           ctx.globalAlpha = t.solid;  // the backing stays solid when the name dims, so a lit line never strikes it out
-          glowText(ctx, line, tx, base, 8);
-          ctx.strokeText(line, tx, base);
+          glowText(ctx, line.t, x0, base, 6);
+          ctx.lineWidth = 4; ctx.strokeStyle = rgba(C.ground, 0.95);
+          ctx.strokeText(line.t, x0, base);
           ctx.globalAlpha = t.a;
-          ctx.fillStyle = C.ink; ctx.fillText(line, tx, base);
-          if (i === last) {
+          ctx.fillStyle = line.head ? C.ink : C.ink2; ctx.fillText(line.t, x0, base);
+          if (line.head) {
             ctx.font = NUM_FONT;
-            ctx.strokeText(t.num, tx + w + NUM_GAP, base);
-            ctx.fillStyle = C.ink3; ctx.fillText(t.num, tx + w + NUM_GAP, base);
-            if (isHot) { ctx.fillStyle = C.red; ctx.fillRect(tx, base + 4, w, 1.2); }
+            ctx.fillStyle = C.red; ctx.fillText(t.num, x0 + line.w + NUM_GAP, base - HEAD_PX * 0.38);
           }
-        });
+        }
+        // the trace: along the name, one 45-degree bend, and the ring over the papers
+        const ry = top - RING_AT, ly = y + 4, drop = Math.max(4, ry - ly);
+        const ex = Math.max(x0 + drop + 14, cx), bx = ex - drop, P = [x0, ly, bx, ly, ex - RING_R * 0.7, ry - RING_R * 0.7];
+        const L1 = bx - x0, L2 = Math.hypot(P[4] - P[2], P[5] - P[3]);
+        const run = (f) => {  // the first f of it
+          const d = f * (L1 + L2);
+          ctx.beginPath(); ctx.moveTo(P[0], P[1]);
+          if (d <= L1) ctx.lineTo(x0 + d, ly);
+          else { const u = (d - L1) / L2; ctx.lineTo(bx, ly); ctx.lineTo(bx + (P[4] - bx) * u, ly + (P[5] - ly) * u); }
+          ctx.stroke();
+        };
+        ctx.globalAlpha = t.a;
+        ctx.lineWidth = 1; ctx.strokeStyle = rgba(C.ink, 0.55); run(1);
+        ctx.beginPath(); ctx.arc(ex, ry, RING_R, 0, 2 * Math.PI);
+        ctx.fillStyle = C.ground; ctx.fill(); ctx.strokeStyle = rgba(C.ink, 0.7); ctx.stroke();
+        // pointed at: a signal runs along it in red and fills the ring
+        if (t.hot > 0.01) {
+          ctx.strokeStyle = C.red; ctx.lineWidth = 1.4; run(t.hot);
+          ctx.globalAlpha = t.a * Math.max(0, (t.hot - 0.7) / 0.3);
+          ctx.beginPath(); ctx.arc(ex, ry, RING_R, 0, 2 * Math.PI); ctx.fillStyle = C.red; ctx.fill(); ctx.stroke();
+        }
       }
     });
   }
@@ -1568,7 +1611,7 @@
     plan.titles = new Map();
     for (const g of groups) {
       const t = titleText(g.info.label, g.mem.length), b = sectionSpan(g.mem, rf && rf.regionAt ? rf.regionAt(g.cid) : null), was = old.get(g.cid);
-      const box = [-t.w / 2 - 4, -TITLE_GAP - t.h - 2, t.w / 2 + 4, -TITLE_GAP + 3];
+      const box = [-t.w / 2 - 4, -TITLE_GAP - t.h - 2, t.w / 2 + 4, -RING_AT + RING_R + 2];
       let minK = 0;
       for (const q of placed) { const u = overlapUntil(b.x, b.top, box, q.x, q.y, q.box); if (u > q.minK) minK = Math.max(minK, u); }
       placed.push({ x: b.x, y: b.top, box, minK });
@@ -2220,7 +2263,7 @@
    *  others pack around them. */
   const REGION_GAP = 2 * 9 + 16;  // two cloud margins (CLOUD_PAD) and clear space between them: clouds never touch
   const SECTION_SIDE = 22;        // graph units each side of a section's disc for its papers' titles
-  const SECTION_HEAD = 16;        // graph units above it for its name
+  const SECTION_HEAD = 22;        // graph units above it for its name
   const GAP_X = 10, GAP_Y = 10;   // clear space between two sections' boxes
   /** a section's box: centre and half sizes (the name band on top shifts its centre up) */
   const sectionBox = (a) => ({ cx: a.x, cy: a.y - SECTION_HEAD / 2, hw: a.r + SECTION_SIDE, hh: a.r * 0.82 + SECTION_HEAD / 2 });
@@ -2494,17 +2537,19 @@
       .linkHoverPrecision(6)
       // no tooltip on a trace: hovering highlights it and shows the pointer; a click explains the link
       .linkLabel(() => '')
-      .onNodeHover((n) => { S.hover = n ? n.id : null; if (n) S.lit = n.id; else releaseLit(); S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
-      .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
+      .onNodeHover((n) => { S.hover = n ? n.id : null; litHover(n); S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
+      .onLinkHover((l) => { const at = pointerAt && lineAt(pointerAt[0], pointerAt[1]); setHoverLink(S.hover ? null : at || l || null); })
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
       .onNodeDrag((n) => { S.dragging = true; S.dragNode = n; motion.tween = null; dragNeighbours(n); runMotion(); })
       .onNodeDragEnd((n) => { S.dragging = false; S.dragNode = null; dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
-      .onLinkRightClick((l, e) => linkMenu(l, e))
+      .onLinkRightClick((l, e) => linkMenu((e && lineAt(e.clientX, e.clientY)) || l, e))
       .onBackgroundClick((e) => {
         if (S.swallowClick && performance.now() - S.swallowClick < 400) return;  // the end of a section drag
         if (regionTagClick(e)) return;
+        { const l = e && lineAt(e.clientX, e.clientY); if (l) { onLinkClick(l); return; } }  // a line that just appeared: the graph's own hit test lags
+        dropLit();
         if (S.backgroundClickHook && S.backgroundClickHook(e)) return;  // static/mobile.js handled it
         // a click in free space means you're done with the open note: it closes (the reopen tab brings it
         // back) and lets go of its dot. Panning the map isn't a click, so dragging with the note open keeps it.
@@ -2515,7 +2560,7 @@
       })
       .onBackgroundRightClick((e) => backgroundMenu(e))
       // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
-      .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
+      .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick((e && lineAt(e.clientX, e.clientY)) || l, e); })
       .onRenderFramePre((ctx, k) => {
         S.k = k; S.partLayout = new Map(); S.frame = (S.frame || 0) + 1;
         S.labelJobs = [];
@@ -2536,6 +2581,7 @@
           drawLabels(ctx, k);
           drawPulses(ctx, k);
           drawCards(ctx, k);
+          drawLinkTag(ctx);
         } finally {
           removeFloat();
           removeShift(); shiftLifted = false;  // dots moved aside for a card are back where they really are
@@ -2951,6 +2997,42 @@
         ctx.strokeText(text, tx, ty);
         ctx.fillStyle = C.ink2; ctx.fillText(text, tx, ty);
       }
+    });
+  }
+
+  // ---------- what a line is, beside where you point at it ----------
+  function linkSays(l) {
+    const nm = (id) => { const n = S.nodes.get(id); return n ? mapLabel(n) : id; };
+    const a = nm(lid(l.source)), b = nm(lid(l.target));
+    const kind = l.kind === 'cites' ? `${a} cites ${b}` : `${a} and ${b}`;
+    const why = l.kind === 'manual' ? 'Your link' : l.kind === 'mention' ? 'You mention one in the other' : l.kind === 'cites' ? 'Citation'
+      : l.kind === 'conflict' ? 'They report measurements that disagree' : l.kind === 'question' ? 'Evidence for your question'
+      : l.kind === 'ai' ? (l.why ? regionName(String(l.why).replace(/\.$/, '')) : 'A connection your AI found')
+      : `Similar text${Number.isFinite(l.score) ? ', ' + l.score.toFixed(2) : ''}`;
+    return { kind, why };
+  }
+  function drawLinkTag(ctx) {
+    const l = S.hoverLink;
+    if (!l || l.kind === 'part' || !S.hoverLinkAt || S.hover || S.dragging || !linkOnMap(l) || !S.links.includes(l)) return;
+    const shown = Math.min(1, (performance.now() - S.hoverLinkT - 230) / 120);  // not while you only sweep across it
+    if (shown <= 0) return;
+    onScreenPx(ctx, (at) => {
+      const { kind, why } = linkSays(l), W = graphEl.clientWidth, H = graphEl.clientHeight, pad = 10;
+      const F1 = '500 12px "Archivo", -apple-system, "Segoe UI", sans-serif', F2 = 'italic 500 14.5px "Newsreader", Georgia, serif', F3 = '500 10.5px "Archivo", -apple-system, "Segoe UI", sans-serif';
+      ctx.font = F2; const lines = wrapWords(ctx, why, 270, 3); let w = Math.max(...lines.map((t) => ctx.measureText(t).width));
+      ctx.font = F1; const [head] = wrapWords(ctx, kind, 290, 1); w = Math.max(w, ctx.measureText(head).width);
+      const hint = 'Click for the full explanation'; ctx.font = F3; w = Math.max(w, ctx.measureText(hint).width);
+      const bw = w + 2 * pad, bh = pad * 2 + 16 + lines.length * 18 + 16;
+      const [px, py] = at(S.hoverLinkAt.x, S.hoverLinkAt.y);
+      const x = Math.max(8, Math.min(px + 14, W - bw - 8)), y = py - bh - 14 > 8 ? py - bh - 14 : Math.min(py + 18, H - bh - 8);
+      ctx.globalAlpha = reducedMotion() ? 1 : shown; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = C.sheet; ctx.strokeStyle = C.rule || rgba(C.ink, 0.18); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.rect(x, y, bw, bh); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = linkStyle(l).col; ctx.fillRect(x, y, 2, bh);  // in the line's own colour
+      let ty = y + pad + 11;
+      ctx.font = F1; ctx.fillStyle = C.ink2; ctx.fillText(head, x + pad, ty); ty += 18;
+      ctx.font = F2; ctx.fillStyle = C.ink; for (const t of lines) { ctx.fillText(t, x + pad, ty); ty += 18; }
+      ctx.font = F3; ctx.fillStyle = C.ink3; ctx.fillText(hint, x + pad, ty + 1);
     });
   }
 
@@ -3593,18 +3675,107 @@
     } } });
   }
   // the lit dot stays lit until the pointer is clearly off it (or leaves the map)
-  let pointerAt = null;  // where the pointer last was on the map, in screen pixels
-  /** The pointer is well off the lit dot: let go of it. Asked when the pointer moves and when the hit test drops the
-   *  dot: after one quick move the hit test catches up later, with no further move to ask again. */
-  function releaseLit() {
-    if (!S.lit || S.hover === S.lit || !fg || !pointerAt) return;
-    const n = S.nodes.get(S.lit), r = graphEl.getBoundingClientRect();
-    const p = n && Number.isFinite(n.x) ? fg.graph2ScreenCoords(n.x, n.y) : null;
-    const reach = n ? drawnRadius(n, S.k || 1) * (S.k || 1) + 8 : 0;  // px: the dot plus a little
-    if (!p || Math.hypot(pointerAt[0] - r.left - p.x, pointerAt[1] - r.top - p.y) > reach) { S.lit = null; S.focusCache = null; kick(260); }
+  let pointerAt = null;  // where the pointer last was on the map, in screen pixels (null: not on the map)
+  // ---------- reaching the lines ----------
+  // Pointing at a dot (or a section's name) brings out its lines; to see why one is there you leave the dot and go to
+  // it. So they stay: as long as the pointer is on or near one of them (or its explanation is open), and for a moment
+  // after it isn't. A dot merely swept over lets go at once, and one crossed on the way doesn't take over until you
+  // rest on it.
+  const HOLD_MS = 1100, EARN_MS = 220, TAKE_MS = 200, NEAR_PX = 22, LINE_PX = 9;
+  const hold = { since: 0, seen: 0, timer: 0, take: 0 };
+  const holding = () => S.lit != null || S.litRegion != null;
+  function setLit(id, cid) {
+    clearTimeout(hold.timer); clearTimeout(hold.take);
+    if (S.lit !== id || S.litRegion !== cid) hold.since = performance.now();
+    hold.seen = performance.now();
+    S.lit = id; S.litRegion = cid; S.focusCache = null; kick(260);
   }
-  graphEl.addEventListener('pointermove', (e) => { pointerAt = [e.clientX, e.clientY]; releaseLit(); });
-  graphEl.addEventListener('pointerleave', () => { if (S.lit) { S.lit = null; S.focusCache = null; kick(260); } });
+  function dropLit() {
+    clearTimeout(hold.timer); clearTimeout(hold.take);
+    if (!holding()) return;
+    S.lit = null; S.litRegion = null; S.focusCache = null; setHoverLink(null);
+    // whatever is under the pointer now gets its turn
+    if (S.hover && S.nodes.has(S.hover)) setLit(S.hover, null);
+    kick(260);
+  }
+  const earned = () => hold.seen - hold.since >= EARN_MS;
+  /** Take over as the lit one: at once, unless another's lines are being held; then only after resting here. */
+  function takeLit(id, cid, still) {
+    clearTimeout(hold.take);
+    if (!holding() || (S.lit === id && S.litRegion === cid) || !earned()) { setLit(id, cid); return; }
+    hold.take = setTimeout(() => { if (still()) setLit(id, cid); }, TAKE_MS);
+  }
+  function litHover(n) {
+    if (n) { setHoverLink(null); if (n.type !== 'fragment') takeLit(n.id, null, () => S.hover === n.id); }
+    else { clearTimeout(hold.take); releaseLit(); }
+  }
+  /** The lines brought out right now, with their shapes. */
+  function litLines() {
+    const out = [];
+    for (const l of S.links || []) {
+      if (l.kind === 'part' || typeof l.source !== 'object' || !linkDrawn(l)) continue;
+      if (S.lit != null ? lid(l.source) === S.lit || lid(l.target) === S.lit : inHotSection(l)) out.push(l);
+    }
+    return out;
+  }
+  /** The nearest line to a point on screen that's drawn, within `px` of it: the lit ones first. */
+  function lineAt(cx, cy, px = LINE_PX) {
+    if (!fg || S.dragging) return null;
+    const r = graphEl.getBoundingClientRect(), p = fg.screen2GraphCoords(cx - r.left, cy - r.top), k = S.k || 1;
+    const nearest = (list) => {
+      let best = null, bd = (px / k) ** 2;
+      for (const l of list) { const g = linkGeom(l); if (!g) continue; const d = segDist2(g.pts, p.x, p.y); if (d < bd) { bd = d; best = l; } }
+      return best;
+    };
+    const lit = holding() ? nearest(litLines()) : null;
+    if (lit) return lit;
+    const all = (S.links || []).filter((l) => l.kind !== 'part' && typeof l.source === 'object' && linkDrawn(l));
+    return (activeId() && nearest(all.filter(touchesActive))) || (all.length < 1500 ? nearest(all) : null);
+  }
+  function setHoverLink(l) {
+    if (l === S.hoverLink) return;
+    S.hoverLink = l; S.hoverLinkT = performance.now(); clearTimeout(hold.tag);
+    if (l) hold.tag = setTimeout(() => kick(250), 240);
+    // what it is, shown beside where you met it (drawLinkTag), so it stays still while you read it
+    if (l && pointerAt) { const r = graphEl.getBoundingClientRect(); S.hoverLinkAt = fg.screen2GraphCoords(pointerAt[0] - r.left, pointerAt[1] - r.top); }
+    graphEl.style.cursor = l || S.hover || S.hoverRegion != null ? 'pointer' : '';
+    kick(150);
+  }
+  /** Is the pointer where the lit lines should stay? On the dot or name, on or near one of its lines. */
+  function nearLit() {
+    if (S.explain && !$('#explain').hidden) return true;
+    if (!pointerAt) return false;
+    if (S.lit != null && S.hover === S.lit) return true;
+    if (S.litRegion != null && S.hoverRegion === S.litRegion) return true;
+    if (S.lit != null) {
+      const n = S.nodes.get(S.lit), r = graphEl.getBoundingClientRect(), p = n && Number.isFinite(n.x) ? fg.graph2ScreenCoords(n.x, n.y) : null;
+      if (!p) return false;
+      // the hit test can drop for a frame with the pointer still (the dots' float, a card opening): the dot plus a little
+      if (Math.hypot(pointerAt[0] - r.left - p.x, pointerAt[1] - r.top - p.y) <= drawnRadius(n, S.k || 1) * (S.k || 1) + 8) return true;
+    }
+    return earned() && !!lineAtLit(NEAR_PX);
+  }
+  function lineAtLit(px) {
+    const r = graphEl.getBoundingClientRect(), p = fg.screen2GraphCoords(pointerAt[0] - r.left, pointerAt[1] - r.top), d = (px / (S.k || 1)) ** 2;
+    return litLines().find((l) => { const g = linkGeom(l); return g && segDist2(g.pts, p.x, p.y) < d; });
+  }
+  /** Asked when the pointer moves and when the hit test drops the dot (it can catch up after the last move). */
+  function releaseLit() {
+    if (!holding() || !fg) return;
+    const now = performance.now();
+    clearTimeout(hold.timer);
+    if (nearLit()) { hold.seen = now; return; }
+    const left = earned() ? hold.seen + HOLD_MS - now : 0;
+    if (left <= 0) dropLit();
+    else hold.timer = setTimeout(releaseLit, left + 10);
+  }
+  graphEl.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch') return;
+    pointerAt = [e.clientX, e.clientY];
+    if (holding()) releaseLit();
+    if (!S.hover && !S.dragging && !labelHit(e)) setHoverLink(lineAt(e.clientX, e.clientY)); else if (S.hover) setHoverLink(null);
+  });
+  graphEl.addEventListener('pointerleave', () => { pointerAt = null; setHoverLink(null); releaseLit(); });
   { const b = document.getElementById('btn-cleanup'); if (b) b.addEventListener('click', () => cleanUp()); }
   /** Dragging a dot moves that dot and nothing else: its lines stretch to follow it, but no other paper is
    *  carried along (its attached highlights, drawn on its ring, go with it). */
@@ -5265,7 +5436,7 @@
       h('div', { class: 'machine-head' }, h('span', { text: r.cached ? `${ai()}'s explanation, saved earlier` : `${ai()}'s explanation, ${ago(r.at)}` })),
       mdEl(r.text)));
   }
-  function closeExplain() { $('#explain').hidden = true; S.explain = null; }
+  function closeExplain() { $('#explain').hidden = true; S.explain = null; releaseLit(); kick(260); }
 
   // ======================================================================
   // Chat
@@ -6320,10 +6491,10 @@
     kick(120);
     const r = S.hover ? null : labelHit(e);
     const id = r ? r.cid : null;
-    if (r && S.hoverLink) { S.hoverLink = null; }
-    if (id !== (S.hoverRegion ?? null)) { S.hoverRegion = id; graphEl.style.cursor = r ? 'pointer' : (S.hover ? 'pointer' : ''); kick(50); }
+    if (r && S.hoverLink) setHoverLink(null);
+    if (id !== (S.hoverRegion ?? null)) { S.hoverRegion = id; if (id != null) takeLit(null, id, () => S.hoverRegion === id && !(pointerAt && holding() && lineAtLit(LINE_PX))); else { clearTimeout(hold.take); releaseLit(); } graphEl.style.cursor = r ? 'pointer' : (S.hover ? 'pointer' : ''); kick(50); }
   });
-  graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; kick(50); } });
+  graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; clearTimeout(hold.take); releaseLit(); kick(50); } });
   // Drag a section: press on its cloud or its name tag (not on a paper) and the whole section comes with you,
   // its papers keeping their places in it; drop it and it stays there (only that section moves). The map's own
   // panning is off for that press, so the press can't drag the whole map; a plain click still works as before.

@@ -1261,6 +1261,48 @@ def test_map_names_hold_still(ctx, server):
         assert set(a) <= set(b)
 
 
+def test_map_lines_can_be_reached(ctx, server):
+    """The lines a paper brings out stay while you go to one of them: along the line, resting on it (which says what it
+    is), and while its explanation is open. A paper only swept over lets go at once."""
+    clear_vault(server)
+    a, a2, *_ = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Hall thruster oscillations {w}", "abstract": PLASMA.format(w=w)})["id"]
+             for w in ("alpha", "beta", "gamma", "delta")]
+    b, *_ = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Cool dwarf atmospheres {w}", "abstract": STARS.format(w=w)})["id"]
+             for w in ("one", "two", "three", "four")]
+    api(server, "POST", f"/api/notes/{a}/link", {"target": b})
+    api(server, "POST", f"/api/notes/{a}/link", {"target": a2})
+    page = open_app(ctx, server)
+    page.wait_for_function("(window.__rb.S.stops || 0) >= 1 && (window.__rb.S.regionLabels || []).filter((r) => r.box).length >= 2", timeout=30000)
+    page.wait_for_timeout(300)
+    pts = page.evaluate("""(a) => { const rb = window.__rb, r = document.getElementById('graph').getBoundingClientRect();
+      window.__l = rb.S.links.find((l) => l.kind === 'manual' && l.source.cluster !== l.target.cluster); const p = rb.linkGeom(window.__l).pts, out = [];
+      for (let i = 0; i + 3 < p.length; i += 2) for (let j = 0; j <= 20; j++) { const t = j / 20,
+        q = rb.fg.graph2ScreenCoords(p[i] + (p[i + 2] - p[i]) * t, p[i + 1] + (p[i + 3] - p[i + 1]) * t); out.push([q.x + r.x, q.y + r.y]); }
+      return window.__l.source.id === a ? out : out.reverse(); }""", a)
+    drawn = "() => window.__rb.linkDrawn(window.__l)"
+    box = page.locator("#graph").bounding_box()
+    away = (box["x"] + 5, box["y"] + box["height"] - 120)
+    page.mouse.move(*away)
+    assert not page.evaluate(drawn)
+    # swept over: gone right away
+    page.mouse.move(*pts[0]); page.wait_for_function(drawn); page.mouse.move(*away)
+    page.wait_for_function("() => !window.__rb.linkDrawn(window.__l)")
+    # rested on, then along its line
+    page.mouse.move(*pts[0]); page.wait_for_function(drawn); page.wait_for_timeout(700)
+    half = next(i for i, q in enumerate(pts) if ((q[0] - pts[0][0]) ** 2 + (q[1] - pts[0][1]) ** 2) ** 0.5 > 45)
+    for q in pts[1:half + 1]:
+        page.mouse.move(*q, steps=2); page.wait_for_timeout(25)
+        assert page.evaluate(drawn)
+    page.wait_for_timeout(2000)  # longer than lines are held for once you've left them
+    assert page.evaluate(drawn) and page.evaluate("window.__rb.S.hoverLink === window.__l")
+    page.mouse.click(*pts[half])
+    expect(page.locator("#explain")).to_be_visible()
+    page.mouse.move(*away); page.wait_for_timeout(1800)
+    assert page.evaluate(drawn)  # its explanation is open
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => !window.__rb.linkDrawn(window.__l)")
+
+
 def test_sections_drag_and_add_into(ctx, server):
     """Sections on the map: drawn as clouds, dragged as a whole by their name tag (only that section moves, and
     it stays where you drop it), and a paper added "into a section" joins it."""
