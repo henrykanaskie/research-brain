@@ -816,13 +816,25 @@
     S.focusCache = { id, links: S.links, thr: S.threshold, sim: S.showSim, set };
     return set;
   }
+  /** the selected dot and what it's joined to, worked out once a frame (only while a lit dot lets go) */
+  function selectedSet() {
+    if (S.selSet && S.selSet.frame === S.frame && S.selSet.id === S.selected) return S.selSet.set;
+    const set = new Set([S.selected]);
+    for (const l of S.links) { if (!linkShown(l)) continue; const a = lid(l.source), b = lid(l.target); if (a === S.selected) set.add(b); else if (b === S.selected) set.add(a); }
+    S.selSet = { frame: S.frame, id: S.selected, set };
+    return set;
+  }
   const DIM = 0.2;
   function targetAlpha(n) {
     if (S.nodeFilter && !S.nodeFilter(n)) return DIM; // graph view filter (static/views.js)
     if (S.search) return S.matches.has(n.id) ? 1 : DIM;
     if (S.focusCluster != null && n.cluster !== S.focusCluster && S.selected !== n.id) return DIM;
     const f = focusSet();
-    return f && !f.has(n.id) ? DIM : 1;
+    if (!f || f.has(n.id)) return 1;
+    if (!S.lit || !hold.fade) return DIM;
+    const back = S.selected && S.nodes.has(S.selected) ? selectedSet() : null;  // how it is once the lit dot has let go
+    const rest = back && !back.has(n.id) ? DIM : 1;
+    return rest + (DIM - rest) * litLevel();
   }
   /** eased per-node alpha (150 ms), advanced once per frame in onRenderFramePre */
   let lastFrame = 0;
@@ -840,8 +852,11 @@
       if (Math.abs(d) > 0.004) { n.__a += d * kf; moving = true; } else n.__a = t;
     }
     // lines fade in and out with their dots
+    const level = litLevel();
+    if (level < 1) moving = true;
+    const onlyLit = (l) => !linkResting(l) && l !== S.hoverLink && !explained(l) && !(S.selected && (lid(l.source) === S.selected || lid(l.target) === S.selected));
     for (const l of S.links || []) {
-      const t = linkDrawn(l) ? 1 : 0;
+      const t = !linkDrawn(l) ? 0 : level < 1 && onlyLit(l) ? level : 1;
       if (l.__v === undefined) l.__v = t;
       const d = t - l.__v;
       if (Math.abs(d) > 0.004) { l.__v += d * kf; moving = true; } else l.__v = t;
@@ -855,13 +870,15 @@
     // S.lit: the dot you last pointed at, kept while the pointer stays on or near it. The hit test alone
     // (S.hover) can drop for a frame with the pointer still (the dots' slow float, a hover card opening),
     // and the highlight would then flicker off under a pointer that hasn't moved.
-    const hov = S.lit || S.hover;
+    const hov = S.lit || (S.overMap !== false && S.hover);
     if (hov && !S.dragging && S.nodes.has(hov) && !nodeHidden(hov)) {
       const n = S.nodes.get(hov);
       if (n.type !== 'fragment') return hov;
     }
     return S.selected && S.nodes.has(S.selected) ? S.selected : null;
   }
+  /** How lit the lit dot (or section) is: 1, or on its way down to 0 since the pointer left it. */
+  const litLevel = () => (holding() && hold.fade ? 1 - Math.pow(Math.min(1, (performance.now() - hold.fade) / FADE_MS), 1.4) : 1);
   const touchesActive = (l) => { const id = activeId(); return !!id && (lid(l.source) === id || lid(l.target) === id); };
   const linkShown = (l) => !(S.hidden && (nodeHidden(lid(l.source)) || nodeHidden(lid(l.target))))
     && (l.kind !== 'similar' || (S.showSim && (l.top || touchesActive(l)) && (l.tree || l.score >= S.threshold)))
@@ -912,7 +929,7 @@
   };
   /** drawn now: a resting line, or one of the dot (or section) you're pointing at, clicked or dragging */
   const explained = (l) => !!S.explain && S.explain.key === linkKey(lid(l.source), lid(l.target));  // its explanation is open
-  const linkDrawn = (l) => linkShown(l) && (linkResting(l) || touchesActive(l) || inHotSection(l) || explained(l)
+  const linkDrawn = (l) => linkShown(l) && (linkResting(l) || touchesActive(l) || inHotSection(l) || explained(l) || S.hoverLink === l
     || !!(S.dragNode && (lid(l.source) === S.dragNode.id || lid(l.target) === S.dragNode.id)));
   /** drawn now, or still fading out */
   const linkOnMap = (l) => linkShown(l) && (linkDrawn(l) || l.__v > 0.01);
@@ -1298,28 +1315,29 @@
     const a = l.source, b = l.target;
     const fa = a.__a ?? 1, fb = b.__a ?? 1;
     const lit = touchesActive(l);  // a connection of the dot under the pointer (or the one you clicked)
-    let dim = lit ? 1 : Math.min(fa, fb);
-    if (S.search) dim = Math.min(fa, fb);
+    const level = lit ? (S.lit != null ? litLevel() : 1) : 0, both = Math.min(fa, fb);
+    let dim = both + (1 - both) * level;
+    if (S.search) dim = both;
     const focus = S.hoverLink || (S.explain && !$('#explain').hidden ? 'explained' : null);
     const mine = focus && (S.hoverLink ? S.hoverLink === l : explained(l));
-    if (lit && focus && !mine) dim *= 0.3;  // one of them is pointed at (or explained): the others step back
+    if (lit && focus && !mine) dim *= 1 - 0.7 * level;  // one of them is pointed at (or explained): the others step back
     if (mine) dim = 1;
-    const hov = mine || S.hoverLink === l || lit;
+    const h = mine ? 1 : level, mix = (x, y) => y + (x - y) * h;  // pointed at, and not
     if (l.__v !== undefined) dim *= l.__v;
     // long fibres recede a little, like depth in tissue
     const len = Math.hypot(b.x - a.x, b.y - a.y) || 0;
     const depth = Math.max(0.45, Math.min(1, 1.25 - len / 320));
     if (l.kind === 'part') return { col: C.ink, a: 0.45 * dim, w: 0.5 };
-    if (l.kind === 'manual') return { col: C.red, a: (hov ? 1 : 0.8) * dim, w: hov ? 1.1 : 0.8 };
-    if (l.kind === 'mention') return { col: C.red, a: (hov ? 0.9 : 0.45) * dim * depth, w: hov ? 0.9 : 0.6 };
-    if (l.kind === 'cites') return { col: C.ink, a: (hov ? 0.9 : 0.4) * dim * depth, w: hov ? 0.8 : 0.5 };
-    if (l.kind === 'question') return { col: C.violet, a: (hov ? 1 : l.verdict === 'related' ? 0.4 : 0.7) * dim, w: hov ? 1 : 0.7 };
-    if (l.kind === 'conflict') return { col: C.ochre, a: (hov ? 1 : 0.85) * dim, w: hov ? 1.1 : 0.8, dash: true };
+    if (l.kind === 'manual') return { col: C.red, a: mix(1, 0.8) * dim, w: mix(1.1, 0.8) };
+    if (l.kind === 'mention') return { col: C.red, a: mix(0.9, 0.45) * dim * depth, w: mix(0.9, 0.6) };
+    if (l.kind === 'cites') return { col: C.ink, a: mix(0.9, 0.4) * dim * depth, w: mix(0.8, 0.5) };
+    if (l.kind === 'question') return { col: C.violet, a: mix(1, l.verdict === 'related' ? 0.4 : 0.7) * dim, w: mix(1, 0.7) };
+    if (l.kind === 'conflict') return { col: C.ochre, a: mix(1, 0.85) * dim, w: mix(1.1, 0.8), dash: true };
     // a connection your AI found (not one you drew): quiet and dashed, so the red lines stay yours
-    if (l.kind === 'ai') return { col: C.machine, a: (hov ? 0.95 : 0.5) * dim * depth, w: hov ? 0.8 : 0.55, dash: true };
+    if (l.kind === 'ai') return { col: C.machine, a: mix(0.95, 0.5) * dim * depth, w: mix(0.8, 0.55), dash: true };
     const span = Math.max(1e-3, 1 - S.threshold);
     const sa = 0.22 + 0.4 * Math.min(1, Math.max(0, (l.score - S.threshold) / span));
-    return { col: C.machine, a: (hov ? 0.95 : sa) * dim * depth, w: hov ? 0.8 : 0.5 };
+    return { col: C.machine, a: mix(0.95, sa) * dim * depth, w: mix(0.8, 0.5) };
   }
 
   /** Hairline fibres: a single fine stroke along the curve. Width is fixed in screen pixels so
@@ -1327,8 +1345,10 @@
   function drawLink(l, ctx, k) {
     const g = linkGeom(l);
     if (!g) return;
+    const far = farLevel(k);
     if (S.probeLink) S.probeLink(l, g);  // tests: what each trace looks like as it's drawn
     const st = linkStyle(l);
+    if (far < 1) st.a *= far;
     if (st.a <= 0.01) return;
     // traces end exactly on the edge of the drawn dot (same radius drawNode uses at this zoom), so
     // they meet it flush and on its centre line; the red note-dots are drawn on top of them
@@ -1439,10 +1459,10 @@
   // about large in the display italic ("Ab Initio" / "Collision Theory"). Under it runs a trace from the logo: along
   // the name, a 45-degree bend, and a ring over the section's papers.
   const LEAD_PX = 13.5, HEAD_PX = 23, LEAD_LINE = 16, HEAD_LINE = 25, TITLE_MAX_W = 230;
-  const TITLE_GAP = 35;  // from the top dot's centre up to the bottom of the words: the trace's room
+  const TITLE_GAP = 31;  // from the top dot's centre up to the bottom of the words: the trace's room
   const LEAD_FONT = `400 ${LEAD_PX}px "Newsreader", Georgia, serif`, HEAD_FONT = `italic 500 ${HEAD_PX}px "Newsreader", Georgia, serif`;
   const NUM_FONT = '600 10px "Archivo", -apple-system, "Segoe UI", sans-serif', NUM_GAP = 5;
-  const RING_R = 2.6, RING_AT = 17;  // the ring at the trace's end, and how far above the top dot's centre it sits
+  const RING_R = 2.6, RING_AT = 15;  // the ring at the trace's end, and how far above the top dot's centre it sits
   const measureCtx = document.createElement('canvas').getContext('2d');
   /** A section's name broken into lines and measured, in screen pixels: the same at every zoom. */
   function titleText(label, size) {
@@ -1472,6 +1492,16 @@
     ctx.setTransform(d, 0, 0, d, 0, 0);
     try { draw((x, y) => [(tf.a * x + tf.e) / d, (tf.d * y + tf.f) / d]); } finally { ctx.restore(); }
   }
+  // How big the section names are. Full size from plan.titleK up; below that they shrink with the map, so zoomed out
+  // the whole picture keeps the arrangement it has at the whole-map view; never smaller than TITLE_MIN, under which
+  // a name that would cover another, or another section's papers, steps out instead. With many sections the names
+  // start smaller (titleFit), and the layout keeps room for them at that size (compactRegions).
+  const TITLE_MIN = 0.62;
+  const titleFit = (sections) => Math.max(0.68, Math.min(1, 1 - (sections - 8) * 0.027));
+  /** Zoomed so far out that names reach over other sections' papers, the papers step back and the names lead, as on
+   *  an atlas: 1 up close, down to 0.28. */
+  const farLevel = (k) => (plan.crowdK > 0 ? Math.max(0.28, Math.min(1, 0.28 + 0.72 * (k / plan.crowdK - 0.6) / 0.4)) : 1);
+  const titleScale = (k) => Math.max(TITLE_MIN, Math.min(1, k / (plan.titleK || 1e-6)));
   let labelDt = 0, labelClock = 0;  // time since the last frame, for names fading in and out
   const easeTo = (v, t) => (reducedMotion() || Math.abs(t - v) < 0.01 ? t : v + (t - v) * (1 - Math.exp(-labelDt / 70)));
   /** Section names: the display face, centred right above the section's papers, two even lines at most, with the
@@ -1484,25 +1514,28 @@
     const focused = S.focusCluster;
     const hoverNode = (S.lit && S.nodes.get(S.lit)) || (S.hover && S.nodes.get(S.hover));
     const hot = S.litRegion != null ? S.litRegion : hoverNode ? hoverNode.cluster : S.hoverRegion != null ? S.hoverRegion : null;
-    const W = graphEl.clientWidth, H = graphEl.clientHeight, px = 1 / k;
-    onScreenPx(ctx, (at) => {
+    const sc = titleScale(k), W = graphEl.clientWidth / sc, H = graphEl.clientHeight / sc, px = sc / k;
+    onScreenPx(ctx, (at0) => {
+      const at = (x, y) => { const q = at0(x, y); return [q[0] / sc, q[1] / sc]; };
+      ctx.scale(sc, sc);  // everything below is in the names' own pixels
       for (const r of S.regionLabels) {
         r.box = null;
-        if (focused != null) continue;  // the focus bar names the region
         const key = r.label + '|' + r.size;
         let t = plan.titles.get(r.cid);
         if (!t || t.key !== key) plan.titles.set(r.cid, t = { ...titleText(r.label, r.size), minK: t ? t.minK : 0, a: t ? t.a : 1 });
         t.shown = k >= t.minK * (t.shown ? 0.97 : 1);
-        const isHot = hot != null && r.cid === hot, dimmed = !isHot && (S.selected || S.search || hot != null || S.lit);
-        const want = !t.shown ? 0 : dimmed ? 0.4 : 1, solid = easeTo(t.solid ?? (t.shown ? 1 : 0), t.shown ? 1 : 0);
+        // focused on one section, the others' names stay, quieter: a click on one goes straight to it
+        const isHot = r.cid === hot || r.cid === focused, stepBack = isHot ? 0 : S.selected || S.search || focused != null ? 1 : hot != null || S.lit ? litLevel() : 0;
+        const want = !t.shown ? 0 : 1 - 0.6 * stepBack, solid = easeTo(t.solid ?? (t.shown ? 1 : 0), t.shown ? 1 : 0);
         t.a = easeTo(t.a ?? want, want); t.solid = solid;
         if (t.a !== want || t.solid !== (t.shown ? 1 : 0)) kick(60);
         if (t.a < 0.02) continue;
         const [cx, top] = at(r.x, r.top), y0 = top - TITLE_GAP - t.h, x0 = cx - t.w / 2;
         if (x0 > W || x0 + t.w < 0 || y0 > H || top < 0) continue;  // off screen
         r.box = [r.x - (t.w / 2 + 4) * px, r.top - (TITLE_GAP + t.h + 2) * px, r.x + (t.w / 2 + 4) * px, r.top - (RING_AT - RING_R - 2) * px];
-        t.hot = easeTo(t.hot || 0, isHot ? 1 : 0);
-        if (t.hot !== (isHot ? 1 : 0)) kick(60);
+        const hotTo = r.cid === focused ? 1 : isHot ? litLevel() : 0;
+        t.hot = easeTo(t.hot || 0, hotTo);
+        if (t.hot !== hotTo) kick(60);
         ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
         // the words, left-aligned over the section's middle
         let y = y0;
@@ -1512,7 +1545,7 @@
           ctx.font = line.head ? HEAD_FONT : LEAD_FONT;
           if ('fontStretch' in ctx) ctx.fontStretch = 'normal';
           ctx.globalAlpha = t.solid;  // the backing stays solid when the name dims, so a lit line never strikes it out
-          glowText(ctx, line.t, x0, base, 6);
+          if (farLevel(k) === 1) glowText(ctx, line.t, x0, base, 6);  // (over receded papers, only a halo)
           ctx.lineWidth = 4; ctx.strokeStyle = rgba(C.ground, 0.95);
           ctx.strokeText(line.t, x0, base);
           ctx.globalAlpha = t.a;
@@ -1553,7 +1586,7 @@
   // name above its papers, a paper's on the side of its dot that's clearest at the whole-map view. Panning changes
   // nothing. Zooming only lets a name in or out, at one fixed zoom of its own: the one from which it no longer
   // overlaps a more important name or a dot.
-  const plan = { titles: new Map(), key: null, gen: 0 };
+  const plan = { titles: new Map(), key: null, gen: 0, titleK: 1, crowdK: 0 };
   const planKey = () => [S.links, S.nodes, S.clusters, S.labelMode, S.hidden, S.lines, S.threshold, S.showSim, S.showCites, plan.gen];
   const planStale = () => { const a = plan.key, b = planKey(); return !a || a.some((v, i) => v !== b[i]); };
   /** the names need placing again (a dot or a section was dropped somewhere else, the fonts loaded) */
@@ -1609,12 +1642,22 @@
       .filter((g) => g.info && g.info.label && g.mem.length > 1).sort((a, b) => b.mem.length - a.mem.length || a.cid - b.cid);
     const old = plan.titles;
     plan.titles = new Map();
+    plan.titleK = k / titleFit(groups.length); plan.crowdK = 0;
+    const kMin = plan.titleK * TITLE_MIN;  // below this zoom the names stay at their smallest size
     for (const g of groups) {
       const t = titleText(g.info.label, g.mem.length), b = sectionSpan(g.mem, rf && rf.regionAt ? rf.regionAt(g.cid) : null), was = old.get(g.cid);
       const box = [-t.w / 2 - 4, -TITLE_GAP - t.h - 2, t.w / 2 + 4, -RING_AT + RING_R + 2];
+      const small = box.map((v) => v * TITLE_MIN);
       let minK = 0;
-      for (const q of placed) { const u = overlapUntil(b.x, b.top, box, q.x, q.y, q.box); if (u > q.minK) minK = Math.max(minK, u); }
-      placed.push({ x: b.x, y: b.top, box, minK });
+      for (const q of placed) {
+        const u = overlapUntil(b.x, b.top, box, q.x, q.y, q.box);
+        if (u > plan.titleK) { if (u > q.minK) minK = Math.max(minK, u); continue; }  // two sections dragged close together
+        const v = Math.min(kMin, overlapUntil(b.x, b.top, small, q.x, q.y, q.small));  // between the two they shrink with the map, together
+        if (v > q.minK) minK = Math.max(minK, v);
+      }
+      // zoomed far out the names reach over neighbouring sections' papers: from here down the papers recede (farLevel)
+      for (const m of dots) if (m.n.cluster !== g.cid) plan.crowdK = Math.max(plan.crowdK, Math.min(kMin, overlapUntil(b.x, b.top, small, m.x, m.y, [-2.4, -2.4, 2.4, 2.4])));
+      placed.push({ x: b.x, y: b.top, box, small, minK });
       plan.titles.set(g.cid, { ...t, minK, a: was && was.a, solid: was && was.solid, shown: was && was.shown });
     }
     // the resting lines, in pixels at that zoom, for the sides that keep off them
@@ -1650,6 +1693,7 @@
       });
       let minK = 0;
       for (const q of placed) { const u = overlapUntil(d.x, d.y, best.box, q.x, q.y, q.box); if (u > q.minK && u > minK) minK = u; }
+      if (d.n.cluster >= 0 && minK === 0) minK = Math.min(k, plan.titleK * 0.55);  // zoomed far out, the sections' names speak
       for (const m of dots) { if (m === d) continue; const u = overlapUntil(d.x, d.y, best.box, m.x, m.y, m.box); if (u > minK) minK = u; }
       n.__lab = { text, w, side: best.side, minK, shown: was && was.shown, a: was && was.a };
       placed.push({ x: d.x, y: d.y, box: best.box, minK });
@@ -1659,7 +1703,10 @@
   function regionTagClick(e) {
     const r = labelHit(e);
     if (!r) return false;
-    if (S.focusCluster === r.cid) unfocusRegion(); else focusRegion(r.cid);
+    if (S.focusCluster === r.cid) { unfocusRegion(); return true; }
+    // from anywhere: whatever was focused before lets go (an open note stays open, its dot just isn't the focus now)
+    S.selected = null; S.focusCache = null; dropLit();
+    focusRegion(r.cid);
     return true;
   }
   function labelHit(e) {
@@ -1677,18 +1724,19 @@
   }
 
   /** Focus one region: zoom to it and dim everything else, until "Show all" or Esc. */
-  function focusRegion(cid) {
+  function focusRegion(cid, fit = true) {
     if (!fg) return;
     const info = (S.clusters || []).find((c) => c.id === cid);
     if (!info) return;
+    unfocusRegion(false);  // straight from another section
     S.focusCluster = cid;
     const bar = $('#region-focus');
     if (bar) { $('.rf-name', bar).textContent = regionName(info.label); bar.hidden = false; }
-    smoothFit(T(700), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid);
+    if (fit) smoothFit(T(700), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid);
     kick(800);
   }
-  /** Rename the focused region, in place in its bar. With a matching topic the topic is renamed too (one
-   *  name for both), unless "keep the topic's name" is ticked; then the region gets a name of its own. */
+  /** Rename the focused region, in place in its bar. It's the same name in the Regions
+   *  drawer (a topic file, in the data): there is only one. */
   function renameRegion(cid = S.focusCluster) {
     const info = (S.clusters || []).find((c) => c.id === cid);
     const bar = $('#region-focus');
@@ -1696,15 +1744,12 @@
     const nameEl = $('.rf-name', bar);
     const input = h('input', { type: 'text', class: 'rf-input', value: regionName(info.label), maxlength: 80, 'aria-label': 'Region name', spellcheck: true });
     const topic = info.topic;
-    const keep = topic ? h('input', { type: 'checkbox', id: 'rf-keep-topic' }) : null;
     const save = h('button', { type: 'button', class: 'btn', text: 'Save' });
     const cancel = h('button', { type: 'button', class: 'btn btn-text', text: 'Cancel' });
-    const reset = info.name_source === 'custom'
-      ? h('button', { type: 'button', class: 'btn btn-text', text: topic ? 'Use topic name' : 'Use automatic name',
-        title: topic ? `Show the topic’s name, “${topic.name}”, again` : `Back to “${regionName(info.auto_label)}”` })
+    const reset = info.name_source === 'custom' && !topic
+      ? h('button', { type: 'button', class: 'btn btn-text', text: 'Use automatic name', title: `Back to “${regionName(info.auto_label)}”` })
       : null;
     const edit = h('span', { class: 'rf-edit' }, input,
-      keep ? h('label', { class: 'rf-keep', for: 'rf-keep-topic', title: `Renaming also renames the topic “${topic.name}”, so they stay the same. Tick this to give the region a different name.` }, keep, ' Keep the topic’s name') : null,
       save, reset, cancel);
     const others = [...bar.querySelectorAll(':scope > .btn')];
     nameEl.hidden = true; others.forEach((b) => { b.hidden = true; });
@@ -1719,15 +1764,14 @@
         const now = (S.clusters || []).find((c) => c.id === cid);
         nameEl.textContent = regionName(now ? now.label : (body.name || ''));
         close();
-        if (r && r.renamed_topic) toast(`Renamed the region and its topic to “${r.name}”`, 'ok');
         window.dispatchEvent(new CustomEvent('rb:topics-changed'));
       } catch (e) { save.disabled = false; toastErr(e, 'Could not rename the region'); }
     };
     save.onclick = () => {
       const name = input.value.trim();
       if (!name) { input.focus(); return; }
-      if (name === regionName(info.label) && !(keep && keep.checked)) { close(); return; }
-      send({ name, rename_topic: !!topic && !(keep && keep.checked) });
+      if (name === regionName(info.label)) { close(); return; }
+      send({ name });
     };
     if (reset) reset.onclick = () => send({ reset: true });
     cancel.onclick = close;
@@ -2029,7 +2073,7 @@
         for (const id of ids) {
           const a = anchors.get(id);
           if (a.mine) continue;
-          const free = (x, y) => placed.every((p) => Math.hypot(p.x - x, p.y - y) >= p.r + a.r + 34);
+          const free = (x, y) => { const B = sectionBox({ ...a, x, y }); return placed.every((p) => !boxesHit(B, sectionBox(p)) && Math.hypot(p.x - x, p.y - y) >= p.r + a.r + 10); };
           if (!free(a.x, a.y)) {
             for (let t = 1; t < 3000; t++) {
               const ang = t * 0.35, rad = t * 0.9, x = a.x + Math.cos(ang) * rad, y = a.y + Math.sin(ang) * rad * 0.8;
@@ -2265,9 +2309,51 @@
   const SECTION_SIDE = 22;        // graph units each side of a section's disc for its papers' titles
   const SECTION_HEAD = 22;        // graph units above it for its name
   const GAP_X = 10, GAP_Y = 10;   // clear space between two sections' boxes
-  /** a section's box: centre and half sizes (the name band on top shifts its centre up) */
-  const sectionBox = (a) => ({ cx: a.x, cy: a.y - SECTION_HEAD / 2, hw: a.r + SECTION_SIDE, hh: a.r * 0.82 + SECTION_HEAD / 2 });
+  /** a section's box: centre and half sizes: its papers, room either side for their names, and its own name on top */
+  const sectionBox = (a) => {
+    const head = a.head || SECTION_HEAD, hh = (a.r * 1.82 + head) / 2;
+    return { cx: a.x, cy: a.y + a.r * 0.91 - hh, hw: Math.max(a.r + SECTION_SIDE, a.half || 0), hh };
+  };
+  const boxesHit = (A, B) => Math.abs(A.cx - B.cx) < A.hw + B.hw && Math.abs(A.cy - B.cy) < A.hh + B.hh;
+  /** Pack, with room for each section's name at the size it has when the whole map is in view. How much that is in map
+   *  units depends on that zoom, and the zoom on the packing: so pack, measure, and pack again. A few starting shapes
+   *  are tried and the one that shows the most at once is kept. (For a screen of one fixed size, so the map doesn't
+   *  rearrange with the window.) */
   function compactRegions(anchors) {
+    const all = [...anchors.entries()];
+    const start = new Map(all.map(([id, a]) => [id, [a.x, a.y]]));
+    const text = new Map();
+    for (const [id] of all) {
+      const info = (S.clusters || []).find((c) => c.id === id);
+      if (info && info.label) text.set(id, titleText(info.label, info.size || 0));
+    }
+    const f = titleFit(all.length), W = 1240, H = 700;
+    const fitK = () => {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const [, a] of all) { const b = sectionBox(a); x0 = Math.min(x0, b.cx - b.hw); x1 = Math.max(x1, b.cx + b.hw); y0 = Math.min(y0, b.cy - b.hh); y1 = Math.max(y1, b.cy + b.hh); }
+      return Math.min(6, W / Math.max(1, x1 - x0), H / Math.max(1, y1 - y0));
+    };
+    let best = null;
+    for (const shape of all.length > 40 ? [[1.35, 0.8]] : [[1.35, 0.8], [1, 1], [1.8, 0.6], [2.4, 0.45]]) {
+      let k = 2;
+      for (let it = 0; it < 4; it++) {
+        for (const [id, a] of all) {
+          const t = text.get(id), p = start.get(id);
+          a.x = p[0]; a.y = p[1];
+          a.head = t ? Math.max(SECTION_HEAD * 0.6, ((TITLE_GAP + t.h) * f + 10) / k) : SECTION_HEAD;
+          a.half = t ? (t.w * f) / 2 / k + 5 / k : 0;
+        }
+        packBoxes(anchors, shape);
+        const now = fitK();
+        if (Math.abs(now - k) < 0.02 * k) { k = now; break; }
+        k = it ? (k + now) / 2 : now;
+      }
+      k = fitK();
+      if (!best || k > best.k * 1.03) best = { k, at: all.map(([, a]) => [a.x, a.y, a.head, a.half]) };
+    }
+    if (best) all.forEach(([, a], i) => { [a.x, a.y, a.head, a.half] = best.at[i]; });
+  }
+  function packBoxes(anchors, shape) {
     const all = [...anchors.values()];
     if (all.length < 2) return;
     const free = all.filter((a) => !a.mine);
@@ -2298,7 +2384,7 @@
       }
     };
     // the shape of a screen: spread the arrangement sideways and flatten it before packing
-    for (const a of free) { a.x *= 1.35; a.y *= 0.8; }
+    for (const a of free) { a.x *= shape[0]; a.y *= shape[1]; }
     clear(80);  // first make room, from where the related-regions layout put them
     // the middle the free sections gather round: the papers' centre of mass, as packRegions left it
     let cx = 0, cy = 0, w = 0;
@@ -2539,7 +2625,7 @@
       .linkLabel(() => '')
       .onNodeHover((n) => { S.hover = n ? n.id : null; litHover(n); S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
       .onLinkHover((l) => { const at = pointerAt && lineAt(pointerAt[0], pointerAt[1]); setHoverLink(S.hover ? null : at || l || null); })
-      .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
+      .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; if (S.focusCluster != null && n.cluster >= 0 && n.cluster !== S.focusCluster) focusRegion(n.cluster, false); openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
       .onNodeDrag((n) => { S.dragging = true; S.dragNode = n; motion.tween = null; dragNeighbours(n); runMotion(); })
@@ -2811,7 +2897,7 @@
     const r = drawnRadius(n, k);
     const sel = S.selected === n.id;
     const hov = S.hover === n.id;
-    const alpha = n.__a ?? 1;
+    const alpha = (n.__a ?? 1) * (hov || sel ? 1 : farLevel(k));
     const px = 1 / k;
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -2993,9 +3079,12 @@
         ctx.textAlign = 'left'; ctx.lineWidth = 3.5;
         // the map's own colour right behind the words: a line that has to pass there doesn't strike them out
         ctx.fillStyle = C.ground;
-        ctx.fillRect(tx - 1, ty - 1, L.w + 2, LABEL_PX + 2);
-        ctx.strokeText(text, tx, ty);
-        ctx.fillStyle = C.ink2; ctx.fillText(text, tx, ty);
+        ctx.fillRect(tx - 1, ty - 1, L.w + 2, LABEL_PX + 3);
+        // on a whole device pixel: WebKit shaves the tails off letters (g, y) drawn between two
+        const dpr = window.devicePixelRatio || 1, by = Math.round((ty + LABEL_PX * 0.83) * dpr) / dpr;
+        ctx.textBaseline = 'alphabetic';
+        ctx.strokeText(text, tx, by);
+        ctx.fillStyle = C.ink2; ctx.fillText(text, tx, by);
       }
     });
   }
@@ -3678,24 +3767,24 @@
   let pointerAt = null;  // where the pointer last was on the map, in screen pixels (null: not on the map)
   // ---------- reaching the lines ----------
   // Pointing at a dot (or a section's name) brings out its lines; to see why one is there you leave the dot and go to
-  // it. So they stay: as long as the pointer is on or near one of them (or its explanation is open), and for a moment
-  // after it isn't. A dot merely swept over lets go at once, and one crossed on the way doesn't take over until you
-  // rest on it.
-  const HOLD_MS = 1100, EARN_MS = 220, TAKE_MS = 200, NEAR_PX = 22, LINE_PX = 9;
-  const hold = { since: 0, seen: 0, timer: 0, take: 0 };
+  // it. So the map goes back to how it was over half a second, starting the moment you leave (nothing seems to hang),
+  // and until they're gone the lines can be pointed at and clicked. A line you reach stays by itself for as long as you're on it (or its explanation is open). A dot merely swept over lets go at
+  // once, and one crossed on the way doesn't take over until you rest on it.
+  const FADE_MS = 500, EARN_MS = 220, TAKE_MS = 120, LINE_PX = 9;
+  const hold = { since: 0, seen: 0, timer: 0, take: 0, fade: 0 };  // fade: when the lit one started to let go (0: it hasn't)
   const holding = () => S.lit != null || S.litRegion != null;
   function setLit(id, cid) {
     clearTimeout(hold.timer); clearTimeout(hold.take);
     if (S.lit !== id || S.litRegion !== cid) hold.since = performance.now();
-    hold.seen = performance.now();
+    hold.seen = performance.now(); hold.fade = 0; hold.on = true;
     S.lit = id; S.litRegion = cid; S.focusCache = null; kick(260);
   }
   function dropLit() {
     clearTimeout(hold.timer); clearTimeout(hold.take);
     if (!holding()) return;
-    S.lit = null; S.litRegion = null; S.focusCache = null; setHoverLink(null);
+    S.lit = null; S.litRegion = null; S.focusCache = null; hold.fade = 0;
     // whatever is under the pointer now gets its turn
-    if (S.hover && S.nodes.has(S.hover)) setLit(S.hover, null);
+    if (pointerAt && S.hover && S.nodes.has(S.hover)) setLit(S.hover, null);
     kick(260);
   }
   const earned = () => hold.seen - hold.since >= EARN_MS;
@@ -3729,6 +3818,7 @@
     };
     const lit = holding() ? nearest(litLines()) : null;
     if (lit) return lit;
+    { const l = S.hoverLink && linkOnMap(S.hoverLink) ? nearest([S.hoverLink]) : null; if (l) return l; }
     const all = (S.links || []).filter((l) => l.kind !== 'part' && typeof l.source === 'object' && linkDrawn(l));
     return (activeId() && nearest(all.filter(touchesActive))) || (all.length < 1500 ? nearest(all) : null);
   }
@@ -3741,9 +3831,8 @@
     graphEl.style.cursor = l || S.hover || S.hoverRegion != null ? 'pointer' : '';
     kick(150);
   }
-  /** Is the pointer where the lit lines should stay? On the dot or name, on or near one of its lines. */
+  /** Is the pointer still on the lit dot or name? */
   function nearLit() {
-    if (S.explain && !$('#explain').hidden) return true;
     if (!pointerAt) return false;
     if (S.lit != null && S.hover === S.lit) return true;
     if (S.litRegion != null && S.hoverRegion === S.litRegion) return true;
@@ -3753,7 +3842,7 @@
       // the hit test can drop for a frame with the pointer still (the dots' float, a card opening): the dot plus a little
       if (Math.hypot(pointerAt[0] - r.left - p.x, pointerAt[1] - r.top - p.y) <= drawnRadius(n, S.k || 1) * (S.k || 1) + 8) return true;
     }
-    return earned() && !!lineAtLit(NEAR_PX);
+    return false;
   }
   function lineAtLit(px) {
     const r = graphEl.getBoundingClientRect(), p = fg.screen2GraphCoords(pointerAt[0] - r.left, pointerAt[1] - r.top), d = (px / (S.k || 1)) ** 2;
@@ -3764,18 +3853,21 @@
     if (!holding() || !fg) return;
     const now = performance.now();
     clearTimeout(hold.timer);
-    if (nearLit()) { hold.seen = now; return; }
-    const left = earned() ? hold.seen + HOLD_MS - now : 0;
-    if (left <= 0) dropLit();
-    else hold.timer = setTimeout(releaseLit, left + 10);
+    if (nearLit()) { hold.seen = now; hold.on = true; if (hold.fade) { hold.fade = 0; kick(260); } return; }
+    if (hold.on) { hold.seen = now; hold.on = false; }  // it was on it until now, moving or not
+    if (!earned()) { dropLit(); return; }
+    if (!hold.fade) { hold.fade = now; kick(FADE_MS + 300); }
+    const left = hold.fade + FADE_MS - now;
+    if (left <= 0) dropLit(); else hold.timer = setTimeout(releaseLit, left + 10);
   }
   graphEl.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'touch') return;
-    pointerAt = [e.clientX, e.clientY];
+    pointerAt = [e.clientX, e.clientY]; S.overMap = true;
     if (holding()) releaseLit();
+    else if (S.hover && S.nodes.has(S.hover)) litHover(S.nodes.get(S.hover));
     if (!S.hover && !S.dragging && !labelHit(e)) setHoverLink(lineAt(e.clientX, e.clientY)); else if (S.hover) setHoverLink(null);
   });
-  graphEl.addEventListener('pointerleave', () => { pointerAt = null; setHoverLink(null); releaseLit(); });
+  graphEl.addEventListener('pointerleave', () => { pointerAt = null; S.overMap = false; S.focusCache = null; setHoverLink(null); releaseLit(); });
   { const b = document.getElementById('btn-cleanup'); if (b) b.addEventListener('click', () => cleanUp()); }
   /** Dragging a dot moves that dot and nothing else: its lines stretch to follow it, but no other paper is
    *  carried along (its attached highlights, drawn on its ring, go with it). */
@@ -3857,11 +3949,11 @@
   let fitAnim = null;
   function stopFit() { if (fitAnim) { cancelAnimationFrame(fitAnim.raf); fitAnim = null; } }
   /** Each section's name, for framing the map: where its papers end up and the name's size on screen. */
-  function sectionNames(posOf) {
+  function sectionNames(posOf, filter = null) {
     const rf = fg.d3Force('regions'), out = [];
     for (const [cid, mem] of cloudMembers()) {
       const info = (S.clusters || []).find((x) => x.id === cid);
-      if (!info || !info.label || mem.length < 2) continue;
+      if (!info || !info.label || mem.length < 2 || (filter && !mem.every(filter))) continue;
       const b = sectionSpan(mem, rf && rf.regionAt ? rf.regionAt(cid) : null, posOf), t = titleText(info.label, mem.length);
       out.push({ x: b.x, top: b.top, w: t.w, h: t.h });
     }
@@ -3878,12 +3970,13 @@
       x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]);
     }
     if (!Number.isFinite(x0) || !W || !H) return;
-    const names = filter ? [] : sectionNames(posOf || restingAt);
+    const names = sectionNames(posOf || restingAt, filter);
     const span = (k) => {  // the dots, and the sections' names at that zoom
       let a = x0, b = y0, c = x1, d = y1;
       for (const s of names) {
-        a = Math.min(a, s.x - (s.w / 2 - pad + 14) / k); c = Math.max(c, s.x + (s.w / 2 - pad + 14) / k);
-        b = Math.min(b, s.top - (TITLE_GAP + s.h - pad + 14) / k);
+        const f = titleScale(k);
+        a = Math.min(a, s.x - (s.w * f / 2 - pad + 14) / k); c = Math.max(c, s.x + (s.w * f / 2 - pad + 14) / k);
+        b = Math.min(b, s.top - ((TITLE_GAP + s.h) * f - pad + 14) / k);
       }
       return [a, b, c, d + 24 / k];  // and the legend's row along the bottom
     };
@@ -5055,7 +5148,7 @@
     if (n.type !== 'fragment') {
       const regions = (S.clusters || []).filter((c) => c.id !== n.cluster && c.label).sort((a, b) => a.label.localeCompare(b.label)).slice(0, 12);
       if (regions.length) {
-        items.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Put in section' }));
+        items.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Put in region' }));
         for (const c of regions) items.push(menuItem(truncate(c.label, 44), `${c.size} papers`, () => putInSection(n, c)));
       }
       const topicSlot = h('div', { class: 'menu-topics' });
@@ -5064,7 +5157,7 @@
         const inRegion = new Set(regions.map((c) => c.topic && c.topic.slug).filter(Boolean));
         const ts = (list || []).filter((t) => !inRegion.has(t.slug)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 12);
         if (!ts.length || !topicSlot.isConnected) return;
-        topicSlot.append(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Add to topic' }),
+        topicSlot.append(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Other regions' }),
           ...ts.map((t) => menuItem(truncate(t.name, 44), `${t.count}`, () => addToTopic(n, t.slug, t.name))));
       }).catch(() => {});
     }
@@ -5100,7 +5193,7 @@
       await api('POST', `/api/topics/${encodeURIComponent(slug)}/notes`, { ids: [n.id] });
       toast(`Added “${truncate(n.title || n.id, 40)}” to ${name}.`, 'ok');
       afterTopicChange(n, slug);
-    } catch (e) { toastErr(e, 'Could not add it to the topic'); }
+    } catch (e) { toastErr(e, 'Could not add it to the region'); }
   }
   function afterTopicChange(n, slug) {
     refreshGraph();
@@ -5558,7 +5651,7 @@
   // ---------- General: things of yours the agent may read (papers, notes, questions, topics) ----------
   S.chatAttach = LS.get('generalAttach', []) || [];
   const saveAttach = () => LS.set('generalAttach', S.chatAttach);
-  const ATTACH_KIND = { paper: 'Paper', note: 'Note', question: 'Question', fragment: 'Highlight', topic: 'Topic' };
+  const ATTACH_KIND = { paper: 'Paper', note: 'Note', question: 'Question', fragment: 'Highlight', topic: 'Region' };
   function renderAttachChips() {
     const box = $('#cs-chips');
     if (!box) return;
@@ -5571,7 +5664,7 @@
   async function chooseAttachments() {
     let topics = [];
     try { topics = (await api('GET', '/api/topics')).filter((t) => t.count > 0); } catch { /* none */ }
-    const input = h('input', { type: 'search', class: 'ca-q', placeholder: 'Search your papers, notes, questions and topics', 'aria-label': 'Search what to attach' });
+    const input = h('input', { type: 'search', class: 'ca-q', placeholder: 'Search your papers, notes, questions and regions', 'aria-label': 'Search what to attach' });
     const list = h('div', { class: 'ca-list', role: 'listbox' });
     const done = h('button', { type: 'button', class: 'btn btn-primary', text: 'Done' });
     const sheet = h('div', { class: 'menu ca-sheet', role: 'dialog', 'aria-label': 'Attach to this conversation' },
@@ -5623,9 +5716,9 @@
   /** Pick topics to ask about (checkboxes), from the chat header or the command palette. */
   async function chooseChatTopics() {
     let list = [];
-    try { list = await api('GET', '/api/topics'); } catch (e) { toastErr(e, 'Could not load your topics'); return; }
+    try { list = await api('GET', '/api/topics'); } catch (e) { toastErr(e, 'Could not load your regions'); return; }
     list = list.filter((t) => t.count > 0);
-    if (!list.length) { toast('Make a topic and add papers to it first (Topics, at the top).', 'info'); return; }
+    if (!list.length) { toast('Make a region and add papers to it first (Regions, at the top).', 'info'); return; }
     const chosen = new Set((S.chatTopics || []).map((t) => t.slug));
     const boxes = list.map((t) => {
       const cb = h('input', { type: 'checkbox', value: t.slug });
@@ -5645,12 +5738,12 @@
       all.indeterminate = on.length > 0 && on.length < boxes.length;
       // papers can be in several topics; the count is of topics' papers, not de-duplicated
       const papers = on.reduce((n, i) => n + ((list.find((t) => t.slug === i.value) || {}).count || 0), 0);
-      go.textContent = on.length ? `Ask about ${on.length === boxes.length && boxes.length > 1 ? 'all ' : ''}${on.length} topic${on.length === 1 ? '' : 's'} (${papers} paper${papers === 1 ? '' : 's'})` : 'Ask about these';
+      go.textContent = on.length ? `Ask about ${on.length === boxes.length && boxes.length > 1 ? 'all ' : ''}${on.length} region${on.length === 1 ? '' : 's'} (${papers} paper${papers === 1 ? '' : 's'})` : 'Ask about these';
       go.disabled = !on.length;
     };
     all.addEventListener('change', () => { for (const i of inputs()) i.checked = all.checked; sync(); });
     for (const i of inputs()) i.addEventListener('change', sync);
-    const sheet = h('div', { class: 'menu tp-sheet', role: 'dialog', 'aria-label': 'Ask about topics' },
+    const sheet = h('div', { class: 'menu tp-sheet', role: 'dialog', 'aria-label': 'Ask about regions' },
       h('div', { class: 'menu-label', text: 'Ask about the papers in…' }), boxes.length > 1 ? allRow : null,
       h('div', { class: 'tp-list' }, boxes), h('div', { class: 'tp-acts' }, cancel, go));
     sync();
@@ -5659,7 +5752,7 @@
     cancel.onclick = close;
     go.onclick = () => {
       const picked = boxes.map((b) => b.querySelector('input')).filter((i) => i.checked).map((i) => list.find((t) => t.slug === i.value));
-      if (!picked.length) { toast('Tick at least one topic.', 'info'); return; }
+      if (!picked.length) { toast('Tick at least one region.', 'info'); return; }
       close();
       chatAboutTopics(picked.map((t) => ({ slug: t.slug, name: t.name })));
     };
@@ -5707,11 +5800,11 @@
     document.body.classList.add('chat-scoped');
     if (S.chatTopics && S.chatTopics.length && !S.chatPaper) {
       const names = S.chatTopics.map((t) => t.name).join(', ');
-      if (title) title.textContent = S.chatTopics.length > 1 ? 'These topics' : 'This topic';
+      if (title) title.textContent = S.chatTopics.length > 1 ? 'These regions' : 'This region';
       $('.cs-title', bar).textContent = names;
-      $('.cs-title', bar).title = 'Choose other topics';
+      $('.cs-title', bar).title = 'Choose other regions';
       if (rel) rel.hidden = true;
-      if (ta) ta.placeholder = 'Ask about the papers in ' + (S.chatTopics.length > 1 ? 'these topics' : 'this topic');
+      if (ta) ta.placeholder = 'Ask about the papers in ' + (S.chatTopics.length > 1 ? 'these regions' : 'this region');
       return;
     }
     if (rel) rel.hidden = false;
@@ -5778,7 +5871,7 @@
           h('div', { class: 'machine-head' }, h('span', { text: `${ai()}, writing…` })),
           h('div', { class: 'msg-body md chat-live', html: partialMD(noMemoryTag(m.live)) }))));
       } else if (m.pending) {
-        kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatGeneral ? (m.web ? `${ai()} is searching the web` : `${ai()} is thinking`) : S.chatPaper ? `${ai()} is reading the paper` : S.chatTopics ? `${ai()} is reading the papers in your topics` : `${ai()} is reading your library`, m.start))));
+        kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatGeneral ? (m.web ? `${ai()} is searching the web` : `${ai()} is thinking`) : S.chatPaper ? `${ai()} is reading the paper` : S.chatTopics ? `${ai()} is reading the papers in your regions` : `${ai()} is reading your library`, m.start))));
       } else if (m.error) {
         kids.push(h('div', { class: 'msg error' }, h('div', { class: 'msg-role', text: `${ai()} couldn't answer` }), h('div', { class: 'msg-body', text: m.content }),
           h('div', { class: 'actions' }, h('button', { class: 'btn btn-sm needs-claude', type: 'button', text: 'Retry', onclick: () => retryChat(i) }))));
@@ -6031,7 +6124,7 @@
     if (base === 'library') return 'Library';
     if (base === 'general') return 'General';
     if (base.startsWith('paper-')) return 'Paper: ' + truncate(nodeTitle(base.slice(6)) || title || base.slice(6), 60);
-    if (base.startsWith('topics-')) return 'Topics: ' + truncate(title || base.slice(7).split('+').join(', '), 60);
+    if (base.startsWith('topics-')) return 'Regions: ' + truncate(title || base.slice(7).split('+').join(', '), 60);
     return title || base;
   }
   const whenText = (t) => {
@@ -6380,7 +6473,7 @@
       let done = false;
       const pick = (v) => { if (!done) { done = true; resolve(v); } };
       const items = [menuItem('Sort automatically', 'it joins the papers it’s most like', () => pick(null)),
-        h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Into a section' }),
+        h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Into a region' }),
         ...list.map((c) => menuItem(truncate(c.label, 44), `${c.size} papers`, () => pick(c)))];
       const r = e && e.currentTarget && e.currentTarget.getBoundingClientRect ? e.currentTarget.getBoundingClientRect() : null;
       showMenu('Add to library', items, r ? { clientX: r.left, clientY: r.bottom + 4 } : e);
@@ -6610,12 +6703,12 @@
     CMD.layer({ id: 'app.region-chooser', order: 95, isOpen: () => !!S.regionChooserClose, close: () => S.regionChooserClose() });
     CMD.layer({ id: 'app.region-focus', order: 35, isOpen: () => S.focusCluster != null, close: () => unfocusRegion() });
     CMD.register({ id: 'graph.focusRegion', title: 'Focus a region…', group: 'Graph', keys: ['G then C'],
-      aliases: ['cluster', 'topic', 'zoom to region', 'isolate', 'only this group'],
+      aliases: ['region', 'cluster', 'topic', 'zoom to region', 'isolate', 'only this group'],
       description: 'Zooms to one region and dims the rest. Click a region\'s name on the graph to do the same; Esc shows everything again.',
       run: chooseRegion });
     CMD.register({ id: 'graph.cleanUp', title: 'Clean up the map', group: 'Graph',
       aliases: ['clean up', 'tidy', 'tidy up', 'neaten', 'compact', 'reset layout', 'organize map'],
-      description: 'Puts every dot you dragged and every section you moved back into the tidy layout: sections close together, each section\'s papers evenly spaced. Undo from the message.',
+      description: 'Puts every dot you dragged and every region you moved back into the tidy layout: regions close together, each region\'s papers evenly spaced. Undo from the message.',
       run: cleanUp });
     CMD.register({ id: 'graph.unpinAll', title: 'Let every dot move freely', group: 'Graph',
       aliases: ['unpin', 'unpin all', 'reset positions', 'release dots', 'auto layout'],
@@ -6624,17 +6717,17 @@
     CMD.register({ id: 'graph.renameRegion', title: 'Rename this region', group: 'Graph',
       when: () => S.focusCluster != null,
       aliases: ['region name', 'name region', 'rename cluster', 'label region'],
-      description: 'Names the focused region. A region with the same papers as a topic shows the topic\'s name; renaming it renames the topic too, unless you choose to keep them different.',
+      description: 'Names the focused region. The name is the same on the map and in the Regions drawer.',
       run: () => renameRegion() });
-    CMD.register({ id: 'topics.autoSort', title: 'Sort papers that have no topic into topics', group: 'Library',
-      aliases: ['auto sort', 'organize', 'organise', 'sort into topics', 'group papers', 'categorize', 'cluster papers'],
-      description: 'The AI agent groups your papers that aren’t in a topic yet by what they’re about, reusing your topics where they fit (without an AI, the map’s regions do).',
+    CMD.register({ id: 'topics.autoSort', title: 'Sort papers that have no region into regions', group: 'Library',
+      aliases: ['region', 'auto sort', 'organize', 'organise', 'sort into topics', 'group papers', 'categorize', 'cluster papers'],
+      description: 'The AI agent groups your papers that aren’t in a region yet by what they’re about, reusing your regions where they fit (without an AI, by similarity).',
       run: async () => {
-        const t = task('Sorting papers into topics');
+        const t = task('Sorting papers into regions');
         try {
           const r = await api('POST', '/api/topics/auto-sort', { unsorted: true });
-          if (!r.sorted) toast(r.note || 'Every paper is already in a topic.', 'info');
-          else toast(`Sorted ${r.sorted} paper${r.sorted === 1 ? '' : 's'} into ${r.topics.length} topic${r.topics.length === 1 ? '' : 's'}${r.by === 'regions' ? ' by similarity' : ''}: ${r.topics.map((x) => x.name).join(', ')}`, 'ok');
+          if (!r.sorted) toast(r.note || 'Every paper is already in a region.', 'info');
+          else toast(`Sorted ${r.sorted} paper${r.sorted === 1 ? '' : 's'} into ${r.topics.length} region${r.topics.length === 1 ? '' : 's'}${r.by === 'regions' ? ' by similarity' : ''}: ${r.topics.map((x) => x.name).join(', ')}`, 'ok');
           refreshGraph();
           window.dispatchEvent(new CustomEvent('rb:topics-changed'));
         } catch (e) { toastErr(e, 'Could not sort the papers'); }
@@ -6644,9 +6737,9 @@
       aliases: ['general chat', 'ask ai', 'web search', 'search the web', 'ask agent', 'assistant'],
       description: 'Ask the agent anything, without your library. With web search allowed in Settings, it can look things up and link sources.',
       run: () => chatGeneral() });
-    CMD.register({ id: 'chat.aboutTopics', title: 'Ask about topics…', group: 'Research',
-      aliases: ['chat about topic', 'ask topic', 'topic chat', 'group of papers', 'ask about these papers'],
-      description: 'Pick one or more topics: the agent reads every paper in them and the passages that best match your question.',
+    CMD.register({ id: 'chat.aboutTopics', title: 'Ask about regions…', group: 'Research',
+      aliases: ['region', 'chat about topic', 'ask topic', 'topic chat', 'group of papers', 'ask about these papers'],
+      description: 'Pick one or more regions: the agent reads every paper in them and the passages that best match your question.',
       run: () => chooseChatTopics() });
     CMD.register({ id: 'chat.aboutPaper', title: 'Ask about this paper', group: 'Note',
       when: () => !!(S.cur && S.cur.type === 'paper'),

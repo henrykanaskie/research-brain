@@ -69,14 +69,14 @@
               <input id="lookup-input" type="text" placeholder="2106.09685 or 10.1063/5.0010332" spellcheck="false">
               <button id="btn-lookup" class="btn btn-primary" type="submit">Add</button>
             </div>
-            <label class="add-section">Section <select id="add-section" aria-label="Section to add it to" title="Which section of the map it goes in (also for PDFs you import from this menu)"><option value="">Sort automatically, by similarity</option></select></label>
+            <label class="add-section">Region <select id="add-section" aria-label="Region to add it to" title="Which region it goes in (also for PDFs you import from this menu)"><option value="">Sort automatically, by similarity</option></select></label>
           </form>
           <div class="menu-sep"></div>
           <button id="btn-add-pdf" class="menu-item" type="button">Import a PDF<span class="menu-hint">or drop one on the window</span></button>
           <input id="pdf-input" type="file" accept="application/pdf,.pdf" multiple hidden>
-          <button id="btn-link-folder" class="menu-item" type="button">Add folders of papers<span class="menu-hint">kept where they are, e.g. in OneDrive; subfolders become topics</span></button>
+          <button id="btn-link-folder" class="menu-item" type="button">Add folders of papers<span class="menu-hint">kept where they are, e.g. in OneDrive; subfolders become regions</span></button>
           <button id="btn-import-folder" class="menu-item" type="button">Import a folder of PDFs<span class="menu-hint">copied into your papers folder</span></button>
-          <button id="btn-import-bookmarks" class="menu-item" type="button">Import browser bookmarks<span class="menu-hint">each bookmark folder becomes a topic</span></button>
+          <button id="btn-import-bookmarks" class="menu-item" type="button">Import browser bookmarks<span class="menu-hint">each bookmark folder becomes a region</span></button>
           <button id="btn-new-note" class="menu-item" type="button">Write a note<span class="menu-hint">your own idea or synthesis</span></button>
           <button id="btn-new-question" class="menu-item" type="button">New question<span class="menu-hint">an open question that collects evidence</span></button>
           <button id="btn-zotero" class="menu-item" type="button">Import from Zotero<span class="menu-hint">papers, notes and highlights</span></button>
@@ -98,7 +98,7 @@
           <label class="menu-check" title="Show links that were found by text similarity"><input id="sim-toggle" type="checkbox" checked> Show similarity links</label>
           <label class="menu-check" title="Show which papers cite which (from Semantic Scholar references)"><input id="cites-toggle" type="checkbox" checked> Show citation links</label>
           <label class="menu-check" title="Quiet signals travel along random connections"><input id="ambient-toggle" type="checkbox" checked> Ambient activity</label>
-          <label class="menu-select" title="Few: your links and the strongest connections inside each section; point at a paper or a section's name to see the rest. All: every line, all the time">Lines
+          <label class="menu-select" title="Few: your links and the strongest connections inside each region; point at a paper or a region's name to see the rest. All: every line, all the time">Lines
             <select id="lines-mode" aria-label="Map lines">
               <option value="few">Few, more when pointing</option>
               <option value="all">All</option>
@@ -136,7 +136,7 @@
     <div id="graph"></div>
     <div id="region-focus" class="region-focus" hidden role="status">
       <span class="rf-label">Region</span> <span class="rf-name"></span>
-      <button type="button" class="btn btn-text" id="rf-rename" title="Name this region. A region with a matching topic shares its name.">Rename</button>
+      <button type="button" class="btn btn-text" id="rf-rename" title="Name this region">Rename</button>
       <button type="button" class="btn btn-text" id="rf-show-all" title="Close the region focus and show the whole map (Esc)">Close</button>
     </div>
     <div id="legend" class="legend">
@@ -152,9 +152,9 @@
       <div class="legend-count" id="legend-count"></div>
     </div>
     <div class="graph-tools">
-      <button id="btn-reorganize" class="btn btn-sm" type="button" title="Let your AI regroup papers into topics by what they're about, or into sections you name, and link papers that belong together">Reorganize</button>
-      <button id="btn-cleanup" class="btn btn-sm" type="button" title="Tidy the map: dots you dragged and sections you moved go back into place, sections close together, papers evenly spaced in each">Clean up</button>
-      <button id="btn-regions" class="btn btn-sm" title="Focus on one region of the graph">Regions</button>
+      <button id="btn-reorganize" class="btn btn-sm" type="button" title="Let your AI regroup papers into regions by what they're about, or into regions you name, and link papers that belong together">Reorganize</button>
+      <button id="btn-cleanup" class="btn btn-sm" type="button" title="Tidy the map: dots you dragged and regions you moved go back into place, regions close together, papers evenly spaced in each">Clean up</button>
+      <button id="btn-regions" class="btn btn-sm" title="Focus on one region (or click its name)">Focus</button>
       <button id="btn-zoom-fit" class="btn btn-sm" title="Fit the whole graph in view">Fit</button>
     </div>
 
@@ -214,13 +214,13 @@
     </div>
     <div class="chat-modes" role="group" aria-label="What to ask about">
       <button type="button" data-mode="library" title="Answers from your papers and notes">Library</button>
-      <button type="button" data-mode="topics" title="Answers from the papers in one or more of your topics">Topics…</button>
+      <button type="button" data-mode="topics" title="Answers from the papers in one or more of your regions">Regions…</button>
       <button type="button" data-mode="general" title="Ask the agent anything; it can search the web if you allow it">General</button>
     </div>
     <div id="chat-general" class="chat-scope" hidden>
       <div class="cs-row"><span class="cs-label">General</span><span class="cs-note">Ask anything. Your library isn’t sent.</span></div>
       <div class="cs-attach"><div id="cs-chips" class="cs-chips"></div>
-        <button type="button" id="cs-attach" class="btn btn-text btn-sm" title="Let the agent read papers, notes, questions or whole topics of yours for this conversation">Attach…</button></div>
+        <button type="button" id="cs-attach" class="btn btn-text btn-sm" title="Let the agent read papers, notes, questions or whole regions of yours for this conversation">Attach…</button></div>
       <label class="cs-related" id="cs-web-wrap"><input type="checkbox" id="cs-web"> Search the web</label>
     </div>
     <div id="chat-scope" class="chat-scope" hidden>

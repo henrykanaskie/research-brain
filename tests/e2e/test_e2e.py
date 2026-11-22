@@ -689,7 +689,7 @@ def test_ask_about_topics_and_the_conversation_is_remembered(ctx, server):
     page.evaluate("RB.commands.run('chat.aboutTopics')")
     page.locator(".tp-sheet .tp-row", has_text="Sheath physics").click()
     page.locator(".tp-sheet .tp-acts .btn-primary").click()
-    expect(page.locator("#chat .chat-title")).to_have_text("This topic")
+    expect(page.locator("#chat .chat-title")).to_have_text("This region")
     expect(page.locator("#chat-scope .cs-title")).to_have_text("Sheath physics")
     page.fill("#chat-input", "What do they say about the sheath?")
     page.click("#btn-chat-send")
@@ -905,15 +905,15 @@ def test_ask_about_topics_select_all(ctx, server):
     expect(go).to_be_disabled()
     sheet.locator("#tp-all").check()
     expect(sheet.locator(".tp-list input:checked")).to_have_count(2)
-    expect(go).to_have_text("Ask about all 2 topics (3 papers)")
+    expect(go).to_have_text("Ask about all 2 regions (3 papers)")
     sheet.locator(".tp-row", has_text="Alpha topic").locator("input").uncheck()
     assert page.evaluate("document.getElementById('tp-all').indeterminate")
-    expect(go).to_have_text("Ask about 1 topic (2 papers)")
+    expect(go).to_have_text("Ask about 1 region (2 papers)")
     sheet.locator("#tp-all").check()
     go.click()
     expect(page.locator("#chat-scope .cs-title")).to_contain_text("Alpha topic")
     expect(page.locator("#chat-scope .cs-title")).to_contain_text("Beta topic")
-    expect(page.locator("#chat .chat-title")).to_have_text("These topics")
+    expect(page.locator("#chat .chat-title")).to_have_text("These regions")
     assert not page.errors
 
 
@@ -1223,8 +1223,9 @@ def test_map_draws_few_lines_until_you_point(ctx, server):
 
 
 def test_map_names_hold_still(ctx, server):
-    """Panning and zooming move no name against its dot or section: no jumping to another side, sliding along the
-    window's edge, rewrapping or resizing. Panning lets no name in or out either, and zooming in only lets names in."""
+    """Panning and zooming move no name against its dot or region: no jumping to another side, sliding along the
+    window's edge or rewrapping. Panning lets no name in or out either, and zooming in only lets names in. Zoomed out
+    below the whole-map view the regions' names shrink, in place and in proportion."""
     clear_vault(server)
     for w in ("alpha", "beta", "gamma", "delta", "epsilon", "zeta"):
         api(server, "POST", "/api/notes", {"type": "paper", "title": f"Hall thruster oscillations {w}", "abstract": PLASMA.format(w=w)})
@@ -1257,8 +1258,16 @@ def test_map_names_hold_still(ctx, server):
         assert set(f) == set(pan[0])
     zoom = [page.evaluate(frame, [k0 * z, 0]) for z in (0.5, 0.7, 0.85, 1.0)]
     for a, b in zip(zoom, zoom[1:]):
-        assert not still(a, b, 4.0), still(a, b, 4.0)  # a dot's own edge grows a little; nothing else
+        papers = lambda d: {i: v for i, v in d.items() if not i.startswith("section")}
+        assert not still(papers(a), papers(b), 4.0), still(papers(a), papers(b), 4.0)  # a dot's own edge grows a little; nothing else
         assert set(a) <= set(b)
+        for i in a:
+            if i.startswith("section"):
+                f = b[i][2] / a[i][2]
+                assert f >= 0.99 and all(abs(a[i][j] * f - b[i][j]) < 2.0 for j in (0, 1)), (i, a[i], b[i])
+    for f in (page.evaluate(frame, [k0 * z, 0]) for z in (1.05, 1.1)):
+        assert not still({i: v for i, v in f.items() if i.startswith("section")}, {i: v for i, v in zoom[-1].items()}, 1.5) or all(
+            f[i][2] >= zoom[-1][i][2] for i in f if i in zoom[-1] and i.startswith("section"))
 
 
 def test_map_lines_can_be_reached(ctx, server):

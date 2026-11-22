@@ -196,10 +196,10 @@ def get_topic(store, slug: str) -> dict:
 def create_topic(store, name: str, description: str = "", members: list[str] | None = None) -> dict:
     name = " ".join((name or "").split())[:120]
     if not name:
-        raise TopicError("Give the topic a name")
+        raise TopicError("Give the region a name")
     with _lock:
         if any(t["name"].casefold() == name.casefold() for t in list_topics(store, {})):
-            raise TopicError(f"There is already a topic called “{name}”")
+            raise TopicError(f"There is already a region called “{name}”")
         base = slugify(name, 50)
         slug, i = base, 2
         while _path(store, slug).exists():
@@ -217,9 +217,9 @@ def update_topic(store, slug: str, name: str | None = None, description: str | N
         if name is not None:
             name = " ".join(name.split())[:120]
             if not name:
-                raise TopicError("Give the topic a name")
+                raise TopicError("Give the region a name")
             if any(x["slug"] != slug and x["name"].casefold() == name.casefold() for x in list_topics(store, {})):
-                raise TopicError(f"There is already a topic called “{name}”")
+                raise TopicError(f"There is already a region called “{name}”")
             t["name"] = name
         if description is not None:
             t["description"] = " ".join(description.split())[:500]
@@ -248,7 +248,7 @@ def _valid_members(store, ids: list[str]) -> list[str]:
         except KeyError:
             raise TopicError(f"No note with id '{nid}'")
         if n["type"] == "fragment":
-            raise TopicError("Add the paper or note itself to a topic, not one of its fragments")
+            raise TopicError("Add the paper or note itself to a region, not one of its fragments")
         out.append(nid)
     return out
 
@@ -403,11 +403,11 @@ def local_queue(store, idx: dict, slug: str, by_id: dict | None = None, t: dict 
             near = [a for a in anchors if a in pos][j] if float(sims[j]) > 0 else ""
         score = sim + 0.15 * cited[m]
         if cited[m]:
-            reason = f"Cited by {cited[m]} paper{'s' if cited[m] != 1 else ''} in this topic"
+            reason = f"Cited by {cited[m]} paper{'s' if cited[m] != 1 else ''} in this region"
         elif near:
             reason = f"Similar to {by_id[near]['title']}"
         else:
-            reason = "In this topic, not read yet"
+            reason = "In this region, not read yet"
         item = _brief(by_id[m])
         item.update(kind="library", key=f"note:{m}", reason=reason, score=round(score, 4), _order=k)
         out.append(item)
@@ -570,11 +570,11 @@ def compute_recs(store, idx: dict, embedder, slug: str) -> dict:
         c = cands[k]
         n_cite = cite_count.get(k, 0)
         if n_cite >= 2:
-            reason = f"Cited by {n_cite} papers in this topic"
+            reason = f"Cited by {n_cite} papers in this region"
         elif k in near and sim.get(k, 0) > 0.05:
             reason = f"Similar to {by_id[near[k]]['title']}"
         else:
-            reason = "Semantic Scholar recommends it for this topic"
+            reason = "Semantic Scholar recommends it for this region"
         sources = [s for s, lst in (("cited", list_a), ("s2", list_b), ("similar", list_c)) if k in lst]
         items.append({"kind": "rec", "key": c.get("s2_id") or k, "s2_id": c.get("s2_id", ""), "title": c["title"],
                       "year": c.get("year"), "authors": (c.get("authors") or [])[:3], "doi": c.get("doi", ""),

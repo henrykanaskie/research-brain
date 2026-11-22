@@ -80,7 +80,7 @@
       const all = [...pv.used, ...pv.left_out.filter((s) => s.why === 'you unticked it' || s.why.startsWith('over '))];
       rows.push(h('div', { class: 'dr-h', text: `Goes to the AI (${pv.used.length})` }));
       rows.push(h('div', { class: 'dr-src' }, h('label', null, h('input', { type: 'checkbox', checked: true, disabled: true }),
-        h('span', { class: 't', text: kind === 'question' ? 'The question’s title and description' : 'The topic’s name and description' }))),
+        h('span', { class: 't', text: kind === 'question' ? 'The question’s title and description' : 'The region’s name and description' }))),
         ...all.map((s) => {
           const box = h('input', { type: 'checkbox', 'aria-label': s.title });
           box.checked = used.has(s.id);

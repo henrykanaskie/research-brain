@@ -285,7 +285,7 @@
     imp.addEventListener('click', () => importZip(say));
     const ioSec = el('section', { class: 'ls-sec' },
       el('div', { class: 'ls-h', text: 'Backup and moving computers' }),
-      el('p', { class: 'ls-p', text: 'The zip holds your notes, PDFs, review history, memory and topics. Import it on another computer; it becomes a new profile, so nothing is overwritten. It is a full backup, so private notes are in it too: keep it as private as the library.' }),
+      el('p', { class: 'ls-p', text: 'The zip holds your notes, PDFs, review history, memory and regions. Import it on another computer; it becomes a new profile, so nothing is overwritten. It is a full backup, so private notes are in it too: keep it as private as the library.' }),
       el('label', { class: 'ls-check' }, withPdfs, el('span', { text: 'Include PDFs' })),
       el('div', { class: 'ls-row' }, exp, imp));
 
@@ -385,7 +385,7 @@
   async function renderSources(sec, say) {
     const box = el('div', { id: 'ls-linked' });
     sec.append(
-      el('p', { class: 'ls-p', text: 'The folders you already keep PDFs in: Downloads, OneDrive, a lab drive. research brain reads them where they are. It never moves, renames or deletes a file there, and it adds new PDFs you put in them later. Each subfolder becomes a topic.' }),
+      el('p', { class: 'ls-p', text: 'The folders you already keep PDFs in: Downloads, OneDrive, a lab drive. research brain reads them where they are. It never moves, renames or deletes a file there, and it adds new PDFs you put in them later. Each subfolder becomes a region.' }),
       box);
     async function draw() {
       let r;

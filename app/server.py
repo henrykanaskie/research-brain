@@ -2530,7 +2530,7 @@ def _chat_prompt(body: ChatIn) -> tuple[str, str, dict]:
     if body.topics:
         allowed, names, overview = _topic_scope(idx, body.topics)
         if not allowed:
-            raise HTTPException(400, "Those topics have no papers yet (or only private ones)")
+            raise HTTPException(400, "Those regions have no papers yet (or only private ones)")
         context, sources, passages = _chat_context(idx, q, body.history, summary=summary, allowed=allowed,
                                                    overview=overview)
         return (TOPIC_CHAT_INSTRUCTION.format(names=", ".join(f"“{n}”" for n in names)), context,
@@ -2701,12 +2701,12 @@ def api_focus(nid: str, body: FocusIn):
         try:
             t = topics_mod.get_topic(store, body.topic)
         except (KeyError, topics_mod.TopicError):
-            raise HTTPException(404, "No such topic")
+            raise HTTPException(404, "No such region")
         query, label = focus_mod.focus_text_topic(t, {x["id"]: x for x in store.all()}), t.get("name") or ""
     else:
         query, label = body.text.strip()[:1000], body.text.strip()[:80]
     if not query:
-        raise HTTPException(400, "Pick a question or topic, or type what you're looking for")
+        raise HTTPException(400, "Pick a question or region, or type what you're looking for")
     _chunk_index._refresh_safe(store.all())
     rows = focus_mod.relevant(paper, _fulltext_needed(root), query, _chunk_index, embedder_family(embedder.kind),
                               k=max(1, min(20, body.k)))
@@ -3506,7 +3506,7 @@ def api_general_stream(body: GeneralIn):
         idx = index()
         allowed, overview, own = _general_attached(idx, body.attach, body.topics)
         if not allowed:
-            raise HTTPException(400, "The attached topics have no papers yet (or only private ones)")
+            raise HTTPException(400, "The attached regions have no papers yet (or only private ones)")
         # With web search, published papers go along as-is (their own text and abstract: public anyway). Your own
         # writing (notes, questions, highlights, your summaries) needs your one-time OK, and without it stays out.
         public_only = False
@@ -3651,7 +3651,7 @@ def _topic_call(fn, *a, **kw):
     try:
         return fn(*a, **kw)
     except KeyError as e:
-        raise HTTPException(404, f"No topic '{e.args[0] if e.args else ''}'")
+        raise HTTPException(404, f"No region '{e.args[0] if e.args else ''}'")
     except topics_mod.TopicError as e:
         raise HTTPException(400, str(e))
 
@@ -3675,12 +3675,12 @@ def api_topic_directions(slug: str, body: TopicDirectionsIn):
     try:
         t = topics_mod.get_topic(store, slug)
     except (KeyError, topics_mod.TopicError):
-        raise HTTPException(404, "No such topic")
+        raise HTTPException(404, "No such region")
     agent = _ai_agent()
     by_id = {n["id"]: n for n in store.all()}
     sources = D.topic_sources(t, by_id, lambda n: privacy.allow_ai(n, agent))
     if not sources:
-        raise HTTPException(400, "This topic has no papers or notes yet.")
+        raise HTTPException(400, "This region has no papers or notes yet.")
     head = f"RESEARCH TOPIC: {t['name']}\n{t.get('description') or ''}"
     context, used, left = D.build(head, sources, set(body.exclude))
     instr = D.instruction("research topic", body.focus)
@@ -3822,7 +3822,7 @@ def api_topics_auto_sort(body: SortTopicsIn):
     groups, by = [], "ai"
     if body.existing_only:
         if not existing:
-            raise HTTPException(400, "You have no topics yet to sort them into.")
+            raise HTTPException(400, "You have no regions yet to sort them into.")
         context = "EXISTING TOPICS:\n" + "\n".join(f"- {t['name']}" for t in existing.values()) \
             + "\n\nPAPERS:\n\n" + _sort_rows(ids, by_id)
         found = _parse_sort(_ask(SORT_EXISTING_INSTRUCTION, context, "topic sorting", sources=ids), set(ids))
@@ -3929,7 +3929,7 @@ def api_topics_reorganize_plan(body: ReorgPlanIn):
     replace = [s for s in dict.fromkeys(body.topics) if s in known]
     ids = _paper_pool(body.ids, "", replace, body.unsorted)
     if len(ids) < 2:
-        raise HTTPException(400, "Choose at least two papers to reorganize (a topic with papers in it, or the papers "
+        raise HTTPException(400, "Choose at least two papers to reorganize (a region with papers in it, or the papers "
                                  "with no topic).")
     names = _clean_names(body.names)
     by = "ai"
@@ -4000,7 +4000,7 @@ def api_topics_reorganize(body: ReorgApplyIn):
         groups[key] = (prev[0], prev[1] + [m for m in mem if m not in prev[1]])
         pool.update(mem)
     if not groups:
-        raise HTTPException(400, "There are no topics to make.")
+        raise HTTPException(400, "There are no regions to make.")
     with topics_mod._lock:
         token, _ = _topics_snapshot()
         replace = [s for s in dict.fromkeys(body.replace) if s in known]
@@ -4065,8 +4065,7 @@ def api_topic_suggest():
 class RegionNameIn(BaseModel):
     region: int
     name: str = ""
-    rename_topic: bool = True  # a region with a matching topic: the topic takes the same name
-    reset: bool = False  # forget the region's own name (back to its topic's name, or the automatic one)
+    reset: bool = False  # a region found by similarity: back to its automatic name
 
 
 @app.post("/api/regions/name")
@@ -4081,7 +4080,7 @@ def api_region_name(body: RegionNameIn):
         return {"ok": True}
     topic = (c.get("topic") or {}).get("slug")
     try:
-        return regions_mod.rename(store, members, body.name, topic, body.rename_topic)
+        return regions_mod.rename(store, members, body.name, topic)
     except regions_mod.RegionError as e:
         raise HTTPException(400, str(e))
 

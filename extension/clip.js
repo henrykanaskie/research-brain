@@ -214,7 +214,7 @@ async function loadTopics() {
   try { list = await api("/api/topics", {}, 4000); } catch { return; }
   let last = "";
   try { last = (await chrome.storage.local.get(TOPIC_KEY))[TOPIC_KEY] || ""; } catch { }
-  sel.innerHTML = `<option value="">None</option>${(list || []).map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join("")}<option value="__new">New topic…</option>`;
+  sel.innerHTML = `<option value="">None</option>${(list || []).map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join("")}<option value="__new">New region…</option>`;
   if (last && (list || []).some((t) => t.slug === last)) sel.value = last;
 }
 $("#topicSel").addEventListener("change", () => {
@@ -223,7 +223,7 @@ $("#topicSel").addEventListener("change", () => {
   if (v === "__new") $("#topicNew").focus();
   else chrome.storage.local.set({ [TOPIC_KEY]: v }).catch(() => {});
 });
-/** File a saved note in the chosen topic (making it if "New topic…"). Never fails the save itself. */
+/** File a saved note in the chosen topic (making it if "New region…"). Never fails the save itself. */
 async function fileInTopic(noteId) {
   if (!noteId) return "";
   let slug = $("#topicSel").value;
@@ -358,7 +358,7 @@ function showSaved(n) {
     : n._partial ? "Linked article: only the abstract is on this page. Open the full text (HTML or PDF) and save again to add it."
     : "Linked article: its link, full text and citation details are saved, without the PDF file.";
   const was = n.duplicate ? (n.text_attached ? "Already in your library; the text was added." : "Already in your library.") : "";
-  const topic = n._topic ? `In the topic “${st.topicName}”.` : "";
+  const topic = n._topic ? `In the region “${st.topicName}”.` : "";
   $("#doneSub").innerHTML = `<b>${esc(n.title || n.id)}</b><span class="kind">${esc([was, kind, topic].filter(Boolean).join(" "))}${n._pdfError ? ` The PDF couldn't be saved: ${esc(n._pdfError)}` : ""}</span>`;
   $("#anotherBtn").hidden = true;
   $("#donePdfBtn").hidden = !!n.has_pdf || !savePdfUrl();

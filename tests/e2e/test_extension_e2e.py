@@ -652,7 +652,7 @@ def test_popup_saves_an_article_and_a_pdf_tab_as_link_and_text(env):
     pop.locator("#topicNew").fill("Linked reading")
     save.click()
     expect(pop.locator("#done")).to_be_visible(timeout=60_000)
-    expect(pop.locator("#doneSub")).to_contain_text("In the topic “Linked reading”.")
+    expect(pop.locator("#doneSub")).to_contain_text("In the region “Linked reading”.")
     n = _note_by_url(env, url)
     topics = api(env, "GET", "/api/topics")
     t = next(x for x in topics if x["name"] == "Linked reading")

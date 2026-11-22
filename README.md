@@ -213,7 +213,7 @@ research brain fills in the authors, year and journal, and looks for a free lega
 2. **Click a dot** and highlight a passage in its PDF (**Open in viewer**).
 3. **Write a short summary**, then click **Critique my summary** (needs an AI).
 4. **Link two papers** in the panel's **Links** box, or right-click a dot.
-5. **Make a topic** from **Topics** at the top, and add papers to it.
+5. **Keep a region** or make one from **Regions** at the top, and add papers to it.
 6. **Ask** (top right) a question about your papers.
 7. **Cite** with **Alt+C**.
 
@@ -224,8 +224,8 @@ research brain fills in the authors, year and journal, and looks for a free lega
 - A highlight becomes a red *fragment* on the paper.
 - A critique checks your summary against the paper.
 - Drag a dot where you want it; linked dots come along.
-- A topic keeps a *Next to read* list for you.
-- **Ask › Library** answers from all your papers, **Topics…** from the topics you pick, and **General** is the agent
+- A region keeps a *Next to read* list for you.
+- **Ask › Library** answers from all your papers, **Regions…** from the regions you pick, and **General** is the agent
   on its own (attach papers or notes if you like). Answers cite pages you can click.
 - **Cite:** pick papers, then *Copy \cite{…}* or *Copy BibTeX* for LaTeX, or *Copy bibliography* for Word.
 - The gear (top right) has Library settings in tabs with a search box, and **?** lists every shortcut.
@@ -261,7 +261,7 @@ research brain/
   Highlights/   a folder per paper, one document per highlight (the passage, its page, your note)
   Notes/        your own notes (put them in subfolders here if you like; they stay there)
   Questions/    your open questions and your answers
-  Topics/       your topics and the papers in each
+  Topics/       your regions and the papers in each
   PDFs/         the papers' PDFs
 ```
 
@@ -273,25 +273,25 @@ folder.
 ### Folders of papers you already have (kept where they are)
 
 1. Click **Add › Add folders of papers** (or **Library settings › Folders of papers**).
-2. Choose your folders, check the topic names, and confirm.
+2. Choose your folders, check the region names, and confirm.
 
 research brain links to each PDF where it is, and never moves, renames, changes or deletes a file there.
 
 <details>
-<summary>Topics from folders</summary>
+<summary>Regions from folders</summary>
 
-Each folder becomes a topic named after it (*Research/Plasma/Sheaths/x.pdf* goes in *Sheaths*). Before anything
-is added you see every folder with its PDF count and topic name: change a name, clear it to leave that folder out
-of topics, or **Suggest names with AI** (it sends your AI the folder and file names only). Two folders given the
-same name share a topic, and a name you already use joins that topic.
+Each folder becomes a region named after it (*Research/Plasma/Sheaths/x.pdf* goes in *Sheaths*). Before anything
+is added you see every folder with its PDF count and region name: change a name, clear it to leave that folder out
+of regions, or **Suggest names with AI** (it sends your AI the folder and file names only). Two folders given the
+same name share a region, and a name you already use joins that region.
 </details>
 
 <details>
 <summary>Keeping up with new and moved PDFs</summary>
 
 The folders are checked when the app starts and every 10 minutes (or **Check now**). A PDF you drop in is added
-to its folder's topic, and a new subfolder becomes a new topic. A PDF you move to another folder keeps its paper,
-notes and highlights and moves to that folder's topic.
+to its folder's region, and a new subfolder becomes a new region. A PDF you move to another folder keeps its paper,
+notes and highlights and moves to that folder's region.
 </details>
 
 <details>
@@ -314,7 +314,7 @@ downloaded until you open a PDF.
 If a Mac can't send them back, reading pauses once 500 MB is held and asks you to right-click the folder ›
 *Free up space*; it goes on by itself. With no room even for one PDF, a paper waits (named from its file name)
 and is read when there's room, or as soon as you open it or ask about it. The same PDF in two folders is one
-paper in both topics.
+paper in both regions.
 
 A large import shows a gauge in the bottom-right corner: how many are done, the time left, the file being read,
 and Stop. Make it smaller with the minus button; it keeps going while you work.
@@ -367,7 +367,7 @@ An AI adds summary critiques, explanations of links, and **Ask your library**. E
 <details>
 <summary>More about the options</summary>
 
-- Without an AI you still get your library and its map, PDFs and highlights, notes, links, tags and topics,
+- Without an AI you still get your library and its map, PDFs and highlights, notes, links, tags and regions,
   search, similar papers, citations and bibliographies.
 - research brain doesn't sell or include an AI: it uses one you install and sign in to yourself.
 - Gemini's free limit was about 1,000 requests a day per Google's docs at the time of writing. It's the easiest
@@ -537,11 +537,11 @@ looks it up and sends back what it found, and the model never gets tools.
 | Link papers | Use the panel's **Links** box or right-click a dot. Click any line to have the AI explain the link. |
 | Move dots | Drag a dot; it stays there. Right-click › **Let it move freely** to undo. |
 | Regions | Related papers group into named regions. Click a region's name to focus or **Rename** it. |
-| Topics | Add a paper to a topic from its panel; the topic keeps a *Next to read* list. |
+| Regions | Add a paper to a region from its panel; the region keeps a *Next to read* list. |
 | Read and unread | Mark it in the panel (**Alt+3**) or right-click its dot. |
 | Filter the map | **Filter** (top left) by type, year, tag or region; save it as a view. |
 | Find more papers | **Discover papers** on a paper, or **Find papers** (Shift+P) to have the AI search a topic. |
-| Ask | **Ask** (top right): **Library**, **Topics…** or **General**. Answers cite pages you can click. |
+| Ask | **Ask** (top right): **Library**, **Regions…** or **General**. Answers cite pages you can click. |
 | Research mode | Switch **Quick** to **Research** for a deeper, multi-step search of your library. |
 | Idea cards | **Ideas** on a paper: claims, equations, values and methods, checked against the paper's text. |
 | Open questions | **Q** writes down a question; matching evidence from your library collects under it. |
@@ -556,7 +556,7 @@ Press **?** for every shortcut, grouped, with a search field ("highlight" finds 
 any action and press Enter; your recent actions come first and each row shows its shortcut. The
 palette also has **Help** (a one-page guide) and **Help: quick tour** (six coach marks, shown once on
 first run). The ones you'll use most: **/** search, **N** new note, **⌘⇧A** add a paper by id,
-**⌘O** import a PDF, **A** ask your library, **G then R** review, **G then T** topics, **G then I** ideas, **S** and **B**
+**⌘O** import a PDF, **A** ask your library, **G then R** review, **G then T** regions, **G then I** ideas, **S** and **B**
 write the summary or notes, **C** critique, **Alt+C** cite papers, **Shift+L** link to…, **O** open the PDF, **F** focus,
 **⌘[ / ⌘]** back and forward, **Esc** closes the innermost thing. In the viewer: **j/k** pages,
 **N** add a note from the selection, **[ / ]** fragments, **G then G** back to the graph.
@@ -567,7 +567,7 @@ write the summary or notes, **C** critique, **Alt+C** cite papers, **Shift+L** l
 - Private notes are never sent (see [Private notes](#private-notes-your-own-ideas-stay-on-your-computer)).
 - **Web search** is the one exception: off by default, allowed in **Library settings › AI and privacy**, and only
   in a General chat with Claude Code.
-- **Attach…** in a General chat adds papers, notes, questions or topics for it to read. Nothing else goes along.
+- **Attach…** in a General chat adds papers, notes, questions or regions for it to read. Nothing else goes along.
 - Conversations are kept in your library and come back next time; **New conversation** starts over.
 
 <details>
@@ -730,10 +730,10 @@ have the AI look too.
 - To move to a new laptop, export the zip, install research brain there, and import it.
 - `research-brain backup --schedule` takes a nightly snapshot of your notes (needs Git).
 
-## Reading status and topics
+## Reading status and regions
 
 - Set a paper's status above its title: To read, Reading, Read, Later or Not relevant (**Alt+1…5**).
-- **T** opens Topics: each topic shows up to 5 papers to read next, including ones you don't have yet.
+- **T** opens Regions: each region shows up to 5 papers to read next, including ones you don't have yet.
 - **L** parks a paper for later.
 
 ## Sharing a reading list

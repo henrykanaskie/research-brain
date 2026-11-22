@@ -85,13 +85,13 @@
   /** How the AI sorts: a number of topics (blank: it decides), and, with `existing`, "only into my existing
    *  topics" (shown once your topics have loaded, if you have any). value() -> {count, existing_only}. */
   function sortChoices(existing = true) {
-    const count = h('input', { type: 'number', class: 'bk-count', min: '1', max: '40', step: '1', placeholder: 'any', 'aria-label': 'Number of topics' });
+    const count = h('input', { type: 'number', class: 'bk-count', min: '1', max: '40', step: '1', placeholder: 'any', 'aria-label': 'Number of regions' });
     const only = h('input', { type: 'checkbox' });
-    const onlyLabel = h('label', { hidden: true }, only, h('span', { text: 'Only into my existing topics' }));
+    const onlyLabel = h('label', { hidden: true }, only, h('span', { text: 'Only into my existing regions' }));
     only.addEventListener('change', () => { count.disabled = only.checked; });
-    const row = h('div', { class: 'bk-subopts' }, h('label', null, 'Number of topics', count, h('span', { class: 'why', text: 'blank: the AI decides' })), existing ? onlyLabel : null);
+    const row = h('div', { class: 'bk-subopts' }, h('label', null, 'Number of regions', count, h('span', { class: 'why', text: 'blank: the AI decides' })), existing ? onlyLabel : null);
     if (existing) api('GET', '/api/topics').then((ts) => {
-      if (ts && ts.length) { onlyLabel.lastChild.textContent = `Only into my existing topics (${ts.length})`; onlyLabel.hidden = false; }
+      if (ts && ts.length) { onlyLabel.lastChild.textContent = `Only into my existing regions (${ts.length})`; onlyLabel.hidden = false; }
     }).catch(() => {});
     return {
       row,
@@ -101,10 +101,10 @@
   }
   /** What sorting did, in a sentence. */
   function sortedText(r, sc) {
-    if (!r.sorted) return r.note || (sc && sc.existing_only ? 'None of them fit your existing topics.' : '');
+    if (!r.sorted) return r.note || (sc && sc.existing_only ? 'None of them fit your existing regions.' : '');
     const list = (r.topics || []).map((t) => `${t.name} (${t.count}${t.new ? ', new' : ''})`).join(', ');
-    return `Sorted into ${plural(r.topics.length, 'topic')}${r.by === 'regions' ? ' by similarity (no AI answer)' : ''}: ${list}.`
-      + (r.unplaced ? ` ${plural(r.unplaced, 'paper')} fit none of your topics and have none.` : '');
+    return `Sorted into ${plural(r.topics.length, 'region')}${r.by === 'regions' ? ' by similarity (no AI answer)' : ''}: ${list}.`
+      + (r.unplaced ? ` ${plural(r.unplaced, 'paper')} fit none of your regions and have none.` : '');
   }
 
   // ---------------------------------------------------------------- a folder of PDFs
@@ -129,9 +129,9 @@
       : 'There are no PDFs in that folder.');
     if (!pdfs.length) { d.card.append(h('div', { class: 'bk-acts' }, h('button', { class: 'btn', type: 'button', text: 'Close', onclick: d.close }))); return; }
     const mode = (v) => h('input', { type: 'radio', name: 'bk-topic', value: v });
-    const opts = [['folders', subs.size ? `A topic for each subfolder (${[...subs].slice(0, 3).join(', ')}${subs.size > 3 ? '…' : ''}), like bookmark folders` : `One topic, “${root}”`],
-      ['ai', 'Let the AI sort them into topics by what they’re about (it reads each paper’s title and opening, and reuses your topics where they fit)'],
-      ['one', `Everything in one topic, “${root}”`], ['none', 'No topics']];
+    const opts = [['folders', subs.size ? `A region for each subfolder (${[...subs].slice(0, 3).join(', ')}${subs.size > 3 ? '…' : ''}), like bookmark folders` : `One region, “${root}”`],
+      ['ai', 'Let the AI sort them into regions by what they’re about (it reads each paper’s title and opening, and reuses your regions where they fit)'],
+      ['one', `Everything in one region, “${root}”`], ['none', 'No regions']];
     const radios = opts.map(([v]) => mode(v));
     (subs.size ? radios[0] : radios[1]).checked = true;  // subfolders: keep them; one flat folder: let the AI sort it
     const status = h('span', { class: 'bk-status' });
@@ -143,7 +143,7 @@
     const sc = sortChoices();
     const onMode = () => { sc.row.hidden = !radios[1].checked; };
     radios.forEach((r) => r.addEventListener('change', onMode)); onMode();
-    d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' }, opts.map(([v, label], i) => [h('label', null, radios[i], label), i === 1 ? sc.row : null])),
+    d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Regions' }, opts.map(([v, label], i) => [h('label', null, radios[i], label), i === 1 ? sc.row : null])),
       pdfs.length > 1 ? h('div', { class: 'bk-opts' }, conn.row) : null,
       h('div', { class: 'bk-bar' }, bar), h('div', { class: 'bk-acts' }, status, cancel, go));
     go.addEventListener('click', async () => {
@@ -178,14 +178,14 @@
       rb.refreshGraph();
       if (m === 'ai' && res.ids.length > 1 && !stop) {
         const done = status.textContent;
-        status.textContent = `${done} Sorting into topics…`;
+        status.textContent = `${done} Sorting into regions…`;
         cancel.disabled = true;
         try {
           const r = await api('POST', '/api/topics/auto-sort', { ids: res.ids, ...how });
           status.textContent = `${done} ${sortedText(r, how)}`;
           rb.refreshGraph();
           window.dispatchEvent(new CustomEvent('rb:topics-changed'));
-        } catch (e) { status.textContent = `${done} Couldn’t sort them into topics: ${e.message}`; }
+        } catch (e) { status.textContent = `${done} Couldn’t sort them into regions: ${e.message}`; }
         finally { cancel.disabled = false; }
       }
       if (conn.box.checked && res.ids.length > 1 && !stop) {
@@ -237,7 +237,7 @@
   function bookmarksDialog(groups) {
     const total = groups.reduce((s, g) => s + g.links.length, 0);
     const papers = groups.reduce((s, g) => s + g.links.filter((l) => PAPERISH.test(l.url)).length, 0);
-    const d = dialog('Import bookmarks', `${total} bookmark${total === 1 ? '' : 's'} in ${groups.length} folder${groups.length === 1 ? '' : 's'}. ${papers} look like papers and are ticked. Each folder becomes a topic. Links with a DOI or arXiv id are added from their records; links to PDFs are downloaded.`);
+    const d = dialog('Import bookmarks', `${total} bookmark${total === 1 ? '' : 's'} in ${groups.length} folder${groups.length === 1 ? '' : 's'}. ${papers} look like papers and are ticked. Each folder becomes a region. Links with a DOI or arXiv id are added from their records; links to PDFs are downloaded.`);
     const rows = [];
     const list = h('div', { class: 'bk-list' });
     for (const g of groups) {
@@ -304,9 +304,9 @@
     (nFolders > 1 ? byFolder : byAI).checked = true;  // subfolders: keep them; one flat folder: let the AI sort it
     const conn = connectBox(pv.pdfs > 1);
     const sc = sortChoices();
-    d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' },
-      h('label', null, byFolder, nFolders > 1 ? 'A topic for each folder (change a name below, or clear it to leave that folder out of topics)' : `One topic for the folder (its name below)`),
-      h('label', null, byAI, 'Let the AI sort them into topics by what they’re about, whatever folder they’re in (it reads each paper’s title and opening, and reuses your topics where they fit)'),
+    d.card.append(h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Regions' },
+      h('label', null, byFolder, nFolders > 1 ? 'A region for each folder (change a name below, or clear it to leave that folder out of regions)' : `One region for the folder (its name below)`),
+      h('label', null, byAI, 'Let the AI sort them into regions by what they’re about, whatever folder they’re in (it reads each paper’s title and opening, and reuses your regions where they fit)'),
       sc.row),
       pv.pdfs > 1 ? h('div', { class: 'bk-opts' }, conn.row) : null);
     const topics = new Set((pv.topics || []).map((t) => t.toLowerCase()));
@@ -318,17 +318,17 @@
       for (const [dir, inp] of inputs) {
         const v = inp.value.trim(), lv = v.toLowerCase();
         const shared = (by.get(lv) || []).filter((x) => x !== dir).map((x) => pv.folders.find((f) => f.dir === x).label);
-        notes.get(dir).textContent = !v ? 'no topic' : shared.length ? `shared with ${shared.slice(0, 2).join(', ')}${shared.length > 2 ? '…' : ''}`
-          : topics.has(lv) ? 'joins your topic' : 'new topic';
+        notes.get(dir).textContent = !v ? 'no region' : shared.length ? `shared with ${shared.slice(0, 2).join(', ')}${shared.length > 2 ? '…' : ''}`
+          : topics.has(lv) ? 'joins your region' : 'new region';
       }
     };
     const rows = pv.folders.map((f) => {
-      const inp = h('input', { type: 'text', class: 'bk-name', value: f.topic, 'aria-label': `Topic for ${f.label}`, spellcheck: 'false', oninput: refresh });
+      const inp = h('input', { type: 'text', class: 'bk-name', value: f.topic, 'aria-label': `Region for ${f.label}`, spellcheck: 'false', oninput: refresh });
       const note = h('span', { class: 'why' });
       inputs.set(f.dir, inp); notes.set(f.dir, note);
       return h('div', { class: 'bk-lrow' }, h('span', { class: 'bk-ldir', title: f.label, text: f.label }), h('span', { class: 'n', text: `${f.pdfs}` }), inp, note);
     });
-    const list = h('div', { class: 'bk-list bk-link' }, h('div', { class: 'bk-lrow bk-lhead' }, h('span', { text: 'Folder' }), h('span', { text: 'PDFs' }), h('span', { text: 'Topic' }), h('span')), ...rows);
+    const list = h('div', { class: 'bk-list bk-link' }, h('div', { class: 'bk-lrow bk-lhead' }, h('span', { text: 'Folder' }), h('span', { text: 'PDFs' }), h('span', { text: 'Region' }), h('span')), ...rows);
     refresh();
     const status = h('span', { class: 'bk-status' });
     const suggest = h('button', { class: 'btn', type: 'button', text: 'Suggest names with AI', title: 'Sends the folder names and file names to your AI. Nothing is downloaded or read.' });
@@ -391,13 +391,13 @@
       const line = h('p', { class: 'bk-note' });
       if (ai || connect) status.closest('.bk-acts').before(line);
       if (ai) {
-        line.textContent = 'Sorting them into topics…';
+        line.textContent = 'Sorting them into regions…';
         try {
           const r = await api('POST', '/api/topics/auto-sort', { folder: job.folder, ...how });
           line.textContent = sortedText(r, how);
           rb.refreshGraph();
           window.dispatchEvent(new CustomEvent('rb:topics-changed'));
-        } catch (e) { line.textContent = `Couldn’t sort them into topics: ${e.message}`; }
+        } catch (e) { line.textContent = `Couldn’t sort them into regions: ${e.message}`; }
         if (!d.card.isConnected && line.textContent) toast(line.textContent, 'ok');
       }
       if (connect) {
@@ -457,22 +457,22 @@
   // ---------------------------------------------------------------- reorganizing topics (POST /api/topics/reorganize*)
   async function reorganizeDialog(opts = {}) {
     let topics;
-    try { topics = await api('GET', '/api/topics'); } catch (e) { toastErr(e, 'Could not load your topics'); return; }
-    const d = dialog('Reorganize topics', 'Your AI reads each paper’s title and opening and groups the papers by what they’re about, not by how they’re filed now. You see the new topics before anything changes, and can undo it after. Private papers aren’t sent and stay where they are.');
+    try { topics = await api('GET', '/api/topics'); } catch (e) { toastErr(e, 'Could not load your regions'); return; }
+    const d = dialog('Reorganize regions', 'Your AI reads each paper’s title and opening and groups the papers by what they’re about, not by how they’re filed now. You see the new regions before anything changes, and can undo it after. Private papers aren’t sent and stay where they are.');
     const only = opts.topics ? new Set(opts.topics) : null;
     const tBoxes = topics.map((t) => { const b = h('input', { type: 'checkbox', value: t.slug }); b.checked = !only || only.has(t.slug); return [b, t]; });
     const noTopic = h('input', { type: 'checkbox' }); noTopic.checked = !only;
-    const pickAll = h('input', { type: 'checkbox', 'aria-label': 'All topics' });
+    const pickAll = h('input', { type: 'checkbox', 'aria-label': 'All regions' });
     const syncAll = () => { pickAll.checked = tBoxes.every(([b]) => b.checked) && noTopic.checked; };
     pickAll.addEventListener('change', () => { tBoxes.forEach(([b]) => { b.checked = pickAll.checked; }); noTopic.checked = pickAll.checked; });
     tBoxes.forEach(([b]) => b.addEventListener('change', syncAll)); noTopic.addEventListener('change', syncAll); syncAll();
     const scope = h('div', { class: 'bk-list' },
       h('label', { class: 'bk-folder' }, pickAll, h('span', { text: 'Everything' })),
       tBoxes.map(([b, t]) => h('label', { class: 'bk-item' }, b, h('span', { class: 't', text: t.name }), h('span', { class: 'why', text: String(t.count) }))),
-      h('label', { class: 'bk-item' }, noTopic, h('span', { class: 't', text: 'Papers with no topic' })));
+      h('label', { class: 'bk-item' }, noTopic, h('span', { class: 't', text: 'Papers with no region' })));
     const free = h('input', { type: 'radio', name: 'bk-reorg', value: 'free' }); free.checked = true;
     const named = h('input', { type: 'radio', name: 'bk-reorg', value: 'named' });
-    const sections = h('textarea', { class: 'bk-sections', 'aria-label': 'Your sections', spellcheck: 'true', placeholder: 'One section per line, for example:\nSheath physics\nHall thruster erosion\nDiagnostics' });
+    const sections = h('textarea', { class: 'bk-sections', 'aria-label': 'Your regions', spellcheck: 'true', placeholder: 'One region per line, for example:\nSheath physics\nHall thruster erosion\nDiagnostics' });
     sections.hidden = true;
     const rc = sortChoices(false);
     const onMode = () => { sections.hidden = !named.checked; rc.row.hidden = named.checked; if (named.checked) sections.focus(); };
@@ -480,15 +480,15 @@
     const conn = connectBox(true);
     const step1 = h('div', null,
       h('div', { class: 'bk-sub', text: 'Which papers' }), scope,
-      h('div', { class: 'bk-sub', text: 'Topics' }),
-      h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Topics' },
-        h('label', null, free, 'Let the AI choose the topics'), rc.row,
-        h('label', null, named, 'Use my own sections (the AI puts each paper in the one it fits best)')),
+      h('div', { class: 'bk-sub', text: 'Regions' }),
+      h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Regions' },
+        h('label', null, free, 'Let the AI choose the regions'), rc.row,
+        h('label', null, named, 'Use my own regions (the AI puts each paper in the one it fits best)')),
       sections,
       h('div', { class: 'bk-opts' }, conn.row));
     const status = h('span', { class: 'bk-status' });
     const bar = h('i');
-    const go = h('button', { class: 'btn btn-primary', type: 'button', text: 'Suggest topics' });
+    const go = h('button', { class: 'btn btn-primary', type: 'button', text: 'Suggest regions' });
     const back = h('button', { class: 'btn', type: 'button', text: 'Back', hidden: true });
     const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => d.close() });
     const step2 = h('div', { class: 'bk-list', hidden: true });
@@ -497,7 +497,7 @@
     let plan = null, inputs = [];
     const busy = (b) => { d.setBusy(b); go.disabled = b; back.disabled = b; cancel.disabled = b; };
 
-    back.addEventListener('click', () => { plan = null; step2.hidden = true; step1.hidden = false; notes.replaceChildren(); back.hidden = true; go.textContent = 'Suggest topics'; status.textContent = ''; });
+    back.addEventListener('click', () => { plan = null; step2.hidden = true; step1.hidden = false; notes.replaceChildren(); back.hidden = true; go.textContent = 'Suggest regions'; status.textContent = ''; });
     go.addEventListener('click', async () => {
       if (!plan) return suggest();
       return apply();
@@ -506,7 +506,7 @@
     async function suggest() {
       const body = { topics: tBoxes.filter(([b]) => b.checked).map(([, t]) => t.slug), unsorted: noTopic.checked,
         names: named.checked ? sections.value.split('\n') : [], count: named.checked ? 0 : rc.value().count };
-      if (named.checked && !sections.value.trim()) { status.textContent = 'Write the sections you want, one per line.'; sections.focus(); return; }
+      if (named.checked && !sections.value.trim()) { status.textContent = 'Write the regions you want, one per line.'; sections.focus(); return; }
       if (!body.topics.length && !body.unsorted) { status.textContent = 'Tick some papers to reorganize.'; return; }
       busy(true); status.textContent = 'Asking your AI to group the papers… (this can take a minute)';
       try { plan = await api('POST', '/api/topics/reorganize/plan', body); }
@@ -517,17 +517,17 @@
         return [inp, g];
       });
       step2.replaceChildren(...inputs.map(([inp, g]) => h('div', { class: 'bk-group' },
-        h('div', { class: 'bk-ghead' }, inp, h('span', { class: 'n', text: String(g.count) }), h('span', { class: 'why', text: g.topic ? 'joins your topic' : 'new topic' })),
+        h('div', { class: 'bk-ghead' }, inp, h('span', { class: 'n', text: String(g.count) }), h('span', { class: 'why', text: g.topic ? 'joins your region' : 'new region' })),
         g.papers.length ? h('details', null, h('summary', { text: 'Papers' }), h('ul', null, g.papers.map((p) => h('li', { title: p.title, text: p.title })))) : null)));
       const bits = [];
-      if (plan.by === 'regions') bits.push(h('p', { class: 'bk-note', text: 'Your AI didn’t give a usable answer, so these groups come from the map’s regions (text similarity).' }));
-      if (plan.unplaced.length) bits.push(h('details', { class: 'bk-note' }, h('summary', { text: `${plural(plan.unplaced.length, 'paper')} fit none of these and will have no topic` }),
+      if (plan.by === 'regions') bits.push(h('p', { class: 'bk-note', text: 'Your AI didn’t give a usable answer, so these groups come from text similarity.' }));
+      if (plan.unplaced.length) bits.push(h('details', { class: 'bk-note' }, h('summary', { text: `${plural(plan.unplaced.length, 'paper')} fit none of these and will have no region` }),
         h('ul', null, plan.unplaced.map((p) => h('li', { text: p.title })))));
       if (plan.removed.length) bits.push(h('p', { class: 'bk-note', text: `Left empty, so they go to the trash: ${plan.removed.join(', ')}.` }));
-      bits.push(h('p', { class: 'bk-note', text: `Rename any topic you like. ${plural(plan.ids.length, 'paper')} will be moved.` }));
+      bits.push(h('p', { class: 'bk-note', text: `Rename any region you like. ${plural(plan.ids.length, 'paper')} will be moved.` }));
       notes.replaceChildren(...bits);
       step1.hidden = true; step2.hidden = false; back.hidden = false; go.textContent = 'Reorganize';
-      status.textContent = `${plural(plan.groups.length, 'topic')}.`;
+      status.textContent = `${plural(plan.groups.length, 'region')}.`;
     }
 
     async function apply() {
@@ -539,14 +539,14 @@
       inputs.forEach(([inp]) => { inp.disabled = true; });
       rb.refreshGraph();
       window.dispatchEvent(new CustomEvent('rb:topics-changed'));
-      const made = `Filed ${plural(r.moved, 'paper')} into ${plural(r.topics.length, 'topic')}${r.deleted.length ? `; ${r.deleted.join(', ')} went to the trash` : ''}.`;
+      const made = `Filed ${plural(r.moved, 'paper')} into ${plural(r.topics.length, 'region')}${r.deleted.length ? `; ${r.deleted.join(', ')} went to the trash` : ''}.`;
       status.textContent = made;
       go.hidden = true; back.hidden = true;
-      const undo = h('button', { class: 'btn btn-text', type: 'button', text: 'Undo', title: 'Put every topic back the way it was', onclick: async () => {
+      const undo = h('button', { class: 'btn btn-text', type: 'button', text: 'Undo', title: 'Put every region back the way it was', onclick: async () => {
         undo.disabled = true;
         try {
           await api('POST', '/api/topics/reorganize/undo', { token: r.undo });
-          status.textContent = 'Your topics are back the way they were.'; undo.remove();
+          status.textContent = 'Your regions are back the way they were.'; undo.remove();
           rb.refreshGraph(); window.dispatchEvent(new CustomEvent('rb:topics-changed'));
         } catch (e) { status.textContent = e.message; undo.disabled = false; }
       } });
@@ -732,16 +732,16 @@
   if (reorgBtn) reorgBtn.addEventListener('click', () => reorganizeDialog());
   const C = window.RB && window.RB.commands;
   if (C && C.register) {
-    C.register({ id: 'import.folder', title: 'Import a folder of PDFs', group: 'Add', description: 'Add every PDF in a folder; its subfolders can become topics.',
+    C.register({ id: 'import.folder', title: 'Import a folder of PDFs', group: 'Add', description: 'Add every PDF in a folder; its subfolders can become regions.',
       aliases: ['bulk', 'folder', 'directory', 'many pdfs', 'import all'], run: () => picker.click() });
     C.register({ id: 'import.linkFolder', title: 'Add folders of papers (keep them where they are)', group: 'Add',
-      description: 'Link a folder you keep PDFs in, such as one in OneDrive: nothing is copied, and each subfolder becomes a topic.',
+      description: 'Link a folder you keep PDFs in, such as one in OneDrive: nothing is copied, and each subfolder becomes a region.',
       aliases: ['onedrive', 'link folder', 'watch folder', 'subfolders', 'in place', 'dropbox', 'icloud'], run: () => pickLinkFolder() });
-    C.register({ id: 'topics.reorganize', title: 'Reorganize topics', group: 'Library',
-      description: 'Your AI regroups papers by what they’re about (or into sections you name), shows you the new topics first, and can link papers that belong together.',
-      aliases: ['reorganize', 'reorganise', 'regroup', 'recluster', 'cluster', 'sections', 'rearrange topics', 'find connections', 'link similar papers'],
+    C.register({ id: 'topics.reorganize', title: 'Reorganize regions', group: 'Library',
+      description: 'Your AI regroups papers by what they’re about (or into regions you name), shows you the new regions first, and can link papers that belong together.',
+      aliases: ['region', 'reorganize', 'reorganise', 'regroup', 'recluster', 'cluster', 'sections', 'rearrange topics', 'find connections', 'link similar papers'],
       run: () => reorganizeDialog() });
-    C.register({ id: 'import.bookmarks', title: 'Import browser bookmarks', group: 'Add', description: 'Add papers from a bookmarks export; each bookmark folder becomes a topic.',
+    C.register({ id: 'import.bookmarks', title: 'Import browser bookmarks', group: 'Add', description: 'Add papers from a bookmarks export; each bookmark folder becomes a region.',
       aliases: ['bookmarks', 'favorites', 'chrome', 'firefox', 'safari'], run: () => bmInput.click() });
   }
 })();

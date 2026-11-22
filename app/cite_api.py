@@ -129,7 +129,7 @@ def resolve_scope(by_id: dict, ids=None, topic: str = "", note: str = "", all_: 
         try:
             t = topics_mod.get_topic(ctx.store, topic)
         except KeyError:
-            raise HTTPException(404, f"No topic '{topic}'")
+            raise HTTPException(404, f"No region '{topic}'")
         for nid in t["members"]:
             add(nid, True)
     if note:
@@ -606,7 +606,7 @@ def api_auto_export_add(body: AutoExportIn):
         try:
             topics_mod.get_topic(ctx.store, m.group(1))
         except KeyError:
-            raise HTTPException(404, f"No topic '{m.group(1)}'")
+            raise HTTPException(404, f"No region '{m.group(1)}'")
     try:
         target = validate_path(body.path, ctx.vault)
     except PathError as e:

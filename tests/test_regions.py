@@ -123,8 +123,8 @@ def _store(root):
 
 
 def test_region_names_topic_custom_reset_ai_and_following_the_region(tmp_path):
-    """A region takes its topic's name, else the automatic one; your name beats the topic's (optionally
-    renaming the topic too), survives small membership changes and resets back; AI names show until you
+    """A region takes its topic's name, else the automatic one; renaming a region renames its topic
+    (one thing, one name); where an older version left them different, the region's name wins; AI names show until you
     rename, and your name follows a region as it grows and shrinks but not one that only brushes it."""
     s = _store(tmp_path / "topic")
     t = topics.create_topic(s, "Plasma waves", members=["a", "b", "c"])
@@ -135,28 +135,36 @@ def test_region_names_topic_custom_reset_ai_and_following_the_region(tmp_path):
     assert out[0]["topic"]["slug"] == t["slug"]
     assert out[1]["label"] == "lasers" and out[1]["name_source"] == "auto" and out[1]["topic"] is None
 
-    # keep them different: the region gets its own name, the topic keeps its own
-    regions.rename(s, ["a", "b", "c"], "Waves", t["slug"], rename_topic=False)
+    # left different by an older version: the region's name wins, and its topic takes it
+    regions._save(s, [{"members": ["a", "b", "c"], "name": "Waves", "at": 1}])
     out = regions.apply(s, clusters, mem)
-    assert out[0]["label"] == "Waves" and out[0]["name_source"] == "custom"
-    assert topics.get_topic(s, t["slug"])["name"] == "Plasma waves"
+    assert out[0]["label"] == "Waves" and out[0]["topic"]["name"] == "Waves"
+    assert topics.get_topic(s, t["slug"])["name"] == "Waves" and not regions._load(s)
+    # not when another topic has that name, or the topic is only partly the same papers: nothing is overwritten
+    other = topics.create_topic(s, "Beams", members=["h"])
+    regions._save(s, [{"members": ["a", "b", "c"], "name": "Beams", "at": 1}])
+    for _ in range(2):
+        out = regions.apply(s, clusters, mem)
+        assert out[0]["label"] == "Beams" and topics.get_topic(s, t["slug"])["name"] == "Waves"
+    topics.update_topic(s, other["slug"], name="Ion beams")
+    regions._save(s, [])
 
     # a slightly different membership is still the same region
     out = regions.apply(s, clusters, {0: ["a", "b", "c", "d"], 1: ["e", "f"]})
     assert out[0]["label"] == "Waves"
 
-    regions.reset(s, ["a", "b", "c"])
-    assert regions.apply(s, clusters, mem)[0]["label"] == "Plasma waves"
-
-    # same name for both: the topic is renamed, and the region keeps the name as its own too
-    regions.rename(s, ["a", "b", "c"], "Alfvén waves", t["slug"], rename_topic=True)
+    # renaming either one renames both
+    regions.rename(s, ["a", "b", "c"], "Alfvén waves", t["slug"])
     assert topics.get_topic(s, t["slug"])["name"] == "Alfvén waves"
-    out = regions.apply(s, clusters, mem)
-    assert out[0]["label"] == "Alfvén waves" and out[0]["name_source"] == "custom"
+    assert regions.apply(s, clusters, mem)[0]["label"] == "Alfvén waves"
+    topics.update_topic(s, t["slug"], name="Kinetic waves")
+    assert regions.apply(s, clusters, mem)[0]["label"] == "Kinetic waves"
 
-    # a region without a topic just keeps its name
-    regions.rename(s, ["e", "f"], "Laser physics", None, rename_topic=True)
+    # a region without a topic just keeps its name, until you reset it
+    regions.rename(s, ["e", "f"], "Laser physics", None)
     assert regions.apply(s, clusters, mem)[1]["label"] == "Laser physics"
+    regions.reset(s, ["e", "f"])
+    assert regions.apply(s, clusters, mem)[1]["label"] == "lasers"
 
     # a fresh library: AI names, then yours, which follows the region and beats AI and topics
     s = _store(tmp_path / "follow")
@@ -165,8 +173,7 @@ def test_region_names_topic_custom_reset_ai_and_following_the_region(tmp_path):
     out = regions.apply(s, clusters, {0: ["a", "b", "c", "d"], 1: ["e", "f", "g"]})
     assert [o["label"] for o in out] == ["Atomic Cross Sections", "Collisional-Radiative Models"]
     assert out[0]["name_source"] == "ai"
-    regions.rename(s, ["e", "f", "g"], "My CRM work", None, rename_topic=False)
-    topics.create_topic(s, "Some topic", members=["e", "f", "g"])
+    regions.rename(s, ["e", "f", "g"], "My CRM work", None)
     # the region grows and loses a paper, step by step: the name stays with it
     for mem in (["e", "f", "g", "h"], ["f", "g", "h"], ["f", "g", "h", "a", "b"]):
         out = regions.apply(s, [clusters[1]], {1: mem})
@@ -198,6 +205,6 @@ def test_ai_names_regions_from_titles_without_private_ones(tmp_path, monkeypatch
     assert sent["purpose"] == "region names"
     out = srv.regions_mod.apply(srv.store, [{"id": 0, "label": "cross sections", "size": 3}], {0: ids})
     assert out[0]["label"] == "Atomic Cross Sections" and out[0]["name_source"] == "ai"
-    srv.regions_mod.rename(srv.store, ids, "Mine", None, rename_topic=False)
+    srv.regions_mod.rename(srv.store, ids, "Mine", None)
     out = srv.regions_mod.apply(srv.store, [{"id": 0, "label": "cross sections", "size": 3}], {0: ids})
     assert out[0]["label"] == "Mine"

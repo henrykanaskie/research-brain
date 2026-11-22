@@ -446,7 +446,7 @@ def test_viewer_side_panel_keys_ask_tab_focus_directions_and_writing_help(ctx, s
     page.evaluate("(slug) => window.__rbDirections.open('topic', slug, 'Sheaths')", t["slug"])
     dlg = page.locator(".dr-card")
     expect(dlg).to_contain_text("Goes to the AI (1)")
-    expect(dlg).to_contain_text("The topic’s name and description")
+    expect(dlg).to_contain_text("The region’s name and description")
     expect(dlg.locator(".dr-size")).to_contain_text("tokens")
     page.keyboard.press("Escape")
     expect(dlg).to_be_hidden()

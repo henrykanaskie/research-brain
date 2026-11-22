@@ -101,13 +101,13 @@ def test_reorganize_by_content_then_into_your_sections(server, browser):
     sent = []
     page.on("request", lambda r: sent.append(json.loads(r.post_data)) if r.url.endswith("/reorganize/plan") else None)
     page.locator("#btn-reorganize").click()
-    card = page.locator(".bk-card[aria-label='Reorganize topics']")
+    card = page.locator(".bk-card[aria-label='Reorganize regions']")
     expect(card).to_be_visible()
     expect(card.locator(".bk-item")).to_have_count(3)  # two topics and "Papers with no topic"
     if shots:
         page.screenshot(path=f"{shots}/reorganize-1.png")
     card.locator(".bk-count").fill("2")
-    card.get_by_role("button", name="Suggest topics").click()
+    card.get_by_role("button", name="Suggest regions").click()
     expect(card.locator(".bk-group")).to_have_count(2)
     assert sent[-1]["count"] == 2
     expect(card).to_contain_text("Left empty, so they go to the trash: Folder A, Folder B")
@@ -118,7 +118,7 @@ def test_reorganize_by_content_then_into_your_sections(server, browser):
     # nothing changed yet
     assert {t["name"] for t in _call(base, "GET", "/api/topics")} == {"Folder A", "Folder B"}
     card.get_by_role("button", name="Reorganize").click()
-    expect(card).to_contain_text("Filed 4 papers into 2 topics")
+    expect(card).to_contain_text("Filed 4 papers into 2 regions")
     expect(card).to_contain_text("Found 1 connection")
     if shots:
         page.screenshot(path=f"{shots}/reorganize-3.png")
@@ -138,14 +138,14 @@ def test_reorganize_by_content_then_into_your_sections(server, browser):
     page.evaluate("window.__rbBulk.reorganize({topics: [" + ",".join(
         f"'{t['slug']}'" for t in _call(base, "GET", "/api/topics")) + "]})")
     expect(card).to_be_visible()
-    card.get_by_text("Use my own sections").click()
+    card.get_by_text("Use my own regions").click()
     card.locator("textarea.bk-sections").fill("Plasma physics\nOptics")
     card.locator("input[type=checkbox]").last.uncheck()  # no connection analysis this time
-    card.get_by_role("button", name="Suggest topics").click()
+    card.get_by_role("button", name="Suggest regions").click()
     expect(card.locator(".bk-group")).to_have_count(2)
-    expect(card).to_contain_text("2 papers fit none of these and will have no topic")
+    expect(card).to_contain_text("2 papers fit none of these and will have no region")
     card.get_by_role("button", name="Reorganize").click()
-    expect(card).to_contain_text("Filed 4 papers into 2 topics")
+    expect(card).to_contain_text("Filed 4 papers into 2 regions")
     assert {t["name"]: t["count"] for t in _call(base, "GET", "/api/topics")} == {"Plasma physics": 2, "Optics": 0}
     assert not errors, errors
 
@@ -174,12 +174,12 @@ def test_imported_folders_sorted_by_content_or_only_into_existing_topics(server,
     expect(card).to_be_visible()
     expect(card.locator(".bk-link")).to_be_visible()  # two folders: a topic for each, by default
     expect(card.locator(".bk-count")).to_be_hidden()
-    card.get_by_text("Let the AI sort them into topics").click()
+    card.get_by_text("Let the AI sort them into regions").click()
     expect(card.locator(".bk-link")).to_be_hidden()
-    expect(card.get_by_text("Only into my existing topics (2)")).to_be_visible()  # Plasma physics, Optics
+    expect(card.get_by_text("Only into my existing regions (2)")).to_be_visible()  # Plasma physics, Optics
     card.locator(".bk-count").fill("2")
     card.get_by_role("button", name="Add 4 PDFs").click()
-    expect(card).to_contain_text("Sorted into 2 topics", timeout=60_000)
+    expect(card).to_contain_text("Sorted into 2 regions", timeout=60_000)
     expect(card).to_contain_text("Found 1 connection", timeout=60_000)
     if os.environ.get("RB_E2E_SHOTS"):
         page.screenshot(path=f"{os.environ['RB_E2E_SHOTS']}/linked-ai.png")
@@ -203,14 +203,14 @@ def test_imported_folders_sorted_by_content_or_only_into_existing_topics(server,
         return f; }))""", {k: base64.b64encode(v).decode() for k, v in pdfs.items()})
     card = page.locator(".bk-card[aria-label='Import “Inbox”']")
     expect(card).to_be_visible()
-    only = card.get_by_text("Only into my existing topics")
+    only = card.get_by_text("Only into my existing regions")
     expect(only).to_be_visible()  # a flat folder: the AI sorts it, and you have topics
     before = {t["name"]: t["count"] for t in _call(base, "GET", "/api/topics")}
     only.click()
     expect(card.locator(".bk-count")).to_be_disabled()
     card.locator("input[type=checkbox]").last.uncheck()  # no connections
     card.get_by_role("button", name="Import 2").click()
-    expect(card).to_contain_text("1 paper fit none of your topics", timeout=60_000)
+    expect(card).to_contain_text("1 paper fit none of your regions", timeout=60_000)
     after = {t["name"]: t["count"] for t in _call(base, "GET", "/api/topics")}
     assert set(after) == set(before)  # no new topic
     first = sorted(before)[0]

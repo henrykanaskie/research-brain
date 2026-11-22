@@ -189,7 +189,7 @@
     const stSel = h('select', { 'aria-label': 'Reading status' }, STATUS_OPTS.map(([v, l]) => h('option', { value: v, text: l })));
     stSel.value = F.status || '';
     stSel.addEventListener('change', () => { F.status = stSel.value; changed(); });
-    const topicRow = F.topic ? h('div', { class: 'gv-row' }, h('span', { class: 'l', text: 'Topic' }),
+    const topicRow = F.topic ? h('div', { class: 'gv-row' }, h('span', { class: 'l', text: 'Only in' }),
       h('span', { style: { flex: '1', minWidth: '0', fontSize: '13px' }, text: F.topicName || F.topic }),
       h('button', { class: 'btn btn-text btn-sm', text: 'Clear', onclick: () => { F.topic = null; F.topicName = ''; changed(); render(); } })) : null;
 
@@ -239,7 +239,7 @@
     if (f.tag) bits.push(`tagged ${f.tag}`);
     if (f.region != null) { const c = (S.clusters || []).find((x) => Number(x.id) === Number(f.region)); bits.push(c ? `region ${c.label}` : 'a region'); }
     if (f.status) bits.push(f.status === 'none' ? 'no status' : (STATUS_OPTS.find((o) => o[0] === f.status) || [, f.status])[1].toLowerCase());
-    if (f.topic) bits.push(`topic ${f.topicName || f.topic}`);
+    if (f.topic) bits.push(`region ${f.topicName || f.topic}`);
     if (v.search) bits.push(`search “${v.search}”`);
     return bits.length ? bits.join(', ') : 'Everything';
   }

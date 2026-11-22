@@ -3,7 +3,7 @@
 research brain runs on your computer. Your phone (or tablet) opens it over Tailscale, after you pair it once.
 On a screen 900px wide or less the app rearranges itself for touch:
 
-- **Library**: search, filter by reading status, topic or your own notes, and triage what's to read
+- **Library**: search, filter by reading status, region or your own notes, and triage what's to read
   (Start reading, Later, Not relevant) with one tap.
 - **Graph**: pinch and drag; tap a dot to select it, tap it again (or Open) to read it.
 - **Add**: save a link, DOI or arXiv id to read later, write a quick note, take a photo of a whiteboard or an

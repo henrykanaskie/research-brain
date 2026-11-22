@@ -3,7 +3,7 @@
  *   right under it, and a Topics chip row (type-ahead to add, x to remove).
  * - Park for later (L): status "later" and focus "Saved because".
  * - Topics drawer (T, or "Topics" in the top bar): home = "Next to read" across topics + the topic list
- *   + "Suggest topics from regions"; a topic = its queue (at most 5, "Show more" adds 5) and its papers
+ *   + the regions the map found, to keep; a region (a topic, in the data) = its queue (at most 5, "Show more" adds 5) and its papers
  *   grouped by status. "Show on graph" fades everything else via the views.js filter.
  * Server: /api/topics*, /api/queue, /api/notes/{id}/park (app/topics.py). Depends on window.__rb.
  */
@@ -68,6 +68,7 @@
   .td-sec > .sec-head { margin-bottom: 4px; }
   .td-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
   .td-list { display: flex; flex-direction: column; }
+  .td-found { display: flex; align-items: center; gap: 6px; } .td-found .td-topic { flex: 1; min-width: 0; margin-right: 0; } .td-found .t-name { color: var(--ink-2); }
   .td-topic { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: baseline; gap: 10px; padding: 7px 8px; margin: 0 -8px; border-radius: 4px; }
   .td-topic:hover, .td-topic:focus-visible { background: var(--ground); }
   .td-topic .t-name { flex: 1; min-width: 0; font-size: 14px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -169,17 +170,17 @@
   function topicRow(n) {
     const row = h('div', { class: 'tp-row', id: 'topic-row' });
     let mine = (n.topics || []).slice();
-    const input = h('input', { type: 'text', class: 'tp-add', placeholder: mine.length ? '+ Topic' : '+ Add to a topic', spellcheck: false,
-      'aria-label': 'Add to a topic', 'aria-autocomplete': 'list', id: 'topic-add' });
+    const input = h('input', { type: 'text', class: 'tp-add', placeholder: mine.length ? '+ Region' : '+ Add to a region', spellcheck: false,
+      'aria-label': 'Add to a region', 'aria-autocomplete': 'list', id: 'topic-add' });
     let sugg = null, hi = 0, opts = [];
     const close = () => { if (sugg) { sugg.remove(); sugg = null; } };
     const draw = () => {
-      row.replaceChildren(h('span', { class: 'tp-lbl', text: 'Topics' }),
+      row.replaceChildren(h('span', { class: 'tp-lbl', text: 'Regions' }),
         ...mine.map((t) => h('span', { class: 'tp-chip', 'data-hue': String([...t.slug].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % 4) },
-          h('button', { class: 'tp-go', title: 'Open this topic', text: t.name, onclick: () => openDrawer(t.slug) }),
+          h('button', { class: 'tp-go', title: 'Open this region', text: t.name, onclick: () => openDrawer(t.slug) }),
           h('button', { class: 'tp-x', title: `Remove from ${t.name}`, 'aria-label': `Remove from ${t.name}`, text: '×', onclick: () => remove(t) }))),
         input);
-      input.placeholder = mine.length ? '+ Topic' : '+ Add to a topic';
+      input.placeholder = mine.length ? '+ Region' : '+ Add to a region';
     };
     const suggest = async () => {
       if (!T.list) await loadTopics();
@@ -195,7 +196,7 @@
       sugg = h('div', { class: 'tp-sugg', role: 'listbox' }, opts.map((o, i) => h('button', {
         type: 'button', role: 'option', class: i === hi ? 'on' : '',
         onmousedown: (e) => { e.preventDefault(); pick(o); } },
-        o.t ? [h('span', { text: o.t.name }), h('span', { class: 'n', text: String(o.t.count) })] : [h('span', { text: `New topic “${o.create}”` })])));
+        o.t ? [h('span', { text: o.t.name }), h('span', { class: 'n', text: String(o.t.count) })] : [h('span', { text: `New region “${o.create}”` })])));
       row.appendChild(sugg);
     };
     const pick = async (o) => {
@@ -211,7 +212,7 @@
         await loadTopics();
         draw(); input.focus();
         if (T.open) scheduleDrawerRefresh();
-      } catch (e) { toastErr(e, 'Could not add to the topic'); }
+      } catch (e) { toastErr(e, 'Could not add to the region'); }
     };
     const remove = async (t) => {
       try {
@@ -222,7 +223,7 @@
         await loadTopics();
         draw();
         if (T.open) scheduleDrawerRefresh();
-      } catch (e) { toastErr(e, 'Could not remove it from the topic'); }
+      } catch (e) { toastErr(e, 'Could not remove it from the region'); }
     };
     input.addEventListener('focus', () => { hi = 0; suggest(); });
     input.addEventListener('input', () => { hi = 0; suggest(); });
@@ -256,12 +257,12 @@
   }
 
   // ====================================================================== drawer
-  const btn = h('button', { id: 'btn-topics', class: 'btn btn-text', title: 'Topics and what to read next (T)', 'aria-expanded': 'false', text: 'Topics' });
+  const btn = h('button', { id: 'btn-topics', class: 'btn btn-text', title: 'Regions and what to read next (T)', 'aria-expanded': 'false', text: 'Regions' });
   const anchor = $('#btn-review') || $('#btn-chat');
   if (anchor) anchor.before(btn);
   btn.addEventListener('click', () => (T.open ? closeDrawer() : openDrawer()));
 
-  const drawer = h('aside', { class: 'td', hidden: true, 'aria-label': 'Topics' });
+  const drawer = h('aside', { class: 'td', hidden: true, 'aria-label': 'Regions' });
   const dHead = h('div', { class: 'td-head' });
   const dBody = h('div', { class: 'td-body' });
   drawer.append(dHead, dBody);
@@ -333,8 +334,8 @@
       for (const it of q.items) list.appendChild(queueItem(it, topicSlug || (it.topic && it.topic.slug), () => { offset = 0; load(); }, !topicSlug));
       if (!list.children.length) {
         list.appendChild(h('div', { class: 'td-empty', text: topicSlug
-          ? 'Nothing waiting. Add papers to this topic, or mark some as read so recommendations have something to go on.'
-          : 'Nothing waiting. Papers you add start as to read, and topics bring recommendations.' }));
+          ? 'Nothing waiting. Add papers to this region, or mark some as read so recommendations have something to go on.'
+          : 'Nothing waiting. Papers you add start as to read, and regions bring recommendations.' }));
       }
       const shown = offset + q.items.length;
       more.replaceChildren(shown < q.total ? h('button', { class: 'btn btn-text btn-sm', text: 'Show more',
@@ -366,14 +367,14 @@
     } });
     if (isRec && slug) {
       acts.append(
-        act('Accept', 'Add it to your library as to read, in this topic', async () => {
+        act('Accept', 'Add it to your library as to read, in this region', async () => {
           const n = await api('POST', `/api/topics/${enc(slug)}/queue/accept`, { s2_id: it.s2_id });
           (T.sets.get(slug) || T.sets.set(slug, new Set()).get(slug)).add(n.id);
           toast(`Added “${truncate(n.title, 60)}” to read`);
           await rb.refreshGraph();
           reload();
         }, 'btn btn-sm'),
-        act('Dismiss', 'Not useful. Never show it again for this topic', async () => {
+        act('Dismiss', 'Not useful. Never show it again for this region', async () => {
           await api('POST', `/api/topics/${enc(slug)}/queue/dismiss`, { s2_id: it.s2_id, title: it.title });
           el.remove(); reload();
         }),
@@ -401,7 +402,7 @@
 
   // ---------- home ----------
   async function renderHome() {
-    dHead.replaceChildren(h('span', { class: 'td-here', text: 'Topics' }), h('div', { class: 'spacer' }), closeBtn());
+    dHead.replaceChildren(h('span', { class: 'td-here', text: 'Regions' }), h('div', { class: 'spacer' }), closeBtn());
     const list = await loadTopics();
     const out = [queueBlock('/api/queue')];
     const rows = list.map((t) => {
@@ -412,7 +413,7 @@
       return h('button', { class: 'td-topic', onclick: () => { T.view = t.slug; render(); } },
         h('span', { class: 't-name', text: t.name, title: t.description || t.name }), h('span', { class: 't-sub', text: bits.join(', ') }));
     });
-    const nameIn = h('input', { type: 'text', placeholder: 'New topic', 'aria-label': 'New topic name', id: 'new-topic-input', spellcheck: true });
+    const nameIn = h('input', { type: 'text', placeholder: 'New region', 'aria-label': 'New region name', id: 'new-topic-input', spellcheck: true });
     const create = async () => {
       const name = nameIn.value.trim();
       if (!name) { nameIn.focus(); return; }
@@ -420,13 +421,32 @@
         const t = await api('POST', '/api/topics', { name });
         T.sets.set(t.slug, new Set());
         T.view = t.slug; render();
-      } catch (e) { toastErr(e, 'Could not create the topic'); }
+      } catch (e) { toastErr(e, 'Could not create the region'); }
     };
     nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); create(); } });
+    // regions the map found by similarity: the same list, until you keep one (then it stays as it is)
+    const kept = new Set(list.map((t) => t.slug));
+    const found = (S.clusters || []).filter((c) => c.label && !(c.topic && kept.has(c.topic.slug)));
+    for (const c of found) {
+      const members = [...S.nodes.values()].filter((n) => n.cluster === c.id && n.type !== 'fragment').map((n) => n.id);
+      const name = c.label.charAt(0).toUpperCase() + c.label.slice(1);
+      rows.push(h('div', { class: 'td-found' },
+        h('button', { class: 'td-topic', title: 'Found by similarity: it can change as you add papers. Show it on the map', onclick: () => rb.focusRegion(c.id) },
+          h('span', { class: 't-name', text: name }), h('span', { class: 't-sub', text: `${members.length} papers, by similarity` })),
+        h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Keep', title: 'Keep this region as it is: its papers stay together', onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try {
+            const t = await api('POST', '/api/topics', { name, members });
+            T.sets.set(t.slug, new Set(t.members));
+            window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+            T.view = t.slug; render();
+          } catch (err) { e.target.disabled = false; toastErr(err, 'Could not keep the region'); }
+        } })));
+    }
     out.push(h('div', { class: 'td-sec' },
-      h('div', { class: 'sec-head' }, h('span', { class: 'sec-title' }, 'Your topics', list.length ? h('span', { class: 'n', text: String(list.length) }) : null)),
-      list.length ? h('div', { class: 'td-list' }, rows)
-        : h('div', { class: 'td-empty', text: 'A topic keeps every paper on one subject together, whatever region of the graph it sits in.' }),
+      h('div', { class: 'sec-head' }, h('span', { class: 'sec-title' }, 'Your regions', rows.length ? h('span', { class: 'n', text: String(rows.length) }) : null)),
+      rows.length ? h('div', { class: 'td-list' }, rows)
+        : h('div', { class: 'td-empty', text: 'A region keeps papers on one subject together, here and on the map.' }),
       h('div', { class: 'td-new' }, nameIn, h('button', { class: 'btn', text: 'Create', onclick: create }))));
     out.push(suggestBlock());
     return out;
@@ -434,42 +454,19 @@
 
   function suggestBlock() {
     const sec = h('div', { class: 'td-sec' });
-    const body = h('div');
-    const go = h('button', { class: 'btn btn-text btn-sm', text: 'Suggest topics from regions', title: 'Turn a region the graph found into a topic', onclick: async () => {
-      go.disabled = true;
-      try {
-        const sug = await api('GET', '/api/topics/suggest');
-        if (!sug.length) { body.replaceChildren(h('div', { class: 'td-empty', text: 'Every region is already a topic, or the library is too small to have regions yet.' })); return; }
-        body.replaceChildren(...sug.slice(0, 8).map((s) => {
-          const inp = h('input', { type: 'text', 'aria-label': 'Topic name', spellcheck: true });
-          inp.value = s.name;
-          const make = async () => {
-            try {
-              const t = await api('POST', '/api/topics', { name: inp.value.trim() || s.name, members: s.members });
-              T.sets.set(t.slug, new Set(t.members));
-              toast(`Made “${t.name}” from ${t.count} papers`);
-              T.view = t.slug; render();
-            } catch (e) { toastErr(e, 'Could not create the topic'); }
-          };
-          inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); make(); } });
-          return h('div', { class: 'sg-row' }, inp, h('span', { class: 'n', text: `${s.size}` , title: `${s.size} papers and notes` }),
-            h('button', { class: 'btn btn-sm', text: 'Make topic', onclick: make }));
-        }));
-      } catch (e) { toastErr(e); } finally { go.disabled = false; }
-    } });
     const reorg = h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Reorganize…',
-      title: 'Let your AI regroup papers into topics by what they’re about, or into sections you name, and link papers that belong together',
+      title: 'Let your AI regroup papers into regions by what they’re about, or into regions you name, and link papers that belong together',
       onclick: () => window.__rbBulk && window.__rbBulk.reorganize() });
-    sec.append(h('div', { class: 'td-tools' }, go, reorg), body);
+    sec.append(h('div', { class: 'td-tools' }, reorg));
     return sec;
   }
 
   // ---------- one topic ----------
   async function renderTopic(slug) {
     const d = await loadSet(slug);
-    dHead.replaceChildren(h('button', { class: 'td-crumb', text: 'Topics', title: 'Back to all topics', onclick: () => { T.view = null; render(); } }),
+    dHead.replaceChildren(h('button', { class: 'td-crumb', text: 'Regions', title: 'Back to all regions', onclick: () => { T.view = null; render(); } }),
       h('span', { class: 'td-here', text: '/' }), h('div', { class: 'spacer' }), closeBtn());
-    const nameIn = h('input', { type: 'text', 'aria-label': 'Topic name', spellcheck: true });
+    const nameIn = h('input', { type: 'text', 'aria-label': 'Region name', spellcheck: true });
     nameIn.value = d.name;
     const saveName = async () => {
       const v = nameIn.value.trim();
@@ -478,14 +475,14 @@
     };
     nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameIn.blur(); } if (e.key === 'Escape') { nameIn.value = d.name; nameIn.blur(); } });
     nameIn.addEventListener('blur', saveName);
-    const desc = h('input', { type: 'text', class: 'td-desc', placeholder: 'What this topic is for', 'aria-label': 'Topic description' });
+    const desc = h('input', { type: 'text', class: 'td-desc', placeholder: 'What this region is for', 'aria-label': 'Region description' });
     desc.value = d.description || '';
     desc.addEventListener('blur', async () => { if (desc.value.trim() !== (d.description || '')) { try { await api('PATCH', `/api/topics/${enc(slug)}`, { description: desc.value }); d.description = desc.value.trim(); } catch (e) { toastErr(e); } } });
     desc.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); desc.blur(); } });
 
     const onGraph = graphTopic() === slug;
     const showBtn = h('button', { class: 'btn btn-sm' + (onGraph ? ' on' : ''), text: onGraph ? 'Show everything' : 'Show on graph',
-      title: onGraph ? 'Stop fading papers outside this topic' : 'Fade everything outside this topic on the graph',
+      title: onGraph ? 'Stop fading papers outside this region' : 'Fade everything outside this region on the graph',
       onclick: () => { showOnGraph(onGraph ? null : slug, d.name); render({ keepScroll: true }); } });
     const refreshBtn = h('button', { class: 'btn btn-text btn-sm', text: 'Refresh recommendations', title: 'Ask Semantic Scholar again now', onclick: async () => {
       refreshBtn.disabled = true;
@@ -499,7 +496,7 @@
         h('button', { class: 'g-open', onclick: () => rb.openNote(it.id, { center: true }) }, it.title,
           it.saved_because ? h('span', { class: 'g-why', text: it.saved_because }) : null),
         it.year ? h('span', { class: 'g-year', text: String(it.year) }) : null,
-        h('button', { class: 'g-x', title: 'Remove from this topic', 'aria-label': `Remove ${it.title} from this topic`, text: '×', onclick: async () => {
+        h('button', { class: 'g-x', title: 'Remove from this region', 'aria-label': `Remove ${it.title} from this region`, text: '×', onclick: async () => {
           try { await api('DELETE', `/api/topics/${enc(slug)}/notes/${enc(it.id)}`); T.sets.get(slug) && T.sets.get(slug).delete(it.id); loadTopics(); render({ keepScroll: true }); if (S.cur && S.cur.id === it.id) rb.reloadCur(); }
           catch (e) { toastErr(e); }
         } })));
@@ -509,28 +506,28 @@
       }
       return h('div', { class: 'g-sec' }, headEl, rows);
     });
-    const del = h('button', { class: 'btn btn-danger btn-sm', text: 'Delete topic', title: 'Remove the topic. Its papers stay in your library.', onclick: async () => {
-      if (!window.confirm(`Delete the topic “${d.name}”? Its papers stay in your library.`)) return;
+    const del = h('button', { class: 'btn btn-danger btn-sm', text: 'Delete region', title: 'Remove the region. Its papers stay in your library.', onclick: async () => {
+      if (!window.confirm(`Delete the region “${d.name}”? Its papers stay in your library.`)) return;
       try { await api('DELETE', `/api/topics/${enc(slug)}`); T.sets.delete(slug); if (graphTopic() === slug) showOnGraph(null); T.view = null; render(); if (S.cur) rb.reloadCur(); }
       catch (e) { toastErr(e); }
     } });
     return [
       h('h2', null, nameIn), desc,
       h('div', { class: 'td-tools' }, showBtn,
-        rb.chatAboutTopics ? h('button', { class: 'btn btn-sm needs-claude', type: 'button', text: 'Ask about this topic',
-          title: 'The AI agent reads every paper in this topic and answers with citations',
+        rb.chatAboutTopics ? h('button', { class: 'btn btn-sm needs-claude', type: 'button', text: 'Ask about this region',
+          title: 'The AI agent reads every paper in this region and answers with citations',
           onclick: () => rb.chatAboutTopics([{ slug, name: d.name }]) }) : null,
         refreshBtn, ...(window.__rbCite ? window.__rbCite.topicTools(slug) : []),
         h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Suggest directions…', id: 'td-directions',
-          title: 'Ask your AI agent for gaps, hypotheses and experiments from this topic’s papers. You see exactly what would be sent first; private notes never go.',
+          title: 'Ask your AI agent for gaps, hypotheses and experiments from this region’s papers. You see exactly what would be sent first; private notes never go.',
           onclick: () => window.__rbDirections && window.__rbDirections.open('topic', slug, ((T.list || []).find((x) => x.slug === slug) || {}).name || slug) }),
         h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Split up…',
-          title: 'Let your AI break this topic into smaller topics by what its papers are about, or into sections you name',
+          title: 'Let your AI break this region into smaller regions by what its papers are about, or into regions you name',
           onclick: () => window.__rbBulk && window.__rbBulk.reorganize({ topics: [slug] }) })),
       qb,
       h('div', { class: 'td-sec' },
         h('div', { class: 'sec-head' }, h('span', { class: 'sec-title' }, 'Papers', h('span', { class: 'n', text: String(d.count) }))),
-        groups.length ? groups : h('div', { class: 'td-empty', text: 'No papers yet. Open a paper and add it under Topics, just below its title.' })),
+        groups.length ? groups : h('div', { class: 'td-empty', text: 'No papers yet. Open a paper and add it under Regions, just below its title.' })),
       h('div', { class: 'td-danger' }, del),
     ];
   }
@@ -553,9 +550,9 @@
 
   // ====================================================================== keyboard (via the command registry when present)
   const COMMANDS = [
-    { id: 'topics.toggle', title: 'Topics and next to read', keys: 't', group: 'Topics', run: () => (T.open ? closeDrawer() : openDrawer()) },
+    { id: 'topics.toggle', title: 'Regions and next to read', keys: 't', group: 'Topics', run: () => (T.open ? closeDrawer() : openDrawer()) },
     { id: 'note.park', title: 'Park for later (and say why)', keys: 'l', group: 'Reading', when: () => !!(S.cur && S.cur.type !== 'fragment' && !$('#panel').hidden), run: parkForLater },
-    { id: 'note.addTopic', title: 'Add the open paper to a topic', keys: 'shift+t', group: 'Topics', when: () => !!(S.cur && S.cur.type !== 'fragment' && !$('#panel').hidden),
+    { id: 'note.addTopic', title: 'Add the open paper to a region', keys: 'shift+t', group: 'Topics', when: () => !!(S.cur && S.cur.type !== 'fragment' && !$('#panel').hidden),
       run: () => { const i = $('#topic-add'); if (i) { i.focus(); } } },
     { id: 'topics.next', title: 'Next to read', keys: 'g then q', group: 'Reading', run: () => { openDrawer(); } },
     ...STATUSES.map(([v, label], i) => ({ id: `note.status.${v}`, title: `Mark as ${label.toLowerCase()}`, keys: `alt+${i + 1}`, group: 'Reading',

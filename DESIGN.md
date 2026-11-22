@@ -107,8 +107,8 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
 - Few lines at rest (View › Lines: "Few"): inside each section, your own links plus the fewest other lines that join
   its papers, never two for one pair; nothing runs from section to section. Pointing at a paper, clicking it, or
   pointing at a section's name fades in all of its lines. "All" draws every line, all the time.
-- Lines you bring out can be reached: they stay while the pointer is on or near one of them, or its explanation is open,
-  and about a second after. Resting on a line says what it is (and why, when the AI found it) on a small sheet with the
+- Lines you bring out can be reached: leaving a paper fades its focus out over half a second, starting at once (never a
+  pause); until it's gone the lines can be pointed at and clicked, and one you reach stays by itself. Resting on a line says what it is (and why, when the AI found it) on a small sheet with the
   line's colour down its edge, and the other lines step back; a click explains it. Sweeping over a paper holds nothing.
 - Somas: small solid ink dot for a paper, hairline ring for a note, tiny red point for a fragment.
 - No decoration around somas. Size hints at engagement (words written, links, opens), subtly: the largest dot is ~1.6x the smallest; a small red core
@@ -119,6 +119,10 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
   Newsreader (13.5px, `--ink-2`), what it's about large in italic (23px, `--ink`), the member count in small red Archivo;
   under it a hairline trace that bends once at 45 degrees and ends in a ring. Pointing at it runs a red signal along the
   trace and fills the ring. The ground colour sits behind the words so no trace runs through them. No outlines or fills.
+  The layout keeps room for every name at the whole-map view (smaller with many regions); zoomed out further they shrink
+  with the map, and where they'd reach over other regions' papers the papers recede (an atlas). A click zooms to the
+  region; with one focused the other names stay, quieter, and a click goes straight there.
+- A region is a topic (the word in the files and the API): one thing, one name, "Region" everywhere people read.
 - Names hold still. Every name gets its place once per layout (planLabels): a section's above its papers, a paper's on the
   side of its dot the fewest resting traces cross. Panning changes nothing; zooming only fades a name in or out, at one
   zoom of its own. Names are drawn in screen pixels at one size, and stay put while their dots float (under a pixel).

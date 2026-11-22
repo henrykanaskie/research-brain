@@ -509,7 +509,7 @@
   function openTips() {
     const close = () => { wrap.remove(); };
     const tips = [
-      ['Library', 'Search, filter by status or topic, and triage what to read next.'],
+      ['Library', 'Search, filter by status or region, and triage what to read next.'],
       ['Graph', 'Pinch to zoom and drag to move. Tap a dot to select it; tap it again to open it.'],
       ['Notes', 'A note opens as a sheet. Drag its top edge down to close it.'],
       ['Share', 'Share a link from any app to research brain to save it to read.'],

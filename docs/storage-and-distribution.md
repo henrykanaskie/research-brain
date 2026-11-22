@@ -94,7 +94,7 @@ A paper is **three plain files that share one id** (for example `attention-is-al
   online) stores it here, after checking the disk has room for it (`app/diskspace.py`).
 - **One of your folders of papers** (`app/linked.py`, `state/linked.json`): folders you already keep PDFs in, such
   as one in OneDrive. The file stays where it is under its own name; research brain records the folder and the path
-  inside it, and never moves, renames, changes or deletes it. Each folder becomes a topic. The folders are checked
+  inside it, and never moves, renames, changes or deletes it. Each folder becomes a region (a file in Topics). The folders are checked
   at start, every 10 minutes and on Check now: new PDFs are added, moved ones are followed (same name and size),
   and a deleted paper's file is left in place and remembered so it isn't added back.
 

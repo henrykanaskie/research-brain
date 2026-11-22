@@ -160,8 +160,8 @@
     aliases: ['chat', 'question', 'claude', 'query', 'rag'], run: () => { if ($('#chat').hidden) rb.openChat(); else $('#chat-input').focus(); } });
   reg({ id: 'library.review', title: 'Review', group: 'Library', keys: 'G then R', description: 'Recall your own summaries and fragment notes, then grade yourself.',
     aliases: ['recall', 'flashcards', 'spaced repetition', 'quiz', 'memory practice'], when: () => !!rb.openReview, run: () => rb.openReview() });
-  reg({ id: 'library.topics', title: 'Open topics', group: 'Library', keys: 'G then T', description: 'Your topics and what to read next in each.',
-    aliases: ['reading list', 'projects', 'collections'], when: () => !!rb.topics, run: () => rb.topics.open() });
+  reg({ id: 'library.topics', title: 'Open regions', group: 'Library', keys: 'G then T', description: 'Your regions and what to read next in each.',
+    aliases: ['region', 'reading list', 'projects', 'collections'], when: () => !!rb.topics, run: () => rb.topics.open() });
   reg({ id: 'library.export', title: 'Export a read-only site…', group: 'Library', description: 'Your search matches, or every note, as a static site to share.',
     aliases: ['share', 'publish', 'html', 'static site'], when: () => !!$('#btn-export'), run: () => $('#btn-export').click() });
 
@@ -206,7 +206,7 @@
     aliases: ['center', 'locate', 'where is', 'zoom in'], when: () => !!S.selected && S.nodes.has(S.selected), run: () => rb.centerOn(S.selected, true) });
   reg({ id: 'graph.similar', title: 'Show or hide similarity links', group: 'Graph', keys: 'Shift+S', description: 'The dashed blue-grey lines found by text similarity.',
     aliases: ['semantic', 'dashed', 'similar', 'toggle links'], run: () => { rb.setShowSim(!S.showSim); toast(S.showSim ? 'Similarity links shown' : 'Similarity links hidden'); } });
-  reg({ id: 'graph.lines', title: 'Show few or all lines on the map', group: 'Graph', keys: [], description: 'Few: your links and the strongest connections inside each section. Point at a paper to see the rest.',
+  reg({ id: 'graph.lines', title: 'Show few or all lines on the map', group: 'Graph', keys: [], description: 'Few: your links and the strongest connections inside each region. Point at a paper to see the rest.',
     aliases: ['clutter', 'declutter', 'connections', 'all lines', 'fewer lines'], run: () => { rb.setLines(S.lines === 'all' ? 'few' : 'all'); toast(S.lines === 'all' ? 'All lines shown' : 'Few lines shown: point at a paper to see the rest of its lines'); } });
   reg({ id: 'graph.citations', title: 'Show or hide citation links', group: 'Graph', keys: 'Shift+C', description: 'Thin ink lines with an arrowhead at the cited paper.',
     aliases: ['cites', 'references', 'arrows', 'toggle links'], when: () => !!$('#cites-toggle'),
@@ -236,10 +236,10 @@
 
   // topics.js copy for the sheet (it registers the commands itself)
   const ann = {
-    'topics.toggle': { title: 'Topics and next to read', group: 'Library', description: 'Opens or closes the topics drawer.', aliases: ['reading list', 'queue', 'projects', 'drawer'] },
+    'topics.toggle': { title: 'Regions and next to read', group: 'Library', description: 'Opens or closes the regions drawer.', aliases: ['reading list', 'queue', 'projects', 'drawer'] },
     'topics.next': { title: 'Next to read', group: 'Library', description: 'Opens your reading queue at the top.', aliases: ['queue', 'reading list', 'what to read', 'up next'] },
     'note.park': { title: 'Park for later', group: 'Note', description: 'Set the open paper aside and say why, so it comes back in your queue.', aliases: ['save for later', 'read later', 'park', 'snooze', 'defer'] },
-    'note.addTopic': { title: 'Add to a topic', group: 'Note', description: 'Files the open paper under one of your topics.', aliases: ['topic', 'collection', 'file under', 'categorize'] },
+    'note.addTopic': { title: 'Add to a region', group: 'Note', description: 'Files the open paper under one of your regions.', aliases: ['topic', 'collection', 'file under', 'categorize'] },
   };
   const STATUS = { 'to-read': 'Not started yet.', reading: 'You are reading it now.', read: 'Finished.', later: 'Set aside for later.', 'not-relevant': 'Not useful for your work.' };
   for (const [v, d] of Object.entries(STATUS)) ann[`note.status.${v}`] = { group: 'Note', description: `Reading status. ${d}`, aliases: ['status', 'reading status', 'mark', v.replace('-', ' ')] };
@@ -253,7 +253,7 @@
 
   // ====================================================================== tooltips with shortcuts
   const tips = [['#search-input', 'nav.search'], ['#btn-add-menu', 'library.addById', 'Add a paper, PDF or note'], ['#btn-chat', 'library.ask'],
-    ['#btn-review', 'library.review'], ['#btn-zoom-fit', 'graph.fit'], ['#btn-topics', 'topics.toggle', 'Topics and what to read next'],
+    ['#btn-review', 'library.review'], ['#btn-zoom-fit', 'graph.fit'], ['#btn-topics', 'topics.toggle', 'Regions and what to read next'],
     ['#btn-panel-close', 'general.close', 'Close'], ['#btn-chat-close', 'general.close', 'Close'], ['#btn-shortcuts', 'general.shortcuts', 'All keyboard shortcuts']];
   function applyTips() { for (const [sel, id, base] of tips) { const n = $(sel); if (n && !n.dataset.tipBase) CMD.tooltip(n, id, base); } }
   applyTips();
@@ -276,9 +276,9 @@
       ['Find papers', 'Find papers in the top bar: describe a topic and {AI} searches OpenAlex and arXiv and proposes papers. Nothing is added until you say so, and you’re told when a search finishes.', ['papers.find']],
       ['Write a note', 'Your own idea or synthesis, not tied to one paper.', ['library.newNote']],
       ['Zotero', 'Add, then Import from Zotero brings in papers, notes and highlights.', []],
-      ['Folders you keep PDFs in', 'Add › Add folders of papers: pick a folder (one in OneDrive works too). The PDFs stay where they are, never moved, renamed or deleted, and no copy is made. Each folder becomes a topic named after it: before adding you can rename any, clear one, let {AI} suggest names, or let {AI} sort the papers into topics by what they’re about instead of by folder. PDFs you add to those folders later come in by themselves, and a PDF you move to another folder changes topic. Online-only PDFs are read one at a time and sent straight back to OneDrive, so every paper has its full text and only the text stays on your computer. A large import shows a gauge in the bottom-right corner. Settings › Library settings › Folders of papers lists them, with Check now and Stop following.', ['import.linkFolder']],
-      ['Copy in a folder of PDFs', 'Add › Import a folder of PDFs copies each one into your papers folder instead. Let {AI} sort them into topics, or make a topic per subfolder. For papers without a topic: the command Sort papers that have no topic into topics.', ['import.folder', 'topics.autoSort']],
-      ['Reorganize topics', 'Reorganize (bottom right of the map, or in Topics): {AI} regroups the papers you tick by what they’re about, ignoring how they’re filed now, or into sections you name, and you can set how many topics to make. You see the new topics and can rename them before anything changes, and Undo puts every topic back. A topic’s own Split up… does this for just that topic. When {AI} sorts an import you can set the number of topics, or have it use only your existing topics. Both imports and Reorganize can also have {AI} find connections: it reads papers that look alike and links the ones that really belong together, so they sit together on the map.', ['topics.reorganize']],
+      ['Folders you keep PDFs in', 'Add › Add folders of papers: pick a folder (one in OneDrive works too). The PDFs stay where they are, never moved, renamed or deleted, and no copy is made. Each folder becomes a region named after it: before adding you can rename any, clear one, let {AI} suggest names, or let {AI} sort the papers into regions by what they’re about instead of by folder. PDFs you add to those folders later come in by themselves, and a PDF you move to another folder changes region. Online-only PDFs are read one at a time and sent straight back to OneDrive, so every paper has its full text and only the text stays on your computer. A large import shows a gauge in the bottom-right corner. Settings › Library settings › Folders of papers lists them, with Check now and Stop following.', ['import.linkFolder']],
+      ['Copy in a folder of PDFs', 'Add › Import a folder of PDFs copies each one into your papers folder instead. Let {AI} sort them into regions, or make a region per subfolder. For papers without a region: the command Sort papers that have no region into regions.', ['import.folder', 'topics.autoSort']],
+      ['Reorganize regions', 'Reorganize (bottom right of the map, or in Regions): {AI} regroups the papers you tick by what they’re about, ignoring how they’re filed now, or into regions you name, and you can set how many regions to make. You see the new regions and can rename them before anything changes, and Undo puts every region back. A region’s own Split up… does this for just that region. When {AI} sorts an import you can set the number of regions, or have it use only your existing regions. Both imports and Reorganize can also have {AI} find connections: it reads papers that look alike and links the ones that really belong together, so they sit together on the map.', ['topics.reorganize']],
       ['Short on disk space', 'Keep your PDFs in OneDrive: Library settings › Papers folder › move it into OneDrive, then right-click it › Free up space. A PDF downloads only when you open it. On Windows, tick Keep new PDFs online only. research brain always leaves 300 MB free, refuses a PDF that won’t fit, and warns you below 1 GB.', ['library.settings']],
     ]],
     ['Reading and thinking', [
@@ -294,18 +294,18 @@
       ['Lines', 'Red lines are links you made. Dashed blue-grey lines are text similarity. Click a line to ask {AI} why two notes connect.', ['graph.similar', 'graph.citations']],
       ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region. Zoom in as far as you like while there’s something on screen (it stops before you’d zoom into empty space); resizing the window refits the map. With a note open, drag the map to look around; click empty map to close the note (the tab on the right edge reopens it).', ['graph.focus', 'graph.filter', 'graph.fit']],
       ['Labels', 'Papers are labelled with first author and year; Settings › Labels shows the title too, or the title alone. Hover a dot for its full title.', []],
-      ['Move dots', 'Drag a dot where you want it: it keeps that spot within its region (and next time) and no other dot moves with it: its lines just stretch to follow. Clean up (above the map) puts dragged dots and moved sections back into the tidy layout. Regions arrange themselves around the middle. Right-click › Let it move freely gives a dot back to the layout.', ['graph.unpinAll']],
-      ['Regions', 'Groups of related papers get a name above them. A region with the same papers as a topic shows the topic’s name. Click a name to focus the region, then Rename to change it (the topic follows, unless you keep them different). To move a paper into a region or a topic, right-click its dot › Put in section or Add to topic.', ['graph.focusRegion', 'graph.renameRegion']],
+      ['Move dots', 'Drag a dot where you want it: it keeps that spot within its region (and next time) and no other dot moves with it: its lines just stretch to follow. Clean up (above the map) puts dragged dots and moved regions back into the tidy layout. Regions arrange themselves around the middle. Right-click › Let it move freely gives a dot back to the layout.', ['graph.unpinAll']],
+      ['Regions', 'Papers are grouped into regions, named on the map and listed in Regions at the top. Click a name on the map to zoom in on it (click another to go straight there, empty space to come back), then Rename to change it. To move a paper into a region, right-click its dot › Put in region.', ['graph.focusRegion', 'graph.renameRegion']],
     ]],
     ['Finding and recalling', [
       ['Search', 'Highlights matches on the graph. Enter opens the first; ↓ and ↑ step through the rest.', ['nav.search', 'nav.nextResult']],
       ['Ask: Library', 'The agent answers from your papers and notes and cites the pages it used. Switch Quick to Research for harder questions.', ['library.ask']],
-      ['Ask: Topics', 'Pick one or more topics: the agent reads every paper in them and the passages that best match. Also Ask about this topic in the Topics drawer.', ['chat.aboutTopics']],
-      ['Ask: General', 'Ask anything, without your library. Attach… adds papers, notes, questions or topics for it to read. Nothing of yours goes along unless you attach it.', ['chat.general']],
+      ['Ask: Regions', 'Pick one or more regions: the agent reads every paper in them and the passages that best match. Also Ask about this region in the Regions drawer.', ['chat.aboutTopics']],
+      ['Ask: General', 'Ask anything, without your library. Attach… adds papers, notes, questions or regions for it to read. Nothing of yours goes along unless you attach it.', ['chat.general']],
       ['Web search', 'Off until you allow it in Settings › Library settings › AI and privacy. Then tick Search the web in a General chat. Attached papers go with their published parts only; your own notes go along only after you confirm once.', []],
-      ['Conversations', 'Every conversation (library, each paper, each set of topics, General) is kept and comes back next time. Older messages are condensed into a short summary to save space. New chat starts over and keeps the last one in Past chats, where you can go back to any earlier conversation.', []],
+      ['Conversations', 'Every conversation (library, each paper, each set of regions, General) is kept and comes back next time. Older messages are condensed into a short summary to save space. New chat starts over and keeps the last one in Past chats, where you can go back to any earlier conversation.', []],
       ['Review', 'Your own summaries come back for recall. Write what you remember, reveal, grade yourself 1 to 4.', ['library.review']],
-      ['Topics', 'Group papers under topics and keep a queue of what to read next.', ['topics.toggle', 'note.park']],
+      ['Regions', 'Group papers under regions and keep a queue of what to read next.', ['topics.toggle', 'note.park']],
     ]],
     ['Getting around', [
       ['Commands', 'Find any action by name. Every action has a title; frequent ones have a key.', ['general.palette', 'general.shortcuts']],
@@ -337,11 +337,11 @@
 
   // ====================================================================== first-run tour (coach marks)
   const TOUR = [
-    { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere. Already keep PDFs in folders (OneDrive too)? Add folders of papers links them where they are, and each folder becomes a topic.', keys: ['library.addById', 'import.linkFolder'] },
+    { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere. Already keep PDFs in folders (OneDrive too)? Add folders of papers links them where they are, and each folder becomes a region.', keys: ['library.addById', 'import.linkFolder'] },
     { sel: '.search', title: 'Search', text: 'Matching nodes light up on the graph. Enter opens the first match.', keys: ['nav.search'] },
     { sel: '#legend', fallback: '#graph', title: 'Reading the graph', text: 'Dots are papers, rings are notes, red points are fragments. Size grows slightly with what you write and link. Red lines are your links; dashed lines are similar text.', keys: ['graph.fit'] },
     { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a node to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes. Drag a dot to place it; linked dots follow.', keys: ['note.summary', 'note.critique'] },
-    { sel: '#btn-chat', title: 'Ask', text: 'Ask about your whole library, about the papers in some topics, or anything at all (General, where you can attach things and, if you allow it, search the web). Conversations are kept.', keys: ['library.ask', 'chat.general'] },
+    { sel: '#btn-chat', title: 'Ask', text: 'Ask about your whole library, about the papers in some regions, or anything at all (General, where you can attach things and, if you allow it, search the web). Conversations are kept.', keys: ['library.ask', 'chat.general'] },
     { sel: '#btn-view-menu', title: 'Settings and shortcuts', text: 'The gear holds Library settings (tabs and a search box), graph options and appearance. Press ? for every shortcut; find any action by name in the command palette.', keys: ['general.shortcuts', 'general.palette'] },
   ];
   const CSS = `

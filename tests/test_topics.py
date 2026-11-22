@@ -203,7 +203,7 @@ def test_queue_orders_to_read_by_relevance(client, server):
     assert ids.index(near) < ids.index(far)
     assert ids.index(cited) < ids.index(far)
     by = {i["id"]: i for i in q["items"]}
-    assert by[cited]["reason"] == "Cited by 1 paper in this topic"
+    assert by[cited]["reason"] == "Cited by 1 paper in this region"
     assert by[near]["reason"] == "Similar to Hall thruster wall erosion"
     # snooze a library paper ("Not now")
     client.post(f"/api/topics/{slug}/queue/snooze", json={"key": f"note:{far}"})
@@ -260,7 +260,7 @@ def test_recommendation_fusion(client, server, monkeypatch):
     assert "C1" not in keys and "P3" not in keys  # cited once only / already in the library
     assert "R1" in keys and keys.index("R1") < keys.index("R2")
     c2 = items[0]
-    assert c2["reason"] == "Cited by 3 papers in this topic" and set(c2["sources"]) == {"cited", "s2", "similar"}
+    assert c2["reason"] == "Cited by 3 papers in this region" and set(c2["sources"]) == {"cited", "s2", "similar"}
     r1 = next(i for i in items if i["s2_id"] == "R1")
     assert r1["reason"].startswith("Similar to ")
     assert sorted(calls["recs"][0]["pos"]) == ["P1", "P2", "P3"] and calls["recs"][0]["neg"] == []

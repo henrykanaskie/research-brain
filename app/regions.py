@@ -4,17 +4,18 @@ Regions (app/server.py `_clusters`) are found again every time the library chang
 stable. A region is recognised by its members instead: the set of papers and notes in it.
 
 A region's name, in order:
-  1. a name you gave it (kept in <library>/state/region_names.json, matched by members). Yours always wins,
-     and it follows the region as papers join or leave it: a region holding at least half of the papers you
+  1. the name of the topic with the same papers (Jaccard overlap >= MATCH). A region you keep IS a topic (a file in
+     Topics/): one thing with one name, on the map and in the Regions drawer. "Topic" is only what it's called in the
+     files and the API;
+  2. a name you gave a region the map found by similarity (kept in <library>/state/region_names.json, matched by
+     members). It follows the region as papers join or leave it: a region holding at least half of the papers you
      named (or half of its papers being them) keeps the name, and the stored members move with it;
-  2. the name of the topic with the same papers (Jaccard overlap >= MATCH), so a region and its topic read
-     the same;
   3. the research area your AI agent named it (state/region_ai_names.json; app/server.py names regions in the
      background from paper titles, never private ones), e.g. "Collisional-Radiative Models";
   4. its automatic name (its most distinctive phrase, from the titles on this computer).
 
-Renaming a region that has a matching topic renames the topic too, unless you ask to keep them different.
-Either way the region keeps the name as its own, so nothing automatic can replace it.
+Renaming a region renames its topic. Older versions let the two differ: the region's name wins, and its topic takes it
+the next time the map is worked out (unify()), if the topic's papers really are the region's.
 """
 from __future__ import annotations
 
@@ -48,7 +49,7 @@ def _load(store, name: str = "region_names.json") -> list[dict]:
     for r in raw if isinstance(raw, list) else []:
         if isinstance(r, dict) and isinstance(r.get("members"), list) and str(r.get("name") or "").strip():
             out.append({"members": [str(m) for m in r["members"]], "name": str(r["name"])[:MAX_NAME],
-                        "at": r.get("at") or 0})
+                        "at": r.get("at") or 0, **({"own": True} if r.get("own") else {})})
     return out
 
 
@@ -134,6 +135,7 @@ def apply(store, clusters: list[dict], members: dict[int, list[str]]) -> list[di
             _save(store, custom)
     topics = _topics(store)
     by_topic = _best(groups, [t["members"] for t in topics])
+    topics = unify(store, groups, custom, by_custom, topics, by_topic)
     ai = _load(store, AI_FILE)
     by_ai = _best(groups, [set(r["members"]) for r in ai])
     out = []
@@ -142,16 +144,46 @@ def apply(store, clusters: list[dict], members: dict[int, list[str]]) -> list[di
         d["auto_label"] = c.get("label") or ""
         t = topics[by_topic[c["id"]]] if c["id"] in by_topic else None
         d["topic"] = {"slug": t["slug"], "name": t["name"]} if t else None
-        if c["id"] in by_custom:
-            d["label"], d["name_source"] = custom[by_custom[c["id"]]]["name"], "custom"
-        elif t:
+        if t and not (c["id"] in by_custom and custom[by_custom[c["id"]]].get("own")):
             d["label"], d["name_source"] = t["name"], "topic"
+        elif c["id"] in by_custom:
+            d["label"], d["name_source"] = custom[by_custom[c["id"]]]["name"], "custom"
         elif c["id"] in by_ai:
             d["label"], d["name_source"] = ai[by_ai[c["id"]]]["name"], "ai"
         else:
             d["name_source"] = "auto"
         out.append(d)
     return out
+
+
+def unify(store, groups: dict[int, set], custom: list[dict], by_custom: dict, topics: list[dict], by_topic: dict) -> list[dict]:
+    """A region with a name of its own and a topic called something else: the region's name is the one that stays, so
+    the topic takes it, once. Left alone ("own") when the topic is only partly the same papers, or another topic has
+    that name already; the region then keeps showing its own name."""
+    from . import topics as T
+    changed, drop = False, []
+    for cid, k in by_custom.items():
+        if cid not in by_topic:
+            continue
+        t, c = topics[by_topic[cid]], custom[k]
+        if c["name"].casefold() != t["name"].casefold():
+            inside = len(t["members"] & groups[cid]) / max(1, len(t["members"]))
+            try:
+                if inside < 0.8:
+                    raise T.TopicError("only partly the same papers")
+                T.update_topic(store, t["slug"], name=c["name"])
+                print(f"[research_brain] the topic {t['name']!r} is now called {c['name']!r}, as its region on the map is")
+                t["name"] = c["name"]
+            except (T.TopicError, KeyError, OSError):
+                if not c.get("own"):
+                    c["own"], changed = True, True
+                continue
+        drop.append(k)
+    if drop or changed:
+        with _lock:
+            gone = [custom[k] for k in drop]
+            _save(store, [c for c in custom if c not in gone])
+    return topics
 
 
 def save_ai_names(store, named: list[tuple[list[str], str]]) -> None:
@@ -172,9 +204,8 @@ class RegionError(ValueError):
     pass
 
 
-def rename(store, region_members: list[str], name: str, topic_slug: str | None, rename_topic: bool) -> dict:
-    """Name a region. With rename_topic and a matching topic, the topic takes the name and the region simply
-    follows it (no separate name is kept). Otherwise the region keeps this name of its own."""
+def rename(store, region_members: list[str], name: str, topic_slug: str | None) -> dict:
+    """Name a region: its topic, when it has one, else the group of papers the map found."""
     from . import topics as T
     name = " ".join((name or "").split())[:MAX_NAME]
     if not name:
@@ -183,18 +214,18 @@ def rename(store, region_members: list[str], name: str, topic_slug: str | None, 
     if not mem:
         raise RegionError("That region is empty")
     with _lock:
-        # the region keeps the name as its own either way, so no topic, AI or automatic name can replace it
         items = [r for r in _load(store) if _held(set(r["members"]), mem) < MATCH]
-        if rename_topic and topic_slug:
+        if topic_slug:
             try:
                 T.update_topic(store, topic_slug, name=name)
             except KeyError:
-                raise RegionError("That topic no longer exists")
+                raise RegionError("That region no longer exists")
             except T.TopicError as e:
                 raise RegionError(str(e))
-        items.append({"members": sorted(mem), "name": name, "at": time.time()})
+        else:
+            items.append({"members": sorted(mem), "name": name, "at": time.time()})
         _save(store, items)
-    return {"name": name, "renamed_topic": bool(rename_topic and topic_slug)}
+    return {"name": name, "renamed_topic": bool(topic_slug)}
 
 
 def reset(store, region_members: list[str]) -> None:

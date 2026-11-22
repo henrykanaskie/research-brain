@@ -335,9 +335,9 @@
 
   function topicTools(slug) {
     return [
-      el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Copy bibliography', title: 'The papers in this topic as a reference list in your default style', onclick: () => copy('bibliography', { topic: slug }).catch(() => {}) }),
-      el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Copy BibTeX', title: 'The BibTeX entries of this topic’s papers, to paste into your .bib file', onclick: () => copy('bibtex', { topic: slug }).catch(() => {}) }),
-      el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Export .bib', title: 'Download this topic’s papers as BibTeX. For a file that updates itself, add an auto-export in Library settings › Citations.', onclick: () => download({ topic: slug }) }),
+      el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Copy bibliography', title: 'The papers in this region as a reference list in your default style', onclick: () => copy('bibliography', { topic: slug }).catch(() => {}) }),
+      el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Copy BibTeX', title: 'The BibTeX entries of this region’s papers, to paste into your .bib file', onclick: () => copy('bibtex', { topic: slug }).catch(() => {}) }),
+      el('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Export .bib', title: 'Download this region’s papers as BibTeX. For a file that updates itself, add an auto-export in Library settings › Citations.', onclick: () => download({ topic: slug }) }),
     ];
   }
 
@@ -387,7 +387,7 @@
     }
     if (!ax.exports.length) list.append(el('li', null, el('span', { class: 'w', text: 'None yet.' })));
     const path = el('input', { type: 'text', placeholder: '/Users/you/thesis/references.bib', spellcheck: 'false', 'aria-label': 'Path of the .bib file' });
-    const scopeSel = el('select', { 'aria-label': 'What to export' }, el('option', { value: 'all', text: 'Whole library' }), ...topics.map((t) => el('option', { value: `topic:${t.slug}`, text: `Topic: ${t.name}` })));
+    const scopeSel = el('select', { 'aria-label': 'What to export' }, el('option', { value: 'all', text: 'Whole library' }), ...topics.map((t) => el('option', { value: `topic:${t.slug}`, text: `Region: ${t.name}` })));
     const flavorSel = el('select', { 'aria-label': 'BibTeX format' }, el('option', { value: 'biblatex', text: 'BibLaTeX (biber, UTF-8)' }), el('option', { value: 'bibtex', text: 'BibTeX (ASCII, LaTeX accents)' }));
     const add = el('button', { class: 'btn', type: 'button', text: 'Add auto-export' });
     add.addEventListener('click', async () => {

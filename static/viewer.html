@@ -301,7 +301,7 @@ a.cite{color:var(--machine)}
     <div id="sideGrip" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0" title="Drag to resize. Double-click to reset."></div>
     <div id="sideTabs" role="tablist" aria-label="Side panel">
       <button type="button" role="tab" id="tabNotes" aria-selected="true" aria-controls="fragList">Notes</button>
-      <button type="button" role="tab" id="tabFocus" aria-selected="false" aria-controls="focusPane" title="What in this paper matters for a question or topic (F). Local, no AI.">Focus</button>
+      <button type="button" role="tab" id="tabFocus" aria-selected="false" aria-controls="focusPane" title="What in this paper matters for a question or region (F). Local, no AI.">Focus</button>
       <button type="button" role="tab" id="tabAsk" aria-selected="false" aria-controls="askPane">Ask<span id="askAgent">AI</span><i class="ag-dot" aria-hidden="true"></i></button>
     </div>
     <div id="fragList" role="tabpanel" aria-labelledby="tabNotes">
@@ -312,7 +312,7 @@ a.cite{color:var(--machine)}
     <section id="focusPane" role="tabpanel" aria-labelledby="tabFocus" hidden>
       <form id="focusForm" autocomplete="off">
         <label for="focusFor" class="f-lab">What matters in this paper for</label>
-        <select id="focusFor" aria-label="Question or topic"><option value="">Loading…</option></select>
+        <select id="focusFor" aria-label="Question or region"><option value="">Loading…</option></select>
         <input id="focusText" type="text" placeholder="or type what you're after" aria-label="Words to look for" spellcheck="false">
         <div class="f-row"><button class="btn primary" id="focusGo" type="submit">Find</button><button class="btn" id="focusClear" type="button" hidden>Clear marks</button>
           <span class="f-note">On this computer; no AI</span></div>
@@ -1158,7 +1158,7 @@ async function loadFocusChoices() {
     const ql = (Array.isArray(qs) ? qs : qs.questions || []).filter((q) => (q.question_status || "open") === "open");
     const tl = Array.isArray(ts) ? ts : ts.topics || [];
     if (ql.length) opts.push(`<optgroup label="Open questions">${ql.map((q) => `<option value="q:${esc(q.id)}">${esc(q.title)}</option>`).join("")}</optgroup>`);
-    if (tl.length) opts.push(`<optgroup label="Topics">${tl.map((t) => `<option value="t:${esc(t.slug)}">${esc(t.name)}</option>`).join("")}</optgroup>`);
+    if (tl.length) opts.push(`<optgroup label="Regions">${tl.map((t) => `<option value="t:${esc(t.slug)}">${esc(t.name)}</option>`).join("")}</optgroup>`);
   } catch { }
   sel.innerHTML = opts.join("");
   try { const last = localStorage.getItem("rb.viewer.focus"); if (last && sel.querySelector(`option[value="${CSS.escape(last)}"]`)) sel.value = last; } catch { }
@@ -1431,9 +1431,9 @@ if (RBC) {
     run: askAboutSelection, when: () => !popIsOpen(),
     description: "Opens the Ask tab beside the PDF. With a passage selected, the question is about that passage.",
     aliases: ["chat", "ai", "claude", "question", "explain"] });
-  RBC.register({ id: "viewer.focus", group: "Viewer", title: "What matters here for a question or topic", keys: ["F"], allowInInput: false,
+  RBC.register({ id: "viewer.focus", group: "Viewer", title: "What matters here for a question or region", keys: ["F"], allowInInput: false,
     run: () => { setTab("focus"); setTimeout(() => $("#focusFor").focus(), 0); }, when: () => !popIsOpen(),
-    description: "Opens the Focus tab: pick an open question or topic (or type words) and the passages of this paper that bear on it are listed and marked. On this computer, no AI.",
+    description: "Opens the Focus tab: pick an open question or region (or type words) and the passages of this paper that bear on it are listed and marked. On this computer, no AI.",
     aliases: ["relevant", "useful", "skim", "find", "question", "topic"] });
   RBC.layer({ id: "viewer.ask-input", order: 55, isOpen: (c) => c && c.target === askInput, close: () => { askInput.blur(); viewer.focus(); } });
   RBC.tooltip && RBC.tooltip($("#askSelBtn"), "viewer.ask", "Ask about this passage");
