@@ -1183,6 +1183,45 @@ PLASMA = "Hall thruster plasma discharge {w} ionization breathing mode oscillati
 STARS = "Stellar spectra of cool dwarf stars {w} atmospheres metallicity abundances exoplanet hosts photometry"
 
 
+def test_map_draws_few_lines_until_you_point(ctx, server):
+    """The resting map: no line runs from section to section and no pair of papers has two lines; pointing at a paper
+    shows its line across; Lines set to All shows everything. Every section's name sits right above its papers."""
+    clear_vault(server)
+    ids = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Hall thruster oscillations {w}", "abstract": PLASMA.format(w=w)})["id"]
+           for w in ("alpha", "beta", "gamma", "delta")]
+    stars = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Cool dwarf atmospheres {w}", "abstract": STARS.format(w=w)})["id"]
+             for w in ("one", "two", "three", "four")]
+    api(server, "POST", f"/api/notes/{ids[0]}/link", {"target": stars[0]})
+    api(server, "POST", f"/api/notes/{ids[0]}/link", {"target": ids[1]})
+    page = open_app(ctx, server)
+    page.wait_for_function("(window.__rb.S.stops || 0) >= 1 && (window.__rb.S.regionLabels || []).filter((r) => r.box).length >= 2", timeout=30000)
+    drawn = """() => { const {S, fg} = window.__rb, vis = fg.linkVisibility(), id = (x) => x.id || x;
+      return S.links.filter((l) => l.kind !== 'part' && vis(l)).map((l) => [l.kind, id(l.source), id(l.target),
+        S.nodes.get(id(l.source)).cluster !== S.nodes.get(id(l.target)).cluster]); }"""
+    across = "() => " + "(" + drawn + ")().some((l) => l[3])"
+    rest = page.evaluate(drawn)
+    assert not [x for x in rest if x[3]], rest
+    pairs = [tuple(sorted(x[1:3])) for x in rest]
+    assert len(pairs) == len(set(pairs)), rest
+    assert ["manual", ids[0], ids[1], False] in rest or ["manual", ids[1], ids[0], False] in rest
+    # names: above their papers, within reach of them, never over a dot
+    bad = page.evaluate("""() => { const {S, fg} = window.__rb, k = fg.zoom();
+      return S.regionLabels.filter((r) => { const b = r.box; if (!b) return true;
+        const mem = [...S.nodes.values()].filter((n) => n.cluster === r.cid), top = Math.min(...mem.map((n) => n.y));
+        const on = [...S.nodes.values()].some((n) => n.x > b[0] && n.x < b[2] && n.y > b[1] && n.y < b[3]);
+        return on || b[3] > top || (top - b[3]) * k > 60; }).map((r) => r.label); }""")
+    assert not bad, bad
+    sx, sy = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id), p = window.__rb.fg.graph2ScreenCoords(n.x, n.y); return [p.x, p.y]; }", ids[0])
+    box = page.locator("#graph").bounding_box()
+    page.mouse.move(box["x"] + sx, box["y"] + sy)
+    page.wait_for_function(across)
+    page.mouse.move(box["x"] + 5, box["y"] + box["height"] - 120)
+    page.wait_for_function("() => !(" + across + ")()")
+    page.evaluate("() => window.__rb.setLines('all')")
+    page.wait_for_function(across)
+    page.evaluate("() => window.__rb.setLines('few')")
+
+
 def test_sections_drag_and_add_into(ctx, server):
     """Sections on the map: drawn as clouds, dragged as a whole by their name tag (only that section moves, and
     it stays where you drop it), and a paper added "into a section" joins it."""

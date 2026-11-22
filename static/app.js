@@ -51,6 +51,7 @@
     threshold: 0.45,
     showSim: LS.get('showSim', true),
     showCites: LS.get('showCites', true),
+    lines: LS.get('lines', 'few'),
     nodes: new Map(),       // id -> node object (persisted across refreshes to keep positions)
     links: [],              // current link objects in the graph
     simLinks: [],
@@ -838,6 +839,13 @@
       const d = t - n.__a;
       if (Math.abs(d) > 0.004) { n.__a += d * kf; moving = true; } else n.__a = t;
     }
+    // lines fade in and out with their dots
+    for (const l of S.links || []) {
+      const t = linkDrawn(l) ? 1 : 0;
+      if (l.__v === undefined) l.__v = t;
+      const d = t - l.__v;
+      if (Math.abs(d) > 0.004) { l.__v += d * kf; moving = true; } else l.__v = t;
+    }
     return moving;
   }
   // S.hidden: ids hidden outright by a neighbourhood focus (static/views.js); their links go too
@@ -858,6 +866,60 @@
   const linkShown = (l) => !(S.hidden && (nodeHidden(lid(l.source)) || nodeHidden(lid(l.target))))
     && (l.kind !== 'similar' || (S.showSim && (l.top || touchesActive(l)) && (l.tree || l.score >= S.threshold)))
     && (l.kind !== 'cites' || S.showCites);
+  // ---------- which lines are drawn while nothing is pointed at ----------
+  // A library has several lines for the same two papers (you linked them, one cites the other, the AI joined them)
+  // and many that run across the map from section to section. Drawn all at once they hide what the map shows, so
+  // with View › Lines on "few" the resting map draws, inside each section only: your own links, then just enough of
+  // the others (the strongest first) to join its papers, never two for one pair. Pointing at a dot, clicking it, or
+  // pointing at a section's name fades in all of its lines.
+  const LINE_RANK = { manual: 0, conflict: 1, question: 2, mention: 3, cites: 4, ai: 5, similar: 6 };
+  const OWN_LINE = new Set(['manual', 'conflict', 'question', 'mention']);
+  let restCache = null;
+  function restingLines() {
+    const c = restCache;
+    if (c && c.links === S.links && c.n === S.links.length && c.nodes === S.nodes && c.clusters === S.clusters && c.thr === S.threshold
+      && c.sim === S.showSim && c.cites === S.showCites && c.hidden === S.hidden) return c.set;
+    const set = new Set(), up = new Map(), pairs = new Set();
+    const root = (x) => { let r = x; while (up.has(r)) r = up.get(r); while (up.has(x)) { const nx = up.get(x); up.set(x, r); x = nx; } return r; };
+    const list = [];
+    for (const l of S.links) {
+      if (!linkShown(l)) continue;
+      if (l.kind === 'part') { set.add(l); continue; }
+      const a = S.nodes.get(lid(l.source)), b = S.nodes.get(lid(l.target));
+      if (!a || !b || (a.cluster >= 0 && b.cluster >= 0 && a.cluster !== b.cluster)) continue;  // from section to section
+      if (l.kind === 'similar' && !l.top) continue;
+      list.push(l);
+    }
+    const score = (l) => (Number.isFinite(l.score) ? l.score : 0);
+    list.sort((p, q) => (LINE_RANK[p.kind] ?? 9) - (LINE_RANK[q.kind] ?? 9) || score(q) - score(p));
+    for (const l of list) {
+      const a = lid(l.source), b = lid(l.target), key = linkKey(a, b);
+      if (pairs.has(key)) continue;
+      const ra = root(a), rb = root(b);
+      if (ra === rb && !OWN_LINE.has(l.kind)) continue;  // its ends are already joined
+      pairs.add(key); set.add(l);
+      if (ra !== rb) up.set(ra, rb);
+    }
+    restCache = { links: S.links, n: S.links.length, nodes: S.nodes, clusters: S.clusters, thr: S.threshold, sim: S.showSim, cites: S.showCites, hidden: S.hidden, set };
+    return set;
+  }
+  const linkResting = (l) => linkShown(l) && (S.lines === 'all' || restingLines().has(l));
+  const inHotSection = (l) => {
+    if (S.hoverRegion == null) return false;
+    const a = S.nodes.get(lid(l.source)), b = S.nodes.get(lid(l.target));
+    return !!(a && b && (a.cluster === S.hoverRegion || b.cluster === S.hoverRegion));
+  };
+  /** drawn now: a resting line, or one of the dot (or section) you're pointing at, clicked or dragging */
+  const linkDrawn = (l) => linkShown(l) && (linkResting(l) || touchesActive(l) || inHotSection(l)
+    || !!(S.dragNode && (lid(l.source) === S.dragNode.id || lid(l.target) === S.dragNode.id)));
+  /** drawn now, or still fading out */
+  const linkOnMap = (l) => linkShown(l) && (linkDrawn(l) || l.__v > 0.01);
+  function setLines(v) {
+    S.lines = v === 'all' ? 'all' : 'few';
+    LS.set('lines', S.lines);
+    const el = $('#lines-mode'); if (el) el.value = S.lines;
+    kick(400);
+  }
 
   // ---------- redraw control: only animate while something is moving ----------
   let animUntil = 0;
@@ -954,7 +1016,7 @@
       }
       if (t >= 1) {
         motion.tween = null;
-        if (!tw.quiet) { motion.restAt = now; S.settledOnce = true; S.stops = (S.stops || 0) + 1; }
+        if (!tw.quiet) { motion.restAt = now; S.settledOnce = true; S.stops = (S.stops || 0) + 1; shapeHidden(); }
       }
       kick(60);
     } else if (floating() && now - motion.lastKick > 33) {
@@ -1012,7 +1074,7 @@
     let n2 = 0;
     for (const l of S.links) {
       if (n2 > 60) break;
-      if (!linkShown(l) || l.kind === 'part') continue;
+      if (!linkDrawn(l) || l.kind === 'part') continue;
       const a = lid(l.source), b = lid(l.target);
       const fromA = hop1.includes(a) && !first.has(b), fromB = hop1.includes(b) && !first.has(a);
       if (!fromA && !fromB) continue;
@@ -1028,7 +1090,7 @@
     // only while the map is coming to life after a change (the float's lifetime): then it is completely still
     if (typeof floatLevel === 'function' && floatLevel() < 0.5) return;
     if (pulses.length > 6) return;
-    const pool = S.links.filter((l) => l.kind !== 'part' && linkShown(l));
+    const pool = S.links.filter((l) => l.kind !== 'part' && linkDrawn(l));
     if (pool.length < 3) return;
     const burst = 1 + (Math.random() < 0.35 ? 1 : 0);
     const now = performance.now();
@@ -1045,8 +1107,8 @@
    *  regions sweep through the middle of the brain, so connections bundle like white-matter tracts. */
   function linkGeom(l, route = true) {
     // Circuit traces: every link is routed octilinearly (straight runs joined by one 45-degree
-    // diagonal), like a trace on a circuit board. Where the straight run splits varies per link so
-    // parallel traces separate instead of sitting on top of each other.
+    // diagonal), like a trace on a circuit board. One bend: the diagonal is at one end or the other,
+    // which end varies per link so parallel traces separate instead of sitting on top of each other.
     const s = l.source, t = l.target;
     if (!s || !t || s.x === undefined || t.x === undefined) return null;
     const k = S.k || 1;
@@ -1063,7 +1125,7 @@
     const x0 = ss ? ss.x : s.x, y0 = ss ? ss.y : s.y, x1 = ts ? ts.x : t.x, y1 = ts ? ts.y : t.y;
     const dx = x1 - x0, dy = y1 - y0, ax = Math.abs(dx), ay = Math.abs(dy);
     const sx = Math.sign(dx) || 1, sy = Math.sign(dy) || 1;
-    if (l.__split === undefined) l.__split = 0.3 + 0.4 * ((strHash(l.kind + linkKey(lid(s), lid(t))) % 1000) / 1000);
+    if (l.__split === undefined) l.__split = strHash(l.kind + linkKey(lid(s), lid(t))) % 2;
     const f = l.__split;
     let pts;
     if (ax >= ay) {
@@ -1167,6 +1229,19 @@
     }
     traceGrid.frame = -1;
   }
+  /** The layout has come to rest: lines that aren't drawn (so nothing is seen to jump) take a shape that misses the
+   *  dots, for when they appear. */
+  function shapeHidden() {
+    if (S.noRoute) return;
+    traceGrid.frame = -1;
+    const until = performance.now() + 60;
+    for (const l of S.links || []) {
+      if (l.kind === 'part' || l.__shape || typeof l.source !== 'object' || !linkShown(l) || linkDrawn(l)) continue;
+      l.__shape = pickShape(l);
+      if (performance.now() > until) break;
+    }
+    traceGrid.frame = -1;
+  }
   function updateCentroids() {
     const sums = new Map(); let ax = 0, ay = 0, an = 0;
     for (const n of S.nodes.values()) {
@@ -1223,6 +1298,7 @@
     let dim = lit ? 1 : Math.min(fa, fb);
     if (S.search) dim = Math.min(fa, fb);
     const hov = S.hoverLink === l || lit;
+    if (l.__v !== undefined) dim *= l.__v;
     // long fibres recede a little, like depth in tissue
     const len = Math.hypot(b.x - a.x, b.y - a.y) || 0;
     const depth = Math.max(0.45, Math.min(1, 1.25 - len / 320));
@@ -1260,8 +1336,9 @@
     if (st.dash) ctx.setLineDash([3 / k, 2.5 / k]);
     ctx.stroke();
     if (st.dash) ctx.setLineDash([]);
+    if (S.drawnTraces && l.kind !== 'part' && linkResting(l)) S.drawnTraces.push(g.pts);  // names keep off these (drawLabels)
     // tiny vias where the trace bends
-    if (k > 0.9 && l.kind !== 'part') {
+    if (k > 5 && l.kind !== 'part') {
       const vr = 0.7 / k;
       ctx.fillStyle = rgba(st.col, Math.min(1, st.a * 1.3));
       for (let i = 2; i < g.pts.length - 2; i += 2) ctx.fillRect(g.pts[i] - vr, g.pts[i + 1] - vr, 2 * vr, 2 * vr);
@@ -1286,9 +1363,8 @@
   }
 
   // ---------- regions ----------
-  // No outlines or fills: the layout's grouping shows the structure. Each section gets a header pinned to the
-  // top of its section (where the layout reserves a band for it), so it never drifts with the dots or jumps
-  // to dodge them, and its papers sit under it.
+  // No outlines or fills: the layout's grouping shows the structure. Each section's name sits right above its own
+  // papers, measured from where they rest (not their float), so it reads as theirs and holds still.
   function drawRegions(ctx, k) {
     S.regionLabels = [];
     if (!S.clusters || !S.clusters.length) return;
@@ -1303,17 +1379,26 @@
       if (mem.length < 2) continue;
       const info = S.clusters.find((c) => c.id === cid);
       if (!info || !info.label) continue;
-      const a = rf && rf.regionAt ? rf.regionAt(cid) : null;
-      let x, top, r;
-      if (a && Number.isFinite(a.x)) { x = a.x; top = a.y - a.r; r = a.r; }
-      else {  // no layout yet: above its papers
-        let cx = 0, minY = Infinity, minX = Infinity, maxX = -Infinity;
-        for (const n of mem) { cx += n.x; minY = Math.min(minY, n.y); minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x); }
-        x = cx / mem.length; top = minY; r = Math.max(10, (maxX - minX) / 2);
-      }
-      S.regionLabels.push({ cid, x, top, r, label: info.label, size: mem.length });
+      const b = sectionSpan(mem, rf && rf.regionAt ? rf.regionAt(cid) : null);
+      S.regionLabels.push({ cid, ...b, label: info.label, size: mem.length });
     }
     S.regionLabels.sort((a, b) => b.size - a.size);
+  }
+  /** The box its papers fill, from where they rest. A dot dragged well out of its section doesn't take the name along. */
+  function atRest(n) {  // without its float, or the step aside it takes for a hover card
+    const dx = (floatOn ? n.__flx || 0 : 0) + (shiftOn ? n.__dx || 0 : 0), dy = (floatOn ? n.__fly || 0 : 0) + (shiftOn ? n.__dy || 0 : 0);
+    return [n.x - dx, n.y - dy];
+  }
+  function sectionSpan(mem, a, posOf = null) {
+    const at = (n) => (posOf && posOf(n)) || atRest(n);
+    let use = a && Number.isFinite(a.x) ? mem.filter((n) => { const p = at(n); return Math.hypot(p[0] - a.x, p[1] - a.y) <= a.r * 1.5; }) : mem;
+    if (!use.length) use = mem;
+    let x0 = Infinity, x1 = -Infinity, top = Infinity, bottom = -Infinity;
+    for (const n of use) {
+      const [x, y] = at(n), r = nodeRadius(n);
+      x0 = Math.min(x0, x - r); x1 = Math.max(x1, x + r); top = Math.min(top, y - r); bottom = Math.max(bottom, y + r);
+    }
+    return { x: (x0 + x1) / 2, x0, x1, top, bottom };
   }
   function regionName(label) { return label ? label.charAt(0).toUpperCase() + label.slice(1) : ''; }
   /** Words into at most `max` lines no wider than `w` (the last one cut with an ellipsis if it must be). */
@@ -1327,6 +1412,15 @@
       if (lines.length === max - 1) { cur = words.slice(i).join(' '); break; }
     }
     if (cur) lines.push(cur);
+    // two lines of about the same length, never one word left over
+    if (max === 2 && lines.length === 2) {
+      const width = (t) => ctx.measureText(t).width;
+      let best = Math.max(width(lines[0]), width(lines[1]));
+      for (let i = 1; i < words.length; i++) {
+        const a = words.slice(0, i).join(' '), b = words.slice(i).join(' '), m = Math.max(width(a), width(b));
+        if (m < best) { best = m; lines[0] = a; lines[1] = b; }
+      }
+    }
     const last = lines.length - 1;
     if (last >= 0 && ctx.measureText(lines[last]).width > w) {
       let t = lines[last];
@@ -1335,56 +1429,74 @@
     }
     return lines;
   }
-  /** Section headers: the name in the display face, centred over the section and wrapped to its width (two
-   *  lines at most), then a short red rule with the paper count beside it, like a label on a specimen drawer.
-   *  They sit in the band the layout keeps above each section, scale with the map (within readable limits),
-   *  and stay put: hovering a dot in the section, or the header, draws the rule full width. Click to focus. */
+  const TITLE_PX = 15, TITLE_MAX_W = 190, TITLE_GAP = 13;  // screen pixels
+  /** Section names: the display face, centred right above the section's papers, two even lines at most, with the
+   *  paper count small after it. The map's own colour sits behind the words, so no line runs through them. A name
+   *  that would cover a dot or another name goes under its section instead. Pointing at it (or at a dot in the
+   *  section) draws a red rule under it; click to focus the section. */
   function drawRegionLabels(ctx, k) {
     if (!S.regionLabels) return;
     const focused = S.focusCluster;
     const hoverNode = S.hover && S.nodes.get(S.hover);
     const hot = S.hoverRegion != null ? S.hoverRegion : hoverNode ? hoverNode.cluster : null;
     const px = 1 / k;
-    // type is about 7.5 map units, so it grows and shrinks with the sections, held between 12 and 18 px on screen
-    const fsPx = Math.max(12, Math.min(18, 7.5 * k)), fs = fsPx * px, lineH = fs * 1.12;
+    // zoomed out on a big library the names shrink a little; they are never louder than the papers
+    const fsPx = Math.max(12, Math.min(TITLE_PX, 6.5 * k)), fs = fsPx * px, lineH = fs * 1.18;
     const nameFont = `italic 500 ${fs}px "Newsreader", Georgia, serif`;
-    const numFont = `500 ${Math.max(8.5, fsPx * 0.62) * px}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
+    const numFont = `500 ${10 * px}px "Archivo", -apple-system, "Segoe UI", sans-serif`;
     const vtl = fg.screen2GraphCoords(0, 0), vbr = fg.screen2GraphCoords(graphEl.clientWidth, graphEl.clientHeight);
+    const rest = [];
+    for (const n of S.dots || []) rest.push([...atRest(n), n.__outer || 2]);
+    const covers = (b) => {
+      let c = 0;
+      for (const [x, y, r] of rest) { const cx = Math.max(b[0], Math.min(x, b[2])), cy = Math.max(b[1], Math.min(y, b[3])); if ((cx - x) ** 2 + (cy - y) ** 2 < r * r) c++; }
+      return c;
+    };
+    const placed = [];
     ctx.save();
     for (const r of S.regionLabels) {
       r.box = null;
       if (focused != null) continue;  // the focus bar names the region
       ctx.font = nameFont;
-      const maxW = Math.max(2 * r.r + 2 * SECTION_SIDE * 0.6, 90 * px);
-      const lines = wrapWords(ctx, regionName(r.label), maxW, 2);
-      const wName = Math.max(...lines.map((t) => ctx.measureText(t).width));
-      const ruleGap = 5 * px, ruleH = 9 * px;  // the rule-and-count line under the name
-      const bottom = r.top - 3 * px;            // just above the section's papers
-      const blockH = lines.length * lineH + ruleGap + ruleH;
-      const y0 = bottom - blockH;
-      const x0 = r.x - wName / 2;
-      if (x0 > vbr.x || x0 + wName < vtl.x || bottom < vtl.y || y0 > vbr.y) continue;  // off screen
-      r.box = [x0 - 4 * px, y0 - 2 * px, x0 + wName + 4 * px, bottom + 2 * px];
-      const isHot = hot != null && r.cid === hot;
-      const dimmed = !isHot && (S.selected || S.search);
-      ctx.globalAlpha = dimmed ? 0.45 : 1;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-      ctx.lineJoin = 'round'; ctx.lineWidth = 4.5 * px; ctx.strokeStyle = rgba(C.ground, 0.92);
-      lines.forEach((t, i) => {
-        const base = y0 + (i + 0.8) * lineH;
-        ctx.strokeText(t, r.x, base);
-        ctx.fillStyle = C.ink; ctx.fillText(t, r.x, base);
-      });
-      // the rule and the count, centred together under the name
+      const maxW = Math.max(r.x1 - r.x0 + 40 * px, TITLE_MAX_W * px);
+      const lines = wrapWords(ctx, regionName(r.label), maxW, 2), widths = lines.map((t) => ctx.measureText(t).width);
       ctx.font = numFont;
-      const num = String(r.size), wNum = ctx.measureText(num).width;
-      const ruleW = isHot ? Math.max(wName - wNum - 6 * px, 14 * px) : 14 * px;
-      const rowW = ruleW + 5 * px + wNum, rx = r.x - rowW / 2, ry = y0 + lines.length * lineH + ruleGap + ruleH / 2;
-      ctx.fillStyle = isHot ? C.red : rgba(C.red, 0.85);
-      ctx.fillRect(rx, ry - 0.6 * px, ruleW, (isHot ? 1.5 : 1.1) * px);
-      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.strokeText(num, rx + ruleW + 5 * px, ry);
-      ctx.fillStyle = C.ink3; ctx.fillText(num, rx + ruleW + 5 * px, ry);
+      const num = String(r.size), wNum = ctx.measureText(num).width, numGap = 5 * px;
+      const last = lines.length - 1, wName = Math.max(...widths.map((w, i) => (i === last ? w + numGap + wNum : w)));
+      const blockH = lines.length * lineH, gap = TITLE_GAP * px;
+      const x0 = r.x - wName / 2;
+      // on screen when any of it or its papers is; a section cut by the window's top or side keeps its name in view
+      if (Math.max(r.x1, x0 + wName) < vtl.x || Math.min(r.x0, x0) > vbr.x || r.bottom < vtl.y || r.top - gap - blockH > vbr.y) continue;
+      const bx = (x) => Math.max(vtl.x + 8 * px, Math.min(x, vbr.x - 8 * px - wName));
+      let best = null;
+      for (const [i, y] of [[0, r.top - gap - blockH], [1, r.bottom + gap + 14 * px], [2, r.top - gap - blockH * 2]]) {
+        const X = bx(x0), box = [X - 4 * px, y - 2 * px, X + wName + 4 * px, y + blockH + 3 * px];
+        if (placed.some((p) => boxesMeet(box, p))) continue;
+        const under = covers(box) + (i === 1 ? 0.5 : 0);
+        if (!best || under < best.under) best = { y, X, box, under };
+        if (best.under < 0.5) break;
+      }
+      if (!best || best.box[3] < vtl.y || best.box[1] > vbr.y) continue;
+      placed.push(best.box); r.box = best.box;
+      const cx = best.X + wName / 2, isHot = hot != null && r.cid === hot;
+      const dimmed = !isHot && (S.selected || S.search || hot != null || S.lit);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      lines.forEach((t, i) => {
+        const w = widths[i], full = i === last ? w + numGap + wNum : w, tx = cx - full / 2, base = best.y + (i + 0.8) * lineH;
+        ctx.font = nameFont;
+        ctx.globalAlpha = 1;  // the backing stays solid when the name dims, so a lit line never strikes it out
+        glowText(ctx, t, tx, base, 8);
+        ctx.lineJoin = 'round'; ctx.lineWidth = 4 * px; ctx.strokeStyle = rgba(C.ground, 0.95);
+        ctx.strokeText(t, tx, base);
+        ctx.globalAlpha = dimmed ? 0.4 : 1;
+        ctx.fillStyle = C.ink; ctx.fillText(t, tx, base);
+        if (i === last) {
+          ctx.font = numFont;
+          ctx.strokeText(num, tx + w + numGap, base);
+          ctx.fillStyle = C.ink3; ctx.fillText(num, tx + w + numGap, base);
+          if (isHot) { ctx.fillStyle = C.red; ctx.fillRect(tx, base + 4 * px, w, 1.2 * px); }
+        }
+      });
     }
     ctx.restore();
   }
@@ -1994,11 +2106,11 @@
    *  so neither titles nor names run into the next section. Sections you dragged stay where you put them; the
    *  others pack around them. */
   const REGION_GAP = 2 * 9 + 16;  // two cloud margins (CLOUD_PAD) and clear space between them: clouds never touch
-  const SECTION_SIDE = 40;        // graph units each side of a section's disc for its papers' titles
-  const SECTION_HEAD = 20;        // graph units above it for its name
-  const GAP_X = 16, GAP_Y = 10;   // clear space between two sections' boxes
+  const SECTION_SIDE = 22;        // graph units each side of a section's disc for its papers' titles
+  const SECTION_HEAD = 16;        // graph units above it for its name
+  const GAP_X = 10, GAP_Y = 10;   // clear space between two sections' boxes
   /** a section's box: centre and half sizes (the name band on top shifts its centre up) */
-  const sectionBox = (a) => ({ cx: a.x, cy: a.y - SECTION_HEAD / 2, hw: a.r + SECTION_SIDE, hh: a.r + SECTION_HEAD / 2 });
+  const sectionBox = (a) => ({ cx: a.x, cy: a.y - SECTION_HEAD / 2, hw: a.r + SECTION_SIDE, hh: a.r * 0.82 + SECTION_HEAD / 2 });
   function compactRegions(anchors) {
     const all = [...anchors.values()];
     if (all.length < 2) return;
@@ -2029,6 +2141,8 @@
         if (!moved) return;
       }
     };
+    // the shape of a screen: spread the arrangement sideways and flatten it before packing
+    for (const a of free) { a.x *= 1.35; a.y *= 0.8; }
     clear(80);  // first make room, from where the related-regions layout put them
     // the middle the free sections gather round: the papers' centre of mass, as packRegions left it
     let cx = 0, cy = 0, w = 0;
@@ -2041,7 +2155,7 @@
         if (d < 1e-6) continue;
         const step = Math.min(d, d * pull + 1.5);
         // pulled in harder from above and below: the map spreads out sideways, the shape of a screen
-        a.x += (dx / d) * step * 0.6; a.y += (dy / d) * step * 1.4;
+        a.x += (dx / d) * step; a.y += (dy / d) * step * 1.2;
       }
       clear(6);
     }
@@ -2081,7 +2195,7 @@
     const shownLines = () => {
       const geoms = [];
       for (const l of S.links || []) {
-        if (l.kind === 'part' || !linkShown(l)) continue;
+        if (l.kind === 'part' || !linkResting(l)) continue;
         const g = linkGeom(l, false);
         if (!g) continue;
         const P = g.pts;
@@ -2146,7 +2260,7 @@
       const dots = nodes.filter((n) => n.type !== 'fragment' && Number.isFinite(n.x) && Number.isFinite(n.y));
       const own = new Map();  // a dot's own lines, which move with it
       for (const l of S.links || []) {
-        if (l.kind === 'part' || !linkShown(l)) continue;
+        if (l.kind === 'part' || !linkResting(l)) continue;
         for (const e of [l.source, l.target]) if (e && typeof e === 'object') (own.get(e.id) || own.set(e.id, []).get(e.id)).push(l);
       }
       let any = false;
@@ -2254,7 +2368,7 @@
         // would keep a closed card's dot hovered and reopen it.)
       })
       .nodeVisibility((n) => !nodeHidden(n.id))
-      .linkVisibility(linkShown)
+      .linkVisibility(linkOnMap)
       .linkCurvature(0)
       .linkPointerAreaPaint((l, color, ctx, k) => {
         const g = linkGeom(l); if (!g) return;
@@ -2267,7 +2381,7 @@
       .linkHoverPrecision(6)
       // no tooltip on a trace: hovering highlights it and shows the pointer; a click explains the link
       .linkLabel(() => '')
-      .onNodeHover((n) => { S.hover = n ? n.id : null; if (n) S.lit = n.id; S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
+      .onNodeHover((n) => { S.hover = n ? n.id : null; if (n) S.lit = n.id; else releaseLit(); S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
       .onLinkHover((l) => { S.hoverLink = l || null; graphEl.style.cursor = l ? 'pointer' : ''; kick(50); })
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
@@ -2291,7 +2405,7 @@
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick(l, e); })
       .onRenderFramePre((ctx, k) => {
         S.k = k; S.partLayout = new Map(); S.frame = (S.frame || 0) + 1;
-        S.labelBoxes = []; S.labelJobs = []; S.dots = [];
+        S.labelBoxes = []; S.labelJobs = []; S.dots = []; S.drawnTraces = [];
         const moving = stepAlphas();
         if (stepCards(ctx, k) || moving) kick(60);
         applyFloat();
@@ -2408,7 +2522,7 @@
       const p = pulses[i];
       const t = (now - p.t0) / p.dur;
       if (t < 0) continue;
-      if (t >= 1 || !linkShown(p.l)) { pulses.splice(i, 1); continue; }
+      if (t >= 1 || !linkOnMap(p.l)) { pulses.splice(i, 1); continue; }
       const g = linkGeom(p.l);
       if (!g) continue;
       const e = 1 - Math.pow(1 - t, 2.2); // ease-out, like a signal losing speed
@@ -2691,6 +2805,26 @@
     return mode === 'authorTitle' ? truncate(`${ay} · ${n.title || ''}`, 46) : ay;
   }
 
+  /** How many of the resting lines run through a box [x0, y0, x1, y1]. */
+  function tracesThrough(b) {
+    let c = 0;
+    for (const P of S.drawnTraces || []) {
+      for (let i = 0; i + 3 < P.length; i += 2) {
+        // the part of the segment inside the box (Liang and Barsky)
+        const x = P[i], y = P[i + 1], dx = P[i + 2] - x, dy = P[i + 3] - y;
+        let t0 = 0, t1 = 1, hit = true;
+        for (const [p, q] of [[-dx, x - b[0]], [dx, b[2] - x], [-dy, y - b[1]], [dy, b[3] - y]]) {
+          if (p === 0) { if (q < 0) { hit = false; break; } continue; }
+          const t = q / p;
+          if (p < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+          if (t0 > t1) { hit = false; break; }
+        }
+        if (hit) { c++; break; }
+      }
+    }
+    return c;
+  }
+
   /** Titles under dots: after every dot is drawn. Ordinary titles only where they cover no other dot, no
    *  region tag and no other title (the better-connected first); the hovered, selected and search-matched
    *  ones always, on top. */
@@ -2726,18 +2860,30 @@
         { x: n.x + outer + gap, y: n.y - fs / 2, align: 'left' },
         { x: n.x - outer - gap, y: n.y - fs / 2, align: 'right' },
         { x: n.x, y: n.y - outer - gap - fs, align: 'center' }];
-      let at = null, box = null;
+      let at = null, box = null, fewest = Infinity;
+      // the first free spot no resting line runs through, else the free one with the fewest
       for (const sp of spots) {
         const x0 = sp.align === 'center' ? sp.x - w / 2 : sp.align === 'left' ? sp.x : sp.x - w;
         const b = [x0 - 4 * px, sp.y - 2 * px, x0 + w + 4 * px, sp.y + fs + 2 * px];
         const roomy = [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
-        if (must || !(taken.some((t) => boxesMeet(roomy, t)) || dotsUnder(G, roomy, n))) { at = sp; box = b; break; }
+        if (must) { at = sp; box = b; break; }
+        if (taken.some((t) => boxesMeet(roomy, t)) || dotsUnder(G, roomy, n)) continue;
+        const hits = tracesThrough(b);
+        // it keeps the spot it had while that's as good, so a name never flips back and forth as the dots float
+        const cost = hits - (n.__spot === spots.indexOf(sp) ? 0.5 : 0);
+        if (cost < fewest) { fewest = cost; at = sp; box = b; }
+        if (cost <= 0 && n.__spot === undefined) break;
       }
       if (!at) { ctx.restore(); continue; }
+      if (!must) n.__spot = spots.indexOf(at);
       taken.push(box);
       ctx.textAlign = at.align;
       ctx.globalAlpha = alpha;
       if (big) glowText(ctx, label, at.x, at.y, 14);
+      else {  // the map's own colour right behind the words: a line that has to pass there doesn't strike them out
+        ctx.fillStyle = C.ground;
+        ctx.fillRect(box[0] + 3 * px, box[1] + px, box[2] - box[0] - 6 * px, box[3] - box[1] - 2 * px);
+      }
       ctx.lineWidth = (big ? 5 : 3.5) * px; ctx.lineJoin = 'round'; ctx.strokeStyle = rgba(C.ground, 0.92);
       ctx.strokeText(label, at.x, at.y);
       ctx.fillStyle = big ? C.ink : C.ink2;
@@ -3384,13 +3530,17 @@
     } } });
   }
   // the lit dot stays lit until the pointer is clearly off it (or leaves the map)
-  graphEl.addEventListener('pointermove', (e) => {
-    if (!S.lit || S.hover === S.lit || !fg) return;
+  let pointerAt = null;  // where the pointer last was on the map, in screen pixels
+  /** The pointer is well off the lit dot: let go of it. Asked when the pointer moves and when the hit test drops the
+   *  dot: after one quick move the hit test catches up later, with no further move to ask again. */
+  function releaseLit() {
+    if (!S.lit || S.hover === S.lit || !fg || !pointerAt) return;
     const n = S.nodes.get(S.lit), r = graphEl.getBoundingClientRect();
     const p = n && Number.isFinite(n.x) ? fg.graph2ScreenCoords(n.x, n.y) : null;
     const reach = n ? drawnRadius(n, S.k || 1) * (S.k || 1) + 8 : 0;  // px: the dot plus a little
-    if (!p || Math.hypot(e.clientX - r.left - p.x, e.clientY - r.top - p.y) > reach) { S.lit = null; S.focusCache = null; kick(260); }
-  });
+    if (!p || Math.hypot(pointerAt[0] - r.left - p.x, pointerAt[1] - r.top - p.y) > reach) { S.lit = null; S.focusCache = null; kick(260); }
+  }
+  graphEl.addEventListener('pointermove', (e) => { pointerAt = [e.clientX, e.clientY]; releaseLit(); });
   graphEl.addEventListener('pointerleave', () => { if (S.lit) { S.lit = null; S.focusCache = null; kick(260); } });
   { const b = document.getElementById('btn-cleanup'); if (b) b.addEventListener('click', () => cleanUp()); }
   /** Dragging a dot moves that dot and nothing else: its lines stretch to follow it, but no other paper is
@@ -3472,6 +3622,19 @@
   // screen, in step with the zoom.
   let fitAnim = null;
   function stopFit() { if (fitAnim) { cancelAnimationFrame(fitAnim.raf); fitAnim = null; } }
+  /** Each section's name, for framing the map: where its papers end up and the name's size on screen. */
+  function sectionNames(posOf) {
+    const rf = fg.d3Force('regions'), out = [], c = document.createElement('canvas').getContext('2d');
+    c.font = `italic 500 ${TITLE_PX}px "Newsreader", Georgia, serif`;
+    for (const [cid, mem] of cloudMembers()) {
+      const info = (S.clusters || []).find((x) => x.id === cid);
+      if (!info || !info.label || mem.length < 2) continue;
+      const b = sectionSpan(mem, rf && rf.regionAt ? rf.regionAt(cid) : null, posOf);
+      const lines = wrapWords(c, regionName(info.label), TITLE_MAX_W, 2);
+      out.push({ x: b.x, top: b.top, w: Math.max(...lines.map((t) => c.measureText(t).width)) + 24, h: lines.length * TITLE_PX * 1.18 });
+    }
+    return out;
+  }
   function smoothFit(ms = 600, pad = 70, filter = null, posOf = null) {
     if (!fg) return;
     const W = graphEl.clientWidth, H = graphEl.clientHeight;
@@ -3483,9 +3646,24 @@
       x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]);
     }
     if (!Number.isFinite(x0) || !W || !H) return;
-    const bw = Math.max(x1 - x0, 1e-6), bh = Math.max(y1 - y0, 1e-6);
-    const kEnd = Math.max(0.12, Math.min(8, (W - 2 * pad) / bw, (H - 2 * pad) / bh));  // one dot: a sensible zoom
-    const cEnd = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+    const names = filter ? [] : sectionNames(posOf || restingAt);
+    const span = (k) => {  // the dots, and the sections' names at that zoom
+      let a = x0, b = y0, c = x1, d = y1;
+      for (const s of names) {
+        a = Math.min(a, s.x - (s.w / 2 - pad + 14) / k); c = Math.max(c, s.x + (s.w / 2 - pad + 14) / k);
+        b = Math.min(b, s.top - (TITLE_GAP + s.h - pad + 14) / k);
+      }
+      return [a, b, c, d + 24 / k];  // and the legend's row along the bottom
+    };
+    let kEnd = Math.max(0.12, Math.min(8, (W - 2 * pad) / Math.max(x1 - x0, 1e-6), (H - 2 * pad) / Math.max(y1 - y0, 1e-6)));  // one dot: a sensible zoom
+    let box = span(kEnd);
+    for (let i = 0; i < 12; i++) {
+      box = span(kEnd);
+      const k = Math.max(0.12, Math.min(kEnd, (W - 2 * pad) / Math.max(box[2] - box[0], 1e-6), (H - 2 * pad) / Math.max(box[3] - box[1], 1e-6)));
+      if (kEnd - k < 1e-3) break;
+      kEnd = k;
+    }
+    const cEnd = { x: (box[0] + box[2]) / 2, y: (box[1] + box[3]) / 2 };
     const kStart = fg.zoom(), cStart = fg.centerAt();
     stopFit();
     if (!ms || !Number.isFinite(kStart) || !cStart || !Number.isFinite(cStart.x)) { fg.zoom(kEnd); fg.centerAt(cEnd.x, cEnd.y); kick(300); return; }
@@ -6159,6 +6337,8 @@
       configureLinkForce(); simNudge();
     });
   }
+  $('#lines-mode').value = S.lines;
+  $('#lines-mode').addEventListener('change', (e) => setLines(e.target.value));
   S.labelMode = LS.get('labelMode', 'author');
   $('#label-mode').value = S.labelMode;
   $('#label-mode').addEventListener('change', (e) => { S.labelMode = e.target.value; LS.set('labelMode', S.labelMode); kick(300); });
@@ -6435,7 +6615,7 @@
     registerRenderer(type, r) { (S.renderers || (S.renderers = {}))[type] = r; if (S.cur && S.cur.type === type && !panel.hidden) renderPanel(); },
     titleField, section, renderTags, renderBacklinks, renderLinked, renderDanger, renderMD, autosize, renderPanel,
     // static/shortcuts.js (keyboard commands, palette actions, tour)
-    openMenu, addById, openChat, closeChat, closeExplain, newNote, runCritique, updateSearch, setShowSim, linkNotes, offerCreate,
+    openMenu, addById, openChat, closeChat, closeExplain, newNote, runCritique, updateSearch, setShowSim, setLines, linkDrawn, linkNotes, offerCreate,
     pickPdf: () => $('#pdf-input').click(),
     upload, task,
     zoomFit: () => fg && smoothFit(T(700), 70), mapLabel,

@@ -206,6 +206,8 @@
     aliases: ['center', 'locate', 'where is', 'zoom in'], when: () => !!S.selected && S.nodes.has(S.selected), run: () => rb.centerOn(S.selected, true) });
   reg({ id: 'graph.similar', title: 'Show or hide similarity links', group: 'Graph', keys: 'Shift+S', description: 'The dashed blue-grey lines found by text similarity.',
     aliases: ['semantic', 'dashed', 'similar', 'toggle links'], run: () => { rb.setShowSim(!S.showSim); toast(S.showSim ? 'Similarity links shown' : 'Similarity links hidden'); } });
+  reg({ id: 'graph.lines', title: 'Show few or all lines on the map', group: 'Graph', keys: [], description: 'Few: your links and the strongest connections inside each section. Point at a paper to see the rest.',
+    aliases: ['clutter', 'declutter', 'connections', 'all lines', 'fewer lines'], run: () => { rb.setLines(S.lines === 'all' ? 'few' : 'all'); toast(S.lines === 'all' ? 'All lines shown' : 'Few lines shown: point at a paper to see the rest of its lines'); } });
   reg({ id: 'graph.citations', title: 'Show or hide citation links', group: 'Graph', keys: 'Shift+C', description: 'Thin ink lines with an arrowhead at the cited paper.',
     aliases: ['cites', 'references', 'arrows', 'toggle links'], when: () => !!$('#cites-toggle'),
     run: () => { const c = $('#cites-toggle'); c.checked = !c.checked; c.dispatchEvent(new Event('change')); toast(c.checked ? 'Citation links shown' : 'Citation links hidden'); } });

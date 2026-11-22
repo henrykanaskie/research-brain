@@ -103,13 +103,19 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
   width fixed in screen pixels, with a tiny via at each bend. Where the straight run splits varies per
   link so parallel traces separate. Your links are carmine, citations ink, machine similarity cobalt
   at low opacity. Each node shows only its 2 strongest similarity links.
+  One bend per trace; vias only when zoomed in close.
+- Few lines at rest (View › Lines: "Few"): inside each section, your own links plus the fewest other lines that join
+  its papers, never two for one pair; nothing runs from section to section. Pointing at a paper, clicking it, or
+  pointing at a section's name fades in all of its lines. "All" draws every line, all the time.
 - Somas: small solid ink dot for a paper, hairline ring for a note, tiny red point for a fragment.
 - No decoration around somas. Size hints at engagement (words written, links, opens), subtly: the largest dot is ~1.6x the smallest; a small red core
   means you have written about the note.
 - Field: plain `--ground`, no pattern. Fine measuring ticks run along the top and left edges of the
   plate and move with pan and zoom.
-- Regions: Newsreader italic names with the member count in small Archivo, placed above the region,
-  no outlines or fills.
+- Regions: Newsreader italic names (12 to 15px), right above the section's own papers, two even lines at most, with
+  the member count in small Archivo after the name. The ground colour sits behind the words so no trace runs through
+  them; a red rule appears under the name on hover. No outlines or fills.
+- Paper names take the free spot around their dot that the fewest resting traces cross.
 - Selection: a hairline reticle (circle and four ticks); the label switches to Newsreader italic.
 - Motion: one signal per click along the traces, optional quiet ambient signals; off under
   prefers-reduced-motion.

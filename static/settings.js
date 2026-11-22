@@ -815,7 +815,7 @@
   // ---------------------------------------------------------------- UI state kept in the library
   // These localStorage keys (the "rb." prefix is the app's) are mirrored to vault/state/ui.json, so a new
   // browser or a cleared cache gets them back. Restoring needs one reload, because app.js reads them at boot.
-  const SYNC = /^(panelW|theme|showSim|showCites|ambient|threshold\..*|graphFilter|graphViews|chatMode|researchFast|tour\.done|cmd\.recent)$/;
+  const SYNC = /^(panelW|theme|showSim|showCites|lines|ambient|threshold\..*|graphFilter|graphViews|chatMode|researchFast|tour\.done|cmd\.recent)$/;
   const snapshot = () => {
     const out = {};
     try {

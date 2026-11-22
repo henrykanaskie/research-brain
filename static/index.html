@@ -98,6 +98,11 @@
           <label class="menu-check" title="Show links that were found by text similarity"><input id="sim-toggle" type="checkbox" checked> Show similarity links</label>
           <label class="menu-check" title="Show which papers cite which (from Semantic Scholar references)"><input id="cites-toggle" type="checkbox" checked> Show citation links</label>
           <label class="menu-check" title="Quiet signals travel along random connections"><input id="ambient-toggle" type="checkbox" checked> Ambient activity</label>
+          <label class="menu-select" title="Few: your links and the strongest connections inside each section; point at a paper or a section's name to see the rest. All: every line, all the time">Lines
+            <select id="lines-mode" aria-label="Map lines">
+              <option value="few">Few, more when pointing</option>
+              <option value="all">All</option>
+            </select></label>
           <label class="menu-select" title="What the dots on the map are labelled with (hovering a dot always shows its title)">Labels
             <select id="label-mode" aria-label="Map labels">
               <option value="author">First author and year</option>
