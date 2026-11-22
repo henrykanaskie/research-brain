@@ -163,6 +163,34 @@ def close_app():
     raise AssertionError("it kept running")
 
 
+def window_picture(hwnd):
+    """A picture of one window as it is drawn, whatever covers it (PrintWindow, with the web page in it)."""
+    import ctypes
+    from ctypes import wintypes
+    from PIL import Image
+    u, g = ctypes.windll.user32, ctypes.windll.gdi32
+    for f in (u.GetWindowDC, g.CreateCompatibleDC, g.CreateCompatibleBitmap, g.SelectObject):
+        f.restype = ctypes.c_void_p
+    u.GetWindowDC.argtypes = [wintypes.HWND]; u.ReleaseDC.argtypes = [wintypes.HWND, ctypes.c_void_p]
+    g.CreateCompatibleDC.argtypes = g.DeleteDC.argtypes = g.DeleteObject.argtypes = [ctypes.c_void_p]
+    g.CreateCompatibleBitmap.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    g.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    u.PrintWindow.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.UINT]
+    g.GetDIBits.argtypes = [ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT, wintypes.UINT, ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT]
+    r = wintypes.RECT()
+    u.GetWindowRect(hwnd, ctypes.byref(r))
+    w, h = max(1, r.right - r.left), max(1, r.bottom - r.top)
+    dc = u.GetWindowDC(hwnd)
+    mem, bmp = g.CreateCompatibleDC(dc), g.CreateCompatibleBitmap(dc, w, h)
+    g.SelectObject(mem, bmp)
+    u.PrintWindow(hwnd, mem, 2)  # PW_RENDERFULLCONTENT
+    head = (ctypes.c_uint32 * 10)(40, w, ctypes.c_uint32(-h).value, 1 | (32 << 16), 0, 0, 0, 0, 0, 0)
+    buf = ctypes.create_string_buffer(w * h * 4)
+    g.GetDIBits(mem, bmp, 0, h, buf, head, 0)
+    g.DeleteObject(bmp); g.DeleteDC(mem); u.ReleaseDC(hwnd, dc)
+    return Image.frombuffer("RGB", (w, h), buf, "raw", "BGRX", 0, 1)
+
+
 def processes() -> list[dict]:
     r = subprocess.run(["powershell", "-NoProfile", "-Command",
                         "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-CimInstance Win32_Process | ? { $_.Name -like 'python*' -or $_.Name -like 'conhost*' } | Select Name,ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress"],
@@ -179,19 +207,33 @@ def main():
     def _():
         return open_app()
 
-    @check("its window is on the screen (a picture of the desktop is kept)")
+    @check("its own window is there and drawn, not blank")
     def _():
         import ctypes
+        u = ctypes.windll.user32
         hwnd = 0
         for _ in range(60):
-            hwnd = ctypes.windll.user32.FindWindowW(None, "research brain")
+            hwnd = u.FindWindowW(None, "research brain")
             if hwnd:
                 break
             time.sleep(0.5)
-        time.sleep(8)  # it loads the map
+        assert hwnd and u.IsWindowVisible(hwnd), "no window titled research brain"
+        # a new Windows 11 account's first-run screen covers everything on GitHub's machines
+        subprocess.run(["taskkill", "/F", "/IM", "WWAHost.exe", "/IM", "UserOOBEBroker.exe", "/IM", "CloudExperienceHostBroker.exe"], capture_output=True)
+        for _ in range(8):  # it loads the map
+            time.sleep(3)
+            u.ShowWindow(hwnd, 5); u.SetForegroundWindow(hwnd)
+            img = window_picture(hwnd)
+            img.save(SHOTS / "window.png")
+            small = img.convert("RGB").resize((160, 120))
+            common, n = max(small.getcolors(160 * 120))  # how much of it is one colour
+            colours = len(small.getcolors(160 * 120))
+            if colours > 60 and common < 160 * 120 * 0.97:
+                break
         from PIL import ImageGrab
         ImageGrab.grab(all_screens=True).save(SHOTS / "desktop.png")
-        assert hwnd and ctypes.windll.user32.IsWindowVisible(hwnd), "no window titled research brain"
+        assert colours > 60 and common < 160 * 120 * 0.97, f"the window is blank: {colours} colours, {100 * common // (160 * 120)}% of it {n}"
+        return f"{img.size[0]}x{img.size[1]}, {colours} colours"
 
     @check("runs under pythonw, as installed")
     def _():
