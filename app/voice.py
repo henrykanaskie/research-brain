@@ -136,8 +136,9 @@ def _install() -> None:
             _step("Setting up the voice’s environment", 0.02)
             uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
             env = d / "env"
+            from . import updates
             if Path(uv).exists():
-                subprocess.run([uv, "venv", "-q", "-p", "3.12", str(env)], check=True, capture_output=True, timeout=600)
+                subprocess.run([uv, "venv", "-q", "-p", updates.uv_python(), str(env)], check=True, capture_output=True, timeout=600)
                 _step("Installing the voice’s software", 0.06)
                 subprocess.run([uv, "pip", "install", "-q", "--python", str(_python()), *PACKAGES], check=True,
                                capture_output=True, timeout=1200)

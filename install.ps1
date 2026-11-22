@@ -121,7 +121,11 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
   Write-Host "-> Installing with uv"
   # Python 3.12: what constraints.txt's pinned versions are built and tested for (uv downloads it if needed)
   # --compile-bytecode: compile now, so the first start after installing isn't seconds slower than the rest
-  Native { if ($Constraints) { uv tool install --force --compile-bytecode --python 3.12 -c $Constraints $Spec } else { uv tool install --force --compile-bytecode --python 3.12 $Spec } }
+  # On an Arm PC: the Intel/AMD Python, which Windows 11 runs as it is. Some of what research brain needs has no
+  # Windows-on-Arm build, and compiling it there fails. (app/updates.py uv_python does the same.)
+  $Arch = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment").PROCESSOR_ARCHITECTURE
+  $Python = if ($Arch -eq "ARM64") { "cpython-3.12-windows-x86_64-none" } else { "3.12" }
+  Native { if ($Constraints) { uv tool install --force --compile-bytecode --python $Python -c $Constraints $Spec } else { uv tool install --force --compile-bytecode --python $Python $Spec } }
   if ($LASTEXITCODE -ne 0) {
     Fail ("Installing didn't finish (what went wrong is just above). Usually: no internet connection, an antivirus " +
           "blocking the download, or research brain still running (close its window, wait a minute, and run this again).")

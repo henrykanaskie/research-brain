@@ -55,7 +55,13 @@ def test_a_lab_folder_release_is_checked_cached_installed_and_copied_with_its_pi
     _folder(tmp_path)  # back to 9.0.0
     info = upd.fetch()
     cmd = upd.install_command(info, "uv")
-    assert cmd[:6] == ["uv", "tool", "install", "--force", "--python", "3.12"]
+    assert cmd[:6] == ["uv", "tool", "install", "--force", "--python", upd.uv_python()]
+    # an Arm Windows PC gets the Intel/AMD Python, on an update as when it was installed
+    for windows, arch, want in ((True, "ARM64", "cpython-3.12-windows-x86_64-none"), (True, "AMD64", "3.12"), (False, "ARM64", "3.12")):
+        with pytest.MonkeyPatch.context() as m:
+            m.setattr(upd, "_windows", lambda w=windows: w)
+            m.setattr(upd, "_machine_arch", lambda a=arch: a)
+            assert upd.uv_python() == want
     assert cmd[-1].endswith("research_brain-9.0.0-py3-none-any.whl") and str(lab / "constraints.txt") in cmd
     pip = upd.install_command(info, "venv")
     assert pip[:4] == [sys.executable, "-m", "pip", "install"] and pip[-1].endswith(".whl")

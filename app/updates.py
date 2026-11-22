@@ -233,6 +233,24 @@ def install_spec(info: dict, extras: str = "") -> str:
     return f"{name} @ git+https://github.com/{REPO}.git@{tag}"
 
 
+def uv_python() -> str:
+    """The Python uv installs research brain with. On an Arm Windows PC it's the Intel/AMD one, which Windows 11 runs as it
+    is: some of what research brain needs has no Windows-on-Arm build, and compiling it there fails. install.ps1 does
+    the same. (Asked of the registry: a program run that way is told the machine is AMD64.)"""
+    if _windows() and _machine_arch() == "ARM64":
+        return "cpython-3.12-windows-x86_64-none"
+    return "3.12"
+
+
+def _machine_arch() -> str:
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") as k:
+            return str(winreg.QueryValueEx(k, "PROCESSOR_ARCHITECTURE")[0]).upper()
+    except (ImportError, OSError):
+        return ""
+
+
 def install_command(info: dict, how: str | None = None) -> list[str] | None:
     how = how or how_installed()
     spec = install_spec(info, "[embeddings]" if _has_embeddings() else "")
@@ -244,7 +262,7 @@ def install_command(info: dict, how: str | None = None) -> list[str] | None:
     if how == "uv":
         if cons and _spaced(cons[1]):
             cons[1] = "constraints.txt"  # uv splits a -c path at spaces: run it from that folder (install_cwd)
-        return ["uv", "tool", "install", "--force", "--python", "3.12", *cons, spec]
+        return ["uv", "tool", "install", "--force", "--python", uv_python(), *cons, spec]
     if how == "pipx":
         return ["pipx", "install", "--force", *(["--pip-args", f'-c "{cons[1]}"'] if cons else []), spec]
     if how in ("venv", "pip"):
