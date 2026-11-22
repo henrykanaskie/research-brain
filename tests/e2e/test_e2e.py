@@ -802,6 +802,54 @@ def test_right_click_empty_map_adds_things_there(ctx, server):
     assert not page.errors
 
 
+def test_the_map_opens_with_every_dot_on_screen_also_after_a_resize_while_it_glides_in(ctx, server):
+    """The first view is framed around where the dots come to rest (not a layout worked out before the forces had
+    the dots, which came out cramped), however slowly the library loads and if the window is resized meanwhile."""
+    clear_vault(server)
+    ids = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Opening view paper {i}"})["id"] for i in range(24)]
+    region = {nid: i % 4 for i, nid in enumerate(ids)}
+    spots = {f"l:opening region {c}": xy for c, xy in enumerate(([-90, -50], [90, -50], [-90, 60], [90, 60]))}
+
+    def graph(wait):
+        def handle(route):
+            resp = route.fetch()
+            g = resp.json()
+            for n in g["nodes"]:
+                n["cluster"], n["sub"] = region.get(n["id"], -1), -1
+            g["clusters"] = [{"id": c, "label": f"Opening region {c}", "size": 6, "topic": None, "near": []} for c in range(4)]
+            time.sleep(wait)
+            route.fulfill(response=resp, json=g)
+        return handle
+    off = """() => { const fg = window.__rb.fg, el = document.getElementById('graph');
+      return [...window.__rb.S.nodes.values()].filter(n => { const p = fg.graph2ScreenCoords(n.x, n.y);
+        return !(p.x > 0 && p.y > 0 && p.x < el.clientWidth && p.y < el.clientHeight); }).length; }"""
+    for wait, resize in ((0, None), (0.8, None), (0, (950, 650))):
+        page = ctx.new_page()
+        page.errors = []
+        page.on("pageerror", lambda e: page.errors.append(str(e)))
+        page.add_init_script(f"localStorage.setItem('rb.regionPos', {json.dumps(json.dumps(spots))});")
+        page.route("**/api/graph", graph(wait))
+        page.goto(server["base"] + "/")
+        page.wait_for_function("window.__rb && window.__rb.fg && window.__rb.S.nodes.size >= 24")
+        if resize:
+            page.wait_for_timeout(600)  # still gliding in
+            page.set_viewport_size({"width": resize[0], "height": resize[1]})
+        page.wait_for_function("() => (window.__rb.S.stops || 0) >= 1", timeout=30000)
+        page.wait_for_timeout(1500)
+        assert page.evaluate(off) == 0, (wait, resize)
+        assert not page.errors
+        page.close()
+
+
+def test_dot_size_is_a_subtle_hint(ctx, server):
+    """Opening a paper a lot, or writing about it, makes its dot a little larger, never several times larger."""
+    page = open_app(ctx, server)
+    plain, opened, most = page.evaluate("""() => [{}, { opens: 100 }, { mass: 5000, opens: 500, degree: 60, parts: 20 }]
+      .map(n => window.__rb.nodeRadius({ type: 'paper', ...n }))""")
+    assert plain < opened < plain * 1.25
+    assert opened < most <= plain * 1.7
+
+
 def test_zooming_in_stops_only_when_nothing_would_be_left_on_screen(ctx, server):
     clear_vault(server)
     for t in ("Zoom paper one", "Zoom paper two", "Zoom paper three"):

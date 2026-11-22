@@ -104,7 +104,7 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
   link so parallel traces separate. Your links are carmine, citations ink, machine similarity cobalt
   at low opacity. Each node shows only its 2 strongest similarity links.
 - Somas: small solid ink dot for a paper, hairline ring for a note, tiny red point for a fragment.
-- No decoration around somas. Size shows engagement (words written, opens, links); a small red core
+- No decoration around somas. Size hints at engagement (words written, links, opens), subtly: the largest dot is ~1.6x the smallest; a small red core
   means you have written about the note.
 - Field: plain `--ground`, no pattern. Fine measuring ticks run along the top and left edges of the
   plate and move with pan and zoom.
