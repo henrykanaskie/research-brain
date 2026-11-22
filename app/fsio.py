@@ -25,6 +25,21 @@ def replace(src, dst, attempts: int = 20, wait: float = 0.1) -> None:
             time.sleep(wait)
 
 
+def read_text(path, attempts: int = 20, wait: float = 0.1, encoding: str = "utf-8") -> str:
+    """Read a file another thread or program may be replacing this instant. On Windows, opening a file while
+    it is swapped in (os.replace) or held by a scanner or sync client fails with a sharing violation for a
+    few milliseconds: retry for up to about two seconds, like replace. A missing file raises at once."""
+    from pathlib import Path
+    for i in range(attempts):
+        try:
+            return Path(path).read_text(encoding=encoding)
+        except PermissionError:
+            if not WINDOWS or i == attempts - 1:
+                raise
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
 def remove_tree(path, attempts: int = 30, wait: float = 0.1) -> None:
     """Delete a folder, ignoring errors. On Windows a process that was just killed can keep its working
     folder open for a moment (taskkill returns before the process is gone), so retry for ~3 seconds."""

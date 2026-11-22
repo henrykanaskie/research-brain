@@ -23,6 +23,8 @@ import pytest
 
 from rb_testserver import run_server
 
+from app import fsio
+
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = json.loads((ROOT / "tests" / "fixtures" / "questions" / "plasma_corpus.json").read_text(encoding="utf-8"))
 
@@ -304,7 +306,8 @@ def test_question_evidence_triage_badge_list(server, browser):
     assert page.locator("#chat").is_hidden()
     # the row moves at once and the save follows: wait for it to reach the file
     for _ in range(40):
-        data = json.loads((vault / "state" / "questions" / f"{qid}.json").read_text(encoding="utf-8"))
+        # read as the app does: on Windows the file can be mid-replace for an instant (a sharing violation)
+        data = json.loads(fsio.read_text(vault / "state" / "questions" / f"{qid}.json"))
         verdicts = {i["id"]: i["verdict"] for i in data["items"]}
         if verdicts[third] == "dismissed":
             break

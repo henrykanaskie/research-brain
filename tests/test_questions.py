@@ -634,3 +634,42 @@ def test_agent_search_needs_agent_reach_and_stops_on_turns(server):
     assert "signed out" in out["error"]
     data = Q.load(srv.store, q["id"])
     assert data["agent"]["error"] and Q.agent_due(data) is False
+
+
+def test_a_busy_evidence_file_is_waited_for_and_never_read_as_empty(server, monkeypatch):
+    """On Windows a question's evidence file can't be opened for an instant while it's being replaced (or held
+    by a scanner or sync client). A short hold is waited out; a long one refuses instead of reading as "no
+    evidence", so nothing is saved over the evidence, and the page is told to try again."""
+    srv, c = server
+    Q, fsio = srv.questions_mod, srv.questions_mod.fsio
+    q = c.post("/api/notes", json={"type": "question", "title": "Why do sheaths form at walls?"}).json()
+    Q._save(srv.store, q["id"], {"items": [{"id": "e1", "key": "k1", "verdict": "new", "user_note": ""}]})
+    path = Q._path(srv.store, q["id"])
+    before = path.read_text(encoding="utf-8")
+    monkeypatch.setattr(fsio, "WINDOWS", True)
+    monkeypatch.setattr(fsio.time, "sleep", lambda s: None)
+    real = Path.read_text
+    busy = {"n": 0}
+
+    def flaky(self, *a, **k):
+        if self == path and busy["n"] > 0:
+            busy["n"] -= 1
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "read_text", flaky)
+
+    busy["n"] = 3  # a short hold: waited out
+    assert [i["id"] for i in Q.load(srv.store, q["id"])["items"]] == ["e1"]
+
+    busy["n"] = 10_000  # held for good: refuses, and a triage click changes nothing on disk
+    with pytest.raises(Q.Unreadable):
+        Q.load(srv.store, q["id"])
+    r = c.put(f"/api/questions/{q['id']}/evidence/e1", json={"verdict": "dismissed"})
+    assert r.status_code == 503 and "try again" in r.json()["detail"]
+    busy["n"] = 0
+    assert path.read_text(encoding="utf-8") == before
+    # lists and counts still show (the busy question as empty for the moment)
+    busy["n"] = 10_000
+    assert c.get("/api/questions").status_code == 200
+    busy["n"] = 0
+    assert [i["verdict"] for i in Q.load(srv.store, q["id"])["items"]] == ["new"]

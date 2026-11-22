@@ -38,6 +38,12 @@ def install(app, *, store, chunk_index, embedder, index_fn, event_bus=None, pass
         event_bus.listen(ctx.matcher.on_event)
     app.include_router(router)
 
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(Q.Unreadable)
+    def _unreadable(_request, exc):  # a busy file: say so and let the page try again; nothing was changed
+        return JSONResponse({"detail": str(exc)}, status_code=503)
+
     @app.on_event("startup")
     def _start_questions():
         if os.environ.get("RB_QUESTIONS_MATCH", "1") != "0":

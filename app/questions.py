@@ -159,12 +159,22 @@ def _path(store, qid: str) -> Path:
     return qdir(store) / f"{qid}.json"
 
 
+class Unreadable(RuntimeError):
+    """A question's evidence file exists but can't be read just now (held open by another program for longer
+    than a save waits). Never treated as "no evidence": anything saved on top of that would wipe it."""
+
+
 def load(store, qid: str) -> dict:
     p = _path(store, qid)
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(fsio.read_text(p))
+    except FileNotFoundError:
         data = {}
+    except ValueError:  # not JSON (edited by hand, or damaged): start over, as before
+        data = {}
+    except OSError as e:
+        raise Unreadable(f"Couldn't read the evidence for this question just now ({e.strerror or e}). "
+                         "Another program may have the file open: try again in a moment.") from e
     if not isinstance(data, dict):
         data = {}
     items = [i for i in (data.get("items") or []) if isinstance(i, dict) and i.get("id") and i.get("key")]
@@ -176,9 +186,19 @@ def load(store, qid: str) -> dict:
     return data
 
 
+def _peek(store, qid: str) -> dict:
+    """load() for display only (lists, counts, the map): a file that's busy for a moment shows as no evidence
+    rather than failing the whole page. Never use it before a save."""
+    try:
+        return load(store, qid)
+    except Unreadable:
+        return {"items": []}
+
+
 def _save(store, qid: str, data: dict) -> None:
     p = _path(store, qid)
-    tmp = p.with_suffix(".json.tmp")
+    # a temporary file of its own: two saves at once (a background search and your triage) never share one
+    tmp = p.with_name(f"{p.name}.{os.getpid()}-{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
     fsio.replace(tmp, p)
     REV[0] += 1
@@ -814,7 +834,7 @@ def list_questions(store, notes: list[dict] | None = None) -> list[dict]:
     for n in notes:
         if not is_question(n):
             continue
-        data = load(store, n["id"])
+        data = _peek(store, n["id"])
         latest = max((str(i.get("found_at") or "") for i in data["items"]), default="")
         c = counts(n, data)
         out.append({"id": n["id"], "title": n["title"], "question_status": n.get("question_status") or "open",
@@ -841,7 +861,7 @@ def graph_extras(store, by_id: dict) -> tuple[dict, list[dict]]:
     for qid, q in by_id.items():
         if not is_question(q):
             continue
-        data = load(store, qid)
+        data = _peek(store, qid)
         new[qid] = counts(q, data)["new"]
         for i in data["items"]:
             if i["verdict"] not in KEPT:
