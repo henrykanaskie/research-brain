@@ -16,7 +16,7 @@ access to the private GitHub repository.
    ```
 
 3. The workflow runs the full test suite on Linux, Windows and macOS, and drives the installed app on Windows
-   (`tests/windows_installed.py`: installed by `install.ps1`, opened from its Start menu entry, under an ordinary user
+   (`tests/windows_installed.py`, on Windows Server (Intel/AMD) and Windows 11 (Arm): installed by `install.ps1`, opened from its Start menu entry, under an ordinary user
    folder and one the code page can't spell) (pushes to a branch test on Linux only, to save
    Actions minutes: on a private repository Windows minutes count double and macOS ten times), checks the tag matches
    `__version__`, builds the wheel, installs it in a clean environment as a smoke test, and creates a
