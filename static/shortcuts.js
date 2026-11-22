@@ -288,7 +288,7 @@
       ['Math', 'Type $…$ for inline math and $$…$$ for display. A backslash opens LaTeX suggestions; Tab accepts.', []],
     ]],
     ['The graph', [
-      ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. Bigger means more connected and more written about. A paper you haven’t read yet has a small yellow glow at its centre.', []],
+      ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. A slightly bigger dot is more written about and connected. A paper you haven’t read yet has a small yellow glow at its centre.', []],
       ['Lines', 'Red lines are links you made. Dashed blue-grey lines are text similarity. Click a line to ask {AI} why two notes connect.', ['graph.similar', 'graph.citations']],
       ['Focus', 'Double-click a node to show only its neighbourhood. Filter by type, year, tag or region. Zoom in as far as you like while there’s something on screen (it stops before you’d zoom into empty space); resizing the window refits the map. With a note open, drag the map to look around; click empty map to close the note (the tab on the right edge reopens it).', ['graph.focus', 'graph.filter', 'graph.fit']],
       ['Labels', 'Papers are labelled with first author and year; Settings › Labels shows the title too, or the title alone. Hover a dot for its full title.', []],
@@ -337,7 +337,7 @@
   const TOUR = [
     { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere. Already keep PDFs in folders (OneDrive too)? Add folders of papers links them where they are, and each folder becomes a topic.', keys: ['library.addById', 'import.linkFolder'] },
     { sel: '.search', title: 'Search', text: 'Matching nodes light up on the graph. Enter opens the first match.', keys: ['nav.search'] },
-    { sel: '#legend', fallback: '#graph', title: 'Reading the graph', text: 'Dots are papers, rings are notes, red points are fragments. Size grows with what you write and link. Red lines are your links; dashed lines are similar text.', keys: ['graph.fit'] },
+    { sel: '#legend', fallback: '#graph', title: 'Reading the graph', text: 'Dots are papers, rings are notes, red points are fragments. Size grows slightly with what you write and link. Red lines are your links; dashed lines are similar text.', keys: ['graph.fit'] },
     { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a node to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes. Drag a dot to place it; linked dots follow.', keys: ['note.summary', 'note.critique'] },
     { sel: '#btn-chat', title: 'Ask', text: 'Ask about your whole library, about the papers in some topics, or anything at all (General, where you can attach things and, if you allow it, search the web). Conversations are kept.', keys: ['library.ask', 'chat.general'] },
     { sel: '#btn-view-menu', title: 'Settings and shortcuts', text: 'The gear holds Library settings (tabs and a search box), graph options and appearance. Press ? for every shortcut; find any action by name in the command palette.', keys: ['general.shortcuts', 'general.palette'] },

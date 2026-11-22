@@ -788,15 +788,15 @@
   const linkKey = (a, b) => (a < b ? a + '\u0001' + b : b + '\u0001' + a);
   const lid = (x) => (x && typeof x === 'object' ? x.id : x);
 
-  /** Size = how much this note matters to YOU: words you've written about it (summary, notes,
-   *  fragment notes), how often you've opened it, and — a little — how connected it is. A paper you
-   *  filed and never touched stays small; the one you've annotated and keep returning to grows. */
+  /** Size hints at how much this note matters to you: words you've written about it (summary, notes, fragment
+   *  notes) and, only slightly, how connected it is and how often you've opened it. Kept subtle: the largest dot
+   *  is about 1.6 times as wide as one you filed and never touched. */
   function nodeRadius(n) {
     if (n.type === 'fragment') return 1.1;
     const words = Number(n.mass) || 0, opens = Number(n.opens) || 0, d = Number(n.degree) || 0;
     const parts = Number(n.parts) || 0; // notes and highlights folded into this document
-    const weight = Math.log2(1 + words / 40) + 0.6 * Math.log2(1 + opens) + 0.25 * Math.sqrt(d) + 0.35 * Math.sqrt(parts);
-    return Math.min(7, 1.5 + 1.05 * weight);
+    const weight = Math.log2(1 + words / 40) + 0.2 * Math.log2(1 + opens) + 0.25 * Math.sqrt(d) + 0.3 * Math.sqrt(parts);
+    return Math.min(3.2, 2 + 0.28 * weight);
   }
 
   // ---------- focus / fade ----------
@@ -904,10 +904,25 @@
     if (ec && ec.settle) ec.settle();
     for (const n of nodes) { n.vx = 0; n.vy = 0; }
   }
+  /** Hand the forces new dots and links now. The library passes new data on to them only a moment later, so a
+   *  layout solved right after graphData() ran on the old dots (none, on the first load): the first map came out
+   *  cramped, the view was framed around that, and the real layout then spread past the window's edges. */
+  function syncForces(nodes, links) {
+    nodes.forEach((n, i) => { n.index = i; if (!Number.isFinite(n.vx)) n.vx = 0; if (!Number.isFinite(n.vy)) n.vy = 0; });
+    const lf = fg.d3Force('link');
+    if (lf) lf.links([]);
+    for (const k of ['hoverLift', 'link', 'charge', 'regions', 'collide', 'edgeClear']) {
+      const f = fg.d3Force(k);
+      if (f && f.initialize) f.initialize(nodes);
+    }
+    if (lf) lf.id((n) => n.id).links(links);
+  }
   /** Work out the new layout from where the dots are resting now, and glide every dot there. */
   function relayout({ alpha = 0.4, ms = 1400, fit = false } = {}) {
     if (!fg) return;
     const nodes = fg.graphData().nodes;
+    // a new layout while the view is still being framed around the last one: frame this one instead
+    if (motion.tween && motion.tween.fit && fitAnim) fit = true;
     const from = new Map();
     for (const n of nodes) {
       if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
@@ -920,7 +935,7 @@
     for (const n of nodes) if (Number.isFinite(n.x) && Number.isFinite(n.y)) to.set(n, [n.x, n.y]);
     for (const [n, p] of from) { n.x = p[0]; n.y = p[1]; }
     for (const [n, p] of to) if (!from.has(n)) { n.x = p[0]; n.y = p[1]; }
-    motion.tween = { from, to, t0: performance.now(), ms: Math.max(1, T(ms)) };
+    motion.tween = { from, to, t0: performance.now(), ms: Math.max(1, T(ms)), fit };
     if (fit) smoothFit(T(ms), 90, null, (n) => to.get(n));
     runMotion();
   }
@@ -2356,7 +2371,7 @@
       }
       kick(300);
       clearTimeout(refitT);
-      refitT = setTimeout(() => { start = null; if (!allInView()) refitView(); }, 300);  // only if something ended up off screen
+      refitT = setTimeout(() => { start = null; if (fitAnim || !allInView()) refitView(); }, 300);  // only if something ended up off screen, or a fit was still framing the old size
     });
     ro.observe(graphEl);
     // Moving the window to a screen with a different pixel density (Retina and not) doesn't change its size,
@@ -3227,7 +3242,14 @@
       S.links = newLinks;
       fg.graphData({ nodes: Array.from(next.values()), links: newLinks });
       configureLinkForce();
-      const rf = fg.d3Force('regions'); if (rf && rf.relayout) rf.relayout();
+      syncForces(fg.graphData().nodes, newLinks);  // also places the sections, which the dots below start from
+      const rf = fg.d3Force('regions');
+      // a new dot with nothing to start beside starts in its section (never without a position: that spreads)
+      for (const n of next.values()) {
+        if (Number.isFinite(n.x) && Number.isFinite(n.y)) continue;
+        const a = rf && rf.anchorOf ? rf.anchorOf(n) : { x: 0, y: 0 };
+        n.x = a.x + (Math.random() - 0.5) * 20; n.y = a.y + (Math.random() - 0.5) * 20;
+      }
       if (S.firstGraph && rf && rf.anchorOf) {
         // a fresh map: each dot starts close to its region (a fixed scatter from its id), not in a spiral at the
         // centre, so the layout is a short glide into place instead of every dot crossing the map
@@ -3428,6 +3450,8 @@
     }
   }
 
+  /** Where a dot is, or where it's gliding to: views are framed around where the dots come to rest. */
+  const restingAt = (n) => (motion.tween && motion.tween.to.get(n)) || [n.x, n.y];
   /** Every dot (shown, of the focused region if one is) inside the view? */
   function allInView() {
     if (!fg) return true;
@@ -3435,7 +3459,7 @@
     for (const n of S.nodes.values()) {
       if (!Number.isFinite(n.x) || nodeHidden(n.id) || n.type === 'fragment') continue;
       if (S.focusCluster != null && n.cluster !== S.focusCluster) continue;
-      const p = fg.graph2ScreenCoords(n.x, n.y);
+      const [gx, gy] = restingAt(n), p = fg.graph2ScreenCoords(gx, gy);
       if (p.x < 0 || p.y < 0 || p.x > w || p.y > h) return false;
     }
     return true;
@@ -3453,7 +3477,7 @@
     const W = graphEl.clientWidth, H = graphEl.clientHeight;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of S.nodes.values()) {
-      const p = posOf ? posOf(n) : [n.x, n.y];  // posOf: fit where the dots are going, not where they are
+      const p = posOf ? posOf(n) : restingAt(n);  // where the dots are going, not where they are
       if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1]) || nodeHidden(n.id)) continue;
       if (filter && !filter(n)) continue;
       x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]);
@@ -3586,6 +3610,7 @@
   function simNudge() {
     // re-applying the link force is enough; a mild reheat lets the layout respond
     clearTimeout(nudgeT);
+    if (S.firstGraph) return;  // starting up: the first map is laid out with these settings anyway
     nudgeT = setTimeout(() => relayout({ alpha: 0.3, ms: 900 }), 350);
   }
   function setShowSim(v) {
