@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 TIMEOUT = float(os.environ.get("RB_PDF_TIMEOUT", "120"))
@@ -53,21 +54,40 @@ def extract(path: Path, max_pages: int = 80, info: dict | None = None) -> tuple[
     here = Path(__file__).resolve().parent
     env["RB_PDF_SYS_PATH"] = json.dumps([p for p in sys.path if p and Path(p).is_dir()
                                          and Path(p).resolve() not in (here, here.parent)])
+    # Opened from the Windows Start menu the app runs under pythonw.exe, and so does this child: a program with no
+    # console may be given no standard output at all. There its answer goes through a file, and no window appears.
+    out_file = None
+    if os.name == "nt":
+        fd, out_file = tempfile.mkstemp(prefix="rb_pdf_", suffix=".json")
+        os.close(fd)
+        env["RB_PDF_OUT"] = out_file
     try:
         proc = subprocess.run([sys.executable, "-I", str(Path(__file__).resolve()), str(path), str(max_pages)],
                               capture_output=True, timeout=TIMEOUT, env=env, stdin=subprocess.DEVNULL,
-                              preexec_fn=_limits if os.name == "posix" else None)
+                              preexec_fn=_limits if os.name == "posix" else None,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        answer = proc.stdout
+        if out_file:
+            answer = Path(out_file).read_bytes() or answer
     except subprocess.TimeoutExpired:
         raise PdfError(f"reading it took longer than {int(TIMEOUT)} s")
     except OSError:  # couldn't start a process at all: parse here rather than fail every import
         return extract_inprocess(path, max_pages, info)
+    finally:
+        if out_file:
+            try:
+                os.unlink(out_file)
+            except OSError:
+                pass
     if proc.returncode != 0:
         tail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1:] or [f"exit {proc.returncode}"]
         if proc.returncode < 0 or "MemoryError" in tail[0]:
             raise PdfError("the PDF parser ran out of time or memory")
+        if "not been decrypted" in tail[0] or "password" in tail[0].lower():
+            raise PdfError("it needs a password. Open it, save a copy without one (print to PDF), and add that")
         raise PdfError(tail[0][:200])
     try:
-        out = json.loads(proc.stdout.decode("utf-8"))
+        out = json.loads(answer.decode("utf-8"))
         if info is not None and isinstance(out.get("info"), dict):
             info.update({str(k): str(v)[:2000] for k, v in out["info"].items() if v})
         return str(out["text"])[:MAX_TEXT_CHARS], str(out["title"])[:500]
@@ -253,6 +273,9 @@ if __name__ == "__main__":  # the child process started by extract()
     # bytes, not sys.stdout: on Windows a piped stdout uses the locale code page (cp1252), which can't encode
     # characters papers are full of (∗, ≈, Greek letters) and the import failed with UnicodeEncodeError.
     # extract() decodes UTF-8.
-    sys.stdout.buffer.write(json.dumps({"text": _text, "title": _title, "info": _info},
-                                       ensure_ascii=False).encode("utf-8", "replace"))
-    sys.stdout.buffer.flush()
+    _answer = json.dumps({"text": _text, "title": _title, "info": _info}, ensure_ascii=False).encode("utf-8", "replace")
+    if os.environ.get("RB_PDF_OUT"):
+        Path(os.environ["RB_PDF_OUT"]).write_bytes(_answer)
+    else:
+        sys.stdout.buffer.write(_answer)
+        sys.stdout.buffer.flush()

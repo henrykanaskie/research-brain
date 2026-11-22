@@ -101,7 +101,8 @@ def _github_token() -> str:
     if tok or not shutil.which("gh"):
         return tok
     try:
-        out = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=5)
+        out = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return out.stdout.strip() if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -499,7 +500,8 @@ def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str
     hb = f"http://127.0.0.1:{port}/api/heartbeat"
     if windows:
         from subprocess import list2cmdline as q
-        lines = ["@echo off", "rem research brain update (app/updates.py): wait, install, start again"]
+        lines = ["@echo off", "chcp 65001 >nul",  # this file is UTF-8: folders the old code page can't spell
+                 "rem research brain update (app/updates.py): wait, install, start again"]
         for i, pid in enumerate(pids):
             lines += [f":w{i}", f'tasklist /FI "PID eq {pid}" /NH 2>nul | findstr /C:" {pid} " >nul && (ping -n 2 127.0.0.1 >nul & goto w{i})']
         if install_dir:

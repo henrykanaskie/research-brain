@@ -376,6 +376,7 @@ def test_windows_shortcut_has_the_brain_icon_and_no_console(monkeypatch, tmp_pat
     monkeypatch.setattr(launcher.sys, "executable", str(env / "python.exe"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
     ran = []
+    monkeypatch.setattr(launcher, "_unicode_shortcut", lambda *a: False)  # no pywin32: the PowerShell way
     monkeypatch.setattr(launcher.subprocess, "run", lambda cmd, **k: ran.append(cmd) or types.SimpleNamespace(returncode=0, stderr=""))
     assert "Start menu" in launcher._windows_shortcut(False)
     ps = ran[0][-1]

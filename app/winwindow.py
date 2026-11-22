@@ -906,6 +906,7 @@ def run(url: str, start) -> int | None:
     if state["ours"] and not state["updating"]:
         _quit_server(url)
     # end now: .NET's and pythonnet's shutdown add seconds to every close
-    sys.stdout.flush()
-    sys.stderr.flush()
+    for s in (sys.stdout, sys.stderr):
+        if s is not None:  # pythonw has neither
+            s.flush()
     os._exit(0)

@@ -160,3 +160,57 @@ jobs:
           echo.| call "C:\zipview\Install-research-brain.cmd" > "C:\zipview\out.txt"
           type "C:\zipview\out.txt"
           findstr /C:"Extract All" "C:\zipview\out.txt"
+
+  # The app as a labmate has it: built, installed by install.ps1 and opened from its Start menu entry (pythonw, no
+  # console), with folders and PDFs whose names the Windows code page can't spell. tests/windows_installed.py drives
+  # it: PDFs of every kind, a followed folder, the map and the viewer in Edge, closing and opening again.
+  windows-installed:
+    strategy:
+      fail-fast: false
+      matrix:
+        # "odd": installed under a user folder the code page can't spell, as for a user called Łukasz
+        home: [plain, odd]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the release folder
+        shell: bash
+        run: |
+          python -m pip install --upgrade build playwright reportlab
+          python -m build --wheel
+          V=$(python -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('app/__init__.py').read()).group(1))")
+          W=$(basename dist/*.whl)
+          mkdir -p "/c/rb test/research-brain-$V"
+          cp dist/*.whl install.ps1 constraints.txt Install-research-brain.cmd "/c/rb test/research-brain-$V/"
+          printf '{"version": "%s", "wheel": "%s"}' "$V" "$W" > "/c/rb test/research-brain-$V/latest.json"
+          echo "RBDIR=C:\\rb test\\research-brain-$V" >> "$GITHUB_ENV"
+      - name: A user folder with characters outside the code page
+        if: matrix.home == 'odd'
+        shell: bash
+        run: |
+          mkdir -p "/c/Users/Łukasz 研究/AppData/Roaming/Microsoft/Windows/Start Menu/Programs" "/c/Users/Łukasz 研究/AppData/Local"
+          { echo "UV_TOOL_DIR=C:\\Users\\Łukasz 研究\\AppData\\Roaming\\uv\\tools"
+            echo "UV_TOOL_BIN_DIR=C:\\Users\\Łukasz 研究\\.local\\bin"
+            echo "APPDATA=C:\\Users\\Łukasz 研究\\AppData\\Roaming"; } >> "$GITHUB_ENV"
+      - name: Install uv (what most people have it installed with)
+        run: python -m pip install uv
+      - name: Install with Windows PowerShell 5.1, as the .cmd does
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RBDIR\install.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed: $LASTEXITCODE" }
+      - name: Drive the installed app
+        shell: powershell
+        working-directory: C:\
+        env:
+          RB_SHOT_DIR: C:\rb-shots
+        run: python "$env:GITHUB_WORKSPACE\tests\windows_installed.py"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-installed-${{ matrix.home }}
+          path: C:\rb-shots

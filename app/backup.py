@@ -91,7 +91,7 @@ def schedule(enable: bool = True) -> str:
             return f"Removed the scheduled task “{TASK}”."
         tr = subprocess.list2cmdline(cmd)
         r = subprocess.run(["schtasks", "/Create", "/TN", TASK, "/TR", tr, "/SC", "DAILY", "/ST", "02:30", "/F"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, errors="replace")
         if r.returncode != 0:
             raise BackupError(f"Task Scheduler refused: {(r.stderr or r.stdout).strip()}")
         return f"Added the scheduled task “{TASK}”: a snapshot every night at 02:30 (Task Scheduler)."

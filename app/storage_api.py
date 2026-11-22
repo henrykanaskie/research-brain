@@ -34,9 +34,10 @@ from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
+from starlette.requests import ClientDisconnect
 
 from . import __version__, acquire, metadata, migrate, paths, profiles, scholar, vaultzip
 
@@ -124,7 +125,10 @@ def get_ui_state():
 @router.put("/api/ui-state")
 async def put_ui_state(request: Request):
     """Merge {"state": {key: value | null}} into state/ui.json (null removes a key)."""
-    raw = await request.body()
+    try:
+        raw = await request.body()
+    except ClientDisconnect:  # the window closed while its last change was on the way
+        return Response(status_code=204)
     if len(raw) > UI_STATE_MAX:
         raise HTTPException(413, "UI state is too large")
     try:

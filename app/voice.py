@@ -204,7 +204,8 @@ class _Worker:
         self.proc = subprocess.Popen([str(_python()), str(script), str(root() / "kokoro-v1.0.onnx"),
                                       str(root() / "voices-v1.0.bin")],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                     text=True, bufsize=1)
+                                     text=True, encoding="utf-8", errors="replace", bufsize=1,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         first = self.proc.stdout.readline()
         if not first or not json.loads(first).get("ready"):
             self.stop()

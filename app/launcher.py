@@ -503,6 +503,30 @@ def windows_shortcut_path() -> Path:
     return programs / f"{APP_NAME}.lnk"
 
 
+def _unicode_shortcut(lnk: Path, target: str, args: str, icon: Path) -> bool:
+    """Make the entry with the shell's own Unicode interface (pywin32). WScript.Shell, used where pywin32 isn't
+    installed, can't spell a path outside the code page: a user called Łukasz got no working entry."""
+    try:
+        import pythoncom
+        from win32com.shell import shell
+    except ImportError:
+        return False
+    try:
+        pythoncom.CoInitialize()
+        s = pythoncom.CoCreateInstance(shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
+        s.SetPath(target)
+        s.SetArguments(args)
+        s.SetShowCmd(7)
+        s.SetDescription("research brain: your papers and notes")
+        if icon.exists():
+            s.SetIconLocation(str(icon), 0)
+        s.QueryInterface(pythoncom.IID_IPersistFile).Save(str(lnk), 0)
+        return lnk.exists()
+    except Exception as e:  # noqa: BLE001  (any COM trouble: the older way is tried next)
+        print(f"[research_brain] Start menu entry: {e!r}")
+        return False
+
+
 def _windows_shortcut(remove: bool) -> str:
     lnk = windows_shortcut_path()
     programs = lnk.parent
@@ -515,12 +539,16 @@ def _windows_shortcut(remove: bool) -> str:
     # is a console program, so it would sit minimized in the taskbar while research brain starts
     pyw = Path(sys.executable).with_name("pythonw.exe")
     target, args = (str(pyw), f"-m {__package__ or 'app'}.cli open") if pyw.exists() else (_command(), "open")
+    if _unicode_shortcut(lnk, target, args, icon):
+        from . import winshell
+        winshell.set_shortcut_app_id(lnk)
+        return f"Added \"{APP_NAME}\" to the Start menu."
     q = lambda v: "'" + str(v).replace("'", "''") + "'"  # a PowerShell string, whatever the path holds
     ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut({q(lnk)});"
           f"$s.TargetPath={q(target)};$s.Arguments={q(args)};$s.WindowStyle=7;"
           f"$s.Description='research brain: your papers and notes';"
           + (f"$s.IconLocation={q(icon)};" if icon.exists() else "") + "$s.Save()")
-    r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], capture_output=True, text=True)
+    r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], capture_output=True, text=True, errors="replace")
     if r.returncode != 0:
         raise OSError(r.stderr.strip() or "PowerShell couldn't make the shortcut")
     # research brain's taskbar ID (WScript.Shell can't set it): its window, this entry and a pinned button

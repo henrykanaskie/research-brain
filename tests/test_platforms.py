@@ -285,3 +285,17 @@ def test_a_real_window_opens_loads_and_closes(tmp_path):
         log = err.read_text(encoding="utf-8", errors="replace")
         assert "window setup" not in log and "no window of its own" not in log and "window message" not in log, log
         assert not (data / "window.json").exists()
+
+
+def test_printing_a_name_the_code_page_cannot_spell_never_fails(tmp_path):
+    """Opened from the Windows Start menu, output goes to app.log in the old code page: printing a library under
+    C:\\Users\\Łukasz, or a title with a ∗, raised UnicodeEncodeError and the app never opened. Importing the package
+    (every entry point does) makes it safe; with no stdout at all (pythonw) it still imports."""
+    code = "import app; print('C:/Users/\\u0141ukasz \\u7814\\u7a76 \\u03c3\\u2217')"
+    env = {**{k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}, "PYTHONIOENCODING": "cp1252", "PYTHONPATH": str(ROOT)}
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, env=env, cwd=str(tmp_path), timeout=60)
+    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
+    assert "Łukasz 研究 σ∗" in r.stdout.decode("utf-8")
+    r = subprocess.run([sys.executable, "-c", "import sys; sys.stdout = sys.stderr = None; import app; print('x \\u2217')"],
+                       capture_output=True, env=env, cwd=str(tmp_path), timeout=60)
+    assert r.returncode == 0

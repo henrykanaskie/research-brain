@@ -127,11 +127,18 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
           "blocking the download, or research brain still running (close its window, wait a minute, and run this again).")
   }
   Native { uv tool update-shell 2>&1 | Out-Null }
+  # the folder uv puts commands in: update-shell adds it for the next sign-in, and this window needs it now, or the
+  # rest of the install (checking the version, the Start menu entry) can't find research-brain
+  $Bin = ((Native { uv tool dir --bin 2>$null }) -join "").Trim()
+  if (-not $Bin) { $Bin = Join-Path $env:USERPROFILE ".local\bin" }
+  Add-UserPath $Bin
 } elseif (Get-Command pipx -ErrorAction SilentlyContinue) {
   Write-Host "-> Installing with pipx"
   Native { if ($Constraints) { pipx install --force --pip-args "-c `"$Constraints`"" $Spec } else { pipx install --force $Spec } }
   if ($LASTEXITCODE -ne 0) { Fail "Installing didn't finish (what went wrong is just above). Check the internet connection and run this again." }
   Native { pipx ensurepath 2>&1 | Out-Null }
+  $Bin = ((Native { pipx environment --value PIPX_BIN_DIR 2>$null }) -join "").Trim()
+  if ($Bin) { Add-UserPath $Bin }
 } else {
   $Py = Find-Python
   $Data = Join-Path $env:APPDATA "research_brain"

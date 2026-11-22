@@ -15,7 +15,9 @@ access to the private GitHub repository.
    git tag v0.8.0 && git push origin main v0.8.0
    ```
 
-3. The workflow runs the full test suite on Linux, Windows and macOS (pushes to a branch test on Linux only, to save
+3. The workflow runs the full test suite on Linux, Windows and macOS, and drives the installed app on Windows
+   (`tests/windows_installed.py`: installed by `install.ps1`, opened from its Start menu entry, under an ordinary user
+   folder and one the code page can't spell) (pushes to a branch test on Linux only, to save
    Actions minutes: on a private repository Windows minutes count double and macOS ten times), checks the tag matches
    `__version__`, builds the wheel, installs it in a clean environment as a smoke test, and creates a
    GitHub release with:
