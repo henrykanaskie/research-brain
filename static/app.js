@@ -2698,7 +2698,7 @@
       .linkLabel(() => '')
       .onNodeHover((n) => { S.hoverRaw = n || null; hoverNow(); })  // its connections light up (and fade back) over ~150 ms
       .onLinkHover((l) => { const at = pointerAt && lineAt(pointerAt[0], pointerAt[1]); setHoverLink(S.hover ? null : at || l || null); })
-      .onNodeClick((n, e) => { if (regionTagClick(e)) return; { const c = (S.shifted || []).length && S.hover && S.nodes.get(S.hover); if (onItsPlace(c)) n = c; } if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; if (S.focusCluster != null && n.cluster >= 0 && n.cluster !== S.focusCluster) focusRegion(n.cluster, false); openNote(n.id, { center: true }); })
+      .onNodeClick((n, e) => { if (regionTagClick(e)) return; { const c = (S.shifted || []).length && S.hover && S.nodes.get(S.hover); if (onItsPlace(c)) n = c; } nodeClicked(n, e); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
       .onNodeDrag((n) => { S.dragging = true; S.dragNode = n; motion.tween = null; dragNeighbours(n); runMotion(); })
@@ -2707,6 +2707,7 @@
       .onBackgroundClick((e) => {
         if (S.swallowClick && performance.now() - S.swallowClick < 400) return;  // the end of a section drag
         if (regionTagClick(e)) return;
+        { const t = e && textNodeAt(e.clientX, e.clientY); if (t) { nodeClicked(t, e); return; } }  // its name, or its card
         { const l = e && lineAt(e.clientX, e.clientY); if (l) { onLinkClick(l); return; } }  // a line that just appeared: the graph's own hit test lags
         dropLit();
         if (S.backgroundClickHook && S.backgroundClickHook(e)) return;  // static/mobile.js handled it
@@ -2717,7 +2718,7 @@
         else if (S.selected) { S.selected = null; S.focusCache = null; kick(300); }
         else if (S.focusCluster != null) unfocusRegion();
       })
-      .onBackgroundRightClick((e) => backgroundMenu(e))
+      .onBackgroundRightClick((e) => { const t = e && textNodeAt(e.clientX, e.clientY); if (t) nodeMenu(t, e); else backgroundMenu(e); })
       // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick((e && lineAt(e.clientX, e.clientY)) || l, e); })
       .onRenderFramePre((ctx, k) => {
@@ -2726,7 +2727,7 @@
           const a = fg.screen2GraphCoords(0, 0), b = fg.screen2GraphCoords(graphEl.clientWidth, graphEl.clientHeight), m = 60 / k;
           S.cull = [Math.min(a.x, b.x) - m, Math.min(a.y, b.y) - m, Math.max(a.x, b.x) + m, Math.max(a.y, b.y) + m];
         }
-        S.labelJobs = [];
+        S.labelJobs = []; S.labelNext = [];  // where each dot's name is drawn: it's pointed at and clicked like its dot
         { const now = performance.now(); labelDt = Math.min(100, now - labelClock); labelClock = now; }
         // names get new places only when the map has changed and is at rest (a layout in motion planned them already)
         if (!motion.tween && !S.dragging && S.dragRegion == null && planStale()) planLabels();
@@ -2745,6 +2746,7 @@
           drawPulses(ctx, k);
           drawCards(ctx, k);
           drawLinkTag(ctx);
+          S.labelHits = S.labelNext;  // (the last whole frame's: what's under the pointer is asked mid-frame too)
         } finally {
           removeFloat();
           removeShift(); shiftLifted = false;  // dots moved aside for a card are back where they really are
@@ -3149,9 +3151,12 @@
         L.a = easeTo(L.a ?? want, want);
         if (L.a !== want) kick(60);
         const a = alpha * L.a * (1 - cardP(n.id));
-        if (a < 0.02) continue;
         const [x, y] = at(n.x - (floatOn ? n.__flx || 0 : 0), n.y - (floatOn ? n.__fly || 0 : 0));
         const o = outer * k;
+        if (a < 0.02) {  // hidden by its own card: still its dot's, so pointing at it keeps the card open
+          if (!sel && alpha * L.a > 0.3) { const [lx, ly] = labelSpots(L.w, o)[L.side]; S.labelNext.push([n, x + lx - 2, y + ly - 2, x + lx + L.w + 2, y + ly + LABEL_PX + 3]); }
+          continue;
+        }
         ctx.globalAlpha = a;
         ctx.textBaseline = 'top'; ctx.lineJoin = 'round'; ctx.strokeStyle = rgba(C.ground, 0.92);
         if (sel) {
@@ -3162,6 +3167,7 @@
           glowText(ctx, title, x, ty, 14);
           ctx.strokeText(title, x, ty);
           ctx.fillStyle = C.ink; ctx.fillText(title, x, ty);
+          if (a > 0.3) { const tw = ctx.measureText(title).width; S.labelNext.push([n, x - tw / 2 - 2, ty - 2, x + tw / 2 + 2, ty + 18]); }
           continue;
         }
         const [lx, ly] = labelSpots(L.w, o)[L.side], tx = x + lx, ty = y + ly;
@@ -3177,6 +3183,7 @@
         ctx.textBaseline = 'alphabetic';
         ctx.strokeText(text, tx, by);
         ctx.fillStyle = C.ink2; ctx.fillText(text, tx, by);
+        if (a > 0.3) S.labelNext.push([n, tx - 2, ty - 2, tx + L.w + 2, ty + LABEL_PX + 3]);
       }
     });
   }
@@ -3924,8 +3931,30 @@
    *  on that dot, and a moved dot can't take it: one sliding under a pointer that isn't moving opened its own card, which
    *  moved others under the pointer, and so on without end (cards hopping about by themselves, and the map redrawn for as
    *  long as the pointer lay there). */
+  function nodeClicked(n, e) {
+    if (S.linkFrom && finishLinkMode(n)) return;
+    if (S.nodeClickHook && S.nodeClickHook(n, e)) return;
+    if (S.focusCluster != null && n.cluster >= 0 && n.cluster !== S.focusCluster) focusRegion(n.cluster, false);
+    openNote(n.id, { center: true });
+  }
+  /** The dot whose name, or whose open card (its title and authors), is under a point on screen. */
+  function textNodeAt(cx, cy) {
+    if (!fg || S.dragging) return null;
+    const r = graphEl.getBoundingClientRect(), x = cx - r.left, y = cy - r.top;
+    for (const c of cards) {
+      if (!c.L || c.p < 0.6) continue;
+      const a = fg.graph2ScreenCoords(c.L.x0, c.L.y0), b = fg.graph2ScreenCoords(c.L.x0 + c.L.w, c.L.y0 + c.L.h);
+      if (x >= a.x && x <= b.x && y >= a.y && y <= b.y) return S.nodes.get(c.id) || null;
+    }
+    const hits = S.labelHits || [];
+    for (let i = hits.length - 1; i >= 0; i--) {  // the last drawn is on top
+      const [n, x0, y0, x1, y1] = hits[i];
+      if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && S.nodes.get(n.id) === n && !nodeHidden(n.id)) return n;
+    }
+    return null;
+  }
   function hoverNow() {
-    let n = S.hoverRaw || null;
+    let n = S.hoverRaw || (pointerAt && S.overMap !== false ? textNodeAt(pointerAt[0], pointerAt[1]) : null) || null;
     if ((S.shifted || []).length) {
       const cur = S.hover && S.nodes.get(S.hover);
       if (onItsPlace(cur)) n = cur;

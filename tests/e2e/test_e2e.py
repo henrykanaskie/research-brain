@@ -1012,11 +1012,15 @@ def test_hover_card_pops_out_and_dots_make_room(ctx, server):
       if (!rb.S.shifted.length) rb.S.shifted = [moved];
       const out = []; for (const n of [moved, null]) {{ on(n, main); out.push(rb.S.hover); }} on(main, null); return out; }}""")
     assert kept == [main, main]
-    # leaving the dot closes it quickly, even when the pointer passes over where the card is
+    # the card is its dot's too: it stays open with the pointer on it, and a click on it opens the paper
     x0, y0, w, h = page.evaluate(f"() => window.__rb.cards.find(c => c.id === '{main}').box")
     mid = page.evaluate(f"() => window.__rb.fg.graph2ScreenCoords({x0 + w * 0.5}, {y0 + h * 0.6})")
     page.mouse.move(box["x"] + mid["x"], box["y"] + mid["y"], steps=3)
-    page.wait_for_function("() => window.__rb.cards.length === 0", timeout=1000)
+    page.wait_for_timeout(500)
+    assert page.evaluate(f"() => window.__rb.cards.some(c => c.id === '{main}') && window.__rb.S.hover === '{main}'")
+    page.mouse.click(box["x"] + mid["x"], box["y"] + mid["y"])
+    page.wait_for_function(f"() => window.__rb.S.cur && window.__rb.S.cur.id === '{main}'", timeout=4000)
+    page.keyboard.press("Escape")
     # moving away closes it, and nothing has moved for real
     page.mouse.move(box["x"] + 5, box["y"] + box["height"] - 5, steps=6)
     page.wait_for_function("() => window.__rb.cards.length === 0", timeout=4000)
