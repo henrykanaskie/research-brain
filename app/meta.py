@@ -345,7 +345,8 @@ class MetaIndex:
 
     def _parse_file(self, nid: str) -> dict | None:
         try:
-            raw = self.store.note_path(nid).read_text(encoding="utf-8")
+            from . import fsio
+            raw = fsio.read_text(self.store.note_path(nid))  # a save swapping it in on Windows: retried, not skipped
             return self.store._parse(nid, raw)
         except (KeyError, OSError, UnicodeDecodeError):
             return None

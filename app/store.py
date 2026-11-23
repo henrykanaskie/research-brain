@@ -428,7 +428,7 @@ class Store:
     def get(self, nid: str) -> dict:
         path = self.note_path(nid)
         try:
-            return self._parse(nid, path.read_text(encoding="utf-8"))
+            return self._parse(nid, fsio.read_text(path))  # retries a Windows sharing violation (a save swapping it in)
         except FileNotFoundError:
             pass
         # Not where it was: a save may be renaming it right now (a new title moves the file). Wait for any
@@ -436,7 +436,7 @@ class Store:
         with self.lock:
             path = self.note_path(nid)
             try:
-                return self._parse(nid, path.read_text(encoding="utf-8"))
+                return self._parse(nid, fsio.read_text(path))  # retries a Windows sharing violation (a save swapping it in)
             except FileNotFoundError:
                 raise KeyError(nid) from None
 
@@ -515,7 +515,7 @@ class Store:
         for nid in sorted(self.layout.scan()):
             p = self.layout.path(nid)
             try:
-                out.append(self._parse(nid, p.read_text(encoding="utf-8")))
+                out.append(self._parse(nid, fsio.read_text(p)))
             except (KeyError, OSError, UnicodeDecodeError, AttributeError):
                 continue
             except Exception as e:  # one unreadable hand-edited file must not take down the whole library
@@ -709,7 +709,7 @@ class Store:
         p = self._json_path(name)
         if p.exists():
             try:
-                return json.loads(p.read_text(encoding="utf-8"))
+                return json.loads(fsio.read_text(p))  # retried while Windows has it locked (an empty {} here would be saved over it)
             except (json.JSONDecodeError, OSError):
                 return {}
         return {}

@@ -100,6 +100,35 @@ def test_note_files_are_windows_safe(tmp_path):
     assert b"\r\n" not in raw and b"one\ntwo" in raw
 
 
+def test_reading_a_note_windows_has_locked_for_a_moment_waits_instead_of_failing(tmp_path, monkeypatch):
+    """On Windows, reading a note while a save swaps the new file in (or a scanner holds it) fails with a sharing
+    violation for a few milliseconds. The store retries rather than failing the request (CI saw a 500 while a
+    paper's citations were saved in the background), and settings files aren't read as empty, then saved over."""
+    from pathlib import Path
+    from app import fsio
+    from app.store import Store
+    s = Store(tmp_path / "vault")
+    n = s.create({"type": "note", "title": "Locked a moment", "body": "still here"})
+    s.save_json("prefs", {"kept": True})
+    monkeypatch.setattr(fsio, "WINDOWS", True)
+    monkeypatch.setattr(fsio.time, "sleep", lambda _s: None)
+    real = Path.read_text
+    busy = {"left": 0}
+
+    def flaky(self, *a, **kw):
+        if busy["left"]:
+            busy["left"] -= 1
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        return real(self, *a, **kw)
+    monkeypatch.setattr(Path, "read_text", flaky)
+    busy["left"] = 3
+    assert s.get(n["id"])["body"].strip() == "still here"
+    busy["left"] = 3
+    assert s.load_json("prefs") == {"kept": True}
+    busy["left"] = 3
+    assert s.meta is None or s.meta._parse_file(n["id"])["title"] == "Locked a moment"
+
+
 @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git not installed")
 def test_backup_snapshot(tmp_path):
     """`research-brain backup` commits the library once (PDFs ignored), and says so when nothing changed."""
