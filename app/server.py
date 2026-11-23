@@ -38,6 +38,7 @@ from .embed import Embedder, note_text
 from .meta import one_look
 from .pdftext import extract, guess_title, why_unreadable
 from . import placing
+from . import region_edit
 from .store import FrontmatterError, Store, normalize_selector, now_iso
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -2772,17 +2773,26 @@ def _chat_prompt(body: ChatIn) -> tuple[str, str, dict]:
     if body.paper:
         context, sources, passages = _paper_chat_context(idx, body.paper, q, body.history, body.include_related,
                                                          page=body.page, selection=body.selection, summary=summary)
-        return PAPER_CHAT_INSTRUCTION, context, {"sources": sources, "passages": passages, "paper": body.paper}
+        return (*_with_regions(q, PAPER_CHAT_INSTRUCTION, context), {"sources": sources, "passages": passages, "paper": body.paper})
     if body.topics:
         allowed, names, overview = _topic_scope(idx, body.topics)
         if not allowed:
             raise HTTPException(400, "Those regions have no papers yet (or only private ones)")
         context, sources, passages = _chat_context(idx, q, body.history, summary=summary, allowed=allowed,
                                                    overview=overview)
-        return (TOPIC_CHAT_INSTRUCTION.format(names=", ".join(f"“{n}”" for n in names)), context,
+        return (*_with_regions(q, TOPIC_CHAT_INSTRUCTION.format(names=", ".join(f"“{n}”" for n in names)), context),
                 {"sources": sources, "passages": passages, "topics": [t for t in body.topics]})
     context, sources, passages = _chat_context(idx, q, body.history, summary=summary)
-    return CHAT_INSTRUCTION, context, {"sources": sources, "passages": passages}
+    return (*_with_regions(q, CHAT_INSTRUCTION, context), {"sources": sources, "passages": passages})
+
+
+def _with_regions(q: str, instruction: str, context: str) -> tuple[str, str]:
+    """Asked to change regions: the chat sees them (app/region_edit.py) and may propose changes, as a block the
+    page shows with Apply. Nothing changes until you click it."""
+    if not region_edit.wants_regions(q):
+        return instruction, context
+    regions = region_edit.context(store, _ai_visible(index()["by_id"]), q)
+    return instruction + region_edit.INSTRUCTION, regions + "\n\n" + context
 
 
 def _history_text(history: list[dict], summary: str = "") -> str:
@@ -5379,6 +5389,9 @@ finder_api.install(app, store=store, publish=event_bus.publish, match_question=_
 from . import novelty_api  # noqa: E402
 novelty_api.install(app, store=store, publish=event_bus.publish, agent=_ai_agent, embedder=embedder,
                     chunk_index=_chunk_index, ask=lambda i, c, purpose="novelty check", sources=None: _ask(i, c, purpose, sources))
+
+# ---------------------------------------------------------------- region changes the chat proposes (app/region_edit.py)
+region_edit.install(app, store=store)
 
 # ---------------------------------------------------------------- citing: styles, keys, .bib/RIS exports (app/cite_api.py)
 from . import cite_api  # noqa: E402

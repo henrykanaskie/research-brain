@@ -416,6 +416,13 @@ and a body of `- [[note-id]]` lines (the ordered members). Dismissals and snooze
 - `PUT /api/notes/{id}/main-region` body `{"slug": slug | null}` → `{id, main_region}`. A note in several regions is
   drawn in its main one (`main_region` in its file); without one, the biggest region it's in. A region it isn't in
   is a 400.
+- `POST /api/regions/changes/preview` body `{"changes": [...]}` → `{changes}`: each change resolved (papers by title,
+  whether it makes a new region) or the reason it can't be done. Changes the chat proposes in a ```` ```rb-regions ````
+  block (app/region_edit.py): `move` (`ids`, `to`, optional `from`), `add`, `remove` (`from`), `rename` (`region`,
+  `to`), `main` (`ids`, `region`). Regions by name; a new name makes one.
+- `POST /api/regions/changes/apply` body `{"changes": [...]}` → `{token, done, skipped}`. Every region file and each
+  touched main region is put aside first.
+- `POST /api/regions/changes/undo` body `{"token": "..."}` → `{ok}`.
 - `GET /api/topics/suggest` → `[{"region","name","label","size","members"}]`: graph regions not already covered by a
   topic (Jaccard overlap < 0.6), with the region label as the suggested name. Create one with `POST /api/topics`.
 

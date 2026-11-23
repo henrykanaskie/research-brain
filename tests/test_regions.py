@@ -252,3 +252,54 @@ def test_ai_names_regions_from_titles_without_private_ones(tmp_path, monkeypatch
     srv.regions_mod.rename(srv.store, ids, "Mine", None)
     out = srv.regions_mod.apply(srv.store, [{"id": 0, "label": "cross sections", "size": 3}], {0: ids})
     assert out[0]["label"] == "Mine"
+
+
+# ---------------------------------------------------------------- region changes the chat proposes (app/region_edit.py)
+def test_region_changes_from_the_chat_preview_apply_and_undo(server):
+    """The chat proposes changes as JSON; nothing changes until Apply. Apply moves, adds, takes out, renames, makes a
+    new region for a new name and sets main regions; Undo puts every region and main region back."""
+    from app import region_edit
+    srv, c = server
+    mk = lambda t: c.post("/api/notes", json={"type": "paper", "title": t, "abstract": t}).json()["id"]
+    a, b, d = mk("Krypton cross sections"), mk("Xenon cross sections"), mk("Hall thruster erosion")
+    c.post("/api/topics", json={"name": "Cross sections", "members": [a, b]})
+    c.post("/api/topics", json={"name": "Thrusters", "members": [d]})
+    before = {t["name"]: t["count"] for t in c.get("/api/topics").json()}
+    changes = [
+        {"op": "move", "ids": [a], "to": "Thrusters", "from": "Cross sections"},
+        {"op": "add", "ids": [b], "to": "Noble gases"},              # a new region
+        {"op": "main", "ids": [b], "region": "Noble gases"},
+        {"op": "rename", "region": "Thrusters", "to": "Hall thrusters"},
+        {"op": "remove", "ids": ["no-such-paper"], "from": "Cross sections"},  # can't: shown, skipped
+        {"op": "explode", "ids": [a]},
+    ]
+    prev = c.post("/api/regions/changes/preview", json={"changes": changes}).json()["changes"]
+    assert [bool(r["problem"]) for r in prev] == [False, False, True, False, True, True]  # main: Noble gases isn't there yet
+    assert prev[0]["papers"][0]["title"] == "Krypton cross sections" and prev[1]["new"] is True
+    assert {t["name"]: t["count"] for t in c.get("/api/topics").json()} == before  # a preview changes nothing
+    r = c.post("/api/regions/changes/apply", json={"changes": changes[:2] + changes[3:]}).json()
+    topics = {t["name"]: t["slug"] for t in c.get("/api/topics").json()}
+    assert set(topics) == {"Cross sections", "Hall thrusters", "Noble gases"}
+    regions = lambda i: sorted(t["name"] for t in c.get(f"/api/notes/{i}/regions").json()["topics"])
+    assert regions(a) == ["Hall thrusters"] and regions(b) == ["Cross sections", "Noble gases"]
+    assert len(r["skipped"]) == 2
+    # main region, now that b is in Noble gases: then undo all of it
+    r2 = c.post("/api/regions/changes/apply", json={"changes": [{"op": "main", "ids": [b], "region": "Noble gases"}]}).json()
+    assert c.get(f"/api/notes/{b}/regions").json()["main_region"] == topics["Noble gases"]
+    c.post("/api/regions/changes/undo", json={"token": r2["token"]})
+    assert c.get(f"/api/notes/{b}/regions").json()["main_region"] is None
+    c.post("/api/regions/changes/undo", json={"token": r["token"]})
+    assert {t["name"]: t["count"] for t in c.get("/api/topics").json()} == before
+    assert regions(a) == ["Cross sections"]
+    assert c.post("/api/regions/changes/undo", json={"token": "../../etc"}).status_code == 400
+    assert c.post("/api/regions/changes/apply", json={"changes": [{"op": "explode"}]}).status_code == 400
+
+    # the chat sees the regions (and may propose) only when asked about them
+    assert region_edit.wants_regions("move the krypton papers into Cross sections")
+    assert region_edit.wants_regions("Rename Downloads to Probe diagnostics")
+    assert not region_edit.wants_regions("What is the Bohm criterion?")
+    by_id = {n["id"]: n for n in srv.store.all()}
+    ctx = region_edit.context(srv.store, by_id, "move krypton")
+    assert "## Cross sections" in ctx and f"[[{a}]] Krypton cross sections" in ctx
+    hidden = {k: v for k, v in by_id.items() if k != a}  # a private paper: not listed
+    assert f"[[{a}]]" not in region_edit.context(srv.store, hidden, "move krypton")

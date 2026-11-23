@@ -29,6 +29,7 @@
   function speakable(md) {
     let t = String(md || '');
     t = t.replace(/<remember>[\s\S]*?<\/remember>/gi, '').replace(/<remember>[\s\S]*$/i, '');
+    t = t.replace(/```rb-regions[\s\S]*?(```|$)/gi, ' (The region changes are in the chat.) ');
     t = t.replace(/```(mermaid|svg)[\s\S]*?```/gi, ' (There’s a diagram in the chat.) ');
     t = t.replace(/```[\s\S]*?```/g, ' (There’s some code in the chat.) ');
     t = t.replace(/^\s*\|.*\|\s*$/gm, '').replace(/(?:\n\s*){2,}(?=\S)/g, '\n\n');

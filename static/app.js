@@ -285,6 +285,9 @@
    *  it while the answer is still being written). */
   const noMemoryTag = (t) => String(t || '').replace(/\s*<remember>[\s\S]*?<\/remember>\s*/gi, '\n\n')
     .replace(/\s*<remember>[\s\S]*$/i, '').replace(/\s*<(r(e(m(e(m(b(e(r)?)?)?)?)?)?)?)?$/i, '');
+  // a ```rb-regions block (region changes the chat proposes) is shown as a card with Apply (static/regionedit.js), not
+  // as text; while it's still being written, nothing of it shows
+  const noRegionBlock = (t) => String(t || '').replace(/\s*```rb-regions[^\n]*\n[\s\S]*?```\s*/gi, '\n\n').replace(/\s*```rb-regions[\s\S]*$/i, '');
 
   // ---------- diagrams and figures in answers ----------
   // ```mermaid and ```svg blocks in finished answers and AI summaries are drawn by static/visuals.js (shared
@@ -6157,7 +6160,7 @@
       } else if (m.pending && m.live) { // streaming: the answer so far (re-rendered by sendChat)
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine streaming', 'aria-live': 'polite' },
           h('div', { class: 'machine-head' }, h('span', { text: `${AI()}, writing…` })),
-          h('div', { class: 'msg-body md chat-live', html: partialMD(noMemoryTag(m.live)) }))));
+          h('div', { class: 'msg-body md chat-live', html: partialMD(noRegionBlock(noMemoryTag(m.live))) }))));
       } else if (m.pending) {
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatGeneral ? (m.web ? `${AI()} is searching the web` : `${AI()} is thinking`) : S.chatPaper ? `${AI()} is reading the paper` : S.chatTopics ? `${AI()} is reading the papers in your regions` : `${AI()} is reading your library`, m.start))));
       } else if (m.error) {
@@ -6171,7 +6174,7 @@
         const ICO_COPY = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg>';
         const ICO_OK = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg>';
         const copyBtn = h('button', { class: 'btn btn-icon msg-act msg-copy', type: 'button', html: ICO_COPY, title: 'Copy this answer (as Markdown)', 'aria-label': 'Copy',
-          onclick: () => copyText(m.content || '').then((ok) => {
+          onclick: () => copyText(noRegionBlock(m.content || '').trim()).then((ok) => {
             copyBtn.innerHTML = ok ? ICO_OK : ICO_COPY; copyBtn.title = ok ? 'Copied' : 'Could not copy'; copyBtn.classList.toggle('done', ok);
             setTimeout(() => { copyBtn.innerHTML = ICO_COPY; copyBtn.title = 'Copy this answer (as Markdown)'; copyBtn.classList.remove('done'); }, 1600);
           }) });
@@ -6183,7 +6186,8 @@
           onclick: () => V.readAloud(m) }) : null;
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
           h('div', { class: 'machine-head' }, h('span', { text: ai() }), readBtn, copyBtn),
-          h('div', { class: 'msg-body md', html: renderMD(noMemoryTag(m.content)) }), src, chatPassages(m), chatPapers(m),
+          h('div', { class: 'msg-body md', html: renderMD(noRegionBlock(noMemoryTag(m.content))) }),
+          window.__rbRegionEdit ? window.__rbRegionEdit.card(m) : null, src, chatPassages(m), chatPapers(m),
           (m.remembered || []).length ? h('div', { class: 'msg-remembered', title: 'Saved to Memory › About you, which every chat uses. Edit or delete it there.' },
             h('span', { class: 'lbl', text: 'Remembered' }), ' ', m.remembered.join(' '), ' ',
             h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Memory', onclick: () => { const mm = window.__rbMemory; if (mm && mm.open) mm.open(); } })) : null)));
@@ -6279,7 +6283,7 @@
       pending.live = text;
       const el = $$('.chat-live', chatLog).pop();
       if (!el) { renderChat(); return; }
-      el.innerHTML = partialMD(noMemoryTag(text));
+      el.innerHTML = partialMD(noRegionBlock(noMemoryTag(text)));
       drawLater(el);
       if (chatFollow) chatLog.scrollTop = chatLog.scrollHeight;
     });
