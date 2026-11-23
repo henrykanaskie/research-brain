@@ -66,7 +66,8 @@ def test_onedrive_link_goes_to_the_windows_download(ctx, server):
     }""", [b64])
     shown = page.evaluate(DROP, [{"text/uri-list": "# a comment line\r\n" + ONEDRIVE, "text/plain": ONEDRIVE}, None])
     assert shown, "the drop overlay shows for a dragged link"
-    expect(page.locator(".toast", has_text="Added “Sheath edge criteria in OneDrive")).to_be_visible()
+    # the library's first PDF is read and indexed first: seconds on a slow runner
+    expect(page.locator(".toast", has_text="Added “Sheath edge criteria in OneDrive")).to_be_visible(timeout=60_000)
     assert page.evaluate("window.__cf") == [ONEDRIVE] and page.evaluate("window.__signinShown")
     expect(page.locator("#drop-overlay")).to_be_hidden()
 
