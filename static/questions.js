@@ -221,7 +221,7 @@
     try {
       const r = await api('POST', `/api/questions/${enc(qid)}/summarize`);
       const left = r.left_out ? `${r.left_out} piece${r.left_out === 1 ? '' : 's'} from private notes left out` : '';
-      out.replaceChildren(h('div', { class: 'machine' }, h('div', { class: 'machine-head' }, h('span', { text: `${RB.aiName()}'s summary, just now` }),
+      out.replaceChildren(h('div', { class: 'machine' }, h('div', { class: 'machine-head' }, h('span', { text: `${RB.AIName()}'s summary, just now` }),
         left ? h('span', { text: left }) : null), rb.mdEl(r.text)));
     } catch (e) { out.replaceChildren(); toastErr(e, 'Could not summarise'); }
     finally { btn.disabled = false; }

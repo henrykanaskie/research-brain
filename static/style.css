@@ -1202,6 +1202,13 @@ html.win-inactive .win-caption button:not(:hover) { opacity: .45; }
 @media (max-width: 900px) {
   html.win-window #topbar { overflow-x: auto; overflow-y: hidden; }
 }
+/* the header at its fullest (papers due for review, new evidence on a question): the search gives up more of its
+   width and the groups sit closer, so the settings button never slides under minimize (seen at 970px) */
+@media (max-width: 1240px) {
+  html.win-window .tb-group.grow { min-width: 120px; }
+  html.win-window #topbar:has(#btn-review:not([hidden])) { gap: 8px; }
+  html.win-window #topbar:has(#btn-review:not([hidden])) .tb-sep { display: none; }
+}
 
 /* Ask about topics (app.js chooseChatTopics): a small sheet of checkboxes */
 .tp-sheet { position: fixed; z-index: 80; top: 96px; right: 24px; width: min(340px, calc(100vw - 32px)); padding: 6px 6px 10px; }

@@ -11,6 +11,7 @@
   // colours come from the DESIGN.md tokens in style.css (re-read on theme change)
   /** short name of the active AI agent for UI copy ("Claude", "Codex", "Your local model") */
   const ai = () => RB.aiName();
+  const AI = () => RB.AIName();  // to start a sentence with
   const C = { ground: '#EEEFEB', sheet: '#F7F7F4', ink: '#15181B', ink2: '#61676C', ink3: '#9A9EA0', rule: '#D5D7D1', red: '#BD3A2C', machine: '#4A6487', dot: 'rgba(21,24,27,.16)' };
   function readTokens() {
     const cs = getComputedStyle(document.documentElement);
@@ -194,7 +195,7 @@
       try { d = JSON.parse(data.join('\n')); } catch { return; }
       if (ev === 'delta' && d.text) { text += d.text; onDelta(text); }
       else if (ev === 'done') done = d;
-      else if (ev === 'error') { const e = new Error(d.detail || `${ai()} failed`); e.claude = true; throw e; }
+      else if (ev === 'error') { const e = new Error(d.detail || `${AI()} failed`); e.claude = true; throw e; }
     };
     for (;;) {
       const { value, done: end } = await reader.read();
@@ -716,7 +717,7 @@
   function unavailableText() {
     const st = S.status || {};
     if (!st.agent || st.agent.none) return S.claudeWhy;
-    return `${ai()} isn't available. ${S.claudeWhy}`;
+    return `${AI()} isn't available. ${S.claudeWhy}`;
   }
   function claudeBlocked(btn) {
     if (!S.claudeOK) { toast(unavailableText(), 'error'); return true; }
@@ -4660,7 +4661,7 @@
     ta.value = n.summary || '';
     const live = h('div', { class: 'md live' });
     const key = 'critique:' + n.id;
-    const btn = h('button', { class: 'btn btn-primary needs-claude', title: `${ai()} compares your summary with the paper`, onclick: () => runCritique(n.id) }, 'Critique my summary');
+    const btn = h('button', { class: 'btn btn-primary needs-claude', title: `${AI()} compares your summary with the paper`, onclick: () => runCritique(n.id) }, 'Critique my summary');
     const hint = h('span', { class: 'hint' });
     const critBox = h('div');
     const setBtnState = () => {
@@ -4707,10 +4708,10 @@
     const kids = [];
     if (op && op.live) {
       kids.push(h('div', { class: 'machine streaming', 'aria-live': 'polite' },
-        h('div', { class: 'machine-head' }, h('span', { text: `${ai()}'s summary, writing…` })),
+        h('div', { class: 'machine-head' }, h('span', { text: `${AI()}'s summary, writing…` })),
         h('div', { class: 'md ai-sum-live', html: partialMD(op.live) })));
     } else if (op) {
-      kids.push(h('div', { class: 'machine' }, working(`${ai()} is reading the paper`, op.start)));
+      kids.push(h('div', { class: 'machine' }, working(`${AI()} is reading the paper`, op.start)));
     } else if (rec && rec.text) {
       const note = rec.source === 'abstract' ? 'from the abstract only' : rec.source === 'digest' ? 'from the main parts of a long paper' : '';
       const copy = h('button', { class: 'btn btn-text msg-copy', type: 'button', text: 'Copy', title: 'Copy the summary as Markdown',
@@ -4726,7 +4727,7 @@
     const busy = !!op;
     const has = !!(rec && rec.text);
     const btn = h('button', { class: 'btn' + (has ? '' : ' btn-primary') + ' needs-claude' + (busy ? ' busy' : ''), type: 'button', disabled: busy,
-      title: has ? `Ask ${ai()} to write it again from the paper` : `${ai()} reads the paper and writes a full summary, with diagrams where they help`,
+      title: has ? `Ask ${ai()} to write it again from the paper` : `${AI()} reads the paper and writes a full summary, with diagrams where they help`,
       onclick: () => runAiSummary(n.id, has) }, has ? 'Write again' : 'Write an AI summary');
     const acts = [btn];
     if (has && !busy) acts.push(h('button', { class: 'btn btn-text', type: 'button', text: 'Remove', title: 'Delete this AI summary',
@@ -4783,15 +4784,15 @@
     const kids = [];
     if (op && op.live) {
       kids.push(h('div', { class: 'machine streaming', 'aria-live': 'polite' },
-        h('div', { class: 'machine-head' }, h('span', { text: `${ai()}'s critique, writing…` })),
+        h('div', { class: 'machine-head' }, h('span', { text: `${AI()}'s critique, writing…` })),
         h('div', { class: 'md crit-live', html: partialMD(op.live) })));
-    } else if (op) kids.push(h('div', { class: 'machine' }, working(`${ai()} is reading your summary`, op.start)));
+    } else if (op) kids.push(h('div', { class: 'machine' }, working(`${AI()} is reading your summary`, op.start)));
     const c = op && op.live ? null : n.critique;
     if (c && c.text) {
       const stale = (liveSummary ?? n.summary ?? '') !== (c.summary_snapshot ?? '');
       kids.push(h('div', { class: 'machine' },
         h('div', { class: 'machine-head' },
-          h('span', { title: fmtDate(c.at), text: `${ai()}'s critique, ${ago(c.at)}` }),
+          h('span', { title: fmtDate(c.at), text: `${AI()}'s critique, ${ago(c.at)}` }),
           stale ? h('span', { class: 'stale', title: 'Your summary has changed since this critique was written', text: 'Summary changed since' }) : null),
         mdEl(c.text)));
     }
@@ -4916,7 +4917,7 @@
       if (count > k) pages.appendChild(h('div', { class: 'hint', text: `${count - k} more pages in the viewer` }));
     }).catch(() => pages.replaceChildren(h('div', { class: 'empty', text: 'The scan couldn’t be shown. Open it in the viewer.' })));
     const btn = h('button', { class: 'btn btn-sm needs-claude', type: 'button', 'data-act': 'transcribe',
-      title: `${ai()} reads the pages and writes them out under your notes, as Markdown with nested bullets and LaTeX. The scan stays.` }, 'Write it out as text');
+      title: `${AI()} reads the pages and writes them out under your notes, as Markdown with nested bullets and LaTeX. The scan stays.` }, 'Write it out as text');
     btn.onclick = async () => {
       const run = (body) => api('POST', `/api/notes/${id}/transcribe`, body);
       btn.classList.add('busy'); btn.disabled = true;
@@ -5679,14 +5680,14 @@
     const cached = S.explainCache.get(key);
     if (cached && !refresh) { showExplain(cached); applyClaude(box); return; }
     if (!S.claudeOK) {
-      body.replaceChildren(h('div', { class: 'empty-list', text: `${ai()} isn't available. ${S.claudeWhy}` }));
+      body.replaceChildren(h('div', { class: 'empty-list', text: `${AI()} isn't available. ${S.claudeWhy}` }));
       applyClaude(box); return;
     }
     const opKey = 'explain:' + key;
-    if (S.ops.has(opKey)) { body.replaceChildren(h('div', { class: 'machine' }, working(`${ai()} is comparing the two`, S.ops.get(opKey).start))); return; }
+    if (S.ops.has(opKey)) { body.replaceChildren(h('div', { class: 'machine' }, working(`${AI()} is comparing the two`, S.ops.get(opKey).start))); return; }
     const start = Date.now();
     S.ops.set(opKey, { start });
-    body.replaceChildren(h('div', { class: 'machine' }, working(`${ai()} is comparing the two`, start)));
+    body.replaceChildren(h('div', { class: 'machine' }, working(`${AI()} is comparing the two`, start)));
     const rb = $('#btn-explain-refresh'); rb.classList.add('busy'); applyClaude(box);
     try {
       const r = await api('POST', '/api/explain', { a, b, refresh: !!refresh });
@@ -5694,7 +5695,7 @@
       r.at = r.at || new Date().toISOString();
       if (S.explain && S.explain.key === key && !box.hidden) showExplain(r);
     } catch (e) {
-      toastErr(e, `${ai()} could not explain this link`);
+      toastErr(e, `${AI()} could not explain this link`);
       if (S.explain && S.explain.key === key) body.replaceChildren(h('div', { class: 'machine' }, h('div', { class: 'msg error' }, h('div', { class: 'msg-body', text: e.message }))));
     } finally {
       S.ops.delete(opKey);
@@ -5703,7 +5704,7 @@
   }
   function showExplain(r) {
     $('#explain-body').replaceChildren(h('div', { class: 'machine' },
-      h('div', { class: 'machine-head' }, h('span', { text: r.cached ? `${ai()}'s explanation, saved earlier` : `${ai()}'s explanation, ${ago(r.at)}` })),
+      h('div', { class: 'machine-head' }, h('span', { text: r.cached ? `${AI()}'s explanation, saved earlier` : `${AI()}'s explanation, ${ago(r.at)}` })),
       mdEl(r.text)));
   }
   function closeExplain() { $('#explain').hidden = true; S.explain = null; releaseLit(); kick(260); }
@@ -6012,7 +6013,7 @@
         'What gaps or open questions do these papers leave?',
       ];
       kids.push(h('div', { class: 'chat-empty' },
-        `${ai()} reads every paper in ${S.chatTopics.map((t) => '“' + t.name + '”').join(' and ')} (title, your summary or the abstract) and the passages that best match your question, and cites them. Your private notes are never included.`,
+        `${AI()} reads every paper in ${S.chatTopics.map((t) => '“' + t.name + '”').join(' and ')} (title, your summary or the abstract) and the passages that best match your question, and cites them. Your private notes are never included.`,
         examples.map((x) => h('button', { type: 'button', class: 'ex', text: x, onclick: () => { const ta = $('#chat-input'); ta.value = x; ta.dispatchEvent(new Event('input')); ta.focus(); } }))));
     } else if (!S.chat.length && S.chatPaper) {
       const examples = [
@@ -6022,7 +6023,7 @@
         'How does this compare with what I wrote in my summary?',
       ];
       kids.push(h('div', { class: 'chat-empty' },
-        `${ai()} reads this paper (and your notes on it) and answers with page citations. Your private notes are never included.`,
+        `${AI()} reads this paper (and your notes on it) and answers with page citations. Your private notes are never included.`,
         examples.map((x) => h('button', { type: 'button', class: 'ex', text: x, onclick: () => { const ta = $('#chat-input'); ta.value = x; ta.dispatchEvent(new Event('input')); ta.focus(); } }))));
     } else if (!S.chat.length) {
       const examples = [
@@ -6031,7 +6032,7 @@
         'What open questions come up repeatedly across my notes?',
       ];
       kids.push(h('div', { class: 'chat-empty' },
-        `${ai()} answers from your papers and notes, and cites the ones it used. Click a citation to open it.`,
+        `${AI()} answers from your papers and notes, and cites the ones it used. Click a citation to open it.`,
         examples.map((x) => h('button', { type: 'button', class: 'ex', text: x, onclick: () => { const ta = $('#chat-input'); ta.value = x; ta.dispatchEvent(new Event('input')); ta.focus(); } }))));
     }
     for (const m of S.chat) rememberSections(m.passages);
@@ -6045,12 +6046,12 @@
           h('div', { class: 'msg-body md', html: renderMD(m.content) })));
       } else if (m.pending && m.live) { // streaming: the answer so far (re-rendered by sendChat)
         kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine streaming', 'aria-live': 'polite' },
-          h('div', { class: 'machine-head' }, h('span', { text: `${ai()}, writing…` })),
+          h('div', { class: 'machine-head' }, h('span', { text: `${AI()}, writing…` })),
           h('div', { class: 'msg-body md chat-live', html: partialMD(noMemoryTag(m.live)) }))));
       } else if (m.pending) {
-        kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatGeneral ? (m.web ? `${ai()} is searching the web` : `${ai()} is thinking`) : S.chatPaper ? `${ai()} is reading the paper` : S.chatTopics ? `${ai()} is reading the papers in your regions` : `${ai()} is reading your library`, m.start))));
+        kids.push(h('div', { class: 'msg assistant' }, h('div', { class: 'machine' }, working(S.chatGeneral ? (m.web ? `${AI()} is searching the web` : `${AI()} is thinking`) : S.chatPaper ? `${AI()} is reading the paper` : S.chatTopics ? `${AI()} is reading the papers in your regions` : `${AI()} is reading your library`, m.start))));
       } else if (m.error) {
-        kids.push(h('div', { class: 'msg error' }, h('div', { class: 'msg-role', text: `${ai()} couldn't answer` }), h('div', { class: 'msg-body', text: m.content }),
+        kids.push(h('div', { class: 'msg error' }, h('div', { class: 'msg-role', text: `${AI()} couldn't answer` }), h('div', { class: 'msg-body', text: m.content }),
           h('div', { class: 'actions' }, h('button', { class: 'btn btn-sm needs-claude', type: 'button', text: 'Retry', onclick: () => retryChat(i) }))));
       } else {
         const src = (m.sources || []).length ? h('div', { class: 'sources' }, h('span', { class: 'lbl', text: 'Sources' }),
@@ -6221,7 +6222,7 @@
       userMsg.failed = true;
       delete pending.live;
       Object.assign(pending, { pending: false, error: true, content: e.message, question });
-      toastErr(e, `${ai()} couldn't answer`);
+      toastErr(e, `${AI()} couldn't answer`);
     } finally {
       S.chatBusy = false; S.chatStop = null;
       if (S.chatPaper) savePaperThread(S.chatPaper.id, S.chat);

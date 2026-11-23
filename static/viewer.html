@@ -365,6 +365,7 @@ const PDFJS = new URL("/static/vendor/pdfjs", location.origin).href;
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const cap = (s) => String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);  // "your AI" starting a sentence or a label
 const viewer = $("#viewer"), pagesEl = $("#pages");
 
 const ID = decodeURIComponent(location.pathname.replace(/\/+$/, "").split("/").pop() || "");
@@ -1294,9 +1295,9 @@ function renderAsk() {
   } else {
     askLog.innerHTML = ASK.thread.map((m, i) => {
       if (m.role === "user") return `<div class="am you"><div class="who">You${m.sel ? ` · selection on p.&nbsp;${esc(m.sel.page)}` : ""}</div>${m.sel ? `<div class="sel-q">${esc(m.sel.text)}</div>` : ""}<div class="txt">${esc(m.content)}</div></div>`;
-      if (m.error) return `<div class="am ai err"><div class="who">${esc(ASK.ai)}</div><div class="txt">${esc(m.content)}</div><button type="button" class="btn retry" data-retry="${i}">Try again</button></div>`;
-      if (m.pending && !m.live) return `<div class="am ai wait"><div class="who">${esc(ASK.ai)}</div><div class="txt">is reading the paper…</div></div>`;
-      return `<div class="am ai"><div class="who">${esc(ASK.ai)}</div><div class="txt${m.pending ? " live" : ""}">${answerHTML(m.pending ? partial(m.live) : m.content, m.sources)}</div></div>`;
+      if (m.error) return `<div class="am ai err"><div class="who">${esc(cap(ASK.ai))}</div><div class="txt">${esc(m.content)}</div><button type="button" class="btn retry" data-retry="${i}">Try again</button></div>`;
+      if (m.pending && !m.live) return `<div class="am ai wait"><div class="who">${esc(cap(ASK.ai))}</div><div class="txt">is reading the paper…</div></div>`;
+      return `<div class="am ai"><div class="who">${esc(cap(ASK.ai))}</div><div class="txt${m.pending ? " live" : ""}">${answerHTML(m.pending ? partial(m.live) : m.content, m.sources)}</div></div>`;
     }).join("");
     if (!window.LatexEditor) askLog.querySelectorAll(".txt").forEach(math);
     drawVisuals();
@@ -1363,7 +1364,7 @@ async function streamChat(body, onDelta) {
     let d; try { d = JSON.parse(data.join("\n")); } catch { return; }
     if (ev === "delta" && d.text) { text += d.text; onDelta(text); }
     else if (ev === "done") done = d;
-    else if (ev === "error") throw new Error(d.detail || `${ASK.ai} failed`);
+    else if (ev === "error") throw new Error(d.detail || `${cap(ASK.ai)} failed`);
   };
   for (;;) {
     const { value, done: end } = await reader.read();

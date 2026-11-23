@@ -120,7 +120,8 @@
   // background; the card follows it and ends as a short report with Full report.
   const RUNS = new Map();   // run id -> the run, as last fetched
   const joined = (t, x) => { t = (t || '').trim(); x = (x || '').trim(); return !t || !x ? t || x : `${t}${/[.?!:]$/.test(t) ? '' : '.'} ${x}`; };
-  const aiName = () => (window.RB && RB.aiName ? RB.aiName() : 'Your AI');
+  const aiName = () => (window.RB && RB.aiName ? RB.aiName() : 'your AI');
+  const AIName = () => (window.RB && RB.AIName ? RB.AIName() : 'Your AI');  // to start a sentence with
   const running = (r) => r && (r.running || r.status === 'running');
 
   function wants(opts) {
@@ -222,8 +223,8 @@
     const go = h('button', { class: 'btn btn-primary btn-sm', type: 'button', text: 'Check novelty' });
     go.onclick = () => start(m, go);
     const aiLine = pl.ai
-      ? (pl.planned_by_ai ? `${aiName()} split the idea into parts. After the search it reads the closest abstracts and says what each did compared with your idea.`
-        : `${aiName()} will read the closest abstracts.${pl.plan_error ? ` (It couldn’t split the idea: ${pl.plan_error})` : ''}`)
+      ? (pl.planned_by_ai ? `${AIName()} split the idea into parts. After the search it reads the closest abstracts and says what each did compared with your idea.`
+        : `${AIName()} will read the closest abstracts.${pl.plan_error ? ` (It couldn’t split the idea: ${pl.plan_error})` : ''}`)
       : `No AI reading: ${pl.ai_why} Papers are compared with your idea on this computer.`;
     return [
       h('div', { class: 'nv-h' }, 'Parts of the idea', h('span', { class: 'sub', text: 'each paper is compared with each part' })), partsBox,
@@ -346,7 +347,7 @@
     if (c.compared) kids.push(h('div', { class: 'nv-new', text: c.new ? `${c.new} close or overlapping paper${c.new === 1 ? '' : 's'} new since your last check` : 'Nothing close is new since your last check.' }));
     if (r.verdict || r.uncovered) {
       kids.push(h('div', { class: 'machine nv-verdict' },
-        h('div', { class: 'machine-head' }, h('span', { text: `${aiName()}, from the abstracts` })),
+        h('div', { class: 'machine-head' }, h('span', { text: `${AIName()}, from the abstracts` })),
         r.verdict ? h('p', { text: r.verdict }) : null,
         r.uncovered ? h('div', null, h('b', { text: 'What none of them does: ' }), rb.mdEl ? rb.mdEl(r.uncovered) : r.uncovered) : null));
     }

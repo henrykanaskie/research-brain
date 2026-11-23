@@ -164,7 +164,7 @@
   }
 
   async function del(f) {
-    const ok = rb.confirmDialog ? await rb.confirmDialog('Delete this finding?', `${RB.aiName()} saved it during Research. Deleting removes it from memory for good.`, 'Delete')
+    const ok = rb.confirmDialog ? await rb.confirmDialog('Delete this finding?', `${RB.AIName()} saved it during Research. Deleting removes it from memory for good.`, 'Delete')
       : window.confirm('Delete this finding?');
     if (!ok) return;
     try { await api('DELETE', `/api/memory/findings/${encodeURIComponent(f.id)}`); toast('Finding deleted', 'info'); load(); }

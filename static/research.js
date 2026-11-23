@@ -17,7 +17,7 @@
     get(k, d) { try { const v = localStorage.getItem('rb.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('rb.' + k, JSON.stringify(v)); } catch { /* private window */ } },
   };
-  const NOTICE = () => `${RB.aiName()} can only read your library here — it can’t browse, click, or touch anything else.`;
+  const NOTICE = () => `${RB.AIName()} can only read your library here — it can’t browse, click, or touch anything else.`;
 
   const CSS = `
   .rs-mode { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; flex-wrap: wrap; }
@@ -59,7 +59,7 @@
   const bar = h('div', { class: 'rs-mode' });
   const seg = h('div', { class: 'rs-seg', role: 'group', 'aria-label': 'Answer mode' });
   const bQuick = h('button', { type: 'button', text: 'Quick', title: 'One answer from the most relevant passages (fast)', onclick: () => setMode('quick') });
-  const bRes = h('button', { type: 'button', text: 'Research', title: `${RB.aiName()} searches your library itself: several searches, opens pages, follows citations`, onclick: () => setMode('research') });
+  const bRes = h('button', { type: 'button', text: 'Research', title: `${RB.AIName()} searches your library itself: several searches, opens pages, follows citations`, onclick: () => setMode('research') });
   const bNov = h('button', { type: 'button', text: 'Novelty', title: 'Describe an idea: how many papers already did something like it, and how close they came. You see the searches before anything is sent.', onclick: () => setMode('novelty') });
   seg.append(bQuick, bRes, bNov);
   const fastBox = h('input', { type: 'checkbox' });
@@ -224,7 +224,7 @@
     }
     if (m.pending) {
       return h('div', { class: 'msg assistant' }, h('div', { class: 'machine streaming', 'aria-live': 'polite' },
-        head(m.live ? `${RB.aiName()}, writing…` : `${RB.aiName()}, researching…`), trail(m),
+        head(m.live ? `${RB.AIName()}, writing…` : `${RB.AIName()}, researching…`), trail(m),
         m.live ? h('div', { class: 'msg-body md rs-live', html: rb.partialMD(m.live) }) : null));
     }
     const src = (m.sources || []).length ? h('div', { class: 'sources' }, h('span', { class: 'lbl', text: 'Sources' }),
@@ -232,7 +232,7 @@
         h('span', { class: 'tdot ' + rb.nodeType(s.id) }), h('span', { class: 't', text: s.title || s.id }),
         s.cited ? h('span', { class: 's', text: 'cited' }) : null))) : null;
     return h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
-      head(`${RB.aiName()}, researched`), trail(m),
+      head(`${RB.AIName()}, researched`), trail(m),
       h('div', { class: 'msg-body md', html: renderMD(m.content) }), src, rb.chatPassages(m)));
   }
   function retry(i) {

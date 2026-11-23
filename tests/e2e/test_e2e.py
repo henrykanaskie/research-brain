@@ -1183,6 +1183,12 @@ def test_with_no_ai_set_up_the_top_bar_says_so(ctx, server):
     expect(page.locator("#status .status-text")).to_have_text("No AI set up")
     assert "Claude" not in page.locator("#status").get_attribute("aria-label")
     assert page.evaluate("window.RB_AI") == "your AI"
+    # a sentence that starts with the AI's name starts with a capital (the chat's intro said "your AI answers ...")
+    assert page.evaluate("RB.AIName()") == "Your AI"
+    assert page.evaluate("RB.aiText('{AI} compares it. Ask {AI} again.')") == "Your AI compares it. Ask your AI again."
+    page.keyboard.press("a")
+    expect(page.locator("#chat")).to_contain_text("Your AI answers from your papers and notes")
+    assert "your AI answers" not in page.locator("#chat").inner_text()
     assert not page.errors
 
 
@@ -1715,9 +1721,20 @@ def test_windows_window_header_is_the_title_bar_and_the_mic_uses_voice_typing(ct
 def test_nothing_in_the_windows_header_sits_under_the_window_buttons(ctx, server):
     """A small laptop screen opens the window narrower (app/winwindow.py _fit): the header gives way so its
     buttons, search and status never slide under minimize, maximize and close, at every width."""
-    for width in (1400, 1326, 1240, 1100, 984, 900):
+    clear_vault(server)
+    api(server, "POST", "/api/notes", {"type": "paper", "title": "Hall thruster oscillations", "abstract": "Breathing mode."})  # the whole header, not the empty library's
+    for width, busy in ((1400, False), (1326, False), (1240, False), (1100, False), (984, False), (900, False),
+                        # the header at its fullest: papers due for review and new evidence on a question (on Windows
+                        # at 970px the gear covered minimize once Review showed up)
+                        (1400, True), (1240, True), (1100, True), (1024, True), (984, True), (970, True), (940, True), (900, True)):
         page = _open_win(ctx, server, viewport={"width": width, "height": 700})
         page.wait_for_timeout(300)
+        if busy:
+            page.evaluate("""() => {
+              const r = document.getElementById('btn-review'); r.hidden = false; r.querySelector('.review-n').textContent = '12';
+              const b = document.querySelector('#btn-questions .oq-badge'); if (b) { b.hidden = false; b.textContent = '3'; }
+            }""")
+            page.wait_for_timeout(100)
         under = page.evaluate("""() => {
           const cap = document.querySelector('.win-caption').getBoundingClientRect();
           return [...document.querySelectorAll('#topbar *')].filter((e) => {
@@ -1726,8 +1743,8 @@ def test_nothing_in_the_windows_header_sits_under_the_window_buttons(ctx, server
             return r.right > cap.left + 1 && r.left < cap.right && r.top < cap.bottom;
           }).map((e) => (e.id || e.className || e.tagName) + ' ' + Math.round(e.getBoundingClientRect().right));
         }""")
-        assert under == [], f"under the window buttons at {width}px: {under}"
-        shot(page, f"win-header-{width}")
+        assert under == [], f"under the window buttons at {width}px{' (busy)' if busy else ''}: {under}"
+        shot(page, f"win-header-{width}{'-busy' if busy else ''}")
         page.close()
 
 

@@ -39,7 +39,9 @@
   // The AI tool you chose (Settings › AI agent), for any text that names it: app.js and viewer.html set
   // window.RB_AI from /api/status. Text written before that is known says {AI}, filled in when it's shown.
   const aiName = (RB.aiName = () => window.RB_AI || 'your AI');
-  const aiText = (RB.aiText = (s) => String(s || '').replace(/\{AI\}/g, aiName()));
+  // the same name to start a sentence with ("your AI" → "Your AI"; "Claude" stays)
+  const AIName = (RB.AIName = () => { const n = aiName(); return n.charAt(0).toUpperCase() + n.slice(1); });
+  const aiText = (RB.aiText = (s) => String(s || '').replace(/(^|[.!?:]\s+)\{AI\}|\{AI\}/g, (m, start) => (start !== undefined ? start + AIName() : aiName())));
   if (RB.commands) return;
 
   const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');

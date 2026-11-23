@@ -214,12 +214,12 @@
     const kids = [compare];
     // optional: Claude checks the recall against the original (at most 3 lines, never a rewrite)
     const checkBtn = h('button', { class: 'btn btn-text needs-claude' + (cur.checking ? ' busy' : ''), disabled: cur.checking || !recalled,
-      title: recalled ? `${RB.aiName()} lists, in at most 3 lines, what you missed or got wrong. It does not rewrite your note.` : 'Write what you remember first',
+      title: recalled ? `${RB.AIName()} lists, in at most 3 lines, what you missed or got wrong. It does not rewrite your note.` : 'Write what you remember first',
       onclick: runCheck }, 'Check my recall');
     const checkRow = h('div', { class: 'rv-actions' }, checkBtn);
     kids.push(checkRow);
-    if (cur.checking) kids.push(h('div', { class: 'machine rv-check' }, h('div', { class: 'working' }, h('span', { class: 'spin' }), `${RB.aiName()} is comparing`)));
-    else if (cur.check) kids.push(h('div', { class: 'machine rv-check' }, h('div', { class: 'machine-head', text: `${RB.aiName()}'s check` }), mdEl(cur.check)));
+    if (cur.checking) kids.push(h('div', { class: 'machine rv-check' }, h('div', { class: 'working' }, h('span', { class: 'spin' }), `${RB.AIName()} is comparing`)));
+    else if (cur.check) kids.push(h('div', { class: 'machine rv-check' }, h('div', { class: 'machine-head', text: `${RB.AIName()}'s check` }), mdEl(cur.check)));
     const iv = it.intervals || {};
     kids.push(h('div', { class: 'rv-grades', role: 'group', 'aria-label': 'How well did you remember?' },
       GRADES.map(([key, label], i) => h('button', { class: 'rv-grade ' + key, onclick: () => grade(key) },
@@ -351,7 +351,7 @@
           : h('span', { class: 'same-all', text: 'Your summary is the same now as when this critique was written.' }));
         det.querySelector('.ch-body')?.remove();
         det.append(h('div', { class: 'ch-body' },
-          h('div', { class: 'machine' }, h('div', { class: 'machine-head', title: fmtDate(c.at), text: `${RB.aiName()}'s critique, ${rb.ago(c.at)}` }), mdEl(c.text)),
+          h('div', { class: 'machine' }, h('div', { class: 'machine-head', title: fmtDate(c.at), text: `${RB.AIName()}'s critique, ${rb.ago(c.at)}` }), mdEl(c.text)),
           h('div', { class: 'ch-diff-lbl', text: changed ? 'How your summary changed since: new words in red, removed words struck through' : 'How your summary changed since' }),
           diff));
       };
