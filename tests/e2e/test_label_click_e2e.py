@@ -1,5 +1,5 @@
-"""A dot's name beside it on the map is the dot's too: pointing at it lights the dot, a click opens the paper and a
-right-click gives the dot's menu."""
+"""A dot's name beside it on the map: a click opens the paper (and a right-click gives the dot's menu), but pointing
+at it opens no card and lights nothing (names sit close together: cards flickered open and shut as you passed)."""
 from __future__ import annotations
 
 from test_e2e import api, clear_vault, open_app
@@ -22,7 +22,8 @@ def test_a_dots_name_is_clicked_like_the_dot(ctx, server):
     assert page.evaluate(f"() => {{ const n = window.__rb.S.nodes.get('{ids[0]}'), p = window.__rb.fg.graph2ScreenCoords(n.x, n.y); return Math.hypot(p.x - {x}, p.y - {y}); }}") > 8
     page.mouse.move(box["x"] + 5, box["y"] + 5)
     page.mouse.move(box["x"] + x, box["y"] + y, steps=4)
-    page.wait_for_function(f"() => window.__rb.S.hover === '{ids[0]}'", timeout=3000)
+    page.wait_for_timeout(700)
+    assert page.evaluate("() => [window.__rb.S.hover, window.__rb.cards.length]") == [None, 0]
     assert page.evaluate("() => document.getElementById('graph').style.cursor") == "pointer"
     page.mouse.click(box["x"] + x, box["y"] + y)
     page.wait_for_function(f"() => window.__rb.S.cur && window.__rb.S.cur.id === '{ids[0]}'", timeout=4000)

@@ -3881,8 +3881,9 @@
     if (S.focusCluster != null && n.cluster >= 0 && n.cluster !== S.focusCluster) focusRegion(n.cluster, false);
     openNote(n.id, { center: true });
   }
-  /** The dot whose name, or whose open card (its title and authors), is under a point on screen. */
-  function textNodeAt(cx, cy) {
+  /** The dot whose name, or whose open card (its title and authors), is under a point on screen. A name is only
+   *  clicked (its card doesn't open from it: names sit close together, and cards opened and closed as you passed). */
+  function textNodeAt(cx, cy, names = true) {
     if (!fg || S.dragging) return null;
     const r = graphEl.getBoundingClientRect(), x = cx - r.left, y = cy - r.top;
     for (const c of cards) {
@@ -3890,7 +3891,7 @@
       const a = fg.graph2ScreenCoords(c.L.x0, c.L.y0), b = fg.graph2ScreenCoords(c.L.x0 + c.L.w, c.L.y0 + c.L.h);
       if (x >= a.x && x <= b.x && y >= a.y && y <= b.y) return S.nodes.get(c.id) || null;
     }
-    const hits = S.labelHits || [];
+    const hits = names ? S.labelHits || [] : [];
     for (let i = hits.length - 1; i >= 0; i--) {  // the last drawn is on top
       const [n, x0, y0, x1, y1] = hits[i];
       if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && S.nodes.get(n.id) === n && !nodeHidden(n.id)) return n;
@@ -3898,7 +3899,7 @@
     return null;
   }
   function hoverNow() {
-    let n = S.hoverRaw || (pointerAt && S.overMap !== false ? textNodeAt(pointerAt[0], pointerAt[1]) : null) || null;
+    let n = S.hoverRaw || (pointerAt && S.overMap !== false ? textNodeAt(pointerAt[0], pointerAt[1], false) : null) || null;
     if ((S.shifted || []).length) {
       const cur = S.hover && S.nodes.get(S.hover);
       if (onItsPlace(cur)) n = cur;
@@ -3977,6 +3978,9 @@
     hoverNow();
     if (holding()) releaseLit();
     else if (S.hover && S.nodes.has(S.hover)) litHover(S.nodes.get(S.hover));
+    const name = !S.hover && textNodeAt(e.clientX, e.clientY);
+    if (name) { graphEl.style.cursor = 'pointer'; setHoverLink(null); return; }  // a click opens it
+    if (!S.hover && S.hoverRegion == null && graphEl.style.cursor === 'pointer') graphEl.style.cursor = '';
     if (!S.hover && !S.dragging && !labelHit(e)) setHoverLink(lineAt(e.clientX, e.clientY)); else if (S.hover) setHoverLink(null);
   });
   graphEl.addEventListener('pointerleave', () => { pointerAt = null; S.overMap = false; S.focusCache = null; setHoverLink(null); releaseLit(); });

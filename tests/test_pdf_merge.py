@@ -190,3 +190,15 @@ def test_take_pdf_moves_side_tables(client):
     ai = connect_api.ai_links({n["id"]: n for n in server.store.all()})
     assert [(x["a"], x["b"]) for x in ai] == [tuple(sorted((a, lonely)))]
     assert server.store.load_json("engagement.json").get(a) == 2
+
+
+def test_titles_with_other_numbers_are_other_papers(client):
+    """"Part 1" and "Part 2" are two papers; and eight PDFs added at once, titled alike, stay eight papers (one
+    being added has no file for a moment: it was taken for a paper waiting for its PDF)."""
+    p1 = client.post("/api/notes", json={"type": "paper", "title": "Collisional radiative modelling of argon plasmas part 1"}).json()["id"]
+    n = _import(client, make_pdf("Collisional radiative modelling of argon plasmas part 2", "Second part."))
+    assert n["id"] != p1 and not client.get(f"/api/notes/{p1}").json()["has_pdf"]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(8) as ex:
+        out = list(ex.map(lambda i: _import(client, make_pdf(f"Parallel import number {i} of cross sections", f"marker zq{i}x"), f"p{i}.pdf"), range(8)))
+    assert len({o["id"] for o in out}) == 8

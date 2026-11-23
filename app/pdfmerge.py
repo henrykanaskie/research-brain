@@ -73,19 +73,25 @@ def _has_pdf(store, n: dict) -> bool:
 
 def matching_paper(store, titles: list[str], ids: dict | None = None) -> dict | None:
     """The one paper without a PDF whose title is the same as this PDF's (app/server.py _same_title: 0.85 or more),
-    for an import that matched nothing by DOI or arXiv id. Conservative: a title of at least four words, exactly
-    one such paper, and none whose own DOI or arXiv id says it is another paper."""
+    for an import that matched nothing by DOI or arXiv id. Conservative: a title of at least four words with the same
+    numbers in it, exactly one such paper, none whose own DOI or arXiv id says it is another paper, and never a paper
+    made from a PDF (one being added alongside this one has no file for a moment)."""
     titles = [t for t in titles if len(_norm(t).split()) >= 4 and len(_norm(t)) >= 20]
     if not titles:
         return None
     ids = ids or {}
     keys = [_norm(t) for t in titles]
+    nums = lambda t: sorted(re.findall(r"\d+", t))
     found = []
     for n in store.all():
         if n.get("type") != "paper" or _has_pdf(store, n) or store.is_linked(n["id"]):
             continue
+        if n.get("source") == "pdf":  # made from a PDF: one being added right now, before its file is in
+            continue
         nt = _norm(n.get("title") or "")
         if not nt:
+            continue
+        if not any(nums(k) == nums(nt) for k in keys):  # "Part 1" and "Part 2", 2019 and 2021: other papers
             continue
         best = 0.0
         for k in keys:
