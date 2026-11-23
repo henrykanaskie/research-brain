@@ -1209,6 +1209,9 @@ html.win-inactive .win-caption button:not(:hover) { opacity: .45; }
   html.win-window #topbar:has(#btn-review:not([hidden])) { gap: 8px; }
   html.win-window #topbar:has(#btn-review:not([hidden])) .tb-sep { display: none; }
 }
+@media (max-width: 1120px) {  /* room to spare for wider fonts (Linux needed 9px more than a Mac at 940px) */
+  html.win-window .tb-group.grow { min-width: 76px; }
+}
 
 /* Ask about topics (app.js chooseChatTopics): a small sheet of checkboxes */
 .tp-sheet { position: fixed; z-index: 80; top: 96px; right: 24px; width: min(340px, calc(100vw - 32px)); padding: 6px 6px 10px; }
