@@ -724,7 +724,13 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
     # a paper you put in a topic (a section, "Put in section") is IN that section, however similar it is to
     # papers elsewhere: every member of a topic takes the region most of its members are in. The biggest topic
     # goes last, so where topics overlap the bigger one decides.
-    for t in sorted(tops_of, key=lambda t: len(t["members"])):
+    # And each topic is a region of its own: two folders whose papers are much alike were one region named after
+    # what they're about. The biggest topic keeps the region most of its members are in; another topic whose members
+    # are mostly there too gets a new one.
+    homes: dict[int, int] = {}  # topic index -> its region
+    taken: set[int] = set()
+    fresh = max(label.values(), default=0) + 1
+    for ti, t in sorted(enumerate(tops_of), key=lambda x: -len(x[1]["members"])):
         mem = [m for m in t["members"] if m in label]
         if len(mem) < 2:
             continue
@@ -732,8 +738,15 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
         for m in mem:
             votes[label[m]] = votes.get(label[m], 0) + 1
         home = max(sorted(votes), key=lambda k: votes[k])
-        for m in mem:
-            label[m] = home
+        if home in taken:
+            home, fresh = fresh, fresh + 1
+        taken.add(home)
+        homes[ti] = home
+    for ti, t in sorted(enumerate(tops_of), key=lambda x: len(x[1]["members"])):
+        if ti in homes:
+            for m in t["members"]:
+                if m in label:
+                    label[m] = homes[ti]
     groups: dict[int, list[str]] = {}
     for i in tops:
         groups.setdefault(label[i], []).append(i)

@@ -184,6 +184,15 @@ def test_topic_members_share_one_section_on_the_map(client, server):
     cl = {n["id"]: n["cluster"] for n in g["nodes"]}
     assert cl[stars[0]] == cl[plasma[0]] and all(cl[p] == cl[plasma[0]] for p in plasma)
     assert cl[stars[1]] != cl[plasma[0]]
+    # two folders of papers much alike (two of the star papers' own folders) are two sections, not one named after them
+    a = client.post("/api/topics", json={"name": "Dwarfs A", "members": stars[1:4]}).json()["slug"]
+    b = client.post("/api/topics", json={"name": "Dwarfs B", "members": stars[4:7]}).json()["slug"]
+    assert a and b
+    g = client.get("/api/graph").json()
+    cl = {n["id"]: n["cluster"] for n in g["nodes"]}
+    assert len({cl[x] for x in stars[1:4]}) == 1 and len({cl[x] for x in stars[4:7]}) == 1 and cl[stars[1]] != cl[stars[4]]
+    names = {c["id"]: c["label"] for c in g["clusters"]}
+    assert {names[cl[stars[1]]], names[cl[stars[4]]]} == {"Dwarfs A", "Dwarfs B"}
 
 
 # ---------------------------------------------------------------- queue
