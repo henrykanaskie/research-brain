@@ -6899,6 +6899,8 @@
     CMD.layer({ id: 'app.panel', order: 40, isOpen: () => !panel.hidden, close: (c) => { if (c.typing) c.target.blur(); closePanel(); } });
     CMD.layer({ id: 'app.region-chooser', order: 95, isOpen: () => !!S.regionChooserClose, close: () => S.regionChooserClose() });
     CMD.layer({ id: 'app.region-focus', order: 35, isOpen: () => S.focusCluster != null, close: () => unfocusRegion() });
+    // a search left on the map (after Enter, or a click on a match): Esc ends it, once an open paper is closed
+    CMD.layer({ id: 'app.search', order: 38, isOpen: (c) => !!S.search.trim() && !(c && c.typing), close: () => { const i = $('#search-input'); i.value = ''; S.search = ''; updateSearch(); } });
     CMD.register({ id: 'graph.focusRegion', title: 'Focus a region…', group: 'Graph', keys: ['G then C'],
       aliases: ['region', 'cluster', 'topic', 'zoom to region', 'isolate', 'only this group'],
       description: 'Zooms to one region and dims the rest. Click a region\'s name on the graph to do the same; Esc shows everything again.',
