@@ -115,3 +115,22 @@ def test_child_output_survives_a_cp1252_stdout(tmp_path):
     assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
     out = json.loads(proc.stdout.decode("utf-8"))
     assert TEXT in out["text"]
+
+
+def test_why_a_pdf_cant_be_read_in_plain_words(tmp_path):
+    from app.pdftext import why_unreadable
+
+    def why(name, data, err=Exception("PdfStreamError: Stream has ended unexpectedly")):
+        p = tmp_path / name
+        p.write_bytes(data)
+        return why_unreadable(p, err)
+
+    assert "empty" in why("empty.pdf", b"")
+    assert "web page" in why("login.pdf", b"<!DOCTYPE html><html><body>Sign in</body></html>")
+    assert "zip" in why("doc.pdf", b"PK\x03\x04" + bytes(200))
+    assert "something else" in why("noise.pdf", bytes(range(256)) * 4)
+    assert "password" in why("locked.pdf", b"%PDF-1.7\n", Exception("FileNotDecryptedError: File has not been decrypted"))
+    assert "damaged" in why("cut.pdf", b"%PDF-1.4\n1 0 obj <<")
+    assert "couldn't be opened" in why_unreadable(tmp_path / "gone.pdf", Exception())
+    for m in (why("a.pdf", b""), why("b.pdf", b"%PDF-1.4\n")):
+        assert "Error" not in m and "pypdf" not in m

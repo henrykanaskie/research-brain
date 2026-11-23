@@ -100,6 +100,30 @@ _XMP_DOI = (r"<prism:doi>\s*([^<\s]+)", r"<pdfx:doi>\s*([^<\s]+)", r"<crossmark:
             r"<rdf:li>\s*(?:doi:|https?://doi\.org/)(10\.\d{4,9}/[^<\s]+)")
 
 
+def why_unreadable(path: Path, error: BaseException | str = "") -> str:
+    """Why a PDF couldn't be read, in plain words (shown to you when it's refused), from the file itself and
+    the error reading it gave."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(2048)
+        size = os.path.getsize(path)
+    except OSError:
+        return "the file couldn't be opened (it may have been moved, or another program has it locked)"
+    if size == 0:
+        return "the file is empty (0 bytes), perhaps a download or copy that didn't finish"
+    if b"%PDF" not in head[:1024]:
+        low = head.lstrip().lower()
+        if low.startswith((b"<!doctype html", b"<html", b"<head", b"<?xml")) or b"<html" in low[:512]:
+            return "it isn't really a PDF: it's a web page saved with a .pdf name (often a login or download page)"
+        if head[:2] == b"PK":
+            return "it isn't really a PDF: it's a zip file (or a Word or similar document) with a .pdf name"
+        return "it isn't really a PDF: the file holds something else under a .pdf name"
+    msg = f"{type(error).__name__}: {error}".lower() if isinstance(error, BaseException) else str(error).lower()
+    if "password" in msg or "decrypt" in msg or "encrypt" in msg:
+        return "it's locked with a password; open it, save an unlocked copy and add that"
+    return "the PDF is damaged or cut short, perhaps a download that didn't finish; download it again"
+
+
 def pdf_info(path: Path) -> dict:
     """Identifiers the PDF declares about itself: XMP (prism:doi, pdfx:doi, crossmark:DOI, dc:identifier) and
     the document info dictionary (/doi, /Subject). Only small strings come back."""

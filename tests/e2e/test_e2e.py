@@ -1223,7 +1223,7 @@ def test_map_draws_few_lines_until_you_point(ctx, server):
     page.wait_for_function(across)
     page.mouse.move(box["x"] + 5, box["y"] + box["height"] - 120)
     page.wait_for_function("() => !(" + across + ")()")
-    # Show all lines, on the map: every connection without pointing at anything, and the setting follows
+    # Show all connections, on the map: every connection without pointing at anything, and the setting follows
     page.click("#btn-lines")
     page.wait_for_function(across)
     assert page.get_attribute("#btn-lines", "aria-pressed") == "true" and page.input_value("#lines-mode") == "all"

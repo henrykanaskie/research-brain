@@ -20,6 +20,8 @@
   .dr-card h2 { font: 600 19px/1.3 var(--serif); margin: 0 0 4px; }
   .dr-sub { color: var(--ink-2); font-size: 13.5px; line-height: 1.5; margin: 0 0 10px; }
   .dr-body { overflow: auto; min-height: 0; flex: 1; }
+  /* a window too short even for the body's few rows: the whole card scrolls rather than running off the page */
+  .dr-card { overflow-y: auto; overscroll-behavior: contain; }
   .dr-src { border-top: 1px solid var(--rule); padding: 8px 0; font-size: 13.5px; }
   .dr-src label { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
   .dr-src .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -60,7 +62,7 @@
     const send = h('button', { class: 'btn btn-primary', type: 'button', text: 'Send to AI' });
     const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close });
     card.append(h('h2', { text: 'Research directions' }),
-      h('p', { class: 'dr-sub', text: `${kind === 'question' ? 'For the question' : 'For the topic'} “${truncate(title || '', 90)}”. Below is everything that would go to the AI. Private notes and papers never do.` }),
+      h('p', { class: 'dr-sub', text: `${kind === 'question' ? 'For the question' : 'For the region'} “${truncate(title || '', 90)}”. Below is everything that would go to the AI. Private notes and papers never do.` }),
       body, h('div', { class: 'dr-acts' }, size, cancel, send));
 
     let pv = null, timer = 0;

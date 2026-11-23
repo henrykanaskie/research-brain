@@ -15,6 +15,7 @@
   .zt-sub { margin: 8px 0 0; color: var(--ink-2); font-size: 13px; line-height: 1.5; }
   .zt-sub .ident { color: var(--ink-2); overflow-wrap: anywhere; }
   .zt-body { padding: 20px 32px 0; overflow: auto; min-height: 0; }
+  .zt-card { overflow-y: auto; overscroll-behavior: contain; }  /* a very short window: the whole card scrolls, not off the page */
   .zt-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--ink-2); margin: 0 0 6px; }
   .zt-tree { list-style: none; margin: 0; padding: 4px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
     max-height: 264px; overflow: auto; }

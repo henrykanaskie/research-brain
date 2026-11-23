@@ -36,7 +36,8 @@ from . import access as access_mod, agents, papers as papers_mod, apikeys, budge
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .meta import one_look
-from .pdftext import extract, guess_title
+from .pdftext import extract, guess_title, why_unreadable
+from . import placing
 from .store import FrontmatterError, Store, normalize_selector, now_iso
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1857,8 +1858,9 @@ def _import_pdf_tmp(tmp: Path, filename: str, quick: bool = False) -> dict:
     try:
         text, meta_title = extract(tmp, info=info)
     except Exception as e:
+        why = why_unreadable(tmp, e)
         shutil.rmtree(tmp.parent, ignore_errors=True)
-        raise HTTPException(400, f"Couldn't read that PDF: {e}")
+        raise HTTPException(400, f"Couldn't read that PDF: {why}")
     ids = _pdf_ids(text, info)
     guess = meta_title or guess_title(text) or Path(filename or "Untitled").stem.replace("_", " ")
     meta = None
@@ -1918,7 +1920,7 @@ def _import_linked(path: Path, fid: str, rel: str, size: int) -> tuple[str, str,
         try:
             text, meta_title = extract(path, info=info)
         except Exception as e:
-            raise ValueError(f"couldn't read it ({e})")
+            raise ValueError(f"couldn't read it: {why_unreadable(path, e)}")
         owner = PdfHashes(store).owner(sha256_file(path))
         if owner:
             return owner, "duplicate", 0
@@ -2070,8 +2072,9 @@ async def api_attach_pdf(nid: str, file: UploadFile = File(...)):
     try:
         text, _ = extract(tmp, info=info)
     except Exception as e:
+        why = why_unreadable(tmp, e)
         shutil.rmtree(tmp.parent, ignore_errors=True)
-        raise HTTPException(400, f"Couldn't read that PDF: {e}")
+        raise HTTPException(400, f"Couldn't read that PDF: {why}")
     _store_pdf(nid, tmp, text)
     if not note["doi"] and not note["arxiv"]:
         ids = _pdf_ids(text, info)
@@ -4170,6 +4173,19 @@ def api_topic_remove(slug: str, nid: str):
     return _topic_call(topics_mod.topic_detail, store, slug)
 
 
+@app.post("/api/regions/place-new")
+def api_regions_place_new():
+    """Papers added since the last look: each goes into the region it clearly belongs to, or you're asked which
+    (app/placing.py). Each paper is looked at once."""
+    full = []
+    for t in topics_mod.list_topics(store):
+        try:
+            full.append({**t, "members": topics_mod.get_topic(store, t["slug"])["members"]})
+        except (KeyError, OSError, topics_mod.TopicError):
+            continue
+    return placing.place_new(store, index(), full, lambda slug, ids: topics_mod.add_notes(store, slug, ids))
+
+
 @app.get("/api/topics/{slug}/queue")
 def api_topic_queue(slug: str, offset: int = 0, limit: int = topics_mod.PAGE):
     return _topic_call(topics_mod.queue, store, index(), embedder, slug, idx_fn=index, offset=offset,
@@ -4969,8 +4985,9 @@ def api_import_url(body: ImportUrlIn):
     try:
         text, meta_title = extract(tmp, info=info)
     except Exception as e:
+        why = why_unreadable(tmp, e)
         shutil.rmtree(tmp.parent, ignore_errors=True)
-        raise HTTPException(400, f"Couldn't read that PDF: {e}")
+        raise HTTPException(400, f"Couldn't read that PDF: {why}")
     if have:  # the paper is in the library without a PDF: attach this one
         _store_pdf(have["id"], tmp, text)
         return _viewer_out(have["id"], duplicate=True)

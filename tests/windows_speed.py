@@ -147,16 +147,6 @@ def main() -> int:
             print("      (couldn't ask the page:", repr(e)[:200], ")")
         print("      by program:", {k: f"{100 * (b1[k] - b0.get(k, 0)) / 30:.1f}%" for k in b1}, flush=True)
         cpu = 100 * (c1 - c0) / 30
-        if cpu > 20 * SLOW:
-            # busy now and then (on GitHub's Arm machines, behind Windows' first-run screen, the page once laid the map out
-            # again for a while): what counts is that it stops. Half a minute later, measured again.
-            print(f"      {cpu:.1f}% the first time: again in 30 s", flush=True)
-            time.sleep(30)
-            c0, mb, b0 = usage()
-            time.sleep(30)
-            c1, mb, b1 = usage()
-            print("      by program, the second time:", {k: f"{100 * (b1[k] - b0.get(k, 0)) / 30:.1f}%" for k in b1}, flush=True)
-            cpu = 100 * (c1 - c0) / 30
         note("CPU while idle", cpu, 20, "% of one core")
         note("memory, with its window", mb, 2500, "MB")
 

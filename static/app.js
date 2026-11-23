@@ -859,6 +859,10 @@
     if (level < 1) moving = true;
     const onlyLit = (l) => !linkResting(l) && l !== S.hoverLink && !explained(l) && !(S.selected && (lid(l.source) === S.selected || lid(l.target) === S.selected));
     const from = activeId(), letting = holding() && hold.fade;
+    // a region's name pointed at: its lines travel out the same way, from where its title is
+    const cid = S.litRegion ?? (S.lit ? null : S.hoverRegion);
+    const tag = cid == null ? null : (S.regionLabels || []).find((r) => r.cid === cid && r.box);
+    const tx = tag ? (tag.box[0] + tag.box[2]) / 2 : 0, ty = tag ? (tag.box[1] + tag.box[3]) / 2 : 0;
     for (const l of S.links || []) {
       const t = !linkDrawn(l) ? 0 : level < 1 && onlyLit(l) ? level : 1;
       if (l.__v === undefined) l.__v = t;
@@ -866,8 +870,17 @@
       if (Math.abs(d) > 0.004) { l.__v += d * kf; moving = true; } else l.__v = t;
       // the dot's lines travel out from it to each connection, and back into it when you let go (growLines)
       const out = from != null && (lid(l.source) === from || lid(l.target) === from);
-      const want = (out && !letting) || l === S.hoverLink || explained(l) ? 1 : 0;
-      if (out && want) l.__from = from;
+      // a resting line is there already: only the ones the region brings out travel
+      const reg = cid != null && !out && inHotSection(l) && !linkResting(l);
+      const want = ((out || reg) && !letting) || l === S.hoverLink || explained(l) ? 1 : 0;
+      if (out && want) { l.__from = from; l.__fromR = null; }
+      else if (reg && want && l.__fromR !== cid) {  // picked once, so the dots' float can't swap ends mid-way
+        const a = l.source, b = l.target, ina = a.cluster === cid, inb = b.cluster === cid;
+        // leaving the region: from its end inside; within it: from the end nearer the title
+        const nearA = ina && inb && tag ? Math.hypot(a.x - tx, a.y - ty) <= Math.hypot(b.x - tx, b.y - ty) : ina;
+        l.__from = nearA ? lid(a) : lid(b); l.__fromR = cid;
+      }
+      if (!want && l.__g <= 0) l.__fromR = null;
       if (l.__g === undefined) l.__g = want;
       if (l.__g !== want) {
         const gdt = Math.min(dt, 34);  // the first frame after the map was still comes late: it still starts at the dot
@@ -3715,6 +3728,8 @@
     $('#legend-count').textContent = [pl(countType('paper'), 'paper'), pl(countType('note'), 'note'), inside ? `${inside} attached` : ''].filter(Boolean).join(', ');
     if (S.fitLegend) S.fitLegend();
     crawlFragments();
+    // new papers: static/placing.js puts each in its region, or asks which
+    if (!S.firstGraph && added.some((n) => n.type === 'paper')) window.dispatchEvent(new CustomEvent('rb:papers-added'));
 
     if (!fg) return;
     if (structural) {

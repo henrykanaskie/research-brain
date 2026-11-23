@@ -19,7 +19,16 @@
 
   const CSS = `
   .bk-wrap { position: fixed; inset: 0; z-index: 72; background: color-mix(in srgb, var(--ground) 70%, transparent); display: flex; align-items: center; justify-content: center; padding: 16px; }
-  .bk-card { width: min(620px, 100%); max-height: min(86vh, 900px); display: flex; flex-direction: column; background: var(--sheet); border: 1px solid var(--rule); padding: 20px 22px 16px; }
+  .bk-card { width: min(620px, 100%); max-height: min(86vh, 900px); display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: var(--sheet); border: 1px solid var(--rule); padding: 20px 22px 16px; }
+  /* on a small window the lists give up their height first (they scroll inside), then the whole card scrolls,
+     with its buttons pinned to the bottom edge (bottom: -16px and the margins cover the card's bottom padding) */
+  .bk-card > *, .bk-step > * { flex: none; }
+  .bk-card > .bk-list, .bk-step > .bk-list { flex: 0 1 auto; min-height: 0; }
+  /* a long list keeps a few rows in view (a short one is never stretched to this) */
+  .bk-card > .bk-list:has(> :nth-child(5)), .bk-step > .bk-list:has(> :nth-child(5)) { min-height: 96px; }
+  .bk-step { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; }
+  .bk-step[hidden] { display: none; }
+  .bk-card > .bk-acts { position: sticky; bottom: -16px; z-index: 1; background: var(--sheet); margin: 0 -22px -16px; padding: 4px 22px 16px; }
   .bk-card h2 { font: 600 19px/1.3 var(--serif); margin: 0 0 6px; }
   .bk-card p { color: var(--ink-2); line-height: 1.55; margin: 0 0 10px; font-size: 14px; }
   .bk-opts { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 12px; font-size: 14px; }
@@ -478,7 +487,7 @@
     const onMode = () => { sections.hidden = !named.checked; rc.row.hidden = named.checked; if (named.checked) sections.focus(); };
     free.addEventListener('change', onMode); named.addEventListener('change', onMode);
     const conn = connectBox(true);
-    const step1 = h('div', null,
+    const step1 = h('div', { class: 'bk-step' },
       h('div', { class: 'bk-sub', text: 'Which papers' }), scope,
       h('div', { class: 'bk-sub', text: 'Regions' }),
       h('div', { class: 'bk-opts', role: 'radiogroup', 'aria-label': 'Regions' },
@@ -702,24 +711,30 @@
   })();
 
   // folders of papers: follow running jobs on the server (started here, by Check now, or by the app's own checks)
-  let watching = null;
+  // The map is fetched again only when a job has finished since the last look: every minute regardless, a big
+  // library laid its whole map out again each time anything had changed (heavy on a slow computer, left alone).
+  let watching = null, seen = null;  // seen: job id -> finished, from the last look (null before the first)
   async function watchImports() {
     if (watching) return;
     const tick = async () => {
       let r;
       try { r = await api('GET', '/api/linked-folders'); } catch { watching = null; return; }
-      let busy = false;
+      let busy = false, ended = false;
+      const now = new Map();
       for (const f of r.folders || []) {
         const j = f.job;
         if (!j) continue;
         const live = ['running', 'paused'].includes(j.state);
         busy = busy || live;
+        now.set(j.id, !live);
+        if (!live && seen && seen.get(j.id) !== true) ended = true;  // it finished since the last look
         if (live || tray.has(j.id)) {
           tray.set(j.id, { ...j, name: j.name || f.name, stop: () => api('POST', `/api/linked-folders/jobs/${j.id}/stop`).catch(() => {}) });
         }
       }
+      seen = now;
       watching = busy ? setTimeout(tick, 1500) : null;
-      if (!busy) { rb.refreshGraph(); window.dispatchEvent(new CustomEvent('rb:topics-changed')); }
+      if (!busy && ended) { rb.refreshGraph(); window.dispatchEvent(new CustomEvent('rb:topics-changed')); }
     };
     watching = setTimeout(tick, 0);
   }
