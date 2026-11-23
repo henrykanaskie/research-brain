@@ -4605,6 +4605,8 @@
       acts.push(h('a', { class: 'btn btn-text', href: `/pdf/${encodeURIComponent(n.id)}`, target: '_blank', rel: 'noopener', title: 'Open the raw PDF in a new tab' }, 'Open PDF'));
       if ((n.fragments || []).some((f) => f.quote)) acts.push(h('a', { class: 'btn btn-text', href: `/pdf/${encodeURIComponent(n.id)}/annotated`, download: '', 'data-act': 'pdf-annotated',
         title: 'Download a copy with your highlights and notes in it as real PDF annotations (Preview, Acrobat, Zotero and browsers show them). Your library copy is unchanged.' }, 'PDF with my highlights'));
+      // static/pdfmerge.js: this PDF belongs to a paper you added without one (it then joins that paper)
+      if (n.type === 'paper' && window.__rbPdfMerge) acts.push(h('button', { class: 'btn btn-text', 'data-act': 'pdf-of', title: 'This PDF is a paper you already have in your library without its PDF: join them into one paper', onclick: () => window.__rbPdfMerge.pick(n) }, 'This is the PDF of…'));
     } else if (n.type === 'paper' && n.source === 'linked') {
       out.push(h('div', { class: 'linked-line' }, h('span', { class: 'kind-link', html: LINK_SVG }),
         h('span', null, h('b', { text: 'Linked article. ' }), n.has_text ? 'Its link, full text and metadata are saved; search, citations and the AI features use the text. The PDF file isn’t kept.' : 'Its link and metadata are saved, not the PDF file.')));
@@ -4633,6 +4635,7 @@
       const btn = h('button', { class: view ? 'btn btn-text' : 'btn', title: 'Attach a PDF file to this paper', onclick: () => inp.click() }, 'Attach PDF');
       inp.addEventListener('change', () => { const f = inp.files[0]; inp.value = ''; if (f) attachPdf(n.id, f, btn); });
       acts.push(btn, inp);
+      if (window.__rbPdfMerge) acts.push(h('button', { class: 'btn btn-text', 'data-act': 'pdf-from-library', title: 'Its PDF is already in your library as a separate paper: give it to this one', onclick: () => window.__rbPdfMerge.pick(n) }, 'Use a PDF already in your library…'));
     }
     if (n.s2_id || n.doi || n.arxiv) {
       const busy = S.ops.has('discover:' + n.id);
@@ -5310,6 +5313,7 @@
       const isRead = n.status === 'read';
       items.push(menuItem(isRead ? 'Mark as unread' : 'Mark as read', isRead ? 'Back to To read' : 'It turns white on the map', () => markRead(n, !isRead)));
     }
+    if (n.type === 'paper' && window.__rbPdfMerge) items.push(menuItem(n.has_pdf ? 'This is the PDF of…' : 'Use a PDF already in your library…', n.has_pdf ? 'a paper you added without its PDF' : 'one imported as a separate paper', () => window.__rbPdfMerge.pick(n)));
     if (n.__userPin) items.push(menuItem('Let it move freely', 'You placed this dot: it settles where you put it. This gives it back to the layout', () => unpinNode(n)));
     // put it in a section of the map (a region) or one of your topics: it joins that group on the map,
     // however similar it is to the papers there

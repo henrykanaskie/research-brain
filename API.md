@@ -82,10 +82,18 @@ Every request first passes the checks in app/security.py (SECURITY.md has the re
 
 - `POST /api/import/pdf` multipart form field `file` (PDF) → Note (201). Extracts text,
   finds DOI/arXiv id, enriches from Semantic Scholar when possible. Returns existing note
-  with `"duplicate": true` if same DOI/arXiv/s2_id already in library.
+  with `"duplicate": true` if same DOI/arXiv/s2_id already in library. With none of those matching, a paper
+  without a PDF whose title is the PDF's (four words or more, one such paper, no clashing DOI) gets it
+  (`"duplicate": true, "title_match": true`); folders of papers you follow do the same (app/pdfmerge.py).
 - `POST /api/import/lookup` body `{"query": "DOI | arXiv id | arxiv/doi URL | title"}` → Note (201)
   (metadata+abstract only, no PDF). 404 if Semantic Scholar finds nothing.
 - `POST /api/notes/{id}/pdf` multipart `file` → Note (attach PDF to an existing paper).
+- `GET /api/notes/{id}/pdf-matches?q=` → `{has_pdf, items: [{id, title, authors, year, venue, doi, score}]}`: the
+  papers it can be joined with (with a PDF for a paper without one, and the other way round), closest title first.
+- `POST /api/notes/{a}/take-pdf` `{"from": b}` → Note `a` with `merged`: paper `a` (no PDF) gets paper `b`'s PDF
+  and text, blank fields filled from `b`; `b`'s highlights, links, [[wikilinks]], regions, question evidence,
+  idea cards, chats, AI summary and review state move to `a`; then `b` goes to the trash. 409 if `a` has a
+  PDF, 400 if either isn't a paper or `b` has no PDF (app/pdfmerge.py).
 - `GET /pdf/{id}` → the PDF file (inline).
 
 ### Claude (local `claude -p` CLI; each call can take 10–90 s — show a spinner)

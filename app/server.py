@@ -32,7 +32,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import access as access_mod, agents, papers as papers_mod, apikeys, budget, citations, claude_cli, diskspace, locate as locate_mod, metadata, openalex, scholar, security
+from . import access as access_mod, agents, papers as papers_mod, pdfmerge, apikeys, budget, citations, claude_cli, diskspace, locate as locate_mod, metadata, openalex, scholar, security
 from .chunks import ChunkIndex, passage_where
 from .embed import Embedder, note_text
 from .meta import one_look
@@ -1883,7 +1883,9 @@ def _import_pdf_tmp(tmp: Path, filename: str, quick: bool = False) -> dict:
     if not meta.get("title"):
         meta["title"] = guess or "Untitled paper"
     dup = store.find_duplicate(meta.get("doi", ""), meta.get("arxiv", ""), meta.get("s2_id", ""))
-    if dup:
+    titled = None if dup else pdfmerge.matching_paper(store, [meta["title"], guess], meta)
+    if dup or titled:
+        dup = dup or titled
         if not dup["has_pdf"]:
             _store_pdf(dup["id"], tmp, text)
         else:
@@ -1891,6 +1893,8 @@ def _import_pdf_tmp(tmp: Path, filename: str, quick: bool = False) -> dict:
         _resolve_meta(dup["id"], meta)
         out = _with_extras(store.get(dup["id"]))
         out["duplicate"] = True
+        if titled:
+            out["title_match"] = True  # the paper with this title you had without its PDF has it now
         return out
     note = _create_paper(meta)  # the resolver runs in the background (this endpoint is async: no waiting)
     _store_pdf(note["id"], tmp, text)
@@ -1928,10 +1932,13 @@ def _import_linked(path: Path, fid: str, rel: str, size: int) -> tuple[str, str,
         dup = store.find_duplicate(ids["doi"], ids["arxiv"], "")
         if dup and dup["has_pdf"]:
             return dup["id"], "duplicate", 0
+        guessed = guess_title(text)
+        guess = meta_title or guessed or Path(rel).stem.replace("_", " ")
+        if not dup:  # the paper with this title you had without its PDF (a confident match only)
+            dup = pdfmerge.matching_paper(store, [t for t in (meta_title, guessed) if t], ids)
         if dup:
             nid, how = dup["id"], "linked"
         else:
-            guess = meta_title or guess_title(text) or Path(rel).stem.replace("_", " ")
             nid, how = _create_paper({"title": guess, "doi": ids["doi"], "arxiv": ids["arxiv"]})["id"], "added"
         store.links.link(nid, fid, rel, size)
         n = store.get(nid)
@@ -5037,6 +5044,11 @@ def urlsplit_path(u: str) -> str:
         return unquote(urlsplit(u).path) or ""
     except ValueError:
         return ""
+
+
+# ---------------------------------------------------------------- one paper, one PDF: joining a PDF's paper to the paper it is (app/pdfmerge.py)
+pdfmerge.install(app, store=store, with_extras=_with_extras, wiki=lambda: _wiki(index()), eng_lock=_eng_lock,
+                 eng_rev=_eng_rev, publish=event_bus.publish)
 
 
 # ---------------------------------------------------------------- folders of papers kept where they are (app/linked_api.py)
