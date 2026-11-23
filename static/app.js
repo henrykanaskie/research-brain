@@ -5789,14 +5789,60 @@
   // Follow the answer as it's written only while you're at the bottom: scroll up and the log stays where you
   // put it (no pull back down with each new line, nor when the answer finishes); scroll back to the bottom to
   // follow again
-  let chatFollow = true, chatTop = 0;
-  chatLog.addEventListener('wheel', (e) => { if (e.deltaY < 0) chatFollow = false; }, { passive: true });
+  // Only your own scrolling (wheel, touch, keys, the scrollbar) changes that: the log growing or shrinking as an
+  // answer is redrawn moves scrollTop too, and once counted as "back at the bottom", so the next redraw pulled you down.
+  let chatFollow = true, chatTop = 0, chatUserAt = -1e9;
+  const chatUser = () => { chatUserAt = performance.now(); chatSettle = null; };
+  chatLog.addEventListener('wheel', (e) => { chatUser(); if (e.deltaY < 0) chatFollow = false; }, { passive: true });
+  for (const ev of ['touchmove', 'pointerdown', 'keydown']) chatLog.addEventListener(ev, chatUser, { passive: true });
   chatLog.addEventListener('scroll', () => {
-    const gap = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight;
-    if (gap < 24) chatFollow = true;
-    else if (chatLog.scrollTop < chatTop - 1) chatFollow = false;
-    chatTop = chatLog.scrollTop;
+    const top = chatLog.scrollTop;
+    if (performance.now() - chatUserAt < 800) {
+      const gap = chatLog.scrollHeight - top - chatLog.clientHeight;
+      if (gap < 24 && top >= chatTop) chatFollow = true;
+      else if (top < chatTop - 1) chatFollow = false;
+    }
+    chatTop = top;
   }, { passive: true });
+  // Scrolled up to read: what you're reading stays put when the log is redrawn (an answer finishing) and while its
+  // math and diagrams draw afterwards. Kept as a message and a block in it, with its distance from the log's top.
+  let chatSettle = null;
+  function chatAnchor() {
+    const top = chatLog.getBoundingClientRect().top;
+    const msgs = [...chatLog.children];
+    for (let i = 0; i < msgs.length; i++) {
+      const r = msgs[i].getBoundingClientRect();
+      if (r.bottom <= top) continue;
+      const body = msgs[i].querySelector('.msg-body, .machine') || msgs[i];
+      const blocks = [...body.children];
+      for (let j = 0; j < blocks.length; j++) {
+        const b = blocks[j].getBoundingClientRect();
+        if (b.bottom > top) return { i, j, off: b.top - top };
+      }
+      return { i, j: -1, off: r.top - top };
+    }
+    return null;
+  }
+  function chatToAnchor(a) {
+    const m = chatLog.children[a.i];
+    if (!m) return;
+    const body = m.querySelector('.msg-body, .machine') || m;
+    const el = (a.j >= 0 && body.children[Math.min(a.j, body.children.length - 1)]) || m;
+    const d = el.getBoundingClientRect().top - chatLog.getBoundingClientRect().top - a.off;
+    if (Math.abs(d) >= 1) { chatLog.scrollTop += d; chatTop = chatLog.scrollTop; }
+  }
+  function chatHold(a) {
+    if (!a || chatFollow) return;
+    chatToAnchor(a);
+    const until = performance.now() + 2500;  // drawings finish within that
+    const hold = (chatSettle = { a });
+    const tick = () => {
+      if (chatSettle !== hold || chatFollow || performance.now() > until) return;
+      chatToAnchor(a);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
   function openChat() {
     $('#chat').hidden = false;
     document.body.classList.add('chat-open');
@@ -6150,12 +6196,14 @@
         h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Remove', title: 'Don’t send this', onclick: () => { S.chatQueue.splice(i, 1); renderChat(); } })),
       h('div', { class: 'msg-body md', html: renderMD(q) }))));
     const keepTop = chatLog.scrollTop;
+    const anchor = chatFollow ? null : chatAnchor();
     chatLog.replaceChildren(...kids);
     drawVisuals(chatLog);
     for (const lv of $$('.chat-live', chatLog)) drawLater(lv);
     linkMentions(chatLog);
     fitWide(chatLog);
-    chatLog.scrollTop = chatFollow ? chatLog.scrollHeight : keepTop;  // scrolled up to read: stay there
+    if (chatFollow) chatLog.scrollTop = chatLog.scrollHeight;
+    else { chatLog.scrollTop = keepTop; chatTop = keepTop; chatHold(anchor); }  // scrolled up to read: stay there
     applyClaude($('#chat'));
     const send = $('#btn-chat-send');
     send.classList.toggle('busy', S.chatBusy);
@@ -7282,7 +7330,7 @@
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
     setNodeFilter(fn) { S.nodeFilter = typeof fn === 'function' ? fn : null; kick(400); },
     setHidden(set) { S.hidden = set && set.size ? set : null; S.focusCache = null; configureLinkForce(); kick(400); },
-    chooseSection, intoSection, renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatDone, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose, errText,
+    chooseSection, intoSection, renderChat, chatFollowing: () => chatFollow, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatDone, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose, errText,
     rerenderCritique() { const s = S.cur && $('#summary-sec', pbody); if (s && s.__refresh) s.__refresh(); },
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },

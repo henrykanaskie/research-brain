@@ -144,10 +144,9 @@
     const log = $('#chat-log');
     const live = rb.streamRenderer((text) => {
       const el = log && log.querySelector('.rs-live:last-of-type');
-      const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
       if (!el) { rb.renderChat(); return; }
       el.innerHTML = rb.partialMD(text);
-      if (atEnd) log.scrollTop = log.scrollHeight;
+      if (rb.chatFollowing()) log.scrollTop = log.scrollHeight;  // scrolled up to read: left alone
     });
     let text = '';
     try {
@@ -208,7 +207,7 @@
     if (!el || !m.pending) { rb.renderChat(); return; }
     el.querySelector('.rs-steps').replaceChildren(...m.steps.map(stepRow));
     const log = $('#chat-log');
-    if (log.scrollHeight - log.scrollTop - log.clientHeight < 80) log.scrollTop = log.scrollHeight;
+    if (rb.chatFollowing()) log.scrollTop = log.scrollHeight;
   }
   setInterval(() => {
     for (const t of document.querySelectorAll('.rs-time[data-start]')) t.textContent = `${Math.round((Date.now() - Number(t.dataset.start)) / 1000)} s`;

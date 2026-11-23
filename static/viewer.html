@@ -1100,6 +1100,39 @@ function showPopErr(m) { const el = $("#pErr"); el.textContent = m; el.style.dis
    you are on and, when you pick "Ask" on a selection, that passage. */
 const ASK = { busy: false, sel: null, related: false, ai: "AI", ok: null, why: "", thread: [] };
 const askLog = $("#askLog"), askInput = $("#askInput");
+// Follow the answer while you're at the bottom; scroll up and the log stays where you put it, also when the answer
+// finishes and is redrawn (it used to jump to the bottom). Only your own scrolling turns following off or on.
+let askFollow = true, askTop = 0, askUserAt = -1e9;
+const askUser = () => { askUserAt = performance.now(); };
+askLog.addEventListener("wheel", (e) => { askUser(); if (e.deltaY < 0) askFollow = false; }, { passive: true });
+for (const ev of ["touchmove", "pointerdown", "keydown"]) askLog.addEventListener(ev, askUser, { passive: true });
+askLog.addEventListener("scroll", () => {
+  const top = askLog.scrollTop;
+  if (performance.now() - askUserAt < 800) {
+    if (askLog.scrollHeight - top - askLog.clientHeight < 24 && top >= askTop) askFollow = true;
+    else if (top < askTop - 1) askFollow = false;
+  }
+  askTop = top;
+}, { passive: true });
+/** The message you're reading and how far it is from the log's top, to put it back there after a redraw. */
+function askAnchor() {
+  const top = askLog.getBoundingClientRect().top;
+  const ms = [...askLog.children];
+  for (let i = 0; i < ms.length; i++) {
+    const txt = ms[i].querySelector(".txt") || ms[i];
+    for (const [j, b] of [...txt.children].entries()) if (b.getBoundingClientRect().bottom > top) return { i, j, off: b.getBoundingClientRect().top - top };
+    if (ms[i].getBoundingClientRect().bottom > top) return { i, j: -1, off: ms[i].getBoundingClientRect().top - top };
+  }
+  return null;
+}
+function askToAnchor(a) {
+  const m = askLog.children[a.i];
+  if (!m) return;
+  const txt = m.querySelector(".txt") || m;
+  const el = (a.j >= 0 && txt.children[Math.min(a.j, txt.children.length - 1)]) || m;
+  const d = el.getBoundingClientRect().top - askLog.getBoundingClientRect().top - a.off;
+  if (Math.abs(d) >= 1) { askLog.scrollTop += d; askTop = askLog.scrollTop; }
+}
 const THREAD_KEY = () => `rb.paperChat.${ID}`;
 const THREAD_MAX = 40;
 function loadThread() {
@@ -1285,6 +1318,7 @@ function partial(text) {
 const EXAMPLES = ["What is the main result, in two sentences?", "Explain the method on this page step by step", "What assumptions does this rely on?", "How does this compare with what I wrote in my notes?"];
 function renderAsk() {
   if ($("#askPane").hidden) return;
+  const keepTop = askLog.scrollTop, anchor = askFollow ? null : askAnchor();
   if (!ASK.thread.length) {
     const blocked = ASK.ok === false;
     askLog.innerHTML = `<div class="ask-empty">
@@ -1302,7 +1336,15 @@ function renderAsk() {
     if (!window.LatexEditor) askLog.querySelectorAll(".txt").forEach(math);
     drawVisuals();
   }
-  askLog.scrollTop = askLog.scrollHeight;
+  if (askFollow) askLog.scrollTop = askLog.scrollHeight;
+  else {  // scrolled up to read: stay there, also while math and diagrams draw
+    askLog.scrollTop = keepTop; askTop = keepTop;
+    if (anchor) {
+      const until = performance.now() + 2500, at = askUserAt;
+      const tick = () => { if (askFollow || askUserAt !== at || performance.now() > until) return; askToAnchor(anchor); requestAnimationFrame(tick); };
+      tick();
+    }
+  }
   renderAskCtx();
   $("#askSend").disabled = ASK.busy || ASK.ok === false;
   askInput.disabled = ASK.ok === false;
@@ -1388,16 +1430,16 @@ async function send(question, sel = ASK.sel) {
   const pending = { role: "assistant", pending: true, live: "" };
   ASK.thread.push(userMsg, pending);
   ASK.sel = null; ASK.busy = true;
+  askFollow = true;  // a new question: follow its answer (scroll up at any time to stay where you are)
   renderAsk();
   let raf = 0;
   const paint = () => {
     raf = 0;
     const el = askLog.querySelector(".txt.live");
     if (!el) { renderAsk(); return; }
-    const atEnd = askLog.scrollHeight - askLog.scrollTop - askLog.clientHeight < 40;
     el.innerHTML = answerHTML(partial(pending.live), null);
     if (window.RBVisuals) window.RBVisuals.pending(el);
-    if (atEnd) askLog.scrollTop = askLog.scrollHeight;
+    if (askFollow) askLog.scrollTop = askLog.scrollHeight;
   };
   try {
     const page = sel ? sel.page : (S.pages.length ? S.current : null);

@@ -209,3 +209,64 @@ def test_mistakes_fixed_or_shown_as_code(page_in, srv, where):
     expect(boxes.nth(2).locator(".md-visual-fig svg")).to_have_count(0)
     expect(answer).to_contain_text("After the diagrams.")
     _no_stray(p)
+
+
+LONG = "\n\n".join([f"Paragraph {i}: the sheath edge sits where ions reach the Bohm speed, $u_B = \\sqrt{{T_e/m_i}}$, "
+                    "and the potential drop follows from flux balance across it." for i in range(14)]
+                   + ["$$\\phi_w = -\\frac{T_e}{2e}\\ln\\left(\\frac{m_i}{2\\pi m_e}\\right)$$", fence(FLOW)]
+                   + [f"More text {i} after the diagram, so there is something to read below it." for i in range(8)])
+
+
+def _until(p, js, timeout=30.0):
+    """Poll a page expression (wait_for_function evaluates a string, which the page's CSP refuses)."""
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if p.evaluate(f"() => !!({js})"):
+            return
+        p.wait_for_timeout(100)
+    raise AssertionError(f"timed out waiting for {js}")
+
+
+@pytest.mark.parametrize("where", ["main", "viewer"])
+def test_scrolled_up_while_it_writes_the_log_stays_put_when_it_finishes(page_in, srv, where):
+    """Scroll up while an answer is being written: the log stays where you put it while it streams, when it
+    finishes (it used to jump to the bottom, in the viewer always) and while its math and diagram draw after."""
+    if where == "main":
+        p = page_in("/")
+        _until(p, "window.__rb && window.__rb.S")
+        ask, log, blocks = _ask_main, "#chat-log", "#chat-log .msg.assistant .msg-body > *"
+    else:
+        p = page_in(f"/viewer/{srv.paper['id']}")
+        ask, log, blocks = _ask_viewer, "#askLog", "#askLog .am.ai .txt > *"
+    ask(p, LONG)
+    # the first answer, finished: its text is what we'll be reading
+    _until(p, f"document.querySelectorAll('{blocks}').length > 10 && !document.querySelector('.chat-live, .txt.live')")
+    if where == "main":
+        p.fill("#chat-input", ask_for(LONG))
+        p.click("#btn-chat-send")
+    else:
+        p.fill("#askInput", ask_for(LONG))
+        p.click("#askSend")
+    _until(p, "!!document.querySelector('.chat-live, .txt.live')")
+    box = p.locator(log).bounding_box()
+    p.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    for _ in range(6):  # well up, into the first answer
+        p.mouse.wheel(0, -500)
+        p.wait_for_timeout(60)
+    p.wait_for_timeout(300)
+    # the block at the top of the view, and where it is
+    mark = p.evaluate(f"""() => {{
+      const top = document.querySelector('{log}').getBoundingClientRect().top;
+      const els = [...document.querySelectorAll('{blocks}')];
+      const i = els.findIndex((e) => e.getBoundingClientRect().bottom > top + 4);
+      return [i, els[i].getBoundingClientRect().top, els[i].textContent.slice(0, 40)];
+    }}""")
+    idx, mark, text = mark
+    _until(p, "!document.querySelector('.chat-live, .txt.live')")
+    p.wait_for_timeout(2500)  # the diagram and math draw after the text
+    now, text2 = p.evaluate(f"() => {{ const e = document.querySelectorAll('{blocks}')[{idx}]; return [e.getBoundingClientRect().top, e.textContent.slice(0, 40)]; }}")
+    assert text2 == text  # the same block (the log was redrawn)
+    assert abs(now - mark) <= 3, (where, mark, now)
+    gap = p.evaluate(f"(() => {{ const l = document.querySelector('{log}'); return l.scrollHeight - l.scrollTop - l.clientHeight; }})()")
+    assert gap > 200, gap  # not pulled down to the end
