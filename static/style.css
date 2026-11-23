@@ -170,6 +170,8 @@ kbd { font: 11px var(--sans); color: var(--ink-2); border: 1px solid var(--rule)
   font: 500 13px/1.3 var(--sans); color: var(--ink); background: none; border: 0; border-radius: 4px; padding: 8px; cursor: pointer; }
 .menu-item:hover, .menu-item:focus-visible { background: var(--ground); outline: none; }
 .menu-hint { font-weight: 400; font-size: 12px; color: var(--ink-2); }
+/* a line in a menu that isn't a choice (the right-click menu's "Main region: …") */
+.menu-note { display: block; padding: 4px 8px 6px; }
 .lookup { display: block; }
 .lookup-row { display: flex; gap: 6px; padding: 0 8px 4px; }
 .lookup-row input { flex: 1; min-width: 0; height: 32px; }
@@ -1149,7 +1151,8 @@ body.chat-scoped .rs-mode { display: none; }
 /* Links: near the top of the panel, a box to link anything by title (app.js linkPicker) */
 .links-sec .link-input { width: 100%; margin: 2px 0 6px; }
 /* right-click a dot (app.js nodeMenu), and the "click the dot to link to" bar */
-.node-menu { position: fixed; top: 0; left: 0; z-index: 80; width: 280px; }  /* above every sheet and dialog: a menu opened from one (Find papers, Add to library) was behind it */
+.node-menu { position: fixed; top: 0; left: 0; z-index: 80; width: 280px;
+  max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain; }  /* above every sheet and dialog: a menu opened from one (Find papers, Add to library) was behind it */
 .link-mode { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 55; display: flex; align-items: center; gap: 12px;
   background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px 6px 12px; font-size: 13px; color: var(--ink);
   box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--ink) 22%, transparent); }

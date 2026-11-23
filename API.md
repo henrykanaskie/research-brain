@@ -410,6 +410,12 @@ and a body of `- [[note-id]]` lines (the ordered members). Dismissals and snooze
 - `DELETE /api/topics/{slug}` → `{"ok": true}` (file moved to `.trash`; papers untouched).
 - `POST /api/topics/{slug}/notes` body `{"ids": [id]}` → Topic. Fragments and unknown ids are a 400.
 - `DELETE /api/topics/{slug}/notes/{id}` → Topic.
+- `GET /api/notes/{id}/regions` → `{id, topics: [{slug, name}], main_region}`: the regions (topics) a note is in.
+- `POST /api/notes/{id}/region` body `{"to": slug, "out_of": [slug]}` → `{id, topics, main_region}`. Moves it: into
+  `to` (`""`: none), out of `out_of`. Still in other regions afterwards, `to` becomes its main region.
+- `PUT /api/notes/{id}/main-region` body `{"slug": slug | null}` → `{id, main_region}`. A note in several regions is
+  drawn in its main one (`main_region` in its file); without one, the biggest region it's in. A region it isn't in
+  is a 400.
 - `GET /api/topics/suggest` → `[{"region","name","label","size","members"}]`: graph regions not already covered by a
   topic (Jaccard overlap < 0.6), with the region label as the suggested name. Create one with `POST /api/topics`.
 

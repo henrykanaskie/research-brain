@@ -748,6 +748,15 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
             for m in t["members"]:
                 if m in label:
                     label[m] = homes[ti]
+    # a paper in several regions that you gave a main one (`main_region`, the right-click menu) is drawn there
+    home_of = {t["slug"]: homes[ti] for ti, t in enumerate(tops_of) if ti in homes}
+    for i in label:
+        n = by_id.get(i) or {}
+        main = (n.get("_extra") or {}).get("main_region") if isinstance(n.get("_extra"), dict) else None
+        if not main or main not in home_of:
+            continue
+        if any(t["slug"] == main and i in t["members"] for t in tops_of):
+            label[i] = home_of[main]
     groups: dict[int, list[str]] = {}
     for i in tops:
         groups.setdefault(label[i], []).append(i)
@@ -4366,6 +4375,68 @@ def api_topic_add(slug: str, body: TopicNotesIn):
 def api_topic_remove(slug: str, nid: str):
     _topic_call(topics_mod.remove_note, store, slug, nid)
     return _topic_call(topics_mod.topic_detail, store, slug)
+
+
+class RegionMoveIn(BaseModel):
+    to: str = ""                 # the region (topic slug) it goes to; "" = none, only taken out
+    out_of: list[str] = []       # the regions it leaves
+
+
+def _set_main_region(nid: str, slug: str | None) -> dict:
+    """A paper in more than one region is drawn in its main one (`main_region` in its file); without one, the biggest
+    region it's in decides (app/server.py _clusters)."""
+    with store.lock:
+        n = _get(nid)
+        extra = dict(n.get("_extra") or {})
+        if slug:
+            extra["main_region"] = slug
+        else:
+            extra.pop("main_region", None)
+        if extra == (n.get("_extra") or {}):
+            return n
+        n["_extra"] = extra
+        return store.save(n, touch=False)
+
+
+@app.post("/api/notes/{nid}/region")
+def api_note_move_region(nid: str, body: RegionMoveIn):
+    """Move a paper or note on the map: out of the regions you name, into `to`. Still in other regions afterwards,
+    `to` becomes its main one, so it really is drawn there (before, "Put in region" left it where it was)."""
+    _get(nid)
+    to = (body.to or "").strip()
+    if to:
+        _topic_call(topics_mod.add_notes, store, to, [nid])
+    for slug in dict.fromkeys(x for x in body.out_of if x and x != to):
+        _topic_call(topics_mod.remove_note, store, slug, nid)
+    left = topics_mod.topics_for(store, nid)
+    main = (_get(nid).get("_extra") or {}).get("main_region")
+    if to and len(left) > 1:
+        _set_main_region(nid, to)
+    elif main and (len(left) <= 1 or main not in {t["slug"] for t in left}):
+        _set_main_region(nid, None)  # one region or none: nothing to choose between
+    return {"id": nid, "topics": left, "main_region": (_get(nid).get("_extra") or {}).get("main_region") or None}
+
+
+@app.get("/api/notes/{nid}/regions")
+def api_note_regions(nid: str):
+    """The regions a paper or note is in and its main one (the right-click menu's Move to / Remove from)."""
+    n = _get(nid)
+    return {"id": nid, "topics": topics_mod.topics_for(store, nid),
+            "main_region": (n.get("_extra") or {}).get("main_region") or None}
+
+
+class MainRegionIn(BaseModel):
+    slug: str | None = None
+
+
+@app.put("/api/notes/{nid}/main-region")
+def api_note_main_region(nid: str, body: MainRegionIn):
+    """Which of its regions a paper in several is drawn in (None: the biggest, as before)."""
+    slug = (body.slug or "").strip() or None
+    if slug and slug not in {t["slug"] for t in topics_mod.topics_for(store, nid)}:
+        raise HTTPException(400, "It isn't in that region: put it there first")
+    n = _set_main_region(nid, slug)
+    return {"id": nid, "main_region": (n.get("_extra") or {}).get("main_region") or None}
 
 
 @app.post("/api/regions/place-new")

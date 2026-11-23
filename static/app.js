@@ -2663,6 +2663,9 @@
         if (!panel.hidden) { S.focusCache = null; closePanel(); }
         else if (S.selected) { S.selected = null; S.focusCache = null; kick(300); }
         else if (S.focusCluster != null) unfocusRegion();
+        // and it clears the search, so the whole map shows again: the search there when you pressed (the map handles
+        // the click a frame later, and just after it opens that can be late: never what you typed after clicking)
+        if (S.search && S.search.trim() && S.search === S.searchAtPress) { const i = $('#search-input'); i.value = ''; S.search = ''; updateSearch(); }
       })
       .onBackgroundRightClick((e) => { const t = e && textNodeAt(e.clientX, e.clientY); if (t) nodeMenu(t, e); else backgroundMenu(e); })
       // region tags are drawn over the traces, so a click on a tag is the tag's, even with a trace beneath it
@@ -4016,6 +4019,8 @@
   // only your own zooming is limited (wheel, trackpad or touch pinch), never Fit or focusing, which animate
   // through empty views on their way to the dots
   graphEl.addEventListener('wheel', () => { userZoomAt = performance.now(); }, { passive: true, capture: true });
+  // the search as it was when you pressed on the map: a click in free space clears that one (onBackgroundClick)
+  graphEl.addEventListener('pointerdown', () => { S.searchAtPress = S.search; }, { passive: true, capture: true });
   graphEl.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) userZoomAt = performance.now(); }, { passive: true, capture: true });
   /** Any dot (shown, not filtered away) inside the view? */
   function dotInView() {
@@ -5321,22 +5326,49 @@
     }
     if (n.type === 'paper' && window.__rbPdfMerge) items.push(menuItem(n.has_pdf ? 'This is the PDF of…' : 'Use a PDF already in your library…', n.has_pdf ? 'a paper you added without its PDF' : 'one imported as a separate paper', () => window.__rbPdfMerge.pick(n)));
     if (n.__userPin) items.push(menuItem('Let it move freely', 'You placed this dot: it settles where you put it. This gives it back to the layout', () => unpinNode(n)));
-    // put it in a section of the map (a region) or one of your topics: it joins that group on the map,
-    // however similar it is to the papers there
+    // regions: move it to another one (out of the one it's drawn in), take it out of one, or, in several, choose the
+    // one it's drawn in (its main region). Filled in once its regions are known.
     if (n.type !== 'fragment') {
-      const regions = (S.clusters || []).filter((c) => c.id !== n.cluster && c.label).sort((a, b) => a.label.localeCompare(b.label)).slice(0, 12);
-      if (regions.length) {
-        items.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Put in region' }));
-        for (const c of regions) items.push(menuItem(truncate(c.label, 44), `${c.size} papers`, () => putInSection(n, c)));
-      }
-      const topicSlot = h('div', { class: 'menu-topics' });
-      items.push(topicSlot);
-      api('GET', '/api/topics').then((list) => {
-        const inRegion = new Set(regions.map((c) => c.topic && c.topic.slug).filter(Boolean));
-        const ts = (list || []).filter((t) => !inRegion.has(t.slug)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 12);
-        if (!ts.length || !topicSlot.isConnected) return;
-        topicSlot.append(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Other regions' }),
-          ...ts.map((t) => menuItem(truncate(t.name, 44), `${t.count}`, () => addToTopic(n, t.slug, t.name))));
+      const slot = h('div', { class: 'menu-regions' });
+      items.push(slot);
+      Promise.all([api('GET', `/api/notes/${encodeURIComponent(n.id)}/regions`), api('GET', '/api/topics')]).then(([mine, list]) => {
+        if (!slot.isConnected) return;
+        const ins = (mine && mine.topics) || [];
+        const inSet = new Set(ins.map((t) => t.slug));
+        const here = (S.clusters || []).find((c) => c.id === n.cluster);
+        const hereSlug = here && here.topic && here.topic.slug;
+        // every region you could send it to: the map's (named) regions, then regions with no papers on the map yet
+        const targets = (S.clusters || []).filter((c) => c.id !== n.cluster && c.label && !(c.topic && inSet.has(c.topic.slug)))
+          .map((c) => ({ name: c.label, hint: `${c.size} papers`, cluster: c, slug: c.topic && c.topic.slug }));
+        const seen = new Set(targets.map((t) => t.slug).filter(Boolean));
+        for (const t of list || []) if (!seen.has(t.slug) && !inSet.has(t.slug) && t.slug !== hereSlug) targets.push({ name: t.name, hint: String(t.count), slug: t.slug });
+        targets.sort((a, b) => a.name.localeCompare(b.name));
+        const kids = [];
+        if (targets.length) {
+          kids.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Move to region' }),
+            ...targets.slice(0, 24).map((t) => menuItem(truncate(t.name, 44), t.hint, () => moveToRegion(n, t, hereSlug ? [hereSlug] : []))));
+        }
+        if (ins.length) {
+          kids.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: ins.length > 1 ? 'Its regions' : 'Its region' }));
+          for (const t of ins) {
+            kids.push(menuItem(`Remove from ${truncate(t.name, 36)}`, null, () => moveToRegion(n, null, [t.slug])));
+          }
+          if (ins.length > 1) {
+            const main = mine.main_region;
+            for (const t of ins) {
+              if (t.slug === main) kids.push(h('div', { class: 'menu-hint menu-note', text: `Main region: ${truncate(t.name, 40)}` }));
+              else kids.push(menuItem(`Make ${truncate(t.name, 30)} its main region`, 'drawn there; still in the others', () => setMainRegion(n, t)));
+            }
+          }
+        }
+        if (targets.length) {
+          kids.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Also put in' }),
+            ...targets.slice(0, 24).map((t) => menuItem(truncate(t.name, 44), 'keeps its other regions',
+              () => (t.cluster ? putInSection(n, t.cluster) : addToTopic(n, t.slug, t.name)))));
+        }
+        slot.append(...kids);
+        // the menu grew: keep it inside the window
+        if (nodeMenuEl) { const r = nodeMenuEl.getBoundingClientRect(); if (r.bottom > innerHeight - 8) nodeMenuEl.style.top = Math.max(8, innerHeight - r.height - 8) + 'px'; }
       }).catch(() => {});
     }
     // unlink: just the notes it's linked to, the open note's first
@@ -5365,6 +5397,35 @@
       toast(`Put “${truncate(n.title || n.id, 40)}” in ${c.label}.`, 'ok');
       afterTopicChange(n, t && t.slug);
     } catch (e) { toastErr(e, 'Could not put it there'); }
+  }
+  /** The region `t` as a topic slug: a region the map found by itself gets a topic of its own first (its papers). */
+  async function regionSlug(t, n) {
+    if (t.slug) return t.slug;
+    const c = t.cluster;
+    const members = [...S.nodes.values()].filter((x) => x.cluster === c.id && x.type !== 'fragment' && x.id !== n.id).map((x) => x.id);
+    try { return (await api('POST', '/api/topics', { name: c.label, members })).slug; }
+    catch (e) {  // a region with that name exists already: use it
+      const same = ((await api('GET', '/api/topics')) || []).find((x) => x.name.toLowerCase() === c.label.toLowerCase());
+      if (!same) throw e;
+      return same.slug;
+    }
+  }
+  /** Move a dot to region `t` (null: only take it out), out of the regions in `outOf`. It is drawn there afterwards:
+   *  still in other regions, `t` becomes its main one (app/server.py api_note_move_region). */
+  async function moveToRegion(n, t, outOf) {
+    try {
+      const to = t ? await regionSlug(t, n) : '';
+      await api('POST', `/api/notes/${encodeURIComponent(n.id)}/region`, { to, out_of: outOf });
+      toast(t ? `Moved “${truncate(n.title || n.id, 40)}” to ${t.name}.` : `Took “${truncate(n.title || n.id, 40)}” out of that region.`, 'ok');
+      afterTopicChange(n, to || outOf[0]);
+    } catch (e) { toastErr(e, 'Could not move it'); }
+  }
+  async function setMainRegion(n, t) {
+    try {
+      await api('PUT', `/api/notes/${encodeURIComponent(n.id)}/main-region`, { slug: t.slug });
+      toast(`“${truncate(n.title || n.id, 40)}” is drawn in ${t.name} now.`, 'ok');
+      afterTopicChange(n, t.slug);
+    } catch (e) { toastErr(e, 'Could not change it'); }
   }
   async function addToTopic(n, slug, name) {
     try {
@@ -5412,7 +5473,8 @@
     nodeMenuEl = h('div', { class: 'menu node-menu', role: 'menu' }, h('div', { class: 'menu-label', text: label }), items);
     document.body.appendChild(nodeMenuEl);
     const w = nodeMenuEl.offsetWidth, ht = nodeMenuEl.offsetHeight;
-    Object.assign(nodeMenuEl.style, { left: Math.min(e.clientX, innerWidth - w - 8) + 'px', top: Math.min(e.clientY, innerHeight - ht - 8) + 'px' });
+    // a long menu is as tall as the window at most and scrolls inside (style.css), so it never starts above the top
+    Object.assign(nodeMenuEl.style, { left: Math.max(8, Math.min(e.clientX, innerWidth - w - 8)) + 'px', top: Math.max(8, Math.min(e.clientY, innerHeight - ht - 8)) + 'px' });
     const first = $('.menu-item', nodeMenuEl); if (first) first.focus({ preventScroll: true });
   }
   document.addEventListener('pointerdown', (e) => { if (nodeMenuEl && !nodeMenuEl.contains(e.target)) closeNodeMenu(); }, true);
@@ -5421,7 +5483,9 @@
     if (nodeMenuEl) closeNodeMenu();
     else if (S.linkFrom) endLinkMode();
   });
-  window.addEventListener('wheel', closeNodeMenu, { passive: true });
+  // scrolling the map closes it; scrolling a long menu itself doesn't
+  // (capture: the map's zoom stops the wheel event before it would reach window)
+  window.addEventListener('wheel', (e) => { if (nodeMenuEl && !nodeMenuEl.contains(e.target)) closeNodeMenu(); }, { passive: true, capture: true });
   /** Copy text to the clipboard: the async clipboard where it's allowed, else a hidden field and the copy command. */
   async function copyText(text) {
     try { await navigator.clipboard.writeText(text); return true; } catch { /* below */ }

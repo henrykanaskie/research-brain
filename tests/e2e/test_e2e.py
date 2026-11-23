@@ -802,6 +802,99 @@ def test_right_click_empty_map_adds_things_there(ctx, server):
     assert not page.errors
 
 
+def test_a_long_right_click_menu_scrolls_instead_of_closing(ctx, server):
+    """A right-click menu taller than the window fits inside it and scrolls: the wheel over the menu scrolls it (it
+    used to close the menu), the wheel over the map still closes it."""
+    clear_vault(server)
+    for t in ("Menu paper one", "Menu paper two"):
+        api(server, "POST", "/api/notes", {"type": "paper", "title": t})
+    page = ctx.new_page()
+    page.set_viewport_size({"width": 1100, "height": 260})
+    page.errors = []
+    page.on("pageerror", lambda e: page.errors.append(str(e)))
+    page.goto(server["base"] + "/")
+    page.wait_for_function("window.__rb && window.__rb.S.nodes.size >= 2")
+    page.wait_for_timeout(1200)
+    box = page.locator("#graph").bounding_box()
+    page.mouse.click(box["x"] + box["width"] * 0.25, box["y"] + box["height"] * 0.5, button="right")  # an empty spot
+    menu = page.locator(".node-menu")
+    expect(menu).to_be_visible()
+    r = menu.bounding_box()
+    assert r["y"] >= 0 and r["y"] + r["height"] <= 260 + 0.5, r  # inside the window
+    assert page.evaluate("(() => { const m = document.querySelector('.node-menu'); return m.scrollHeight > m.clientHeight; })()")
+    page.mouse.move(r["x"] + r["width"] / 2, r["y"] + r["height"] / 2)
+    page.mouse.wheel(0, 200)
+    page.wait_for_timeout(300)
+    expect(menu).to_be_visible()
+    assert page.evaluate("document.querySelector('.node-menu').scrollTop") > 0
+    page.mouse.move(box["x"] + box["width"] - 40, box["y"] + box["height"] / 2)
+    page.mouse.wheel(0, 100)
+    expect(menu).to_have_count(0)
+    assert not page.errors
+
+
+def test_right_click_moves_a_paper_to_another_region_and_chooses_its_main_one(ctx, server):
+    """Right-click a paper: Move to region takes it out of its region and it is drawn in the new one (Put in region
+    used to leave it where it was); in two regions, Make … its main region decides where it's drawn; Remove from
+    takes it out. A click on empty map clears the search."""
+    clear_vault(server)
+    kr = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Krypton collisional radiative model {i}",
+                                             "abstract": "collisional radiative model krypton emission"})["id"] for i in range(5)]
+    ha = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Hall thruster breathing mode {i}",
+                                             "abstract": "hall thruster breathing oscillation discharge"})["id"] for i in range(3)]
+    api(server, "POST", "/api/topics", {"name": "Krypton models", "members": kr})
+    api(server, "POST", "/api/topics", {"name": "Hall thrusters", "members": ha})
+    p = kr[0]
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 8")
+    page.wait_for_timeout(2000)
+    cl = lambda i: page.evaluate("(id) => window.__rb.S.nodes.get(id).cluster", i)
+
+    def right_click(i):
+        sx, sy = page.evaluate("(id) => { const fg = window.__rb.fg, n = window.__rb.S.nodes.get(id); const q = fg.graph2ScreenCoords(n.x, n.y); return [q.x, q.y]; }", i)
+        box = page.locator("#graph").bounding_box()
+        page.mouse.move(box["x"] + sx - 30, box["y"] + sy - 20)
+        page.mouse.move(box["x"] + sx, box["y"] + sy, steps=6)  # like a real pointer: the map knows the dot under it
+        page.wait_for_timeout(200)
+        page.mouse.click(box["x"] + sx, box["y"] + sy, button="right")
+        menu = page.locator(".node-menu")
+        expect(menu.locator(".menu-regions .menu-label").first).to_be_visible()
+        return menu
+
+    assert cl(p) == cl(kr[1])
+    menu = right_click(p)
+    expect(menu).to_contain_text("Move to region")
+    expect(menu).to_contain_text("Remove from Krypton models")
+    menu.locator(".menu-regions .menu-item", has_text="Hall thrusters").first.click()
+    page.wait_for_function(f"window.__rb.S.nodes.get('{p}').cluster === window.__rb.S.nodes.get('{ha[0]}').cluster")
+    assert [t["name"] for t in api(server, "GET", f"/api/notes/{p}/regions")["topics"]] == ["Hall thrusters"]
+
+    # in both regions: drawn in the main one
+    api(server, "POST", f"/api/notes/{p}/region", {"to": "", "out_of": []})
+    kr_slug = next(t["slug"] for t in api(server, "GET", "/api/topics") if t["name"] == "Krypton models")
+    api(server, "POST", f"/api/topics/{kr_slug}/notes", {"ids": [p]})
+    page.evaluate("window.__rb.refreshGraph()")
+    page.wait_for_function(f"window.__rb.S.nodes.get('{p}').cluster === window.__rb.S.nodes.get('{kr[1]}').cluster")  # the bigger one
+    menu = right_click(p)
+    expect(menu).to_contain_text("Its regions")
+    menu.locator(".menu-item", has_text="Make Hall thrusters its main region").click()
+    page.wait_for_function(f"window.__rb.S.nodes.get('{p}').cluster === window.__rb.S.nodes.get('{ha[0]}').cluster")
+    menu = right_click(p)
+    expect(menu).to_contain_text("Main region: Hall thrusters")
+    menu.locator(".menu-item", has_text="Remove from Hall thrusters").click()
+    page.wait_for_function(f"window.__rb.S.nodes.get('{p}').cluster === window.__rb.S.nodes.get('{kr[1]}').cluster")
+    assert api(server, "GET", f"/api/notes/{p}/regions")["main_region"] is None
+
+    # search, then a click on empty map clears it
+    page.fill("#search-input", "krypton")
+    page.wait_for_function("window.__rb.S.search === 'krypton'")
+    box = page.locator("#graph").bounding_box()
+    page.mouse.click(box["x"] + 30, box["y"] + 120)
+    page.wait_for_function("window.__rb.S.search === ''")
+    expect(page.locator("#search-input")).to_have_value("")
+    assert not page.errors
+
+
 def test_the_map_opens_with_every_dot_on_screen_also_after_a_resize_while_it_glides_in(ctx, server):
     """The first view is framed around where the dots come to rest (not a layout worked out before the forces had
     the dots, which came out cramped), however slowly the library loads and if the window is resized meanwhile."""

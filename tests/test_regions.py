@@ -36,6 +36,50 @@ def test_a_paper_added_to_a_topic_joins_its_region(server):
     assert cl[odd] == cl[ids[0]] >= 0
 
 
+def test_moving_a_paper_to_another_region_moves_it_and_a_main_region_decides_between_two(server):
+    """"Put in region" used to add a paper to the other region and leave it in its own, where the bigger region kept
+    it: it never moved. Moving takes it out of the region it's in; a paper you keep in two regions is drawn in the
+    one you make its main region; taking it out of every region gives it back to similarity."""
+    srv, c = server
+    def mk(title, abstract):
+        return c.post("/api/notes", json={"type": "paper", "title": title, "abstract": abstract}).json()["id"]
+    krs = [mk(f"Collisional radiative model for krypton plasma {i}", "collisional radiative model krypton plasma emission")
+           for i in range(5)]
+    hal = [mk(f"Hall thruster breathing mode oscillation {i}", "hall thruster breathing mode discharge oscillation")
+           for i in range(3)]
+    c.post("/api/topics", json={"name": "Krypton models", "members": krs})
+    c.post("/api/topics", json={"name": "Hall thrusters", "members": hal})
+    slug = {t["name"]: t["slug"] for t in c.get("/api/topics").json()}
+    kr, ha = slug["Krypton models"], slug["Hall thrusters"]
+    p = krs[0]
+
+    def where():
+        cl = {n["id"]: n["cluster"] for n in c.get("/api/graph").json()["nodes"]}
+        return "kr" if cl[p] == cl[krs[1]] else "ha" if cl[p] == cl[hal[0]] else cl[p]
+    assert where() == "kr"
+    # the old "Put in region": added, not moved, so the bigger region keeps it
+    c.post(f"/api/topics/{ha}/notes", json={"ids": [p]})
+    assert where() == "kr"
+    # main region: drawn in the region you choose, in both still
+    r = c.put(f"/api/notes/{p}/main-region", json={"slug": ha}).json()
+    assert r["main_region"] == ha and where() == "ha"
+    r = c.put(f"/api/notes/{p}/main-region", json={"slug": None}).json()
+    assert r["main_region"] is None and where() == "kr"
+    assert c.put(f"/api/notes/{p}/main-region", json={"slug": "no-such-region"}).status_code == 400
+    # move: out of Krypton models, into Hall thrusters (only there now, so no main region needed)
+    c.delete(f"/api/topics/{ha}/notes/{p}")
+    r = c.post(f"/api/notes/{p}/region", json={"to": ha, "out_of": [kr]}).json()
+    assert [t["slug"] for t in r["topics"]] == [ha] and r["main_region"] is None
+    assert where() == "ha"
+    # move while it stays in another region too: the one it moved to becomes its main one
+    c.post(f"/api/topics/{kr}/notes", json={"ids": [p]})
+    r = c.post(f"/api/notes/{p}/region", json={"to": ha, "out_of": []}).json()
+    assert r["main_region"] == ha and where() == "ha"
+    # out of every region: the main region goes too
+    r = c.post(f"/api/notes/{p}/region", json={"to": "", "out_of": [kr, ha]}).json()
+    assert r["topics"] == [] and r["main_region"] is None
+
+
 def test_papers_matching_an_open_question_group_with_it(server):
     """Papers on an open question's subject share its region even when they barely match each other."""
     srv, c = server
