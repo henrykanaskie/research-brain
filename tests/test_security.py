@@ -501,6 +501,7 @@ XSS_CASES = [
     "<svg onload=alert(1)>", "$\\href{javascript:alert(1)}{x}$", "$$\\htmlClass{x}{y}\\url{javascript:x}$$",
     "[x](https://ok.example \"t\\\" onmouseover=alert(1) x=\\\"\")", "LEPH0XL<img src=x onerror=alert(1)>",
     "`<img src=x onerror=alert(1)>`", "```\n<script>alert(1)</script>\n```",
+    "==<img src=x onerror=alert(1)>==", "==[a](javascript:alert(1))==", "- [ ] ==<svg onload=alert(1)>==",
 ]
 
 

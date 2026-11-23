@@ -402,6 +402,38 @@ details.abstract .md { margin-top: 8px; }
 .md h1 { font-size: 17px; } .md h2 { font-size: 15px; } .md h3, .md h4 { font-size: 14px; }
 .md ul, .md ol { padding-left: 1.3em; margin: 0 0 .65em; }
 .md li { margin: .15em 0; }
+/* nested lists read like an outline: a hairline guide down each level, and the bullet changes with depth */
+.md li > ul, .md li > ol { margin: .1em 0 .2em -.55em; padding-left: 1.7em; border-left: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); }
+.md ul { list-style: disc; } .md ul ul { list-style: circle; } .md ul ul ul { list-style: square; } .md ul ul ul ul { list-style: disc; }
+.md li::marker { color: var(--ink-2); }
+.md ol > li::marker { font: 500 .85em var(--sans); font-variant-numeric: tabular-nums; }
+/* checklists: the box replaces the bullet, and ticking it in the reading view ticks it in the text */
+.md li:has(> input[type="checkbox"]), .md li:has(> p > input[type="checkbox"]) { list-style: none; margin-left: -1.3em; }
+.md li > input[type="checkbox"], .md li > p > input[type="checkbox"] { accent-color: var(--ink); width: 14px; height: 14px; margin: 0 .5em 0 0; vertical-align: -2px; cursor: pointer; }
+.md li:has(> input[type="checkbox"]:checked) { color: var(--ink-2); text-decoration: line-through; text-decoration-color: var(--rule); }
+.md mark { background: color-mix(in srgb, var(--red) 14%, transparent); color: inherit; padding: 0 2px; border-radius: 2px; }
+.md h1 + ul, .md h2 + ul, .md h3 + ul { margin-top: .2em; }
+/* figures and photos in a note */
+.md img { display: block; max-width: 100%; height: auto; margin: .6em 0; border: 1px solid var(--rule); border-radius: var(--r); background: #fff; }
+.md p > img:only-child { margin: .3em 0; }
+.md li img { display: inline-block; vertical-align: top; max-height: 320px; }
+/* the scan of a handwritten note: its pages, kept as they are */
+.scan-pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.scan-page { display: block; border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; background: #fff; }
+.scan-page img { display: block; width: 100%; height: auto; }
+.scan-page:hover, .scan-page:focus-visible { border-color: var(--ink-2); }
+/* the formatting bar over a note you're writing (static/notes-editor.js) */
+.ne-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; margin: 0 0 4px; }
+.ne-btn { all: unset; box-sizing: border-box; min-width: 28px; height: 26px; padding: 0 7px; border-radius: 3px; cursor: pointer; text-align: center;
+  font: 500 13px/26px var(--sans); color: var(--ink-2); }
+.ne-btn:hover { background: var(--ground); color: var(--ink); }
+.ne-btn:focus-visible { outline: 1px solid var(--ink-2); }
+.ne-btn.ne-b { font-weight: 700; } .ne-btn.ne-i { font-style: italic; font-family: var(--serif); font-size: 14px; }
+.ne-btn.ne-mark, .ne-btn.ne-img { font-size: 12px; }
+.ne-btn.ne-mark { background: color-mix(in srgb, var(--red) 10%, transparent); }
+.ne-sep { width: 1px; height: 16px; background: var(--rule); margin: 0 5px; }
+.body-field { tab-size: 4; }
+.body-field.ne-drop, .field.ne-drop { outline: 2px dashed var(--ink-2); outline-offset: -4px; }
 .md code { font-family: var(--mono); font-size: .8em; background: var(--ground); padding: 1px 4px; border-radius: 2px; }
 .md pre { background: var(--ground); padding: 8px 10px; overflow-x: auto; border-radius: var(--r); }
 .md pre code { background: none; padding: 0; }

@@ -913,6 +913,32 @@ Paired devices get `403 Available on your computer` from: `/api/pair/*`, `/api/d
 `/api/vault/export|import`, `/api/library/move-legacy`, `/api/zotero/*`, `/api/export`, `/api/backfill/*`, and
 writes to `/api/profiles*`, `/api/settings`, `/api/agents/active`, `/api/privacy/settings`.
 
+## ADDED: Writing and importing notes (app/noteimport.py, static/notes-editor.js, static/noteimport.js)
+
+- `POST /api/notes/convert-html` `{html}` → `{markdown}`: formatted text pasted into a note (Google Docs, Word,
+  Apple Notes, Notion, web pages) as Markdown: headings, bold/italic/strike/`==highlight==`, links (http, https,
+  mailto only), nested and numbered lists (4 spaces a level), checkboxes, quotes, code, tables. Scripts, styles and
+  other links are dropped.
+- `POST /api/notes/image?name=` raw `image/jpeg|png|webp|gif` body (≤ 25 MB, checked by its first bytes) →
+  `201 {url, markdown}`: a figure stored in `vault/attachments/`, served at `/attachments/{name}`. The page turns
+  HEIC and other photos into JPEG first.
+- `POST /api/import/notes` multipart `files` (one or more) + optional `topic` → `201 {created: [{id, title}],
+  skipped: [{name, why}]}`. Reads `.md/.markdown/.txt` (YAML frontmatter `title`/`tags`, else a first `# Heading`,
+  else the file name), `.html/.htm`, `.docx`, and `.zip` files of them (hidden folders and `__MACOSX` skipped;
+  at most 2000 notes and 200 MB unpacked). A note with the same title and text as one you have is skipped.
+- `POST /api/import/handwritten` multipart `files` (one PDF, or JPEG photos: one PDF page each, in the order sent)
+  + optional `title`, `topic` → `201` Note (type `note`, tag `handwritten`, `has_pdf`). The scan is kept as it is;
+  a scan without a text layer is fine.
+- `GET /api/notes/{id}/scan` → `{pages}`; `GET /api/notes/{id}/scan/{page}.png` (from 1) → a page as a picture.
+- `POST /api/notes/{id}/transcribe` `{send_private?}` → Note: the active AI writes the scan out as Markdown, added
+  under the note's text; the scan stays. 403 for a private note (notes are private by default) unless
+  `send_private` is true; 400 when the note has no scan or the AI can't read images (`reads_images` in
+  `/api/status` `agent`: Claude Code, Ollama and local OpenAI-compatible servers, with a vision model).
+- Editor keys (every Markdown field you write in, not the chat box): Tab / Shift+Tab nest and un-nest list items
+  and never leave the field (Esc, then Tab, does); Enter continues a list, an empty item un-nests or ends it;
+  Cmd/Ctrl+B, I; Cmd/Ctrl+Shift+H highlight, Cmd/Ctrl+Shift+X checkbox. The note body has a formatting bar.
+  Checkboxes tick in the reading view.
+
 ## ADDED: Continue on your phone (app/chats.py handoff)
 - `POST /api/chats/{key}/handoff` body `{"messages": [...], "title"}` (the chat's messages, as `PUT /api/chats/{key}`
   takes them; empty = the saved conversation) → `{"text", "messages", "left_out", "condensed"}`: the conversation

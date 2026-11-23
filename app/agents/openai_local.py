@@ -63,8 +63,19 @@ class OpenAILocalBackend(Backend):
         chosen = model_for(self.id)
         return Detection(True, path=self.base_url(), signed_in=True, note=f"Model: {chosen or names[0]}.")
 
+    reads_images = True  # with a vision model loaded (LM Studio marks them with an eye)
+
+    def ask_images(self, prompt: str, images: list[tuple[str, str]], *, system: str = "", timeout: float = 300) -> str:
+        msgs = messages(prompt, system)
+        msgs[-1]["content"] = [{"type": "text", "text": prompt}] + [
+            {"type": "image_url", "image_url": {"url": f"data:{mt};base64,{data}"}} for mt, data in images]
+        return "".join(self._chat(msgs, timeout)).strip()
+
     def ask_stream(self, prompt: str, *, system: str = "", timeout: float = 180) -> Iterator[str]:
-        body = {"model": self.model(), "messages": messages(prompt, system), "stream": True}
+        yield from self._chat(messages(prompt, system), timeout)
+
+    def _chat(self, msgs: list[dict], timeout: float) -> Iterator[str]:
+        body = {"model": self.model(), "messages": msgs, "stream": True}
         got = False
         for line in post_lines(self.base_url() + "/chat/completions", body, timeout):
             if not line.startswith("data:"):

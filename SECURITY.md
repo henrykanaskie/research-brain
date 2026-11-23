@@ -97,7 +97,8 @@ gets anything until it is paired; this computer itself never needs pairing.
   any other, so it needs the device token too.
 - **Photos** (`POST /api/capture/photo`) must be JPEG, PNG or WebP by content type *and* by their first bytes, at
   most 25 MB (`RB_MAX_PHOTO_MB`); they are stored under `vault/attachments/` with a random name and served only
-  by exact name.
+  by exact name. **Figures in notes** (`POST /api/notes/image`) follow the same rules and may also be GIF; SVG is
+  never accepted (it can carry script).
 - The Host allowlist, Origin and fetch-metadata rules above still apply to paired devices. An `https` origin on
   port 443 is accepted for a non-loopback allowed name (that is `tailscale serve`).
 
@@ -268,6 +269,13 @@ The CLI's environment drops `ANTHROPIC_API_KEY` (so your subscription is used), 
 `NODE_PATH` (which could load code into the CLI) and the app's own `RB_AGENT_*` values, and sets
 `ENABLE_CLAUDEAI_MCP_SERVERS=false` (no claude.ai connectors) and
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `DISABLE_TELEMETRY=1`, `DISABLE_ERROR_REPORTING=1`.
+
+**Reading handwriting** (`POST /api/notes/{id}/transcribe`) uses the same flags, with the page pictures and the
+request sent together as one `--input-format stream-json` message on stdin (nothing is written to disk for the CLI
+to read, and there is no fallback command line). The init-event tool guard applies as for every call. Notes are
+private by default, so a hosted AI gets a note's pages only when you say so for that note (the page asks; the
+import dialog's "write it out" box says the same), and each send is listed in *What was sent to AI*. Ollama and
+local OpenAI-compatible servers get the pictures in the request body, loopback only, like any other prompt.
 
 **Research mode** additionally gets exactly one MCP server, research_brain's own (`--mcp-config`, a
 generated file readable only by you), with only its tool names pre-approved (`--allowedTools mcp__rb__…`,

@@ -341,6 +341,38 @@ def ask_stream(instruction: str, context: str = "", system: str = "", heartbeat:
             raise _error(last_err)
 
 
+def ask_images(instruction: str, images: list[tuple[str, str]], system: str = "", model: str | None = None) -> str:
+    """One call with images ([(media type, base64)]) and text in a single user message, sent as stream-json on
+    stdin. The same lockdown as ask_stream (no tools, no MCP, no settings, no session, empty folder) and the
+    same init-event tool guard; there is no fallback command line, so an older CLI just fails."""
+    if os.environ.get("RB_FAKE_CLAUDE"):
+        return (f"# (fake Claude) transcription\n\n- read {len(images)} image(s)\n    - nested point\n"
+                "- [ ] a box\n\n$$E = mc^2$$")
+    path = find_claude()
+    if not path:
+        raise ClaudeError(status()["detail"])
+    cmd = [path, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+           "--tools", "", "--disallowedTools", "mcp__*", *DYNAMIC_DENY, "--strict-mcp-config", *NO_DYNAMIC,
+           "--permission-mode", "dontAsk", "--no-session-persistence", "--disable-slash-commands",
+           "--setting-sources", ""]
+    if model or MODEL:
+        cmd += ["--model", model or MODEL]
+    if system:
+        cmd += ["--system-prompt", system]
+    content = [{"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}} for mt, data in images]
+    content.append({"type": "text", "text": instruction})
+    stdin = json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
+    state: dict = {}
+    with _sema:
+        text = "".join(_run_stream(cmd, stdin, _env(), state, None))
+    if state.get("ok") and not state.get("error"):
+        out = (text or state.get("result") or "").strip()
+        if not out:
+            raise ClaudeError("Claude CLI error: the answer was empty")
+        return out
+    raise _error(state.get("error") or state.get("stderr") or f"exit code {state.get('code')}")
+
+
 def _run_stream(cmd: list[str], stdin: str, env: dict, state: dict, heartbeat: float | None):
     """Run one stream-json CLI process, yielding text deltas. Sets state ok/code/stderr/error."""
     from . import procs

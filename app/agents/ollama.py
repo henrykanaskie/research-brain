@@ -83,8 +83,18 @@ class OllamaBackend(Backend):
         note = f"Model: {chosen or names[0]}." + ("" if not chosen or chosen in names else " (not installed)")
         return Detection(True, version=version, path=self.base_url(), signed_in=True, note=note)
 
+    reads_images = True  # with a vision model (llava, llama3.2-vision, qwen2.5vl, gemma3, ...)
+
+    def ask_images(self, prompt: str, images: list[tuple[str, str]], *, system: str = "", timeout: float = 300) -> str:
+        msgs = messages(prompt, system)
+        msgs[-1]["images"] = [data for _, data in images]
+        return "".join(self._chat(msgs, timeout)).strip()
+
     def ask_stream(self, prompt: str, *, system: str = "", timeout: float = 180) -> Iterator[str]:
-        body = {"model": self.model(), "messages": messages(prompt, system), "stream": True}
+        yield from self._chat(messages(prompt, system), timeout)
+
+    def _chat(self, msgs: list[dict], timeout: float) -> Iterator[str]:
+        body = {"model": self.model(), "messages": msgs, "stream": True}
         got = False
         for line in post_lines(self.base_url() + "/api/chat", body, timeout):
             try:

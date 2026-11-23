@@ -25,7 +25,7 @@ for _ext, _type in ((".mjs", "text/javascript"), (".js", "text/javascript"), (".
     mimetypes.add_type(_type, _ext)
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
@@ -1079,6 +1079,7 @@ def _agent_status() -> dict:
                   "Copilot or Ollama work too): click here to choose one, or see the README, \"Add an AI\".")
     return {"claude": {"available": det.available, "path": det.path or None, "detail": detail},
             "agent": {"id": b.id, "name": b.name, "kind": b.kind, "model": agents.model_for(b.id) or "", "none": none,
+                      "reads_images": bool(getattr(b, "reads_images", False)),
                       **det.as_dict()}}
 
 
@@ -1798,6 +1799,187 @@ async def api_import_pdf(file: UploadFile = File(...), quick: bool = False, topi
     if topic:
         out["topic"] = _file_in_topic(out["id"], topic)
     return _downloads_copy(out, file.filename or "", out["id"]) if not quick else out
+
+
+# ---------------------------------------------------------------- notes written elsewhere (app/noteimport.py)
+from . import noteimport  # noqa: E402
+
+MAX_NOTE_UPLOAD = 300 << 20
+
+
+class HtmlIn(BaseModel):
+    html: str
+
+
+@app.post("/api/notes/convert-html")
+def api_convert_html(body: HtmlIn):
+    """Formatted text you pasted (Google Docs, Word, Apple Notes, Notion, a web page) as Markdown."""
+    return {"markdown": noteimport.html_to_markdown(body.html[:4_000_000])}
+
+
+async def _read_upload(file: UploadFile, limit: int) -> bytes:
+    buf, size = [], 0
+    while chunk := await file.read(1 << 20):
+        size += len(chunk)
+        if size > limit:
+            raise HTTPException(413, f"{file.filename or 'A file'} is larger than {limit >> 20} MB")
+        buf.append(chunk)
+    return b"".join(buf)
+
+
+def _note_key(title: str, body: str) -> str:
+    return re.sub(r"\s+", " ", f"{title}\n{body}").strip().casefold()
+
+
+@app.post("/api/import/notes", status_code=201)
+async def api_import_notes(files: list[UploadFile] = File(...), topic: str = Form("")):
+    """Notes from files: .md/.txt (Obsidian, Bear, Logseq...), .html (Notion, Evernote, OneNote, Apple Notes
+    exports), .docx (Word, Google Docs), or a .zip of any of them. A note already here, same title and text,
+    is skipped."""
+    found, skipped = [], []
+    for f in files:
+        data = await _read_upload(f, MAX_NOTE_UPLOAD)
+        got, skip = await run_in_threadpool(noteimport.notes_from_file, f.filename or "notes", data)
+        found += got
+        skipped += skip
+    have = {_note_key(n["title"], n.get("body") or "") for n in store.all() if n["type"] == "note"}
+    created = []
+    for n in found:
+        key = _note_key(n["title"], n["body"])
+        if key in have:
+            skipped.append({"name": n["name"], "why": "already in your library"})
+            continue
+        if not n["body"].strip() and not n["title"].strip():
+            skipped.append({"name": n["name"], "why": "empty"})
+            continue
+        have.add(key)
+        note = store.create({"type": "note", "title": n["title"], "body": n["body"], "tags": n["tags"]})
+        if topic:
+            _file_in_topic(note["id"], topic)
+        created.append({"id": note["id"], "title": note["title"]})
+    if created:
+        event_bus.publish({"type": "notes-changed", "ids": [c["id"] for c in created]})
+    return {"created": created, "skipped": skipped}
+
+
+@app.post("/api/import/handwritten", status_code=201)
+async def api_import_handwritten(files: list[UploadFile] = File(...), title: str = Form(""), topic: str = Form("")):
+    """Handwritten (or any scanned) notes kept as they are: one PDF, or photos of pages (JPEG; the page turns
+    other photos into JPEG first) made into one PDF, a page each. A new note that shows the scan; to write it
+    out as text too, POST /api/notes/{id}/transcribe after."""
+    if not files:
+        raise HTTPException(400, "Choose a PDF or photos of your pages")
+    first = files[0].filename or "Handwritten notes"
+    title = re.sub(r"[\x00-\x1f\x7f]", " ", title).strip()[:200] or noteimport.clean_title(first)
+    tmpdir = Path(tempfile.mkdtemp(prefix="rb_hand_"))
+    dest = tmpdir / "upload.pdf"
+    try:
+        datas = [await _read_upload(f, MAX_PDF_MB << 20) for f in files]
+        pdfs = [d for d in datas if d[:1024].find(b"%PDF") != -1]
+        if pdfs:
+            if len(datas) > 1:
+                raise HTTPException(400, "Add one PDF at a time, or only photos")
+            dest.write_bytes(pdfs[0])
+        else:
+            try:
+                await run_in_threadpool(noteimport.images_to_pdf, datas, dest)
+            except noteimport.ImportError_ as e:
+                raise HTTPException(400, f"Couldn't read the photos: {e}")
+        diskspace.ensure_room(Path(store.pdf_dir), dest.stat().st_size)
+        try:
+            text, _ = await run_in_threadpool(extract, dest)
+        except Exception as e:
+            try:  # a scan has no text layer: fine, as long as it opens as a PDF
+                import pypdfium2 as _pdfium
+                _pdfium.PdfDocument(str(dest)).close()
+                text = ""
+            except Exception:
+                raise HTTPException(400, f"Couldn't read that PDF: {why_unreadable(dest, e)}")
+    except BaseException:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise
+    note = store.create({"type": "note", "title": title, "body": "", "tags": ["handwritten"]})
+    _store_pdf(note["id"], dest, text)  # removes tmpdir
+    if topic:
+        _file_in_topic(note["id"], topic)
+    event_bus.publish({"type": "notes-changed", "ids": [note["id"]]})
+    return _with_extras(store.get(note["id"]))
+
+
+@app.get("/api/notes/{nid}/scan")
+def api_scan_info(nid: str):
+    """How many pages a note's scan has (its PDF), for showing them in the note."""
+    _get(nid)
+    p = store.pdf_path(nid)
+    if not p.is_file():
+        raise HTTPException(404, "No scan")
+    import pypdfium2 as _pdfium
+    try:
+        doc = _pdfium.PdfDocument(str(p))
+        try:
+            return {"pages": len(doc)}
+        finally:
+            doc.close()
+    except Exception:
+        raise HTTPException(400, "The scan couldn't be read")
+
+
+@app.get("/api/notes/{nid}/scan/{page}.png")
+def api_scan_page(nid: str, page: int):
+    """One page of a note's scan as a picture (1400 px on its long side)."""
+    _get(nid)
+    p = store.pdf_path(nid)
+    if not p.is_file() or page < 1 or page > 500:
+        raise HTTPException(404, "No such page")
+    try:
+        png = noteimport.pdf_page_png(p, page - 1, long_side=1400)
+    except IndexError:
+        raise HTTPException(404, "No such page")
+    except Exception:
+        raise HTTPException(400, "The scan couldn't be read")
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
+
+
+class TranscribeIn(BaseModel):
+    send_private: bool = False  # you said yes to sending this private note's pages, this once
+
+
+@app.post("/api/notes/{nid}/transcribe")
+def api_transcribe(nid: str, body: TranscribeIn | None = None):
+    """Write out a note's scan (its PDF: handwriting, a photo of a whiteboard) as Markdown with the active AI,
+    added under what the note already says. The scan stays attached. Your notes are private by default: a
+    hosted AI gets the pages only with send_private (the page asks first), and the send is in the AI log."""
+    note = _get(nid)
+    if not note.get("has_pdf"):
+        raise HTTPException(400, "This note has no scan to write out")
+    agent = _ai_agent()
+    if agent is None:
+        raise HTTPException(400, "Set up an AI in Settings → AI to write out handwriting")
+    if not privacy.allow_ai(note, agent) and not (body and body.send_private):
+        raise HTTPException(403, f"This note is private: its pages go to {agent.name} only if you say so.")
+    try:
+        pngs = noteimport.pdf_pages_png(store.pdf_path(nid))
+    except Exception as e:
+        raise HTTPException(400, f"Couldn't read the scan: {e}")
+    if not pngs:
+        raise HTTPException(400, "The scan has no pages")
+    if not getattr(agent, "reads_images", False):
+        raise HTTPException(400, f"{agent.name} can't read images here. The scan is kept as it is; to write it out, "
+                                 "choose Claude Code or a local vision model in Settings → AI.")
+    privacy.log_send(agent, "transcribe", [nid], sum(len(p) for p in pngs))
+    try:
+        md = noteimport.transcribe(agent, pngs, hint=note["title"])
+    except noteimport.ImportError_ as e:
+        raise HTTPException(400, str(e))
+    except agents.AgentError as e:
+        raise HTTPException(502, str(e))
+    if not md.strip():
+        raise HTTPException(502, "The AI couldn't make out any writing")
+    note = _get(nid)
+    body = (note.get("body") or "").rstrip()
+    store.update(nid, {"body": (body + "\n\n" if body else "") + md + "\n"})
+    event_bus.publish({"type": "notes-changed", "ids": [nid]})
+    return _with_extras(store.get(nid))
 
 
 class BookmarkIn(BaseModel):

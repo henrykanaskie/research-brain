@@ -11,7 +11,8 @@ target) and photo capture. The rules live in app/pairing.py; app/security.py enf
     PATCH  /api/devices/{id}         {name} (computer only)
     DELETE /api/devices/{id}         revoke (computer only)
     POST   /api/capture/photo?title=  raw image body -> a new note showing the photo (attachment)
-    GET    /attachments/{name}       an attached photo
+    POST   /api/notes/image?name=  raw image body -> {url, markdown}: a figure or photo to put in a note's text
+    GET    /attachments/{name}       an attached photo or figure
     GET    /pair, /share, /manifest.webmanifest, /sw.js
 """
 from __future__ import annotations
@@ -39,8 +40,8 @@ class _Ctx:
 
 ctx = _Ctx()
 
-IMAGE_MAGIC = ((b"\xff\xd8\xff", "jpg"), (b"\x89PNG\r\n\x1a\n", "png"), (b"RIFF", "webp"))
-ATTACH_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}\.(jpg|png|webp)$")
+IMAGE_MAGIC = ((b"\xff\xd8\xff", "jpg"), (b"\x89PNG\r\n\x1a\n", "png"), (b"RIFF", "webp"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
+ATTACH_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}\.(jpg|png|webp|gif)$")
 MAX_PHOTO = int(float(os.environ.get("RB_MAX_PHOTO_MB", "25")) * (1 << 20))
 
 
@@ -209,18 +210,52 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")[:40] or "photo"
 
 
-@router.post("/api/capture/photo", status_code=201)
-async def api_capture_photo(request: Request, title: str = "", note: str = ""):
-    data = await request.body()
+def _image_ext(data: bytes) -> str:
+    """jpg/png/webp/gif from the file's first bytes (never its name or the request's type), or 415.
+    No SVG: it can carry script."""
     if not data:
-        raise HTTPException(400, "No photo in the request")
+        raise HTTPException(400, "No image in the request")
     if len(data) > MAX_PHOTO:
-        raise HTTPException(413, "The photo is too large")
+        raise HTTPException(413, "The image is too large")
     ext = next((e for magic, e in IMAGE_MAGIC if data.startswith(magic)), None)
     if ext == "webp" and data[8:12] != b"WEBP":
         ext = None
     if not ext:
-        raise HTTPException(415, "Send a JPEG, PNG or WebP photo")
+        raise HTTPException(415, "Send a JPEG, PNG, WebP or GIF image")
+    return ext
+
+
+def save_image(data: bytes, title: str) -> str:
+    """Store an image in the attachments folder; its /attachments/ URL."""
+    ext = _image_ext(data)
+    from . import diskspace
+    diskspace.ensure_room(_attach_dir(), len(data), "this image")
+    name = f"{_slug(title)}-{secrets.token_hex(4)}.{ext}"
+    (_attach_dir() / name).write_bytes(data)
+    return f"/attachments/{name}"
+
+
+@router.post("/api/notes/image", status_code=201)
+async def api_note_image(request: Request, name: str = ""):
+    """A figure, photo or screenshot pasted, dropped or picked into a note: stored, and the Markdown that shows it."""
+    data = await request.body()
+    title = re.sub(r"[\x00-\x1f\x7f]", " ", Path(name or "").stem).strip()[:120] or "figure"
+    url = save_image(data, "figure" if re.fullmatch(r"(?i)(image|screenshot|clipboard|pasted|img)[\w .-]*", title) else title)
+    alt = re.sub(r"[\[\]]", "", title)
+    return {"url": url, "markdown": f"![{alt}]({url})"}
+
+
+@router.post("/api/capture/photo", status_code=201)
+async def api_capture_photo(request: Request, title: str = "", note: str = ""):
+    data = await request.body()
+    try:
+        ext = _image_ext(data)
+    except HTTPException as e:
+        if e.status_code == 415:
+            raise HTTPException(415, "Send a JPEG, PNG or WebP photo")
+        if e.status_code == 400:
+            raise HTTPException(400, "No photo in the request")
+        raise HTTPException(e.status_code, "The photo is too large")
     title = re.sub(r"[\x00-\x1f\x7f]", " ", title or "").strip()[:200] or "Photo"
     name = f"{_slug(title)}-{secrets.token_hex(4)}.{ext}"
     path = _attach_dir() / name

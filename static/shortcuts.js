@@ -154,6 +154,8 @@
   reg({ id: 'library.importPdf', title: 'Import a PDF…', group: 'Library', keys: 'Mod+O', allowInInput: true,
     description: 'Pick a PDF from disk. You can also drop one anywhere on the window.', aliases: ['upload', 'open file', 'add pdf', 'drop'],
     run: () => { rb.closeMenus(); rb.pickPdf(); } });
+  reg({ id: 'library.importNotes', title: 'Import notes…', group: 'Library', description: 'Notes from Obsidian, Notion, Word, Google Docs or web pages, or handwritten pages kept as they are.',
+    aliases: ['import notes', 'obsidian', 'notion', 'docx', 'word', 'markdown', 'handwritten', 'scan', 'handwriting'], when: () => !!window.__rbNoteImport, run: () => window.__rbNoteImport.open() });
   reg({ id: 'library.zotero', title: 'Import from Zotero…', group: 'Library', description: 'Papers, notes and highlights from your local Zotero library.',
     aliases: ['zotero', 'migrate', 'bulk import'], when: () => !!$('#btn-zotero'), run: () => { rb.openMenu('#btn-add-menu', '#add-menu'); $('#btn-zotero').click(); } });
   reg({ id: 'library.ask', title: 'Ask your library', group: 'Library', keys: 'A', description: 'Ask {AI} a question across all your papers and notes.',
@@ -288,6 +290,8 @@
       ['Fragments', 'A quote, equation or passage with your note on it. Add one in the panel, or highlight in the viewer.', ['note.fragment', 'note.viewer']],
       ['Links', 'Use the Links box near the top of the panel, or right-click a dot on the map. Type [[ in any text to mention a note. Your links are red on the graph.', ['note.link']],
       ['Math', 'Type $…$ for inline math and $$…$$ for display. A backslash opens LaTeX suggestions; Tab accepts.', []],
+      ['Outlines', `Start a line with "- " for a bullet, "1. " for a numbered list or "- [ ] " for a checkbox. Tab nests the line under the one above and Shift+Tab brings it back; Tab never leaves your notes (press Esc first to move on). Enter starts the next item; Enter on an empty one steps back a level, then ends the list. The bar above your notes does the same, plus bold (${MOD}B), italic (${MOD}I), highlight (${MOD}Shift+H) and headings. Tick checkboxes right in the reading view.`, []],
+      ['Figures and other notes', `Paste a screenshot or figure into a note, drop an image on it, or use Image in the bar. Pasting from Google Docs, Word, Apple Notes or Notion keeps bullets, headings and bold. Add › Import notes brings in Markdown, Word, web pages and whole Obsidian or Notion exports, or handwritten pages: kept as they are, and {AI} can write them out as text.`, ['library.importNotes']],
     ]],
     ['The graph', [
       ['What you see', 'Filled dots are papers, rings are notes, small red dots are fragments. A slightly bigger dot is more written about and connected. A paper you haven’t read yet has a small yellow glow at its centre.', []],

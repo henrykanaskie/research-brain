@@ -592,8 +592,49 @@
     return inline ? out : `<p>${out}</p>`;
   }
   function mdEl(src, cls = 'md', opts) { return h('div', { class: cls, html: renderMD(src, opts) }); }
-  /** Attach the shared LaTeX helper (autocomplete, Cmd/Ctrl+M, symbols, live preview) if loaded. */
-  function latex(ta, preview, mode = 'markdown') {
+  // ---- notes: outliner keys, formatting bar, pasted formatting, figures (static/notes-editor.js)
+  const NOTE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  /** a photo the server stores as it is (JPEG, PNG, WebP, GIF), else (HEIC from an iPhone, BMP, TIFF, or a
+   *  huge photo) drawn again as a JPEG no more than 2400 px on its long side */
+  async function toJpegIfNeeded(file) {
+    if (NOTE_IMAGE_TYPES.includes(file.type) && file.size < 12 << 20) return file;
+    if (!window.createImageBitmap) return file;
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch (e) { return file; }
+    const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.88));
+    return blob ? new File([blob], (file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }) : file;
+  }
+  async function uploadNoteImage(file) {
+    const f = await toJpegIfNeeded(file);
+    let res;
+    try {
+      res = await fetch('/api/notes/image?name=' + encodeURIComponent(f.name || 'figure'),
+        { method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream' }, body: f });
+    } catch (e) { toast('Cannot reach the research_brain server. Is it running?', 'error'); throw e; }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(errText(data, res.status), 'error'); throw new Error('upload failed'); }
+    return data.markdown;
+  }
+  async function pastedHtmlToMarkdown(html) {
+    try { return (await api('POST', '/api/notes/convert-html', { html })).markdown; } catch (e) { return null; }
+  }
+  /** outliner keys (+ a formatting bar in `bar`, if given) on a Markdown field you write notes in */
+  function noteKeys(ta, bar) {
+    if (!window.NotesEditor) return null;
+    try { return window.NotesEditor.attach(ta, { toolbar: bar || false, paste: pastedHtmlToMarkdown, image: uploadNoteImage }); }
+    catch (e) { console.warn('NotesEditor.attach failed', e); return null; }
+  }
+
+  /** Attach the shared LaTeX helper (autocomplete, Cmd/Ctrl+M, symbols, live preview) if loaded. Markdown
+   *  fields also get the outliner keys (Tab nests a bullet...), all but the chat box, where Enter sends. */
+  function latex(ta, preview, mode = 'markdown', { bar = null } = {}) {
+    if (mode === 'markdown' && ta.id !== 'chat-input') noteKeys(ta, bar);
     try { if (window.Wikilinks) window.Wikilinks.attach(ta, { nodes: () => S.nodes.values(), self: () => (S.cur && ta.closest('#panel') ? S.cur.id : null) }); } catch (e) { console.warn('Wikilinks.attach failed', e); }
     if (!window.LatexEditor) return null;
     // the preview shows only while what you type has math in it: plain writing reads fine as it is
@@ -4571,6 +4612,7 @@
 
     if (n.type === 'paper') out.push(renderAiSummary(n));
     out.push(renderSummary(n));
+    if (n.type === 'note' && n.has_pdf) out.push(renderScan(n));
     out.push(renderBodyEditor(n, 'Notes', 'Your notes. Markdown, $inline$ and $$display$$ math. Type [[ to link another note.'));
     out.push(section('Tags', null, renderTags(n)));
     out.push(renderFragments(n));
@@ -4809,7 +4851,8 @@
     const ta = h('textarea', { class: 'field body-field', rows: 10, spellcheck: true, placeholder: ph, 'aria-label': title });
     ta.value = n.body || '';
     const live = h('div', { class: 'md live' });
-    const editWrap = h('div', null, ta, live);
+    const bar = h('div', { class: 'ne-holder' });
+    const editWrap = h('div', null, bar, ta, live);
     const prev = h('div', { class: 'preview md', title: 'Double-click to edit' });
     const bEdit = h('button', { type: 'button', text: 'Edit' });
     const bPrev = h('button', { type: 'button', text: 'Preview' });
@@ -4823,6 +4866,8 @@
       if (m === 'preview') {
         const html = renderMD(ta.value);
         if (html) prev.innerHTML = html; else prev.replaceChildren(h('div', { class: 'empty', text: 'Nothing written yet. Double-click to start.' }));
+        // checkboxes come out disabled: here they tick (the click handler below changes the text)
+        for (const cb of prev.querySelectorAll('li > input[type="checkbox"], li > p > input[type="checkbox"]')) { cb.disabled = false; cb.title = 'Tick or untick'; }
       } else autosizeBody();
     };
     bEdit.onclick = () => { set('edit'); ta.focus(); };
@@ -4832,11 +4877,63 @@
     ta.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); set('preview'); }
     });
-    latex(ta, live);
+    latex(ta, live, 'markdown', { bar });
+    // a checkbox in the reading view ticks the box in the text
+    prev.addEventListener('click', (e) => {
+      const cb = e.target.closest('input[type="checkbox"]');
+      if (!cb || !window.NotesEditor) return;
+      e.preventDefault();
+      const i = Array.from(prev.querySelectorAll('li > input[type="checkbox"], li > p > input[type="checkbox"]')).indexOf(cb);
+      if (i < 0) return;
+      const next = window.NotesEditor.toggleTask(ta.value, i);
+      if (next === ta.value) return;
+      ta.value = next;
+      queueSave({ body: next });
+      set('preview');
+    });
     const sec = section(title, null, head(h('div', { class: 'spacer' })), head(h('div', { class: 'seg', role: 'group' }, bEdit, bPrev)), editWrap, prev);
     set(mode);
     setTimeout(() => { if (!editWrap.hidden) autosizeBody(); }, 0);
     return sec;
+  }
+
+  /** A note that is a scan (handwritten pages, a whiteboard photo): its pages, kept as they are, and a button
+   *  that has the AI write them out as text under your notes (app/server.py: /api/notes/{id}/transcribe). */
+  function renderScan(n) {
+    const pages = h('div', { class: 'scan-pages' });
+    const id = encodeURIComponent(n.id);
+    api('GET', `/api/notes/${id}/scan`).then(({ pages: count }) => {
+      const k = Math.min(count, 60);
+      for (let i = 1; i <= k; i++) {
+        pages.appendChild(h('a', { class: 'scan-page', href: `/viewer/${id}#page=${i}`, target: '_blank', rel: 'noopener', title: `Page ${i}: open in the viewer` },
+          h('img', { src: `/api/notes/${id}/scan/${i}.png`, alt: `Page ${i}`, loading: 'lazy' })));
+      }
+      if (count > k) pages.appendChild(h('div', { class: 'hint', text: `${count - k} more pages in the viewer` }));
+    }).catch(() => pages.replaceChildren(h('div', { class: 'empty', text: 'The scan couldn’t be shown. Open it in the viewer.' })));
+    const btn = h('button', { class: 'btn btn-sm needs-claude', type: 'button', 'data-act': 'transcribe',
+      title: `${ai()} reads the pages and writes them out under your notes, as Markdown with nested bullets and LaTeX. The scan stays.` }, 'Write it out as text');
+    btn.onclick = async () => {
+      const run = (body) => api('POST', `/api/notes/${id}/transcribe`, body);
+      btn.classList.add('busy'); btn.disabled = true;
+      const old = btn.textContent; btn.textContent = 'Reading your handwriting…';
+      try {
+        await flushSave();
+        try { await run({}); }
+        catch (e) {
+          if (!/only if you say so/.test(e.message)) throw e;
+          const yes = await confirmDialog('Send these pages to ' + ai() + '?',
+            `Your notes are private, so they never go to an AI unless you say so. Writing this one out sends pictures of its pages to ${ai()}, this once (it's listed in Settings → Privacy, under What was sent to AI). Nothing else from your library goes with them.`,
+            'Send and write out');
+          if (!yes) return;
+          await run({ send_private: true });
+        }
+        toast('Written out under your notes. The scan is still here.', 'ok');
+        S.bodyMode[n.id] = 'preview';
+        await reloadCur();
+      } catch (e) { toastErr(e); }
+      finally { btn.classList.remove('busy'); btn.disabled = false; btn.textContent = old; }
+    };
+    return section('Your pages', null, head(h('div', { class: 'spacer' })), head(btn), pages);
   }
 
   function renderTags(n) {

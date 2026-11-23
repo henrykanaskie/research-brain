@@ -84,6 +84,14 @@ class Backend:
         (A backend must override at least one of ask / ask_stream.)"""
         yield self.ask(prompt, system=system, timeout=timeout)
 
+    # Reading images (handwritten notes, app/noteimport.py): only backends that can take an image in the
+    # request itself, with no file or tool access, set this and implement ask_images().
+    reads_images: bool = False
+
+    def ask_images(self, prompt: str, images: list[tuple[str, str]], *, system: str = "", timeout: float = 300) -> str:
+        """The answer to `prompt` about `images` ([(media type, base64 data)]), as text."""
+        raise AgentError(f"{self.name} can't read images in research brain.")
+
     def models(self) -> list[str]:
         return []
 

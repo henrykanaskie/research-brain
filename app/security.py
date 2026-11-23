@@ -14,7 +14,7 @@ main way in for an attacker, so every request passes these checks before any end
    is refused unless it is a top-level navigation (someone clicking a link to the app). That covers
    <img>/<script>/no-cors GETs from other sites and other localhost ports, which carry no Origin.
 4. Body type. POST/PUT/PATCH/DELETE with a body must be application/json, or multipart/form-data on the
-   two PDF upload endpoints; RAW_BODY_PATHS fixes the one type a raw-body endpoint takes (application/pdf,
+   upload endpoints in UPLOAD_PATHS; RAW_BODY_PATHS fixes the one type a raw-body endpoint takes (application/pdf,
    application/zip: neither can be sent cross-origin without a CORS preflight). text/plain and urlencoded bodies (what an HTML form or a "simple" no-cors
    fetch can send without a CORS preflight) are refused.
 5. Body size. JSON bodies at most RB_MAX_JSON_MB (default 16), uploads at most RB_MAX_UPLOAD_MB
@@ -40,13 +40,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
-UPLOAD_PATHS = re.compile(r"^/api/(import/pdf|notes/[^/]+/pdf)$")
+UPLOAD_PATHS = re.compile(r"^/api/(import/pdf|notes/[^/]+/pdf|import/notes|import/handwritten)$")
 # Raw-body endpoints (app/storage_api.py): the body type is fixed per path, and neither type can be sent
 # cross-origin without a CORS preflight. path -> (allowed content types, size limit env, default MB)
 RAW_BODY_PATHS = {
     "/api/import/pdf-bytes": (("application/pdf",), "RB_MAX_UPLOAD_MB", 300),
     "/api/vault/import": (("application/zip", "application/x-zip-compressed"), "RB_MAX_IMPORT_MB", 50 * 1024),
     "/api/capture/photo": (("image/jpeg", "image/png", "image/webp"), "RB_MAX_PHOTO_MB", 25),  # app/mobile_api.py
+    "/api/notes/image": (("image/jpeg", "image/png", "image/webp", "image/gif"), "RB_MAX_PHOTO_MB", 25),  # a figure in a note
     "/api/voice/stt": (("audio/wav", "audio/x-wav", "audio/wave"), "RB_MAX_VOICE_MB", 12),  # voice mode: what you said
 }
 MB = 1 << 20

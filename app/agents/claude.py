@@ -69,6 +69,14 @@ class ClaudeBackend(Backend):
         except claude_cli.ClaudeError as e:
             raise _convert(e)
 
+    reads_images = True
+
+    def ask_images(self, prompt: str, images: list[tuple[str, str]], *, system: str = "", timeout: float = 300) -> str:
+        try:
+            return claude_cli.ask_images(prompt, images, system, model=self._model())
+        except claude_cli.ClaudeError as e:
+            raise _convert(e)
+
     def ask(self, prompt: str, *, system: str = "", timeout: float = 180) -> str:
         return self.ask_parts("Follow the request on stdin.", prompt, system)
 

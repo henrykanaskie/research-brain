@@ -169,6 +169,16 @@
   function getMarked() {
     if (md || !window.marked || !window.marked.Marked) return md;
     md = new window.marked.Marked({ gfm: true, breaks: false });
+    // ==highlight== (Obsidian, Bear, iA Writer): <mark>
+    md.use({ extensions: [{
+      name: 'mark', level: 'inline',
+      start(src) { const i = src.indexOf('=='); return i < 0 ? undefined : i; },
+      tokenizer(src) {
+        const m = /^==(?=\S)([\s\S]*?\S)==(?!=)/.exec(src);
+        if (m) return { type: 'mark', raw: m[0], tokens: this.lexer.inlineTokens(m[1]) };
+      },
+      renderer(t) { return '<mark>' + this.parser.parseInline(t.tokens) + '</mark>'; },
+    }] });
     md.use({
       renderer: {
         html(t) { return esc(typeof t === 'string' ? t : (t && (t.raw || t.text)) || ''); },
