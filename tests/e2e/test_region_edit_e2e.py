@@ -62,6 +62,7 @@ def test_the_chat_proposes_region_changes_and_you_apply_and_undo_them(ctx, serve
     # still there after the chat is drawn again (the choice is kept on the message)
     page.evaluate("window.__rb.renderChat()")
     expect(msg.locator(".re-card")).to_contain_text("Applied.")
+    expect(msg.locator(".re-card")).not_to_contain_text("Can't")  # what was done, not checked again after the rename
 
     msg.locator(".re-card").get_by_role("button", name="Undo").click()
     expect(msg.locator(".re-card")).to_contain_text("Undone.")

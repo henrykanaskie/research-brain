@@ -79,13 +79,15 @@
       if (s === 'applied') {
         acts.replaceChildren(h('span', { class: 're-done', text: 'Applied.' }),
           h('button', { class: 'btn btn-sm', type: 'button', text: 'Undo', onclick: async (e) => {
-            e.currentTarget.disabled = true;
+            const b = e.currentTarget;
+            b.disabled = true;
             try {
               await api('POST', '/api/regions/changes/undo', { token: m.regionEdit.token });
               save({ state: 'undone' });
               toast('Your regions are back as they were.', 'ok');
+              check();  // as they are again: what Apply after all would do
               await after();
-            } catch (err) { toastErr(err, 'Could not undo it'); e.currentTarget.disabled = false; }
+            } catch (err) { toastErr(err, 'Could not undo it'); b.disabled = false; }
           } }));
       } else if (s === 'dismissed' || s === 'undone') {
         acts.replaceChildren(h('span', { class: 're-done', text: s === 'undone' ? 'Undone.' : 'Not applied.' }),
@@ -107,16 +109,19 @@
       for (const b of acts.querySelectorAll('button')) b.disabled = true;
       try {
         const r = await api('POST', '/api/regions/changes/apply', { changes });
-        save({ state: 'applied', token: r.token });
+        rows = [...(r.done || []), ...(r.skipped || [])];
+        save({ state: 'applied', token: r.token, rows });  // what was done, shown as it was (checking again now
+                                                            // would say "no region called …" after a rename)
         const n = (r.done || []).length, skipped = (r.skipped || []).length;
         toast(`Made ${n} region change${n === 1 ? '' : 's'}${skipped ? `; ${skipped} couldn't be done` : ''}.`, 'ok');
         await after();
         paint(rows);
       } catch (err) { toastErr(err, 'Could not change the regions'); paint(rows); }
     };
-    api('POST', '/api/regions/changes/preview', { changes })
+    const check = () => api('POST', '/api/regions/changes/preview', { changes })
       .then((r) => { rows = r.changes || []; paint(rows); })
       .catch((err) => { list.replaceChildren(h('li', { class: 're-bad', text: `These changes can't be read: ${err.message || err}` })); });
+    if (st.state === 'applied' && Array.isArray(st.rows)) { rows = st.rows; paint(rows); } else check();
     return box;
   }
 
