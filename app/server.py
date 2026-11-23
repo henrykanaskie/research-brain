@@ -3260,6 +3260,23 @@ def api_backfill_citations():
 
 
 @app.on_event("startup")
+async def _quiet_dropped_connections():
+    """On Windows a page that went away (a window closed or ended, a browser tab shut) makes asyncio log a traceback,
+    ConnectionResetError in _call_connection_lost, though nothing is wrong: keep it out of app.log."""
+    if os.name != "nt":
+        return
+    import asyncio
+    loop = asyncio.get_running_loop()
+    before = loop.get_exception_handler()
+
+    def handler(lp, context):
+        if isinstance(context.get("exception"), ConnectionResetError) and "_call_connection_lost" in str(context.get("handle") or context.get("message") or ""):
+            return
+        (before or (lambda l, c: l.default_exception_handler(c)))(lp, context)
+    loop.set_exception_handler(handler)
+
+
+@app.on_event("startup")
 def _warm_passages():
     # build/refresh the chat passage index in the background so the first question doesn't wait for it
     if not os.environ.get("RB_FAKE_CLAUDE"):

@@ -76,6 +76,8 @@ def main() -> int:
 
     @check("a library of 1,500 opens")
     def _():
+        # its window can be asked what its page is doing (see the idle check)
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = "--disable-features=ElasticOverscroll --remote-debugging-port=9333"
         # its own data folder, written before the first start (which turns it into the readable folders)
         W.DATA, W.DOCS = W.HOME / "big" / "research_brain", W.HOME / "big" / "Documents" / "research brain"
         write_library(W.DATA / "profiles" / "default", 1500, 150)
@@ -119,6 +121,27 @@ def main() -> int:
                 W.window_picture(hwnd()).save(SHOTS / "idle-window.png")
         except Exception as e:
             print("      (no picture:", e, ")")
+        try:  # what the page in its window is doing
+            from playwright.sync_api import sync_playwright
+            import collections
+            with sync_playwright() as pw:
+                b = pw.chromium.connect_over_cdp("http://127.0.0.1:9333")
+                pg = next(p for c in b.contexts for p in c.pages if "127.0.0.1:8765" in p.url)
+                f0 = pg.evaluate("window.__rb && window.__rb.S.frame")
+                time.sleep(3)
+                f1 = pg.evaluate("window.__rb && window.__rb.S.frame")
+                print(f"      the map drew {(f1 or 0) - (f0 or 0)} frames in 3 s; {pg.evaluate('JSON.stringify(window.__rb && window.__rb.motionState)')}", flush=True)
+                print("      running animations:", pg.evaluate("JSON.stringify(document.getAnimations().filter(a => a.playState === 'running').slice(0, 8).map(a => [a.animationName || a.constructor.name, a.effect && a.effect.target && (a.effect.target.id || a.effect.target.className)]))"), flush=True)
+                cdp = pg.context.new_cdp_session(pg)
+                cdp.send("Profiler.enable"); cdp.send("Profiler.start"); time.sleep(4)
+                prof = cdp.send("Profiler.stop")["profile"]
+                nodes = {q["id"]: q for q in prof["nodes"]}; tot = collections.Counter()
+                for sid, d in zip(prof["samples"], prof["timeDeltas"]):
+                    f = nodes[sid]["callFrame"]; tot[f"{f['functionName'] or '(anon)'} {f['url'].rsplit('/', 1)[-1][:30]}:{f['lineNumber'] + 1}"] += d
+                print("      page time:", [(k, round(v / 1e3)) for k, v in tot.most_common(12)], flush=True)
+                b.close()
+        except Exception as e:
+            print("      (couldn't ask the page:", repr(e)[:200], ")")
         print("      by program:", {k: f"{100 * (b1[k] - b0.get(k, 0)) / 30:.1f}%" for k in b1}, flush=True)
         note("CPU while idle", 100 * (c1 - c0) / 30, 20, "% of one core")
         note("memory, with its window", mb, 2500, "MB")
