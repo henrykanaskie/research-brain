@@ -56,9 +56,10 @@ profile's `backups/`). Say so in the notes, and don't roll back past it.
 ## Updates
 
 Once installed, people don't need a new zip. The app reads the latest release's `latest.json` from GitHub (the
-repository is public, so no account is needed) at most once a day, and when there's a newer version an
+repository is public, so no account is needed) each time it's opened and about every hour while it's
+open (sooner again after a check that failed), and when there's a newer version an
 **Update** button appears in the top bar. **Update now** downloads the wheel and `constraints.txt` into the
-data folder's `update/`, starts a small script on its own and quits; the script waits for research brain to
+data folder's `update/`, starts a small installer on its own and quits; the installer waits for research brain to
 stop, reinstalls with whatever installed it, and starts it again. The window stays open, says what's happening
 and reloads on the new version, which says "Updated to X" (or shows what went wrong, with the end of
 `update/update.log`). Settings › About shows the version, Check now and the same button. Details:
@@ -91,10 +92,12 @@ won't use a terminal.
 ## How updating from the app works
 
 `POST /api/update/install` (the Update button) downloads the release, tries it out beside the installed one with uv, and
-only then stops research brain. On a Mac or Linux a shell script installs it and starts research brain again; on Windows
-`app/update_run.py` does, run by the Python underneath research brain's own. It waits for (and after 25 s ends) anything
+only then stops research brain. `app/update_run.py` installs it and starts research brain again, run by the Python
+underneath research brain's own. It waits for (and after 25 s ends) anything
 still run from the folder being replaced, tries again when a file was in use, puts the old version back if the new one
-doesn't run or doesn't answer within two minutes, and opens the window again if it was open. `update/updating.json` names
+doesn't run or doesn't answer within two minutes, and opens the window again if it was open (on a Mac the window stays
+open and reloads). `update/updating.json` names
 its process, so an update that died blocks nothing. `update/update.log` in the data folder says what happened, and
 `window.log` what went wrong with the Windows window. A release is published only after `tests/windows_update.py` and
-`tests/windows_speed.py` pass on Windows Server and Windows 11 (the windows-update job).
+`tests/windows_speed.py` pass on Windows Server and Windows 11 (the windows-update job), and `tests/mac_update.py` on Apple Silicon and Intel
+Macs (mac-update: it presses the button in the app's own window).

@@ -13,15 +13,18 @@ The app looks for that file in its *update source*, in this order:
    `releases/latest/download/latest.json` with no account; a GITHUB_TOKEN (or `gh` signed in) is only
    a fallback, through the API.
 
-The app asks at most once a day (cached in the data folder; GET /api/update, app/updates_api.py) and
-shows "Update" in the top bar when there's a newer version. RB_UPDATE_CHECK=0 turns it off.
+The app asks each time it's opened, and about every hour while it stays open (what it heard is kept in the data
+folder; GET /api/update, app/updates_api.py), and shows "Update" in the top bar when there's a newer version. A check
+that failed (no internet) is tried again within minutes and never forgets a release already heard of.
+RB_UPDATE_CHECK=0 turns it off.
 
 Installing from the app (POST /api/update/install): the wheel and constraints.txt are downloaded first,
 into the data folder's `update/`, and with uv the new version is tried out beside this one (try_out): one that can't
-be installed or doesn't start is found out while this one still runs. Then a small shell script (on Windows
-app/update_run.py) is started on its own and research brain stops. It waits for research brain's processes to end (Windows can't replace a
+be installed or doesn't start is found out while this one still runs. Then app/update_run.py
+is started on its own and research brain stops. It waits for research brain's processes to end (Windows can't replace a
 running research-brain.exe, and nothing should run from a half-replaced install), reinstalls with whatever
-installed this one (uv, pipx or the private virtualenv from install.sh), and starts research brain again.
+installed this one (uv, pipx or the private virtualenv from install.sh), and starts research brain again, or puts the
+version it had back when the new one doesn't run.
 While it runs, `update/updating.json` exists (with the installer's process: one that died, with the computer
 switched off in the middle, say, is seen to have died and blocks nothing), and `research-brain open` (app/launcher.py) waits for it
 instead of starting the old, half-replaced copy. The next start reads how it went (`last_result`).
@@ -36,6 +39,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import requests
@@ -43,7 +47,9 @@ import requests
 from . import __version__, paths
 
 REPO = "henrykanaskie/research-brain"
-CHECK_EVERY = dt.timedelta(hours=24)
+CHECK_EVERY = dt.timedelta(minutes=50)  # while it stays open (static/updates.js asks every hour)
+OPEN_EVERY = dt.timedelta(minutes=1)    # each time it's opened, but not for every reload of the page
+RETRY_EVERY = dt.timedelta(minutes=2)   # after a check that failed
 _VER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[.-]?(?:post|rc|a|b|dev)?\d*)?$")
 
 
@@ -170,36 +176,79 @@ def fetch() -> dict | None:
         return None
 
 
-def check(force: bool = False) -> dict:
-    """{"current", "latest", "newer", "notes", "url", "source", "checked", "command"}; cached for a day."""
+_asking = threading.Lock()
+
+
+def check(force: bool = False, opened: bool = False) -> dict:
+    """{"current", "latest", "newer", "notes", "url", "source", "checked", "failed", "command"}. Asks the update source
+    when what's kept is old (see CHECK_EVERY; opened: the app was just opened, OPEN_EVERY) or force. A check that fails
+    answers with the release last heard of, and "failed"; "checked" is the last one that worked."""
     out = {"current": __version__, "latest": None, "newer": False, "notes": "", "url": "", "source": source() or "github",
-           "checked": None, "command": "research-brain update", "enabled": enabled()}
+           "checked": None, "failed": False, "command": "research-brain update", "enabled": enabled()}
     if not enabled():
         return out
+    kept = _kept(out["source"])
+    if not force and not _due(kept, opened):
+        return _merge(out, kept)
+    # one at a time: a page that's only waiting (an update installing) is answered from what's kept meanwhile
+    if not _asking.acquire(blocking=force):
+        return _merge(out, kept)
+    try:
+        return _merge(out, _keep(out["source"], fetch()))
+    finally:
+        _asking.release()
+
+
+def _when(iso) -> dt.datetime | None:
+    try:
+        t = dt.datetime.fromisoformat(iso)
+        return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _kept(src: str) -> dict:
+    """What the last checks of this source heard: {"checked", "info"}, and "tried" when one has failed since."""
+    try:
+        k = json.loads(_cache_path().read_text(encoding="utf-8"))
+        if k.get("source") != src:
+            return {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    if not isinstance(k.get("info"), dict):  # versions before 1.0.69 kept a failed check as if it had worked
+        k.update(info=None, tried=k.get("tried") or k.get("checked"), checked=None)
+    return k
+
+
+def _due(kept: dict, opened: bool) -> bool:
     now = dt.datetime.now(dt.timezone.utc)
-    cached = None
+
+    def within(iso, limit: dt.timedelta) -> bool:  # (a time in the future is a clock that was wrong)
+        t = _when(iso)
+        return t is not None and dt.timedelta(0) <= now - t < limit
+    every = OPEN_EVERY if opened else CHECK_EVERY
+    if kept.get("tried"):
+        return not within(kept["tried"], min(every, RETRY_EVERY))
+    return not within(kept.get("checked"), every)
+
+
+def _keep(src: str, info: dict | None) -> dict:
+    stamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    if info and parse(str(info.get("version", ""))):
+        kept = {"checked": stamp, "source": src, "info": info}
+    else:
+        old = _kept(src)
+        kept = {"checked": old.get("checked"), "source": src, "info": old.get("info"), "tried": stamp}
     try:
-        cached = json.loads(_cache_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        pass
-    if cached and not force and cached.get("source") == out["source"]:
-        try:
-            if now - dt.datetime.fromisoformat(cached["checked"]) < CHECK_EVERY:
-                info = cached.get("info")
-                return _merge(out, info, cached["checked"])
-        except (KeyError, ValueError, TypeError):
-            pass
-    info = fetch()
-    stamp = now.isoformat(timespec="seconds")
-    try:
-        paths.write_json_atomic(_cache_path(), {"checked": stamp, "source": out["source"], "info": info})
+        paths.write_json_atomic(_cache_path(), kept)
     except OSError:
         pass
-    return _merge(out, info, stamp)
+    return kept
 
 
-def _merge(out: dict, info: dict | None, stamp: str) -> dict:
-    out["checked"] = stamp
+def _merge(out: dict, kept: dict) -> dict:
+    info = kept.get("info")
+    out.update(checked=kept.get("checked"), failed=bool(kept.get("tried")))
     if info and parse(str(info.get("version", ""))):
         out.update(latest=info["version"], newer=newer(info["version"]), notes=(info.get("notes") or "")[:2000],
                    url=info.get("url") or "", published=info.get("published") or "")
@@ -336,7 +385,7 @@ def _is_installer(pid: int, started: dt.datetime) -> bool:
         return born is None or abs((born - started).total_seconds()) < 300
     try:
         out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, errors="replace", timeout=5).stdout
-        return "run-update" in out or not out
+        return "update_run" in out or "run-update" in out or not out  # run-update.sh: 1.0.68 and before
     except (OSError, subprocess.SubprocessError):
         return True
 
@@ -511,11 +560,6 @@ def relaunch_command(port: int) -> list[str]:
     return cmd
 
 
-def _sh(cmd: list[str]) -> str:
-    import shlex
-    return " ".join(shlex.quote(c) for c in cmd)
-
-
 def _windows() -> bool:
     return os.name == "nt"
 
@@ -568,28 +612,6 @@ def reopen_command(port: int) -> list[str]:
     return cmd
 
 
-def script(install: list[str], *, pids: list[int], port: int, relaunch: list[str], cwd: str, install_dir: str | None = None) -> str:
-    """The script (Mac, Linux) that waits for research brain to stop, installs, and starts it again."""
-    d = update_dir()
-    log, code, marker, applog = d / "update.log", d / "exit-code", _marker(), paths.user_data_dir() / "app.log"
-    hb = f"http://127.0.0.1:{port}/api/heartbeat"
-    lines = ["#!/bin/sh", "# research brain update (app/updates.py): wait, install, start again"]
-    for pid in pids:
-        # a process that has ended but whose parent hasn't collected it yet (the Mac window started this
-        # server, and stays open) still answers kill -0: count it as gone ("Z" in ps)
-        lines.append(f"n=0; while kill -0 {pid} 2>/dev/null && [ \"$(ps -o stat= -p {pid} 2>/dev/null | cut -c1)\" != Z ]"
-                     " && [ $n -lt 1200 ]; do sleep 0.5; n=$((n+1)); done")
-    if install_dir:
-        lines.append(f"cd {_sh([install_dir])}")
-    lines += [f"echo \"== $(date)\" >> {_sh([str(log)])}", f"{_sh(install)} >> {_sh([str(log)])} 2>&1",
-              f"echo $? > {_sh([str(code)])}", f"cd {_sh([cwd])}",
-              f"nohup {_sh(relaunch)} >> {_sh([str(applog)])} 2>&1 < /dev/null &",
-              "n=0; while [ $n -lt 240 ]; do",
-              f"  if command -v curl >/dev/null 2>&1; then curl -fs -o /dev/null {hb} && break; else sleep 5; break; fi",
-              "  sleep 0.5; n=$((n+1)); done", f"rm -f {_sh([str(marker)])}"]
-    return "\n".join(lines) + "\n"
-
-
 def _console_python() -> str:
     exe = Path(sys.executable)
     c = exe.with_name("python.exe")
@@ -598,20 +620,44 @@ def _console_python() -> str:
 
 def _base_python() -> str:
     """The Python research brain's environment was made from: the update doesn't touch it."""
-    for p in (Path(sys.base_prefix) / "pythonw.exe", Path(sys.base_prefix) / "python.exe", Path(getattr(sys, "_base_executable", "") or "")):
+    real = Path(getattr(sys, "_base_executable", "") or "")
+    bin_ = Path(sys.base_prefix) / "bin"
+    for p in ([Path(sys.base_prefix) / "pythonw.exe", Path(sys.base_prefix) / "python.exe", real] if os.name == "nt" else
+              [bin_ / f"python{sys.version_info[0]}.{sys.version_info[1]}", bin_ / "python3", real]):
         if p.name and p.is_file():
             return str(p)
     raise UpdateError("Couldn't find Python to run the update with. Run the newer installer instead.")
 
 
-def previous_command(how: str) -> list[str] | None:
-    """Puts this version back, from its GitHub release, if the new one turns out not to run."""
+def _previous_dir() -> Path:
+    return update_dir() / "previous"
+
+
+def _pin_installed() -> str:
+    """The folder with a constraints.txt of exactly what is installed now: putting this version back then needs nothing
+    newer than it had (which might not work with it, or have to be compiled), and mostly nothing downloaded. "" if not."""
+    import importlib.metadata as md
+    pins = {}
+    try:
+        for x in md.distributions():
+            name = (x.metadata["Name"] or "").strip()
+            if re.fullmatch(r"[A-Za-z0-9._-]+", name) and x.version and name.lower().replace("_", "-") not in ("research-brain", "pip"):
+                pins[name.lower()] = f"{name}=={x.version}"
+        _previous_dir().mkdir(parents=True, exist_ok=True)
+        (_previous_dir() / "constraints.txt").write_text("".join(f"{p}\n" for _, p in sorted(pins.items())), encoding="utf-8")
+    except (OSError, KeyError, TypeError, ValueError):
+        return ""
+    return str(_previous_dir()) if pins else ""
+
+
+def previous_command(how: str, pins: str = "") -> list[str] | None:
+    """Puts this version back, from its GitHub release, if the new one turns out not to run. pins: _pin_installed()."""
     if not parse(__version__):
         return None
     name = f"research_brain-{__version__}-py3-none-any.whl"
     kept = update_dir() / name
     wheel = str(kept) if kept.is_file() else release_file(__version__, name)
-    cmd = install_command({"version": __version__, "wheel": wheel}, how)
+    cmd = install_command({"version": __version__, "wheel": wheel, "source": pins}, how)
     if cmd and how in ("uv", "pipx"):
         cmd[0] = find_program(how) or cmd[0]
     return cmd
@@ -675,24 +721,19 @@ def start_install(info: dict, *, port: int, pids: list[int]) -> dict:
     env = {k: v for k, v in os.environ.items() if k not in ("RB_RESTART_FILE", "RB_PORT")}
     (d / "update.log").unlink(missing_ok=True)
     try:
-        if windows:
-            job = {"from": __version__, "to": info["version"], "pids": pids, "port": port, "install": cmd, "cwd": install_cwd(info),
-                   "folder": sys.prefix if sys.prefix != sys.base_prefix else "", "marker": str(_marker()),
-                   "applog": str(paths.user_data_dir() / "app.log"), "home": str(Path.home()),
-                   "check": [_console_python(), "-m", f"{__package__ or 'app'}.cli", "--version"],
-                   "serve": relaunch_command(port), "open": reopen, "previous": previous_command(how)}
-            paths.write_json_atomic(d / "job.json", job)
-            run = d / "update_run.py"
-            shutil.copyfile(Path(__file__).with_name("update_run.py"), run)
-            proc = subprocess.Popen([_base_python(), "-I", "-S", str(run), str(d / "job.json")], env=env, cwd=str(d),
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                    close_fds=True, creationflags=0x00000200 | 0x08000000)
-        else:
-            path = d / "run-update.sh"
-            path.write_text(script(cmd, pids=pids, port=port, relaunch=relaunch_command(port), cwd=str(paths.PKG_DIR.parent),
-                                   install_dir=install_cwd(info)), encoding="utf-8")
-            proc = subprocess.Popen(["/bin/sh", str(path)], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL, start_new_session=True)
+        pins = _pin_installed()
+        job = {"from": __version__, "to": info["version"], "pids": pids, "port": port, "install": cmd, "cwd": install_cwd(info),
+               "folder": sys.prefix if sys.prefix != sys.base_prefix else "", "marker": str(_marker()),
+               "applog": str(paths.user_data_dir() / "app.log"), "home": str(Path.home()),
+               "check": [_console_python(), "-m", f"{__package__ or 'app'}.cli", "--version"],
+               "serve": relaunch_command(port), "open": reopen, "previous": previous_command(how, pins),
+               "previous_cwd": pins or None, "previous_unpinned": previous_command(how)}
+        paths.write_json_atomic(d / "job.json", job)
+        run = d / "update_run.py"
+        shutil.copyfile(Path(__file__).with_name("update_run.py"), run)
+        own = {"creationflags": 0x00000200 | 0x08000000} if windows else {"start_new_session": True}
+        proc = subprocess.Popen([_base_python(), "-I", "-S", str(run), str(d / "job.json")], env=env, cwd=str(d),
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, **own)
         paths.write_json_atomic(_marker(), {**state, "pid": int(getattr(proc, "pid", 0) or 0) or None, "starting": True})
     except OSError as e:
         _marker().unlink(missing_ok=True)

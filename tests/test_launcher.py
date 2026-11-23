@@ -212,6 +212,11 @@ def test_install_app_entries(monkeypatch, tmp_path):
     assert "LSUIElement" not in plist and "local.research-brain.launcher" in plist
     exe = app / "MacOS" / "research-brain"
     script = exe.read_text(encoding="utf-8")
+    if sys.platform == "darwin":  # as the processor it was installed for, whatever macOS takes a script for
+        import platform
+        assert f'exec /usr/bin/arch -{platform.machine()} {sys.executable} "$RB" open' in script
+    assert "LSArchitecturePriority" in plist
+    assert "updating.json" in script and script.index("pgrep -f update_run.py") < script.index('! -x "$RB"')  # clicked during an update
     assert 'exec "$RB" open >>"$LOG" 2>&1' in script and 'RB="/opt/rb/bin/research-brain"' in script
     if os.name != "nt":
         assert os.access(exe, os.X_OK)

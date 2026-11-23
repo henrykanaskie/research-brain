@@ -170,6 +170,9 @@ def cmd_open(a) -> int:
         _tell("research brain didn't start", f"What it said is at the end of {paths.user_data_dir() / 'app.log'}")
         return 1
     if macwindow.available():  # a Mac: research brain's own window, no title bar (app/macwindow.py)
+        from . import updates
+        if updates.wait_while_updating():  # its files are being replaced: wait, then run the new ones, not half of each
+            os.execv(sys.executable, [sys.executable, "-m", f"{__package__ or 'app'}.cli", *sys.argv[1:]])
         # start the server now, while the window is made (about half a second each), not after it
         import threading
         box: dict = {}
@@ -417,20 +420,36 @@ def _mac_applet(app: Path) -> str:
     return f"Added {app}: open it from Launchpad or the Applications folder, and keep it in the Dock (right-click its icon > Options > Keep in Dock)."
 
 
+def _mac_native() -> str:
+    """The script line that runs the command as the processor research brain was installed for. macOS can take an app
+    whose executable is a script for an Intel one, and under Rosetta a Python made for both (python.org's) then runs as
+    Intel and can't load the Apple Silicon libraries: research brain never opened."""
+    import platform
+    import shlex
+    arch, py = platform.machine(), shlex.quote(sys.executable)
+    if sys.platform != "darwin" or arch not in ("arm64", "x86_64") or not os.path.exists("/usr/bin/arch"):
+        return ""
+    # its Python by name: what `arch` asks for doesn't reach the Python that a script's first line names
+    return f'[ -x {py} ] && /usr/bin/arch -{arch} {py} -c "" 2>/dev/null && exec /usr/bin/arch -{arch} {py} "$RB" open >>"$LOG" 2>&1 </dev/null\n'
+
+
 def _mac_window_script(cmd: str) -> str:
     """The native-window app's executable: it becomes `research-brain open` (exec), so the app in the Dock is
     the window itself (app/macwindow.py): it answers macOS at once, and Quit closes it."""
     log = paths.user_data_dir() / "app.log"
+    marker = paths.user_data_dir() / "update" / "updating.json"
     return f"""#!/bin/sh
 RB="{cmd}"
 LOG="{log}"
 mkdir -p "$(dirname "$LOG")"
+# clicked while an update replaces it: wait for that (its window, or this one, then opens on the new version)
+n=0; while [ -f "{marker}" ] && pgrep -f update_run.py >/dev/null 2>&1 && [ $n -lt 1200 ]; do sleep 0.5; n=$((n+1)); done
 if [ ! -x "$RB" ]; then
   [ -n "$RB_NO_ALERT" ] || /usr/bin/osascript -e 'display alert "research brain is not installed where this app expects it" message "Run ./install.sh again (it remakes this app), or run: research-brain install-app"' >/dev/null 2>&1
   exit 1
 fi
 echo "--- $(date): opened from the app" >>"$LOG"
-exec "$RB" open >>"$LOG" 2>&1 </dev/null
+{_mac_native()}exec "$RB" open >>"$LOG" 2>&1 </dev/null
 """
 
 
@@ -456,6 +475,7 @@ def _mac_window_app(app: Path) -> str:
   <key>CFBundleShortVersionString</key><string>3</string>
   <key>CFBundleVersion</key><string>3</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSArchitecturePriority</key><array><string>arm64</string><string>x86_64</string></array>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>research brain listens in voice mode, so you can talk with the AI hands-free. What you say is transcribed on this computer.</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.education</string>

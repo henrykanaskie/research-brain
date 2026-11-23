@@ -1,11 +1,12 @@
-"""Installs an update while research brain is stopped (Windows), then starts it again. Copied into the data folder's update/
+"""Installs an update while research brain is stopped, then starts it again. Copied into the data folder's update/
 and run from there by the Python underneath research brain's own (the one its environment was made from), so nothing it
 needs is being replaced. Standard library only; it must not import the package.
 
     pythonw -I -S update_run.py job.json
 
-The batch file this replaced could wait for ever on the wrong process, replace files still in use, and, because the server
-it started held app.log open, never open the window again (Windows refuses a second redirect into an open file).
+The scripts this replaced could wait for ever on the wrong process, left a version that doesn't start in place, and on
+Windows replaced files still in use and never opened the window again (the server they started held app.log open, and
+Windows refuses a second redirect into an open file). On a Mac the window stays open and reloads by itself.
 
  1. wait for research brain to end: the processes it was told about, and any program run from the folder being replaced
     (uv's launchers, an AI agent's tools server); after a while, end what is left;
@@ -32,7 +33,9 @@ def main(path):
     def say(msg):
         log.write(time.strftime("%Y-%m-%d %H:%M:%S  ") + str(msg) + "\n")
 
-    def finish(code):
+    def finish(code, installed=False):
+        if installed and os.name != "nt":
+            return  # the Mac's window waits for the marker to go: that's once the new version answers (or the old one is back)
         tmp = os.path.join(d, "exit-code")
         with open(tmp, "w", encoding="ascii") as f:
             f.write("%d\n" % code)
@@ -51,16 +54,19 @@ def main(path):
             code = 97
         if code and not runs(job, say):
             put_back(job, log, say)
-        finish(code)
-        start(job, say)
-        if not answers(job, 120):
-            say("it didn't answer within 2 minutes of starting")
+        finish(code, installed=True)
+        new = start(job, say)
+        if not answers(job, 120, new):
+            say("it stopped, or didn't answer within 2 minutes")
             if code == 0:
                 code = 98
+                end(new)
                 stop_all(job, say, patience=2)
                 put_back(job, log, say)
-                finish(code)
-                start(job, say)
+                finish(code, installed=True)
+                new = start(job, say)
+                answers(job, 120, new)
+        finish(code)
         say("done (%d)" % code)
     except BaseException as e:  # noqa: BLE001  (whatever happened, research brain must open again)
         import traceback
@@ -75,10 +81,14 @@ def alive(pid):
     if os.name != "nt":
         try:
             os.kill(pid, 0)
-            return True
         except ProcessLookupError:
             return False
         except OSError:
+            return True
+        # ended, but not yet collected by whoever started it (the Mac window started this server, and stays open)
+        try:
+            return not subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, timeout=5).stdout.strip().startswith(b"Z")
+        except (OSError, subprocess.SubprocessError):
             return True
     import ctypes
     k = ctypes.windll.kernel32
@@ -207,7 +217,9 @@ def runs(job, say):
 def put_back(job, log, say):
     if job.get("previous"):
         say("putting %s back" % job["from"])
-        install(dict(job, cwd=job.get("home")), job["previous"], log, say)
+        code = install(dict(job, cwd=job.get("previous_cwd") or job.get("home")), job["previous"], log, say)
+        if code and job.get("previous_unpinned") not in (None, job["previous"]):
+            install(dict(job, cwd=job.get("home")), job["previous_unpinned"], log, say)
 
 
 # ---------------------------------------------------------------- starting
@@ -218,13 +230,28 @@ def start(job, say):
     env = {k: v for k, v in os.environ.items() if k not in ("RB_RESTART_FILE", "RB_PORT")}
     try:
         with open(job["applog"], "ab") as out:
-            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, cwd=job.get("home") or None,
+            return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, cwd=job.get("home") or None,
                              close_fds=True, creationflags=flags, start_new_session=os.name != "nt")
     except OSError as e:
         say("couldn't start it: %r" % e)
+    return None
 
 
-def answers(job, limit):
+def end(proc):
+    """End what start() started, and what that started (Mac, Linux; on Windows stop_all finds them by their folder)."""
+    if proc is not None and os.name != "nt":
+        import signal
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            proc.wait(10)
+        except subprocess.SubprocessError:
+            pass
+
+
+def answers(job, limit, proc=None):
     t0 = time.time()
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.time() - t0 < limit:
@@ -234,6 +261,8 @@ def answers(job, limit):
                     return True
         except OSError:
             pass
+        if proc is not None and os.name != "nt" and proc.poll() is not None:
+            return False  # it has stopped (on Windows this is the launcher of a window, which may end by itself)
         time.sleep(0.5)
     return False
 

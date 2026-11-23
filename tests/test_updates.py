@@ -41,7 +41,7 @@ def test_version_comparison_and_how_this_copy_was_installed():
 
 def test_a_lab_folder_release_is_checked_cached_installed_and_copied_with_its_pins(upd, tmp_path):
     """A lab folder as the update source: a missing folder is refused; the check finds the newer release and its
-    notes and is cached for a day; the install command fits the installer (uv, venv, none from a checkout, a git tag
+    notes and is kept for a while; the install command fits the installer (uv, venv, none from a checkout, a git tag
     without a wheel); and preparing copies the wheel and its constraints into the update folder."""
     lab = _folder(tmp_path)
     assert upd.set_source(str(lab)) == str(lab.resolve())
@@ -49,7 +49,7 @@ def test_a_lab_folder_release_is_checked_cached_installed_and_copied_with_its_pi
         upd.set_source(str(tmp_path / "nowhere"))
     info = upd.check(force=True)
     assert info["newer"] and info["latest"] == "9.0.0" and "Better citations" in info["notes"]
-    # the next check within a day is answered from the cache
+    # the next check soon after is answered from what's kept
     (lab / "latest.json").write_text(json.dumps({"version": "9.9.9", "wheel": "x.whl"}), encoding="utf-8")
     assert upd.check()["latest"] == "9.0.0" and upd.check(force=True)["latest"] == "9.9.9"
     _folder(tmp_path)  # back to 9.0.0
@@ -70,6 +70,59 @@ def test_a_lab_folder_release_is_checked_cached_installed_and_copied_with_its_pi
     assert upd.install_spec({"version": "9.0.0", "tag": "v9.0.0"}).endswith("research-brain.git@v9.0.0")
     info = upd.prepare(upd.fetch())
     assert Path(info["wheel"]).parent == upd.update_dir() and (upd.update_dir() / "constraints.txt").is_file()
+
+
+def test_it_checks_when_opened_and_hourly_and_a_failed_check_is_soon_tried_again(upd, tmp_path, monkeypatch):
+    """Opening asks again after a minute, staying open after about an hour; a failed check keeps the release already
+    heard of (and says it failed), is tried again in minutes, and a failed check kept by an older version for a day
+    (or a time in the future) holds nothing up. Two checks at once ask once."""
+    import datetime as dt
+    import threading
+    asked, answer = [], [{"version": "9.0.0"}]
+    monkeypatch.setattr(upd, "fetch", lambda: asked.append(1) or answer[0])
+
+    def age(**kw):
+        k = json.loads(upd._cache_path().read_text(encoding="utf-8"))
+        for f in ("checked", "tried"):
+            if k.get(f):
+                k[f] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(**kw)).isoformat()
+        upd._cache_path().write_text(json.dumps(k), encoding="utf-8")
+
+    def n(**kw):
+        before = len(asked)
+        out = upd.check(**kw)
+        return len(asked) - before, out
+    assert n()[0] == 1 and n()[0] == 0 and n(opened=True)[0] == 0  # reloading the page at once asks nothing
+    age(minutes=2)
+    assert n()[0] == 0 and n(opened=True)[0] == 1
+    age(minutes=55)
+    assert n()[0] == 1
+    answer[0] = None  # no internet: the release already heard of is still offered
+    age(minutes=2)
+    asked_, out = n(opened=True)
+    assert asked_ == 1 and out["failed"] and out["newer"] and out["latest"] == "9.0.0" and out["checked"]
+    assert n()[0] == 0
+    age(minutes=3)
+    answer[0] = {"version": "9.0.1"}
+    asked_, out = n()
+    assert asked_ == 1 and out["latest"] == "9.0.1" and not out["failed"]
+    age(minutes=-600)  # the clock was wrong
+    assert n()[0] == 1
+    for info in (None, {"version": "9.0.0"}):  # kept by a version before this: a failure an hour ago, a success a day ago
+        when = dt.datetime.now(dt.timezone.utc) - (dt.timedelta(hours=1) if info is None else dt.timedelta(hours=23))
+        upd._cache_path().write_text(json.dumps({"checked": when.isoformat(), "source": "github", "info": info}), encoding="utf-8")
+        asked_, out = n()
+        assert asked_ == 1 and out["latest"] == "9.0.1"
+    gate, inside = threading.Event(), threading.Event()
+    monkeypatch.setattr(upd, "fetch", lambda: (asked.append(1), inside.set(), gate.wait(10), {"version": "9.0.2"})[-1])
+    age(minutes=55)
+    before = len(asked)
+    t = threading.Thread(target=upd.check)
+    t.start()
+    assert inside.wait(5) and upd.check()["latest"] == "9.0.1"  # not kept waiting
+    gate.set()
+    t.join(10)
+    assert len(asked) == before + 1 and upd.check()["latest"] == "9.0.2"
 
 
 class _Resp:
@@ -141,43 +194,6 @@ def test_prepare_downloads_into_the_update_folder(upd, tmp_path, monkeypatch):
         upd.prepare({**info, "wheel": "https://example.org/../../evil.sh"})
 
 
-def test_the_update_script_waits_installs_and_starts_research_brain_again(upd, tmp_path):
-    """Run the real script (sh): it waits for a process to end, runs the install, records how it went, starts
-    the 'app' again (a tiny web server answering /api/heartbeat) and clears the marker once it answers."""
-    if sys.platform == "win32":
-        pytest.skip("the .cmd variant is checked by text below")
-    import socket
-    import subprocess
-    import time
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    web = tmp_path / "web"
-    (web / "api").mkdir(parents=True)
-    (web / "api" / "heartbeat").write_text("{}")
-    slow = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.5)"])
-    done = tmp_path / "installed"
-    install = [sys.executable, "-c", f"open({str(done)!r}, 'w').write('ok'); print('installing')"]
-    relaunch = [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", str(web)]
-    d = upd.update_dir()
-    d.mkdir(parents=True)
-    upd.paths.write_json_atomic(d / "updating.json", {"from": "1.0.0", "to": "9.0.0", "started": "2999-01-01T00:00:00+00:00"})
-    sh = d / "run-update.sh"
-    sh.write_text(upd.script(install, pids=[slow.pid], port=port, relaunch=relaunch, cwd=str(tmp_path)))
-    t0 = time.monotonic()
-    proc = subprocess.Popen(["/bin/sh", str(sh)])
-    try:
-        time.sleep(0.6)
-        assert not done.exists()  # still waiting for research brain to stop
-        assert proc.wait(timeout=60) == 0
-        assert done.read_text() == "ok" and time.monotonic() - t0 >= 1.2
-        assert (d / "exit-code").read_text().strip() == "0" and "installing" in (d / "update.log").read_text()
-        assert not (d / "updating.json").exists()  # cleared once the new one answered
-    finally:
-        slow.kill()
-        subprocess.run(["pkill", "-f", f"http.server {port}"], check=False)
-
-
 def _job(tmp_path, **kw):
     """A job for app/update_run.py whose 'research brain' is a tiny web server answering /api/heartbeat."""
     import socket
@@ -215,7 +231,7 @@ def _stop(job):
         subprocess.run(["pkill", "-f", f"http.server {job['port']}"], check=False)
 
 
-def test_the_windows_updater_waits_installs_starts_and_clears_the_marker(tmp_path):
+def test_the_updater_waits_installs_starts_and_clears_the_marker(tmp_path):
     """app/update_run.py (it runs anywhere): waits for research brain to end, installs, says how it went, starts it (its
     window when that was open) and clears the marker."""
     import subprocess
@@ -236,7 +252,7 @@ def test_the_windows_updater_waits_installs_starts_and_clears_the_marker(tmp_pat
         _stop(job)
 
 
-def test_the_windows_updater_ends_what_will_not_stop_and_puts_the_old_version_back(tmp_path):
+def test_the_updater_ends_what_will_not_stop_and_puts_the_old_version_back(tmp_path):
     """A process that won't end doesn't hold the update up for ever; a new version that doesn't run, or an install that
     fails and leaves nothing that runs, is replaced by the old one; research brain is started and the marker cleared
     whatever happens."""
@@ -252,6 +268,10 @@ def test_the_windows_updater_ends_what_will_not_stop_and_puts_the_old_version_ba
     ok = tmp_path / "works"
     back = [sys.executable, "-c", f"open({str(tmp_path / 'installed')!r}, 'a').write('old '); open({str(ok)!r}, 'w')"]
     check = [sys.executable, "-c", f"import os, sys; sys.exit(0 if os.path.exists({str(ok)!r}) else 1)"]
+    d, job = _job(tmp_path, previous=[sys.executable, "-c", "import sys; sys.exit(1)"], previous_unpinned=back)
+    with open(tmp_path / "log", "w", encoding="utf-8") as log:
+        ur.put_back(job, log, said.append)
+    assert ok.exists()  # the pinned versions couldn't be had: without them
     for install, want in ((None, "97"), ([sys.executable, "-c", "import sys; sys.exit(2)"], "2"), (["no-such-installer-rb"], "95")):
         for f in (ok, tmp_path / "installed"):
             f.unlink(missing_ok=True)
@@ -262,6 +282,32 @@ def test_the_windows_updater_ends_what_will_not_stop_and_puts_the_old_version_ba
             assert not (d / "updating.json").exists() and ur.answers(job, 10)
         finally:
             _stop(job)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="on Windows the window is opened again instead (tests/windows_update.py)")
+def test_on_a_mac_a_version_that_stops_is_replaced_at_once_while_the_window_waits(tmp_path):
+    """A new version whose server stops (or hangs) is ended and the old one put back; the marker the Mac's window waits
+    for goes only once something answers; a server that ended but wasn't collected by the window counts as ended."""
+    import subprocess
+    import time
+    import app.update_run as ur
+    d, job = _job(tmp_path)
+    good = tmp_path / "works"
+    marker = d / "updating.json"
+    serve = ("import os, sys\nif not os.path.exists(%r): open(%r, 'a').write(str(os.path.exists(%r))); sys.exit(1)\n"
+             "os.execv(sys.executable, %r)") % (str(good), str(tmp_path / "waiting"), str(marker), job["serve"])
+    ended = subprocess.Popen([sys.executable, "-c", "pass"])  # never collected
+    d, job = _job(tmp_path, pids=[ended.pid], serve=[sys.executable, "-c", serve],
+                  previous=[sys.executable, "-c", f"open({str(good)!r}, 'w')"], port=job["port"])
+    try:
+        t0 = time.monotonic()
+        _run_job(d)
+        assert time.monotonic() - t0 < 90  # not the two minutes one that hangs is given (a Mac on CI takes half a minute over the tiny web server)
+        assert (d / "exit-code").read_text().strip() == "98" and not marker.exists() and ur.answers(job, 5)
+        assert (tmp_path / "waiting").read_text() == "True"
+    finally:
+        ended.wait()
+        _stop(job)
 
 
 def test_an_update_that_died_blocks_nothing(upd, monkeypatch):
@@ -335,10 +381,13 @@ def test_start_install_marks_it_running_reports_once_and_reopens_the_window(upd,
     info = {"version": "9.0.0", "wheel": str(d / "research_brain-9.0.0-py3-none-any.whl"), "source": str(d)}
     upd.start_install(info, port=8765, pids=[123])
     assert started and upd.in_progress()["to"] == "9.0.0" and upd.last_result() is None  # still running
-    if os.name == "nt":
-        assert json.loads((d / "job.json").read_text(encoding="utf-8"))["pids"] == [123]
-    else:
-        assert "kill -0 123" in (d / "run-update.sh").read_text()
+    job = json.loads((d / "job.json").read_text(encoding="utf-8"))
+    assert job["pids"] == [123]
+    # putting this version back installs exactly what it has now
+    pins = (d / "previous" / "constraints.txt").read_text(encoding="utf-8").splitlines()
+    assert f"numpy=={__import__('numpy').__version__}" in pins and not any(x.startswith("research") for x in pins)
+    assert job["previous_cwd"] == str(d / "previous") and "-c" not in job["previous_unpinned"]
+    assert ("-c" in job["previous"]) == (sys.version_info >= (3, 12))
     upd.paths.write_json_atomic(d / "updating.json", {**json.loads((d / "updating.json").read_text()), "pid": None})
     # research brain waits for it instead of starting the half-replaced copy
     assert upd.wait_while_updating(limit=0.6) is True
@@ -372,11 +421,10 @@ def test_update_api_from_a_checkout(client):
     assert client.post("/api/update/ack", json={}).json() == {"ok": True}
 
 
-@pytest.mark.skipif(os.name == "nt", reason="runs the sh script")
+@pytest.mark.skipif(os.name == "nt", reason="a stand-in uv in sh")
 def test_uv_install_works_from_a_folder_with_a_space(upd, tmp_path):
     """uv 0.12 splits a -c path at spaces ("File not found: .../Library/Application"), and the Mac data folder
     is ~/Library/Application Support: the update names constraints.txt relatively and runs from its folder."""
-    import subprocess
     lab = tmp_path / "Shared Drive" / "lab"
     lab.mkdir(parents=True)
     (lab / "research_brain-9.0.0-py3-none-any.whl").write_bytes(b"PK")
@@ -391,16 +439,12 @@ def test_uv_install_works_from_a_folder_with_a_space(upd, tmp_path):
                     'echo "error: File not found"; exit 2;; esac; [ -f "$1" ] || { echo "error: File not found"; exit 2; }; '
                     'fi; shift; done; echo installed\n')
     fake.chmod(0o755)
-    upd.update_dir().mkdir(parents=True)
-    sh = tmp_path / "run.sh"
-    sh.write_text(upd.script([str(fake), *cmd[1:]], pids=[], port=1, relaunch=["true"], cwd=str(tmp_path),
-                             install_dir=upd.install_cwd(info)))
-    (tmp_path / "curl").write_text("#!/bin/sh\nexit 0\n")  # research brain "answers" at once
-    (tmp_path / "curl").chmod(0o755)
-    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
-    subprocess.run(["/bin/sh", str(sh)], timeout=30, check=True, env=env)
-    assert (upd.update_dir() / "exit-code").read_text().strip() == "0"
-    assert "installed" in (upd.update_dir() / "update.log").read_text()
+    d, job = _job(tmp_path, install=[str(fake), *cmd[1:]], cwd=upd.install_cwd(info))
+    try:
+        _run_job(d)
+        assert (d / "exit-code").read_text().strip() == "0" and "installed" in (d / "update.log").read_text()
+    finally:
+        _stop(job)
     # no space: the full path, run from anywhere
     plain = _folder(tmp_path)
     upd.set_source(str(plain))

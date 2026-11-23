@@ -274,3 +274,35 @@ jobs:
         with:
           name: windows-update-${{ matrix.os }}-${{ matrix.home }}
           path: C:\rb-shots
+
+  # The same on a Mac: the Update button pressed in the installed app's own window (tests/mac_update.py).
+  mac-update:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/mac')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    name: mac-update (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pyobjc-framework-Quartz reportlab build
+      - name: Made-up releases (in a folder with a space)
+        run: python tests/fake_releases.py "$HOME/rb releases"
+      - name: Install this version (its installer gets uv itself)
+        run: |
+          cp install.sh "$HOME/rb releases/own/"
+          bash "$HOME/rb releases/own/install.sh"
+      - name: Updating
+        working-directory: /
+        env: { RB_SHOT_DIR: /tmp/rb-shots }
+        run: python "$GITHUB_WORKSPACE/tests/mac_update.py" local "$HOME/rb releases"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-update-${{ matrix.os }}
+          path: /tmp/rb-shots

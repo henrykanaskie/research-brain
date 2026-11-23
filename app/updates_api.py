@@ -1,8 +1,9 @@
 """HTTP endpoints for updates (app/updates.py). Installed by app/server.py.
 
-    GET  /api/update?force=false  {current, latest, newer, notes, url, published, checked, enabled, system,
+    GET  /api/update?force=false&opened=false
+                                  {current, latest, newer, notes, url, published, checked, failed, enabled, system,
                                    can_install, reason, installing, result}
-                                  checks at most once a day unless force; `result` is how the last update from
+                                  asks again about hourly, when the app was just opened, or when forced; `result` is how the last update from
                                   the app went (once, until POST /api/update/ack)
     POST /api/update/install      {} -> {ok, from, to}: downloads the new version, starts the installer and
                                   stops research brain; the installer starts it again (about a minute)
@@ -31,8 +32,8 @@ def _system() -> str:
 
 
 @router.get("/api/update")
-def api_update(force: bool = False):
-    out = updates.check(force=force)
+def api_update(force: bool = False, opened: bool = False):
+    out = updates.check(force=force, opened=opened)
     ok, why = updates.can_install()
     return {**out, "current": __version__, "system": _system(), "can_install": ok, "reason": why,
             "installing": updates.in_progress(), "result": updates.last_result()}

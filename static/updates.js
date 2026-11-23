@@ -1,7 +1,7 @@
 /* research_brain — updates: the version, "Update" in the top bar, and installing a new version from the app.
  *
- * Asks GET /api/update a few seconds after the app opens and every six hours (the server asks GitHub at
- * most once a day). When there's a newer version, a small "Update" button appears in the top bar; it opens
+ * Asks GET /api/update a few seconds after the app opens (the server then asks GitHub), about every hour, when the
+ * internet comes back, and a few minutes after a check that failed. When there's a newer version, a small "Update" button appears in the top bar; it opens
  * a popover with what's new, Update now and Later (Later hides the button until the version after that).
  * Update now saves open edits, then POST /api/update/install: the server downloads the new version and
  * stops, an installer starts it again (app/updates.py), and this page says what's happening, waits, and
@@ -219,8 +219,11 @@
   }
 
   // ---------------------------------------------------------------- checking
-  async function check(force) {
-    try { INFO = await api('/api/update' + (force ? '?force=true' : '')); } catch { return INFO; }
+  let retry = 0;
+  async function check(force, opened) {
+    clearTimeout(retry);
+    try { INFO = await api('/api/update' + (force ? '?force=true' : opened ? '?opened=true' : '')); } catch { return INFO; }
+    if (INFO.enabled && INFO.failed) retry = setTimeout(() => check(false), 5 * 60000);
     const r = INFO.result;
     if (r && !installing) {
       if (r.ok) { failed = null; toast(`Updated to ${r.version}.`, 'ok'); store.set('update.later', ''); }
@@ -266,10 +269,10 @@
         notes.hidden = !l.length;
         upBtn.hidden = false; upBtn.disabled = !i.can_install;
         if (!i.can_install) { err.hidden = false; err.textContent = i.reason; }
-      } else if (i.latest) {
+      } else if (i.latest && !i.failed) {
         line.textContent = `You’re up to date. Checked ${checked}.`;
       } else {
-        line.textContent = `Couldn’t check for updates${checked ? ` (tried ${checked})` : ''}. It tries again by itself; you need an internet connection.`;
+        line.textContent = `Couldn’t check for updates${checked ? ` (last checked ${checked})` : ''}. It tries again by itself; you need an internet connection.`;
       }
     }
     checkBtn.addEventListener('click', async () => {
@@ -284,7 +287,8 @@
     return sec;
   }
 
-  setTimeout(() => check(false), 4000);
-  setInterval(() => check(false), 6 * 3600 * 1000);
+  setTimeout(() => check(false, true), 4000);
+  setInterval(() => check(false), 3600 * 1000);
+  addEventListener('online', () => setTimeout(() => { if (!installing) check(false); }, 3000));
   window.__rbUpdates = { settingsSection, check, install };
 })();
