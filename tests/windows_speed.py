@@ -105,6 +105,17 @@ def main() -> int:
         c0, mb, b0 = usage()
         time.sleep(30)
         c1, mb, b1 = usage()
+        try:  # what was on the screen meanwhile, and where the pointer lay (over the map, the test showed redrawing)
+            import ctypes
+            from ctypes import wintypes
+            pt = wintypes.POINT(); ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            print(f"      pointer at {pt.x},{pt.y}; window {hwnd()}", flush=True)
+            from PIL import ImageGrab
+            ImageGrab.grab(all_screens=True).save(SHOTS / "idle-desktop.png")
+            if hwnd():
+                W.window_picture(hwnd()).save(SHOTS / "idle-window.png")
+        except Exception as e:
+            print("      (no picture:", e, ")")
         print("      by program:", {k: f"{100 * (b1[k] - b0.get(k, 0)) / 30:.1f}%" for k in b1}, flush=True)
         note("CPU while idle", 100 * (c1 - c0) / 30, 20, "% of one core")
         note("memory, with its window", mb, 2500, "MB")

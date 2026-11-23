@@ -7060,7 +7060,10 @@
     });
   }
   // expose for debugging/tests
-  window.__rb = { S, renderMD, refreshGraph, openNote, linkGeom, relayout, nodeRadius, kick, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); } };
+  window.__rb = { S, renderMD, refreshGraph, openNote, linkGeom, relayout, nodeRadius, kick, get fg() { return fg; }, get cards() { return cards.map((c) => ({ id: c.id, p: c.p, box: c.L && [c.L.x0, c.L.y0, c.L.w, c.L.h] })); },
+    // tests: why the map is drawing (it should stop once nothing moves)
+    get motionState() { return { level: litLevel(), fade: hold.fade, holding: holding(), seen: hold.seen, since: hold.since, pulses: pulses.length,
+      tween: !!motion.tween, floating: floating(), animUntilIn: Math.round(animUntil - performance.now()) }; } };
   // hooks for static/review.js and static/views.js (review mode, critique history, graph views)
   Object.assign(window.__rb, {
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
