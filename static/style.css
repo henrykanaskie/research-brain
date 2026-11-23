@@ -581,6 +581,7 @@ kbd { font: 500 11px/16px var(--sans); border-radius: 2px; border-color: var(--r
   radial-gradient(circle at 92% 70%, var(--red) 0 1.1px, transparent 1.2px),
   radial-gradient(circle at 8% 70%, var(--red) 0 1.1px, transparent 1.2px); }
 .graph-tools .btn { background: var(--ground); }
+.graph-tools .btn[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
 .empty-card h1 { font: 400 54px/1.02 var(--display); letter-spacing: -.02em; font-variation-settings: "opsz" 96; }
 
 /* ---- side panel: a sheet laid on the field ---- */

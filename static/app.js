@@ -34,7 +34,9 @@
     if (r) { const p = r[1].split(',').map((x) => x.trim()); return `rgba(${p[0]},${p[1]},${p[2]},${a})`; }
     return col;
   }
-  const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // asked for every dot in every frame: the query is made once (it still follows the setting when it changes)
+  const motionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  const reducedMotion = () => !!(motionQuery && motionQuery.matches);
   const T = (ms) => (reducedMotion() ? 0 : ms);
   const SAVE_DEBOUNCE = 800;
   const LS = {
@@ -836,6 +838,7 @@
     const rest = back && !back.has(n.id) ? DIM : 1;
     return rest + (DIM - rest) * litLevel();
   }
+  const GROW_MS = 260;  // a dot's lines reach their far ends in about a quarter of a second
   /** eased per-node alpha (150 ms), advanced once per frame in onRenderFramePre */
   let lastFrame = 0;
   function stepAlphas() {
@@ -855,11 +858,22 @@
     const level = litLevel();
     if (level < 1) moving = true;
     const onlyLit = (l) => !linkResting(l) && l !== S.hoverLink && !explained(l) && !(S.selected && (lid(l.source) === S.selected || lid(l.target) === S.selected));
+    const from = activeId(), letting = holding() && hold.fade;
     for (const l of S.links || []) {
       const t = !linkDrawn(l) ? 0 : level < 1 && onlyLit(l) ? level : 1;
       if (l.__v === undefined) l.__v = t;
       const d = t - l.__v;
       if (Math.abs(d) > 0.004) { l.__v += d * kf; moving = true; } else l.__v = t;
+      // the dot's lines travel out from it to each connection, and back into it when you let go (growLines)
+      const out = from != null && (lid(l.source) === from || lid(l.target) === from);
+      const want = (out && !letting) || l === S.hoverLink || explained(l) ? 1 : 0;
+      if (out && want) l.__from = from;
+      if (l.__g === undefined) l.__g = want;
+      if (l.__g !== want) {
+        const gdt = Math.min(dt, 34);  // the first frame after the map was still comes late: it still starts at the dot
+        l.__g = rm ? want : want > l.__g ? Math.min(1, l.__g + gdt / GROW_MS) : Math.max(0, l.__g - gdt / FADE_MS);
+        moving = true;
+      }
     }
     return moving;
   }
@@ -937,6 +951,7 @@
     S.lines = v === 'all' ? 'all' : 'few';
     LS.set('lines', S.lines);
     const el = $('#lines-mode'); if (el) el.value = S.lines;
+    const b = $('#btn-lines'); if (b) b.setAttribute('aria-pressed', String(S.lines === 'all'));
     kick(400);
   }
 
@@ -1298,23 +1313,40 @@
     return { x: g.x1 - g.x0, y: g.y1 - g.y0 };
   };
   /** trace path, trimmed by r0/r1 at the ends so it meets the soma's edge */
-  function tracePath(ctx, g, r0, r1) {
-    const p = g.pts.slice();
+  /** part: {f, fromEnd} draws only the first fraction f of the trace's length, starting at its end if fromEnd (a line
+   *  on its way out from a dot, or back into it). */
+  function tracePath(ctx, g, r0, r1, part = null) {
+    let p = g.pts.slice();
     const trim = (ia, ib, r) => {
       const dx = p[ib] - p[ia], dy = p[ib + 1] - p[ia + 1], d = Math.hypot(dx, dy);
       if (d > r) { p[ia] += (dx / d) * r; p[ia + 1] += (dy / d) * r; }
     };
     trim(0, 2, r0); trim(p.length - 2, p.length - 4, r1);
+    if (part) {
+      if (part.fromEnd) { const q = []; for (let i = p.length - 2; i >= 0; i -= 2) q.push(p[i], p[i + 1]); p = q; }
+      let total = 0;
+      for (let i = 2; i < p.length; i += 2) total += Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]);
+      let left = total * Math.max(0, Math.min(1, part.f));
+      const q = [p[0], p[1]];
+      for (let i = 2; i < p.length && left > 0; i += 2) {
+        const d = Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]);
+        if (d <= left) { q.push(p[i], p[i + 1]); left -= d; continue; }
+        const u = left / d;
+        q.push(p[i - 2] + (p[i] - p[i - 2]) * u, p[i - 1] + (p[i + 1] - p[i - 1]) * u);
+        left = 0;
+      }
+      p = q;
+    }
     ctx.moveTo(p[0], p[1]);
     for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
   }
 
   function strHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 
-  function linkStyle(l) {
+  function linkStyle(l, resting = false) {
     const a = l.source, b = l.target;
     const fa = a.__a ?? 1, fb = b.__a ?? 1;
-    const lit = touchesActive(l);  // a connection of the dot under the pointer (or the one you clicked)
+    const lit = !resting && touchesActive(l);  // a connection of the dot under the pointer (or the one you clicked)
     const level = lit ? (S.lit != null ? litLevel() : 1) : 0, both = Math.min(fa, fb);
     let dim = both + (1 - both) * level;
     if (S.search) dim = both;
@@ -1343,6 +1375,8 @@
   /** Hairline fibres: a single fine stroke along the curve. Width is fixed in screen pixels so
    *  zooming in reveals structure instead of thickening lines. */
   function drawLink(l, ctx, k) {
+    const s0 = l.source, t0 = l.target, V = S.cull;
+    if (V && s0 && t0 && ((s0.x < V[0] && t0.x < V[0]) || (s0.x > V[2] && t0.x > V[2]) || (s0.y < V[1] && t0.y < V[1]) || (s0.y > V[3] && t0.y > V[3]))) return;  // off screen
     const g = linkGeom(l);
     if (!g) return;
     const far = farLevel(k);
@@ -1354,8 +1388,20 @@
     // they meet it flush and on its centre line; the red note-dots are drawn on top of them
     const r0 = g.sd ? g.sd.r : drawnRadius(l.source, k), r1 = g.td ? g.td.r : drawnRadius(l.target, k);
     if (Math.hypot(g.x1 - g.x0, g.y1 - g.y0) <= r0 + r1) return;
+    const grow = l.__g ?? 1, growing = grow < 0.999 && l.__from != null && !reducedMotion();
+    if (growing && linkResting(l) && l.kind !== 'part') {  // a line that's always there: its resting look underneath
+      const rs = linkStyle(l, true);
+      if (far < 1) rs.a *= far;
+      if (rs.a > 0.01) {
+        ctx.beginPath(); tracePath(ctx, g, r0, r1); ctx.lineJoin = 'miter';
+        ctx.strokeStyle = rgba(rs.col, rs.a); ctx.lineWidth = rs.w / k;
+        if (rs.dash) ctx.setLineDash([3 / k, 2.5 / k]);
+        ctx.stroke();
+        if (rs.dash) ctx.setLineDash([]);
+      }
+    } else if (growing && grow <= 0.001) return;
     ctx.beginPath();
-    tracePath(ctx, g, r0, r1);
+    tracePath(ctx, g, r0, r1, growing ? { f: 1 - (1 - grow) ** 3, fromEnd: lid(l.target) === l.__from } : null);
     ctx.lineJoin = 'miter';
     ctx.strokeStyle = rgba(st.col, st.a);
     ctx.lineWidth = st.w / k;
@@ -1364,6 +1410,7 @@
     ctx.stroke();
     if (st.dash) ctx.setLineDash([]);
     // tiny vias where the trace bends
+    if (growing) return;  // the vias and the arrow once it's all there
     if (k > 5 && l.kind !== 'part') {
       const vr = 0.7 / k;
       ctx.fillStyle = rgba(st.col, Math.min(1, st.a * 1.3));
@@ -1839,10 +1886,21 @@
     return lo.concat(up);
   }
   /** a section's cloud: the hull of its papers (each paper's dot as a ring of points), and the margin around it */
+  const cloudCache = new Map();
   function cloudShape(mem) {
+    // the same shape while its papers stay put (to within a unit: the float moves them less): working out the hull
+    // of every section in every frame was a sixth of a frame with a large library
+    let sx = 0, sy = 0, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const n of mem) { sx += n.x; sy += n.y; x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x); y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y); }
+    const key = [mem.length, sx, sy, x0, x1, y0, y1].map((v) => Math.round(v)).join(',') + '|' + mem[0].id;
+    const hit = cloudCache.get(key);
+    if (hit) return hit;
     const pts = [];
     for (const n of mem) { const r = nodeRadius(n); for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; pts.push([n.x + Math.cos(a) * r, n.y + Math.sin(a) * r]); } }
-    return { hull: hull(pts), pad: CLOUD_PAD };
+    const out = { hull: hull(pts), pad: CLOUD_PAD };
+    if (cloudCache.size > 200) cloudCache.clear();
+    cloudCache.set(key, out);
+    return out;
   }
   function cloudTint(cid) {
     const pal = [C.machine, C.violet || C.machine, C.ochre || C.machine, C.red, '#4F7A55'];
@@ -2649,6 +2707,10 @@
       .onLinkClick((l, e) => { if (!regionTagClick(e)) onLinkClick((e && lineAt(e.clientX, e.clientY)) || l, e); })
       .onRenderFramePre((ctx, k) => {
         S.k = k; S.partLayout = new Map(); S.frame = (S.frame || 0) + 1;
+        { // what's on screen (map units, with a margin): dots and lines outside it aren't drawn
+          const a = fg.screen2GraphCoords(0, 0), b = fg.screen2GraphCoords(graphEl.clientWidth, graphEl.clientHeight), m = 60 / k;
+          S.cull = [Math.min(a.x, b.x) - m, Math.min(a.y, b.y) - m, Math.max(a.x, b.x) + m, Math.max(a.y, b.y) + m];
+        }
         S.labelJobs = [];
         { const now = performance.now(); labelDt = Math.min(100, now - labelClock); labelClock = now; }
         // names get new places only when the map has changed and is at rest (a layout in motion planned them already)
@@ -2855,12 +2917,25 @@
   /** Where each attached note's red dot sits on its paper's ring. A note that links somewhere faces
    *  that link (snapped to 45 degrees), so its trace leaves outward instead of crossing the paper;
    *  notes without links fill the free directions. Dots keep a minimum spacing. Cached per frame. */
+  let partLinks = null;
   function partAngles(host) {
     if (S.partLayout && S.partLayout.has(host.id)) return S.partLayout.get(host.id);
     const ids = (S.partsOf && S.partsOf.get(host.id)) || [];
     const shown = ids.slice(0, 12);
     const want = new Map();
-    for (const l of S.links) {
+    // only the lines that leave from this paper's note dots (indexed once per set of lines): going through every line
+    // for every dot, every frame, was most of the time a frame took with a large library
+    if (!partLinks || partLinks.links !== S.links || partLinks.n !== S.links.length) {
+      const by = new Map();
+      for (const l of S.links) for (const [part, end] of [[l.sPart, l.source], [l.tPart, l.target]]) {
+        if (!part) continue;
+        const h = lid(end);
+        if (!by.has(h)) by.set(h, []);
+        by.get(h).push(l);
+      }
+      partLinks = { links: S.links, n: S.links.length, by };
+    }
+    for (const l of (shown.length && partLinks.by.get(host.id)) || []) {
       const mine = (l.sPart && lid(l.source) === host.id) ? l.sPart : (l.tPart && lid(l.target) === host.id) ? l.tPart : null;
       if (!mine || want.has(mine)) continue;
       const other = l.sPart === mine ? l.target : l.source;
@@ -2895,6 +2970,8 @@
   function drawNode(n, ctx, k) {
     // zooming in should reveal structure, not inflate the dots: grow slower than the zoom
     const r = drawnRadius(n, k);
+    const V = S.cull;
+    if (V && (n.x < V[0] || n.x > V[2] || n.y < V[1] || n.y > V[3]) && S.selected !== n.id && S.hover !== n.id) { n.__outer = n.__outer || r; return; }  // off screen
     const sel = S.selected === n.id;
     const hov = S.hover === n.id;
     const alpha = (n.__a ?? 1) * (hov || sel ? 1 : farLevel(k));
@@ -3129,7 +3206,7 @@
   // Resting the pointer on a dot lifts a card out of it (it closes as soon as the pointer leaves the dot): the kind and year, the full title (up to three lines)
   // and the authors, each on its own line. Dots under the card glide aside while it's open and drift back when
   // it closes. They only move on screen: the layout and your placed dots aren't changed (see applyShift).
-  const CARD_DWELL = 90;  // ms of hover before a card opens, so sweeping the pointer across dots stays calm
+  const CARD_DWELL = 180;  // ms of hover before a card opens, so sweeping the pointer across dots (or resting on one only a moment) moves nothing
   const cards = [];        // { id, p (0..1 eased), since, L (layout, graph units) }
   let cardFrame = 0;
   // p runs linearly in time; what you see follows an ease-out curve: it settles gently into place when
@@ -3331,8 +3408,27 @@
     const owners = new Set(open.map((c) => c.id));
     const kn = rm ? 1 : 1 - Math.exp(-dt / 45);  // the dots follow the card's own curve, a touch behind
     const shifted = [];
-    const tgt = open.length ? cardTargets(open, owners, k) : null;
-    for (const m of S.nodes.values()) {
+    // Where each card sends the dots, worked out once for the card fully open (again only if it moves, the map is
+    // zoomed or the layout changes) and scaled by how open it is: working it out every frame, and going through every
+    // dot, was half of a frame with a large library, and the map stuttered whenever a card opened.
+    let tgt = null;
+    if (open.length) {
+      tgt = new Map();
+      for (const c of open) {
+        const L = c.L, key = [Math.round(L.x0 * k), Math.round(L.y0 * k), Math.round(L.w * k), Math.round(L.h * k), Math.round(k * 1000),
+          S.stops || 0, motion.tween ? S.frame : 0, S.nodes.size].join(',');
+        if (!c.full || c.fullKey !== key) { c.full = cardTargets([{ L, p: 1 }], new Set([c.id]), k); c.fullKey = key; }
+        const e = ease3(c.p);
+        for (const [m, t] of c.full) {
+          if (owners.has(m.id)) continue;
+          const was = tgt.get(m);
+          tgt.set(m, was ? [was[0] + t[0] * e, was[1] + t[1] * e] : [t[0] * e, t[1] * e]);
+        }
+      }
+    }
+    const touched = new Set(S.shifted || []);
+    if (tgt) for (const m of tgt.keys()) touched.add(m);
+    for (const m of touched) {
       if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
       const t = tgt && tgt.get(m), tx = t ? t[0] : 0, ty = t ? t[1] : 0;
       const ox = m.__dx || 0, oy = m.__dy || 0;
@@ -3615,6 +3711,7 @@
     const pl = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const inside = S.folded ? S.folded.size : 0;
     $('#legend-count').textContent = [pl(countType('paper'), 'paper'), pl(countType('note'), 'note'), inside ? `${inside} attached` : ''].filter(Boolean).join(', ');
+    if (S.fitLegend) S.fitLegend();
     crawlFragments();
 
     if (!fg) return;
@@ -6688,6 +6785,19 @@
     });
   }
   $('#lines-mode').value = S.lines;
+  { // the legend stops where the buttons on the right begin, and its count goes first when there isn't room
+    const lg = $('#legend'), tools = document.querySelector('.graph-tools'), count = $('#legend-count');
+    const fit = () => {
+      if (!lg || !tools || !lg.offsetParent) return;
+      const room = tools.getBoundingClientRect().left - lg.getBoundingClientRect().left - 16;
+      lg.style.maxWidth = `${Math.max(0, room)}px`;
+      if (count) { count.hidden = false; count.hidden = lg.scrollWidth > lg.clientWidth + 1; }
+    };
+    if (window.ResizeObserver && lg && tools) { const ro = new ResizeObserver(fit); ro.observe(tools); ro.observe(document.body); }
+    addEventListener('resize', fit);
+    S.fitLegend = fit;
+  }
+  { const b = $('#btn-lines'); if (b) { b.setAttribute('aria-pressed', String(S.lines === 'all')); b.addEventListener('click', () => setLines(S.lines === 'all' ? 'few' : 'all')); } }
   $('#lines-mode').addEventListener('change', (e) => setLines(e.target.value));
   S.labelMode = LS.get('labelMode', 'author');
   $('#label-mode').value = S.labelMode;
