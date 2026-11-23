@@ -1513,7 +1513,9 @@
   const measureCtx = document.createElement('canvas').getContext('2d');
   /** A section's name broken into lines and measured, in screen pixels: the same at every zoom. */
   function titleText(label, size) {
-    const c = measureCtx, words = regionName(label).split(/\s+/).filter(Boolean);
+    // a folder's "(final versions after review)" is a detail the map leaves to the Regions list: its title was "…after Review)"
+    const bare = String(label || '').replace(/\s*\([^()]*\)\s*$/, '').trim() || String(label || '');
+    const c = measureCtx, words = regionName(bare).split(/\s+/).filter(Boolean);
     if ('fontStretch' in c) c.fontStretch = 'normal';
     // what it's about: the last word, with the one before it when the last is short ("Collision Theory"), but never
     // starting on a joining word ("ML Surrogates for" / "CRMs")
