@@ -34,13 +34,17 @@ self.addEventListener('fetch', (e) => {
   }
   if (req.mode === 'navigate' && (url.pathname === '/' || url.pathname === '/share')) {
     // the page itself is never stored; offline, show a plain notice instead of the browser's error page
-    e.respondWith(fetch(req).catch(() => new Response(OFFLINE, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })));
+    // the computer's own window (Windows, Mac: ?app=) gets a notice for a computer, not the phone's
+    const page = url.searchParams.has('app') ? offline(DESKTOP) : offline(PHONE);
+    e.respondWith(fetch(req).catch(() => new Response(page, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })));
   }
   // everything else (/api/, /pdf/, /attachments/, ...) goes straight to the network, uncached
 });
 
-const OFFLINE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+const PHONE = ["Your computer isn't answering", "research brain runs on your computer. Check that it's awake, that the app is running, and that this phone is on Tailscale (or the same network). Then pull to refresh."];
+const DESKTOP = ["research brain isn't running", "It usually starts again by itself in a few seconds. If this stays, close this window and open research brain again."];
+const offline = ([title, text]) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>research brain</title><link rel="stylesheet" href="/static/vendor/fonts/fonts.css">
 <body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#EEEFEB;color:#15181B;font:16px/1.55 Archivo,sans-serif;padding:24px">
-<main style="max-width:420px"><h1 style="font:italic 500 32px/1.1 'Newsreader',Georgia,serif;margin:0 0 12px">Your computer isn't answering</h1>
-<p style="color:#61676C;border-left:2px solid #BD3A2C;padding-left:14px">research brain runs on your computer. Check that it's awake, that the app is running, and that this phone is on Tailscale (or the same network). Then pull to refresh.</p></main></body>`;
+<main style="max-width:420px"><h1 style="font:italic 500 32px/1.1 'Newsreader',Georgia,serif;margin:0 0 12px">${title}</h1>
+<p style="color:#61676C;border-left:2px solid #BD3A2C;padding-left:14px">${text}</p></main></body>`;

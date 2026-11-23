@@ -106,6 +106,11 @@ def _start_server(a, url: str) -> bool:
             time.sleep(0.25)
     if _status_ok(url):
         return True
+    if os.environ.get("RB_WV2_RETRY"):  # a window started again (app/winwindow.py): the first one started a server
+        for _ in range(240):
+            if _status_ok(url, 0.5):
+                return True
+            time.sleep(0.25)
     # one that is stopping (just quit) still holds the port and answers 503: let it go first
     for _ in range(150):
         if not _port_busy(a.port):

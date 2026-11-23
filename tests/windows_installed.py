@@ -229,6 +229,8 @@ def main():
         t0, before, middle = time.time(), None, 0
         while time.time() - t0 < 60:  # until the greeting of a new library is drawn and nothing changes any more
             time.sleep(3)
+            if not u.IsWindow(hwnd):  # WebView2 didn't start the first time (a busy PC): the window it tried again with
+                hwnd = u.FindWindowW(None, "research brain") or hwnd
             u.ShowWindow(hwnd, 5); u.SetForegroundWindow(hwnd)
             img = window_picture(hwnd)
             img.save(SHOTS / "window.png")
@@ -413,6 +415,27 @@ def main():
         m = len(api("GET", "/api/graph")["nodes"])
         assert m == n, (n, m)
         return f"{n} notes"
+
+    @check("WebView2 failing to start (it did on a busy PC): the window tries once more, and is its own")
+    def _():
+        from windows_update import hwnd  # research brain's own window, not a browser's
+        close_app()
+        os.environ["RB_WIN_FAIL_ONCE"] = "1"
+        logs = [DATA / "window.log", DATA / "window-before.log"]
+        said = lambda: "".join(p.read_text(encoding="utf-8", errors="replace") for p in logs if p.exists())
+        try:
+            t = open_app()
+            for _ in range(60):  # the first window gives up, then the one it starts again appears
+                if "trying once more" in said() and hwnd():
+                    break
+                time.sleep(0.5)
+            else:
+                raise AssertionError(("no window of its own after trying again", said()[-500:]))
+        finally:
+            os.environ.pop("RB_WIN_FAIL_ONCE")
+        servers = [p for p in processes() if "research_brain.cli serve" in (p.get("CommandLine") or "") and "Scripts" not in (p.get("CommandLine") or "")]
+        assert len(servers) <= 1, servers  # the window it starts again waits for the server the first one started
+        return t
 
     @check("nothing went wrong in app.log")
     def _():

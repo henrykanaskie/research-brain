@@ -43,9 +43,28 @@ def dump(tag: str) -> None:
 
 
 def hwnd() -> int:
+    """research brain's own window (run by Python), not a browser's app window that has the same title."""
     import ctypes
-    h = ctypes.windll.user32.FindWindowW(None, "research brain")
-    return h if h and ctypes.windll.user32.IsWindowVisible(h) else 0
+    from ctypes import wintypes
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    k.OpenProcess.restype = ctypes.c_void_p
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(h, _):
+        buf = ctypes.create_unicode_buffer(64)
+        if u.IsWindowVisible(h) and u.GetWindowTextW(h, buf, 64) and buf.value == "research brain":
+            pid = wintypes.DWORD()
+            u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+            ph = k.OpenProcess(0x1000, False, pid.value)
+            name, n = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
+            if ph and k.QueryFullProcessImageNameW(ctypes.c_void_p(ph), 0, name, ctypes.byref(n)) and "python" in name.value.lower():
+                found.append(h)
+            if ph:
+                k.CloseHandle(ctypes.c_void_p(ph))
+        return True
+    u.EnumWindows(each, 0)
+    return found[0] if found else 0
 
 
 def wait_window(limit=60) -> int:

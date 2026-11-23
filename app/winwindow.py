@@ -30,8 +30,10 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
+import time
 import webbrowser
 
 from . import __version__, paths
@@ -603,6 +605,7 @@ class _Page:
         self.may_close = False    # the page said close (after its own "Save before closing?" dialog)
         self.win = None
         self.chrome = _Chrome()
+        self.broken = threading.Event()  # WebView2 couldn't start (pywebview only logs it)
 
 
 def _on_message(page: _Page, msg) -> None:
@@ -669,8 +672,17 @@ def _patch(page: _Page) -> None:
                 _prepare(sender.CoreWebView2, cls._rb_page)
             except Exception as e:
                 print(f"[research_brain] title bar setup: {e!r}", file=sys.stderr)
+        if args.IsSuccess and os.environ.get("RB_WIN_FAIL_ONCE") == "1" and not os.environ.get("RB_WV2_RETRY"):
+            cls._rb_page.broken.set()  # tests: as if WebView2 had failed to start (see run's started)
+            return
         ready(self, sender, args)
         if not args.IsSuccess:
+            try:  # what was going on, for window.log
+                print(f"[research_brain] WebView2 processes on this window's folder: {_webview_using(_storage())}, "
+                      f"try {int(os.environ.get('RB_WV2_RETRY') or 0) + 1}", file=sys.stderr)
+            except Exception:
+                pass
+            cls._rb_page.broken.set()  # the window gives up at once (run's started), not after half a minute
             return
         try:
             _tune(sender.CoreWebView2)
@@ -796,6 +808,67 @@ def _relaunch(win) -> None:
         print(f"[research_brain] taskbar relaunch: {e!r}", file=sys.stderr)
 
 
+STORAGE_MAX = 80  # characters: WebView2 makes files about 170 deeper than its folder
+
+
+def _storage():
+    """WebView2's folder: window/ in the data folder, or, where that is so deep that WebView2's own files would pass
+    Windows' 260 characters (a long user name, a data folder moved somewhere deep), a short one of its own in
+    AppData\\Local. There WebView2 stopped with "can't read and write to its data directory" and no window came up."""
+    from pathlib import Path
+    usual = paths.user_data_dir() / "window"
+    if len(str(usual)) <= STORAGE_MAX or not os.environ.get("LOCALAPPDATA"):
+        return usual
+    import hashlib
+    tag = hashlib.sha1(str(usual).lower().encode("utf-8")).hexdigest()[:8]  # one per data folder
+    return Path(os.environ["LOCALAPPDATA"]) / "research_brain" / f"window-{tag}"
+
+
+def _webview_using(storage) -> int:
+    """How many WebView2 processes (msedgewebview2.exe) have this window's data folder (their command line names it)."""
+    import ctypes
+    from ctypes import wintypes
+    k, ps, nt = ctypes.windll.kernel32, ctypes.windll.psapi, ctypes.windll.ntdll
+    k.OpenProcess.restype = ctypes.c_void_p
+    want = os.path.normcase(os.path.join(str(storage), "EBWebView"))
+    arr, got = (wintypes.DWORD * 8192)(), wintypes.DWORD()
+    if not ps.EnumProcesses(ctypes.byref(arr), ctypes.sizeof(arr), ctypes.byref(got)):
+        return 0
+    n = 0
+    for pid in arr[: got.value // ctypes.sizeof(wintypes.DWORD)]:
+        h = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            continue
+        try:
+            name, size = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
+            if not k.QueryFullProcessImageNameW(ctypes.c_void_p(h), 0, name, ctypes.byref(size)) or not name.value.lower().endswith("msedgewebview2.exe"):
+                continue
+            buf, ret = ctypes.create_string_buffer(65536), wintypes.ULONG()
+            if nt.NtQueryInformationProcess(ctypes.c_void_p(h), 60, buf, len(buf), ctypes.byref(ret)) != 0:  # ProcessCommandLineInformation
+                continue
+            length, ptr = ctypes.c_ushort.from_buffer(buf, 0).value, ctypes.c_void_p.from_buffer(buf, 8).value
+            if ptr and want in os.path.normcase(ctypes.wstring_at(ptr, length // 2)):
+                n += 1
+        finally:
+            k.CloseHandle(ctypes.c_void_p(h))
+    return n
+
+
+def _wait_for_webview(storage, limit: float = 10.0) -> bool:
+    """Wait (up to `limit` s) while another WebView2 still has this window's data folder: one whose window has just
+    gone takes a second or more to end, and a new one started meanwhile fails (E_ABORT). True if it's free."""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < limit:
+        try:
+            if not _webview_using(storage):
+                return True
+        except Exception as e:  # never keep the window from opening over this
+            print(f"[research_brain] couldn't look for WebView2: {e!r}", file=sys.stderr)
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def run(url: str, start) -> int | None:
     """Show the window now, start the server with start() (True once it answers), then load the app.
     Returns when the window closes; None if the window couldn't be shown (the caller opens the Chrome window)."""
@@ -846,9 +919,16 @@ def run(url: str, start) -> int | None:
         return url + f"/?app=win{bar}&v={__version__}"
 
     def started():
-        # WebView2 that won't start (pywebview only logs it) leaves an empty window: use the Chrome one instead
-        if not win.events.loaded.wait(30):
-            state["failed"] = True
+        # WebView2 that won't start leaves an empty window. On a busy PC (just installed, Defender looking at new files)
+        # it said E_ABORT now and then: as soon as that's known, try again as a new window (twice), then the Chrome one
+        for _ in range(300):
+            if win.events.loaded.wait(0.1) or page.broken.is_set():
+                break
+        if not win.events.loaded.is_set():
+            if page.broken.is_set() and int(os.environ.get("RB_WV2_RETRY") or 0) < 2:
+                state["retry"] = True  # it fails now and then on a busy PC (E_ABORT): once more, as a new window
+            else:
+                state["failed"] = True
             win.destroy()
             return
         if not start():
@@ -880,8 +960,10 @@ def run(url: str, start) -> int | None:
                 win.load_url(app_url())
                 state["ours"] = bool((_status(url, "/api/heartbeat") or {}).get("idle_exit"))
 
-    storage = paths.user_data_dir() / "window"
+    storage = _storage()
     storage.mkdir(parents=True, exist_ok=True)
+    if not _wait_for_webview(storage):
+        print("[research_brain] another WebView2 still has the window's folder after 10 s", file=sys.stderr)
     pid_file = _pid_file()
     try:
         paths.write_json_atomic(pid_file, {"pid": os.getpid(), "port": int(url.rsplit(":", 1)[-1])})
@@ -901,6 +983,22 @@ def run(url: str, start) -> int | None:
             pid_file.unlink(missing_ok=True)
         except OSError:
             pass
+    if state.get("retry"):
+        import ctypes
+        ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(lock))  # the new window takes over as the one window
+        time.sleep(1)
+        print("[research_brain] WebView2 didn't start: trying once more", file=sys.stderr)
+        try:
+            tries = str(int(os.environ.get("RB_WV2_RETRY") or 0) + 1)
+            # without the graphics card the second time: where WebView2 didn't come up (on a VM, a PC busy with new files)
+            # its main process had started and nothing else had
+            env = {**os.environ, "RB_WV2_RETRY": tries,
+                   "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": "--disable-features=ElasticOverscroll --disable-gpu"}
+            subprocess.Popen([sys.executable, "-m", f"{__package__ or 'app'}.cli", *sys.argv[1:]], env=env,
+                             close_fds=True, creationflags=0x00000200 | 0x08000000)
+            os._exit(0)
+        except OSError:
+            return None
     if state["failed"]:
         return None
     if state["ours"] and not state["updating"]:
