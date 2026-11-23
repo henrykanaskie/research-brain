@@ -114,6 +114,16 @@ def status() -> dict:
 
 
 def _fake(instruction: str, context: str) -> str:
+    # a test can choose the answer: a question holding "FAKE-ANSWER:<base64 of UTF-8 Markdown>" gets exactly
+    # that Markdown back (the last one, so an earlier turn in the history doesn't win)
+    import base64
+    import re
+    picks = re.findall(r"FAKE-ANSWER:([A-Za-z0-9+/=_-]+)", context or "")
+    if picks:
+        try:
+            return base64.urlsafe_b64decode(picks[-1] + "=" * (-len(picks[-1]) % 4)).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            pass
     head = instruction.strip().splitlines()[0][:120]
     return (f"**(fake Claude)** Responding to: _{head}_\n\n"
             f"- Context was {len(context)} characters.\n- Inline math check: $E = mc^2$\n\n"

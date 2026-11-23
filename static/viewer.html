@@ -16,6 +16,7 @@
 <script defer src="/static/vendor/katex/contrib/auto-render.min.js"></script>
 <script defer src="/static/vendor/marked.min.js"></script>
 <script defer src="/static/latex-editor.js"></script>
+<script defer src="/static/visuals.js"></script>
 <script src="/static/commands.js"></script>
 <style>
 :root{
@@ -1253,6 +1254,14 @@ function citeSub(src, put, sources) {
     return put(`<a class="cite" href="${esc(href)}" target="_blank" rel="noopener" title="${esc(label)}">${esc(short)}${page ? `, p.&nbsp;${esc(page)}` : ""}</a>`);
   });
 }
+/* ```mermaid and ```svg blocks in answers become diagrams, charts and figures (static/visuals.js, shared with the
+   main app's chat); while an answer is still being written they show as a placeholder */
+function drawVisuals() {
+  const V = window.RBVisuals;
+  if (!V) return;
+  V.draw(askLog, ".am.ai .txt:not(.live)");
+  askLog.querySelectorAll(".am.ai .txt.live").forEach((el) => V.pending(el));
+}
 function answerHTML(text, sources) {
   const LE = window.LatexEditor;
   if (!LE) return esc(text).replace(/\n/g, "<br>");
@@ -1290,6 +1299,7 @@ function renderAsk() {
       return `<div class="am ai"><div class="who">${esc(ASK.ai)}</div><div class="txt${m.pending ? " live" : ""}">${answerHTML(m.pending ? partial(m.live) : m.content, m.sources)}</div></div>`;
     }).join("");
     if (!window.LatexEditor) askLog.querySelectorAll(".txt").forEach(math);
+    drawVisuals();
   }
   askLog.scrollTop = askLog.scrollHeight;
   renderAskCtx();
@@ -1385,6 +1395,7 @@ async function send(question, sel = ASK.sel) {
     if (!el) { renderAsk(); return; }
     const atEnd = askLog.scrollHeight - askLog.scrollTop - askLog.clientHeight < 40;
     el.innerHTML = answerHTML(partial(pending.live), null);
+    if (window.RBVisuals) window.RBVisuals.pending(el);
     if (atEnd) askLog.scrollTop = askLog.scrollHeight;
   };
   try {

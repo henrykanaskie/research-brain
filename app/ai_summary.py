@@ -1,5 +1,5 @@
 """AI summary of a paper: a thorough, structured explainer written by the active AI agent, with diagrams
-(```mermaid / ```svg blocks, drawn by static/app.js) when the agent can make them.
+(```mermaid / ```svg blocks, drawn by static/visuals.js) when the agent can make them.
 
 It is the AI's reading of the paper, kept apart from the student's own summary (which stays theirs to write
 and is what the critique checks). Stored in the library folder, not in the note's file, so a long summary with
@@ -41,7 +41,7 @@ DIAGRAMS = (
     "DIAGRAMS: include 1 to 3 diagrams where they genuinely help understanding, placed in the section they "
     "belong to: for example the method's pipeline or architecture as a flowchart, the causal chain or physical "
     "mechanism, the experimental setup, a timeline, or a chart of the main quantitative results. Write each as a "
-    "```mermaid block (flowchart, sequenceDiagram, timeline, mindmap, pie or xychart-beta; keep labels short and "
+    "```mermaid block (flowchart, sequenceDiagram, timeline, mindmap, pie, or xychart-beta for bar and line charts; keep labels short and "
     "plain, put each label in double quotes, no Markdown or math inside labels; it is shown in a narrow sidebar, "
     "so lay flowcharts out top-down (flowchart TD) with at most 4 nodes side by side) or, for a custom figure Mermaid "
     "can't draw, a ```svg block (self-contained, viewBox set, no scripts, links or external images). Every "

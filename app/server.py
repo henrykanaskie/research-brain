@@ -2491,13 +2491,19 @@ def api_chat_thread_delete(key: str):
     return {"ok": True}
 
 
-# Every chat may draw (diagrams, charts, figures; static/app.js draws them) and may remember a lasting fact
-# about you for later chats (app/memory.py about.md, shown and editable in Memory). Kept to two sentences, and
+# Every chat may draw (diagrams, charts, figures; static/visuals.js draws them) and may remember a lasting fact
+# about you for later chats (app/memory.py about.md, shown and editable in Memory). Kept short, with one tiny
+# example of each drawing (labels quoted: unquoted brackets are the usual reason a diagram doesn't draw), and
 # the memory to a short list, so neither inflates what each question sends.
 CHAT_EXTRAS = (
-    " If a diagram or chart would make the answer clearer, include a small ```mermaid block (flowchart, "
-    "sequenceDiagram, timeline, mindmap, pie or xychart-beta) or, for a custom figure, a ```svg block "
-    "(self-contained, no scripts or links). If the user tells you something lasting about themselves or their "
+    "\n\nDIAGRAMS AND CHARTS: if one would make the answer clearer, or the user asks for one, write a ```mermaid "
+    "block; the app draws it in the answer. Use flowchart TD, sequenceDiagram, timeline, mindmap, pie, or "
+    "xychart-beta for bar and line charts. Put every label in double quotes and keep it short and plain (no "
+    "Markdown or math inside). For example:\n```mermaid\nflowchart TD\n  A[\"Data (n=40)\"] -->|\"fit\"| B[\"Model\"]\n```\n"
+    "```mermaid\nxychart-beta\n  title \"Accuracy\"\n  x-axis [\"A\", \"B\"]\n  y-axis \"Percent\" 0 --> 100\n  bar [72, 85]\n```\n"
+    "For a custom figure Mermaid can't draw, use a ```svg block (self-contained, viewBox set, no scripts or "
+    "links). Code in other languages (Python, Vega, Chart.js) is shown as code, not drawn.\n\n"
+    "If the user tells you something lasting about themselves or their "
     "research that will help in later chats (their field, project, level, preferences), end the answer with "
     "<remember>one short sentence</remember>: rarely, at most one, never personal or sensitive details and "
     "nothing from private notes.")

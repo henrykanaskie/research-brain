@@ -285,108 +285,11 @@
     .replace(/\s*<remember>[\s\S]*$/i, '').replace(/\s*<(r(e(m(e(m(b(e(r)?)?)?)?)?)?)?)?$/i, '');
 
   // ---------- diagrams and figures in answers ----------
-  // ```mermaid blocks become diagrams and charts (static/vendor/mermaid.min.js, loaded the first time one shows);
-  // ```svg blocks become figures, drawn as an image so nothing in them can run. Both fit the width they're in,
-  // with Show code and Save image under them. Drawn diagrams are cached by their source, so re-showing the chat
-  // doesn't redraw them.
-  const visualCache = new Map();
-  let mermaidReady = null;
-  const darkTheme = () => document.documentElement.dataset.theme === 'dark'
-    || (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-  function loadMermaid() {
-    if (mermaidReady) return mermaidReady;
-    mermaidReady = new Promise((resolve, reject) => {
-      if (window.mermaid) { resolve(window.mermaid); return; }
-      const sc = document.createElement('script');
-      sc.src = '/static/vendor/mermaid.min.js';
-      sc.onload = () => (window.mermaid ? resolve(window.mermaid) : reject(new Error('mermaid did not load')));
-      sc.onerror = () => { mermaidReady = null; reject(new Error('mermaid did not load')); };
-      document.head.appendChild(sc);
-    });
-    return mermaidReady;
-  }
-  let mermaidSeq = 0, mermaidTheme = '';
-  async function mermaidSvg(src) {
-    const mm = await loadMermaid();
-    const theme = darkTheme() ? 'dark' : 'light';
-    if (theme !== mermaidTheme) {
-      // the app's own colours; a plain system font, which mermaid measures and draws the same (a web font it
-      // measured before it loaded cut labels short)
-      const v = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-      const ink = v('--ink'), ink2 = v('--ink-2'), sheet = v('--sheet'), ground = v('--ground'), rule = v('--rule'), machine = v('--machine');
-      const font = 'Helvetica, Arial, sans-serif';
-      mm.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', fontFamily: font,
-        themeVariables: { fontFamily: font, fontSize: '14px', darkMode: theme === 'dark', background: sheet,
-          primaryColor: ground, primaryTextColor: ink, primaryBorderColor: machine, lineColor: ink2, secondaryColor: sheet,
-          tertiaryColor: sheet, textColor: ink, mainBkg: ground, nodeBorder: machine, clusterBkg: sheet, clusterBorder: rule,
-          titleColor: ink, edgeLabelBackground: sheet, noteBkgColor: sheet, noteTextColor: ink, noteBorderColor: rule,
-          actorBkg: ground, actorBorder: machine, actorTextColor: ink, signalColor: ink2, signalTextColor: ink,
-          pie1: machine, pie2: v('--red'), pie3: v('--ochre'), pie4: v('--moss'), pie5: v('--violet'), pie6: ink2, pieStrokeColor: sheet,
-          pieTitleTextColor: ink, pieSectionTextColor: sheet, pieLegendTextColor: ink,
-          xyChart: { backgroundColor: sheet, titleColor: ink, xAxisLabelColor: ink2, yAxisLabelColor: ink2, xAxisTitleColor: ink2,
-            yAxisTitleColor: ink2, xAxisLineColor: rule, yAxisLineColor: rule, xAxisTickColor: rule, yAxisTickColor: rule,
-            plotColorPalette: [machine, v('--red'), v('--ochre'), v('--moss'), v('--violet')].join(',') } },
-        flowchart: { useMaxWidth: true, htmlLabels: false, padding: 12 }, sequence: { useMaxWidth: true }, gantt: { useMaxWidth: true },
-        xyChart: { useMaxWidth: true, height: 320 } });
-      mermaidTheme = theme;
-    }
-    // mermaid reads each label as Markdown and can't show a list or heading there: a label that starts like
-    // "1. Fit", "- check" or "# Step" came out as "Unsupported markdown: list". Escape those starts so they
-    // read as plain text; if that error still shows in the drawing, draw it again with the markers left out.
-    let { svg } = await mm.render('rb-mm-' + (++mermaidSeq), mermaidSafe(src, false));
-    if (/Unsupported markdown/i.test(svg)) ({ svg } = await mm.render('rb-mm-' + (++mermaidSeq), mermaidSafe(src, true)));
-    return svg;
-  }
-  function mermaidSafe(src, strip) {
-    const START = String.raw`(^|[\[("'|{]|\n|<br\s*/?>)([ \t]*)`;
-    const num = new RegExp(START + String.raw`(\d+)\.(?=[ \t])`, 'g');
-    const mark = new RegExp(START + String.raw`([-*+#>])(?=[ \t])`, 'g');
-    return String(src).split('\n').map((line, i) => {
-      if (i === 0 || /^\s*(%%|classDef|style|linkStyle|click|class\s)/.test(line)) return line;  // the diagram type and styling lines
-      // a no-break space after the marker: looks the same, but Markdown no longer reads it as a list or heading
-      return strip ? line.replace(num, '$1$2$3)').replace(mark, '$1$2')
-        : line.replace(new RegExp(num.source + String.raw`[ \t]`, 'g'), '$1$2$3.\u00a0')
-          .replace(new RegExp(START + String.raw`([-*+])[ \t]`, 'g'), '$1$2$3\u00a0')
-          .replace(new RegExp(START + String.raw`([#>])(?=[ \t])`, 'g'), '$1$2\\$3');  // mermaid's own syntax uses # and >: escaped
-    }).join('\n');
-  }
-  function visualBox(kind, src, makeFigure) {
-    const fig = h('div', { class: 'md-visual-fig' });
-    const code = h('pre', { class: 'md-visual-code', hidden: true }, h('code', { text: src }));
-    const show = h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Show code',
-      onclick: () => { code.hidden = !code.hidden; show.textContent = code.hidden ? 'Show code' : 'Hide code'; } });
-    const save = h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Save image', onclick: () => {
-      const svg = fig.querySelector('svg') ? fig.querySelector('svg').outerHTML : kind === 'svg' ? src : '';
-      if (!svg) return;
-      const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-      const a = h('a', { href: url, download: kind === 'svg' ? 'figure.svg' : 'diagram.svg' });
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
-    } });
-    const box = h('div', { class: 'md-visual md-visual-' + kind }, fig, h('div', { class: 'md-visual-tools' }, show, save), code);
-    makeFigure(fig, code, show);
-    return box;
-  }
-  function drawVisuals(root) {
-    for (const code of root.querySelectorAll('.msg-body:not(.chat-live) pre > code.language-mermaid, .msg-body:not(.chat-live) pre > code.language-svg, .ai-sum-body pre > code.language-mermaid, .ai-sum-body pre > code.language-svg')) {
-      const pre = code.parentElement, src = code.textContent.trim();
-      if (!src) continue;
-      if (code.classList.contains('language-svg')) {
-        if (!/^(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(src)) continue;
-        pre.replaceWith(visualBox('svg', src, (fig) => {
-          fig.appendChild(h('img', { src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(src), alt: 'Figure' }));
-        }));
-        continue;
-      }
-      const key = (darkTheme() ? 'd' : 'l') + src;
-      pre.replaceWith(visualBox('mermaid', src, (fig, codeEl, show) => {
-        const fail = (e) => { fig.replaceChildren(h('div', { class: 'md-visual-err', text: 'Couldn’t draw this diagram' + (e && e.message ? `: ${truncate(String(e.message).split('\n')[0], 120)}` : '') })); codeEl.hidden = false; show.textContent = 'Hide code'; };
-        if (visualCache.has(key)) { const v = visualCache.get(key); if (v.err) fail(v.err); else fig.innerHTML = v.svg; return; }
-        fig.appendChild(h('div', { class: 'md-visual-wait', text: 'Drawing the diagram' }));
-        mermaidSvg(src).then((svg) => { visualCache.set(key, { svg }); if (fig.isConnected || true) fig.innerHTML = svg; })
-          .catch((e) => { visualCache.set(key, { err: e }); fail(e); });
-      }));
-    }
-  }
+  // ```mermaid and ```svg blocks in finished answers and AI summaries are drawn by static/visuals.js (shared
+  // with the PDF viewer); while an answer is still being written they show as a placeholder (drawLater).
+  const VISUAL_IN = '.msg-body:not(.chat-live), .ai-sum-body';
+  function drawVisuals(root) { if (window.RBVisuals) window.RBVisuals.draw(root, VISUAL_IN); }
+  function drawLater(root) { if (window.RBVisuals) window.RBVisuals.pending(root); }
 
   // ---------- wide equations and tables fit the chat's width ----------
   // A display equation or table wider than the chat is scaled down to fit (equations to 55%, tables to 75% of
@@ -6076,6 +5979,7 @@
     const keepTop = chatLog.scrollTop;
     chatLog.replaceChildren(...kids);
     drawVisuals(chatLog);
+    for (const lv of $$('.chat-live', chatLog)) drawLater(lv);
     linkMentions(chatLog);
     fitWide(chatLog);
     chatLog.scrollTop = chatFollow ? chatLog.scrollHeight : keepTop;  // scrolled up to read: stay there
@@ -6154,6 +6058,7 @@
       const el = $$('.chat-live', chatLog).pop();
       if (!el) { renderChat(); return; }
       el.innerHTML = partialMD(noMemoryTag(text));
+      drawLater(el);
       if (chatFollow) chatLog.scrollTop = chatLog.scrollHeight;
     });
     try {
