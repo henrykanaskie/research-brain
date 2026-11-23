@@ -508,6 +508,10 @@ Used by the Chrome extension's annotate mode (`extension/annotate.js`). No Claud
   IPv4-mapped forms are refused with 403), at most 3 redirects (502 beyond), at most 100 MB (`RB_URL_IMPORT_MAX_MB`;
   413), and the body must start with `%PDF` (415). Then it dedupes (DOI, arXiv id from the URL or text, S2 id) and
   enriches from Semantic Scholar like `/api/import/pdf`; a known paper without a PDF gets this one attached.
+  A OneDrive or SharePoint link shared with "Anyone with the link" is fetched from its download address
+  (`?download=1`; personal OneDrive through `api.onedrive.com/v1.0/shares/u!<link>/root/content`). A link to a
+  file in your own OneDrive needs your sign-in, so it gets 422 with a message saying to drop it on research brain's
+  own window, which downloads it with your OneDrive sign-in and adds it with `/api/import/pdf` (`app/cloudfetch.py`).
 
 ## ADDED: Library, profiles and storage
 Logic in `app/paths.py`, `app/profiles.py`, `app/migrate.py`, `app/acquire.py`, `app/vaultzip.py`; endpoints in

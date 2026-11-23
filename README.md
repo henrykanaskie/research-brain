@@ -346,6 +346,16 @@ same way.
 </details>
 
 <details>
+<summary>Papers from OneDrive on the web</summary>
+
+Drag a PDF from OneDrive (or SharePoint) in your browser onto research brain's window. OneDrive hands over only a
+link, which opens only for you, so the first time research brain opens a small window to sign in to OneDrive
+(your school's or company's login). After that it stays signed in and each paper you drag in is added at once.
+This works in research brain's own window on a Mac or Windows; in a browser tab, download the PDF and drop that.
+A link shared with *Anyone with the link* works everywhere, with no sign-in.
+</details>
+
+<details>
 <summary>When the disk is nearly full</summary>
 
 research brain always leaves 300 MB free: it refuses to add a PDF that would go past that, and says how much space

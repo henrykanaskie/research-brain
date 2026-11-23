@@ -606,6 +606,7 @@ class _Page:
         self.win = None
         self.chrome = _Chrome()
         self.broken = threading.Event()  # WebView2 couldn't start (pywebview only logs it)
+        self.cloud = None         # downloads dropped OneDrive links (app/cloudfetch.py)
 
 
 def _on_message(page: _Page, msg) -> None:
@@ -633,6 +634,8 @@ def _on_message(page: _Page, msg) -> None:
             print(f"[research_brain] voice typing: {e!r}", file=sys.stderr)
         except Exception as e:
             print(f"[research_brain] voice typing: {e!r}", file=sys.stderr)
+    if isinstance(msg.get("cloud"), dict) and page.cloud is not None:  # a OneDrive link dropped (app/cloudfetch.py)
+        page.cloud.handle(str(msg["cloud"].get("id") or ""), str(msg["cloud"].get("url") or ""))
     if msg.get("close") and page.win is not None:  # the page's dialog said close: now it may
         page.may_close = True
         win = page.win
@@ -654,6 +657,8 @@ def _patch(page: _Page) -> None:
             data = json.loads(args.get_WebMessageAsJson())
         except Exception:
             data = None
+        if isinstance(data, dict) and "rb" in data and not _ours(self):
+            return  # the OneDrive sign-in window (app/cloudfetch.py) runs Microsoft's pages: nothing of theirs is ours
         if isinstance(data, dict) and "rb" in data:
             try:
                 if isinstance(data["rb"], dict) and data["rb"].get("dropped"):
@@ -666,6 +671,8 @@ def _patch(page: _Page) -> None:
         return notify(self, sender, args)
 
     def on_webview_ready(self, sender, args):
+        if not _ours(self):  # the OneDrive sign-in window: an ordinary window, none of the main one's setup
+            return ready(self, sender, args)
         if args.IsSuccess:
             try:  # before pywebview's first navigation, so the loading page can be dragged too
                 _prepare(sender.CoreWebView2, cls._rb_page)
@@ -691,6 +698,13 @@ def _patch(page: _Page) -> None:
     cls.on_script_notify = on_script_notify
     cls.on_webview_ready = on_webview_ready
     cls._rb_patched = True
+
+
+def _ours(browser) -> bool:
+    """The main window's browser (not the OneDrive sign-in window's)."""
+    page = getattr(type(browser), "_rb_page", None)
+    win = getattr(browser, "pywebview_window", None)
+    return page is None or page.win is None or win is None or win is page.win
 
 
 def _prepare(core, page: _Page) -> None:
@@ -747,6 +761,15 @@ def _tune(core) -> None:
 
 
 # ---------------------------------------------------------------- run
+def _cloud(url: str, win):
+    """Dropped OneDrive links, downloaded with your sign-in (app/cloudfetch.py); answers go to the page."""
+    from . import cloudfetch
+
+    def reply(msg: dict) -> None:
+        win.evaluate_js(f"window.__rbCloud && window.__rbCloud({json.dumps(msg)})")
+    return cloudfetch.Fetcher(url, reply)
+
+
 def _work_area() -> tuple[int, int, int, int] | None:
     """The main screen without the taskbar (width, height, left, top), in logical (96 dpi) pixels, as pywebview
     sizes and places windows."""
@@ -898,6 +921,7 @@ def run(url: str, start) -> int | None:
                                 x=at[0] if at else None, y=at[1] if at else None,
                                 min_size=least, background_color="#EEEFEB", text_select=True)
     page.win = win
+    page.cloud = _cloud(url, win)
     if mode == "custom":
         # before the window is shown (pywebview runs before_show on the UI thread), so it never has a caption
         win.events.before_show += lambda: _hook(page.chrome, win)

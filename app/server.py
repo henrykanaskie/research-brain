@@ -5081,7 +5081,9 @@ def api_memory_delete(entry_id: str):
 #        downloads a PDF server-side (app/urlfetch.py: http(s) only, public addresses only, <= 3 redirects,
 #        <= 100 MB, must start with %PDF), then dedupes and enriches like /api/import/pdf. If the page's paper
 #        is already in the library with a PDF, nothing is downloaded ("existing": true).
-from . import urlfetch  # noqa: E402  (kept with its endpoints)
+#        A OneDrive/SharePoint "Anyone with the link" share is fetched from its download address; a link to
+#        your own OneDrive file gets a 422 saying to drop it on the app's window (app/cloudfetch.py).
+from . import cloudfetch, urlfetch  # noqa: E402  (kept with its endpoints)
 
 
 class ImportUrlIn(BaseModel):
@@ -5168,9 +5170,13 @@ def api_import_url(body: ImportUrlIn):
     have = _match_url(url)
     if have and have["has_pdf"]:
         return _viewer_out(have["id"], existing=True, duplicate=True)
-    try:
-        tmp, final_url = urlfetch.download_pdf(url)
+    try:  # a OneDrive or SharePoint link shared with "Anyone with the link": its download address (app/cloudfetch.py)
+        tmp, final_url = urlfetch.download_pdf(cloudfetch.anonymous_url(url) or url)
     except urlfetch.FetchError as e:
+        if cloudfetch.is_cloud(url):  # your own OneDrive file: only a signed-in window can download it
+            raise HTTPException(422, "OneDrive only gives this file to someone signed in. Drop it on research "
+                                     "brain's own window (it signs you in to OneDrive once), or Download it in "
+                                     "OneDrive and drop the PDF here.")
         raise HTTPException(e.status, str(e))
     same = _same_file(tmp)
     if same:

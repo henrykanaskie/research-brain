@@ -265,5 +265,25 @@
     catch { /* not the Windows window */ }
   }
   window.__rbDropped = droppedReply;  // the Mac window answers through this (app/macwindow.py)
-  window.__rbLive = { get source() { return es; }, flush, native: post, get app() { return appKind; }, droppedPaths };
+  // A OneDrive link dropped on the page: research brain's own window downloads the PDF with your OneDrive sign-in
+  // and adds it (app/cloudfetch.py). Resolves to the paper; rejects with what went wrong. onSignin(): the sign-in
+  // window opened. Only in the Mac and Windows windows (cloudFetch is missing in a browser).
+  const cloudWaits = new Map();
+  let cloudSeq = 0;
+  function cloudFetch(url, onSignin) {
+    const id = `c${Date.now()}-${++cloudSeq}`;
+    return new Promise((resolve, reject) => {
+      cloudWaits.set(id, { resolve, reject, onSignin });
+      if (!post({ cloud: { id, url } })) { cloudWaits.delete(id); resolve(null); }
+    });
+  }
+  window.__rbCloud = (m) => {
+    const w = m && cloudWaits.get(m.cloud);
+    if (!w) return;
+    if (m.signin) { if (w.onSignin) w.onSignin(); return; }
+    cloudWaits.delete(m.cloud);
+    if (m.error) w.reject(new Error(m.error)); else w.resolve(m.note || null);
+  };
+  window.__rbLive = { get source() { return es; }, flush, native: post, get app() { return appKind; }, droppedPaths,
+    ...(appKind === 'mac' || appKind === 'win' ? { cloudFetch } : {}) };
 })();

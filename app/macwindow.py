@@ -94,6 +94,7 @@ class _Header:
         self.unsaved = False      # the page has edits not yet on disk (static/app.js tellWindow)
         self.may_close = False    # the page said close (after its own "Save before closing?" dialog)
         self.win = None
+        self.cloud = None         # downloads dropped OneDrive links (app/cloudfetch.py)
 
 
 def _titlebar(nsw) -> None:
@@ -203,6 +204,8 @@ def _on_message(header: _Header, body: str) -> None:
         print(f"[research_brain] page: {str(msg['log'])[:300]}", file=sys.stderr)
     if msg.get("dropped"):  # files or folders dropped on the page (static/live.js droppedPaths): where they are
         _dropped(header, str(msg["dropped"])[:64], msg.get("names"))
+    if isinstance(msg.get("cloud"), dict) and header.cloud is not None:  # a OneDrive link dropped (app/cloudfetch.py)
+        header.cloud.handle(str(msg["cloud"].get("id") or ""), str(msg["cloud"].get("url") or ""))
     if "dictate" in msg:  # the chat's mic button (static/app.js): macOS dictation into the focused field
         _dictate(bool(msg["dictate"]))
     if "unsaved" in msg:
@@ -369,6 +372,9 @@ def run(url: str, start) -> int:
     closed = threading.Event()
     win.events.closed += closed.set
     header.win = win
+    from . import cloudfetch
+    header.cloud = cloudfetch.Fetcher(url, lambda m: win.evaluate_js(
+        f"window.__rbCloud && window.__rbCloud({json.dumps(m)})"))
 
     def closing():
         """Closing the window (or Quit) with edits not yet saved: stay open, and let the page ask, with its own

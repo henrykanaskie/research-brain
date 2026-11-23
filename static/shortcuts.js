@@ -152,7 +152,7 @@
   reg({ id: 'library.newNote', title: 'New note', group: 'Library', keys: ['N', 'G then N'], description: 'Write your own idea or synthesis.',
     aliases: ['write', 'create', 'idea', 'synthesis', 'blank note'], run: () => rb.newNote() });
   reg({ id: 'library.importPdf', title: 'Import a PDF…', group: 'Library', keys: 'Mod+O', allowInInput: true,
-    description: 'Pick a PDF from disk. You can also drop one anywhere on the window.', aliases: ['upload', 'open file', 'add pdf', 'drop'],
+    description: 'Pick a PDF from disk. You can also drop one anywhere on the window, or a link to one: a paper dragged from OneDrive on the web too.', aliases: ['upload', 'open file', 'add pdf', 'drop'],
     run: () => { rb.closeMenus(); rb.pickPdf(); } });
   reg({ id: 'library.importNotes', title: 'Import notes…', group: 'Library', description: 'Notes from Obsidian, Notion, Word, Google Docs or web pages, or handwritten pages kept as they are.',
     aliases: ['import notes', 'obsidian', 'notion', 'docx', 'word', 'markdown', 'handwritten', 'scan', 'handwriting'], when: () => !!window.__rbNoteImport, run: () => window.__rbNoteImport.open() });
@@ -341,7 +341,7 @@
 
   // ====================================================================== first-run tour (coach marks)
   const TOUR = [
-    { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere. Already keep PDFs in folders (OneDrive too)? Add folders of papers links them where they are, and each folder becomes a region.', keys: ['library.addById', 'import.linkFolder'] },
+    { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere, or drag one in from OneDrive on the web (the first time, research brain asks you to sign in to OneDrive). Already keep PDFs in folders (OneDrive too)? Add folders of papers links them where they are, and each folder becomes a region.', keys: ['library.addById', 'import.linkFolder'] },
     { sel: '.search', title: 'Search', text: 'Matching nodes light up on the graph. Enter opens the first match.', keys: ['nav.search'] },
     { sel: '#legend', fallback: '#graph', title: 'Reading the graph', text: 'Dots are papers, rings are notes, red points are fragments. Size grows slightly with what you write and link. Red lines are your links; dashed lines are similar text.', keys: ['graph.fit'] },
     { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a node to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes. Drag a dot to place it; linked dots follow.', keys: ['note.summary', 'note.critique'] },

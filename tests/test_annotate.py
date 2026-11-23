@@ -181,6 +181,22 @@ def test_import_url_downloads_and_dedupes(env, web):
     assert len([x for x in server.store.all() if x["type"] == "paper"]) == 1
 
 
+def test_import_url_onedrive_share_link_and_private_file(env, web):
+    """A SharePoint link shared with Anyone downloads from its download address (?download=1); a link to your own
+    OneDrive file, which needs a sign-in, says to drop it on the app's window (app/cloudfetch.py)."""
+    c, _ = env
+    share = "https://contoso-my.sharepoint.com/:b:/g/personal/ann_contoso_edu/EabcDEF?e=x1Y2"
+    web["routes"][share + "&download=1"] = FakeResp(200, _pdf("Sheath physics in Hall thrusters"))
+    r = c.post("/api/import/url", json={"url": share})
+    assert r.status_code == 201, r.text
+    assert r.json()["title"] == "Sheath physics in Hall thrusters" and web["calls"] == [share + "&download=1"]
+    mine = ("https://contoso-my.sharepoint.com/personal/ann_contoso_edu/_layouts/15/onedrive.aspx"
+            "?id=%2Fpersonal%2Fann_contoso_edu%2FDocuments%2FPapers%2Fbohm.pdf")
+    web["routes"][mine] = FakeResp(200, b"<html>Sign in to your account</html>", {"Content-Type": "text/html"})
+    r = c.post("/api/import/url", json={"url": mine})
+    assert r.status_code == 422 and "signed in" in r.json()["detail"] and "own window" in r.json()["detail"]
+
+
 def test_import_url_attaches_pdf_to_known_paper_or_makes_one(env, web):
     """A PDF URL for a paper already in the library (without a PDF) attaches to it; a plain PDF with no
     identifiers becomes a new paper titled from the PDF, keeping the URL."""

@@ -6484,14 +6484,18 @@
         const note = await upload('/api/import/pdf', f, (p) => t.progress(p));
         last = note;
         if (section) { try { await intoSection(note, section); } catch { /* added either way */ } }
-        if (note.duplicate) toast(note.same_file ? `You already have this exact file: “${truncate(note.title, 60)}”. No second copy was made.` : `Already in your library: “${truncate(note.title, 60)}”`, 'info');
-        else toast(`Added “${truncate(note.title, 70)}”`, 'ok');
-        if (note.downloads_copy) offerTrashDownload(note.downloads_copy);
+        addedToast(note);
       } catch (e) {
         toastErr(e, `Could not add ${f.name}`);
       } finally { t.done(); }
     }
     if (last) { await refreshGraph(); openOrOffer(last, seq0); }
+  }
+
+  function addedToast(note) {
+    if (note.duplicate) toast(note.same_file ? `You already have this exact file: “${truncate(note.title, 60)}”. No second copy was made.` : `Already in your library: “${truncate(note.title, 60)}”`, 'info');
+    else toast(`Added “${truncate(note.title, 70)}”`, 'ok');
+    if (note.downloads_copy) offerTrashDownload(note.downloads_copy);
   }
 
   /** The file just added is still in Downloads (same name, same bytes): offer to send that copy to the Trash,
@@ -6958,16 +6962,26 @@
       description: 'Looks the paper up on Semantic Scholar and adds it, with its abstract.', run: addById });
   }
 
-  // drag & drop PDFs
-  let dragDepth = 0;
-  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
-  window.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; $('#drop-overlay').hidden = false; });
-  window.addEventListener('dragover', (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
-  window.addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('#drop-overlay').hidden = true; });
+  // drag & drop PDFs, and links to PDFs (a paper dragged from OneDrive on the web is only a link: dropLink)
+  let dragDepth = 0, dragInside = false;
+  const types = (e) => Array.from((e.dataTransfer && e.dataTransfer.types) || []);
+  const hasFiles = (e) => types(e).includes('Files');
+  const editable = (t) => !!(t && t.closest && t.closest('input, textarea, [contenteditable=""], [contenteditable="true"]'));
+  // a link from another app or browser tab (not one dragged inside this page, and not into a text field)
+  const hasLink = (e) => !dragInside && !hasFiles(e) && !editable(e.target) && types(e).some((t) => /^(text\/uri-list|downloadurl)$/i.test(t));
+  const dropping = (e) => hasFiles(e) || hasLink(e);
+  window.addEventListener('dragstart', () => { dragInside = true; });
+  window.addEventListener('dragend', () => { dragInside = false; });
+  window.addEventListener('dragenter', (e) => { if (!dropping(e)) return; e.preventDefault(); dragDepth++; $('#drop-overlay').hidden = false; });
+  window.addEventListener('dragover', (e) => { if (!dropping(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  window.addEventListener('dragleave', (e) => { if (!dropping(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('#drop-overlay').hidden = true; });
   window.addEventListener('drop', (e) => {
-    if (!hasFiles(e)) return;
+    const link = hasLink(e);
+    dragInside = false;
+    if (!hasFiles(e) && !link) return;
     e.preventDefault(); dragDepth = 0; $('#drop-overlay').hidden = true;
     const dt = e.dataTransfer;
+    if (!hasFiles(e)) { const url = droppedUrl(dt); if (url) dropLink(url); return; }
     const files = Array.from(dt.files || []);
     // folders come as entries (read now: the drop's data is gone once this handler returns)
     const entries = Array.from(dt.items || []).map((it) => (it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null));
@@ -6977,6 +6991,44 @@
     const paths = live && live.droppedPaths ? live.droppedPaths(dt.files, dirs.map((d) => d.name)) : Promise.resolve(null);
     droppedFolders(dirs, files, paths);
   });
+
+  /** The address a dragged link carries: a browser's file drag (DownloadURL, "type:name:url"), a link, or a
+   *  page address dragged as text. */
+  function droppedUrl(dt) {
+    const web = (u) => (/^https?:\/\/\S+$/i.test((u || '').trim()) ? u.trim() : '');
+    const dl = (dt.getData('DownloadURL') || '').match(/(https?:\/\/\S+)$/i);
+    if (dl) return dl[1];
+    const list = (dt.getData('text/uri-list') || '').split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith('#'));
+    if (web(list)) return web(list);
+    if (web(dt.getData('text/plain'))) return web(dt.getData('text/plain'));
+    const a = (dt.getData('text/html') || '').match(/href="(https?:[^"]+)"/i);
+    return a ? web(a[1].replace(/&amp;/g, '&')) : '';
+  }
+
+  /** A link dropped on the window: the PDF it points at, added like a dropped file. A file in your OneDrive (or
+   *  SharePoint) opens only for you, signed in: research brain's own window downloads it with your sign-in,
+   *  asking for it the first time (app/cloudfetch.py); anything else the server downloads (/api/import/url). */
+  async function dropLink(url) {
+    const live = window.__rbLive;
+    const work = /^https:\/\/[^/?#]+\.sharepoint(-mil)?\.(com|us|cn|de)(\/|$)/i.test(url);
+    const share = work && /^https:\/\/[^/]+\/:[a-z]:\/[a-z]\//i.test(url);
+    const seq0 = openSeq;
+    const t = task(work ? 'From OneDrive' : truncate(url.replace(/^https?:\/\//, ''), 40));
+    t.label('Downloading');
+    try {
+      let note = null;
+      if (share) { try { note = await api('POST', '/api/import/url', { url }); } catch { /* not shared with anyone: sign in */ } }
+      if (!note && work && live && live.cloudFetch) {
+        note = await live.cloudFetch(url, () => t.label('Sign in to OneDrive in the window that opened'));
+      }
+      if (!note) note = await api('POST', '/api/import/url', { url });
+      addedToast(note);
+      await refreshGraph();
+      openOrOffer(note, seq0);
+    } catch (err) {
+      toastErr(err, work ? 'Could not add it from OneDrive' : 'Could not add that link');
+    } finally { t.done(); }
+  }
 
   /** Folders dropped on the window. In research brain's own window (Mac or Windows) it knows where they are, so
    *  they're added like Add folders of papers: kept where they are, each folder a topic. In a browser, which

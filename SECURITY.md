@@ -410,7 +410,15 @@ private items. Anyone who can run programs as you can read the vault (see below)
   **Suggest ideas** (idea cards, `app/cards.py`) sends only the paper's own text and abstract, never your
   notes, summaries, cards or questions, and never a paper marked private (logged as `card-extraction`).
 - **Hugging Face**, once: the embedding model download (`sentence-transformers`), unless `RB_EMBEDDER=tfidf`.
-- **The URL you import**, when you use "Annotate this PDF" / import by URL.
+- **The URL you import**, when you use "Annotate this PDF" / import by URL, or drop a link on the window.
+- **OneDrive or SharePoint, in research brain's own window only**, when you drop a link to a file in your
+  OneDrive (`app/cloudfetch.py`). The window opens that OneDrive site in a separate web view (hidden unless it has
+  to show you Microsoft's sign-in, or your organization's) and downloads only the dropped file from it, with a
+  `fetch` on that site, so it carries the site's own cookies. Your password and second step go to Microsoft's and
+  your organization's pages, never to research brain; the sign-in is kept, like a browser's, with the window's
+  other data in `<data dir>/window`. Messages from that web view to research brain are ignored (Windows), and it
+  gets no message channel at all (Mac). The bytes must start with `%PDF` and are at most 300 MB, then go to
+  `/api/import/pdf` like a dropped file.
 - Nothing else. The interface loads no CDN, font or analytics URL (`tests/test_offline.py` and the
   browser tests fail if it tries).
 
