@@ -649,21 +649,6 @@ def _patch(page: _Page) -> None:
     if getattr(cls, "_rb_patched", False):
         return
     notify, ready = cls.on_script_notify, cls.on_webview_ready
-    init = cls.__init__
-
-    def __init__(self, *a, **k):
-        init(self, *a, **k)
-        # more for WebView2 (pywebview sets its own, so WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS isn't heard): on the window
-        # started again, no graphics card (run); in tests, a port to ask the page what it's doing
-        more = [x for x in (os.environ.get("RB_WV2_ARGS", ""),
-                            f"--remote-debugging-port={int(os.environ['RB_WV2_DEBUG_PORT'])}" if os.environ.get("RB_WV2_DEBUG_PORT", "").isdigit() else "") if x]
-        if more:
-            try:
-                props = self.webview.CreationProperties
-                props.AdditionalBrowserArguments = (props.AdditionalBrowserArguments or "") + " " + " ".join(more)
-            except Exception as e:
-                print(f"[research_brain] WebView2 arguments: {e!r}", file=sys.stderr)
-
     def on_script_notify(self, sender, args):
         try:
             data = json.loads(args.get_WebMessageAsJson())
@@ -703,7 +688,6 @@ def _patch(page: _Page) -> None:
         except Exception as e:  # its looks and the mic are extras; never lose the window over them
             print(f"[research_brain] window setup: {e!r}", file=sys.stderr)
 
-    cls.__init__ = __init__
     cls.on_script_notify = on_script_notify
     cls.on_webview_ready = on_webview_ready
     cls._rb_patched = True
@@ -903,6 +887,8 @@ def run(url: str, start) -> int | None:
     _identity()
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+    if os.environ.get("RB_WV2_DEBUG_PORT", "").isdigit():  # tests (tests/windows_speed.py): ask the page what it's doing
+        webview.settings["REMOTE_DEBUGGING_PORT"] = int(os.environ["RB_WV2_DEBUG_PORT"])
     mode = _titlebar_mode(_webview2_version(), os.environ.get("RB_WIN_TITLEBAR", ""))
     loading = LOADING
     if mode == "custom":  # no title bar yet: the loading page drags the window
@@ -1005,9 +991,7 @@ def run(url: str, start) -> int | None:
         print("[research_brain] WebView2 didn't start: trying once more", file=sys.stderr)
         try:
             tries = str(int(os.environ.get("RB_WV2_RETRY") or 0) + 1)
-            # without the graphics card the second time: where WebView2 didn't come up (on a VM, a PC busy with new files)
-            # its main process had started and nothing else had
-            env = {**os.environ, "RB_WV2_RETRY": tries, "RB_WV2_ARGS": "--disable-gpu"}
+            env = {**os.environ, "RB_WV2_RETRY": tries}
             subprocess.Popen([sys.executable, "-m", f"{__package__ or 'app'}.cli", *sys.argv[1:]], env=env,
                              close_fds=True, creationflags=0x00000200 | 0x08000000)
             os._exit(0)
