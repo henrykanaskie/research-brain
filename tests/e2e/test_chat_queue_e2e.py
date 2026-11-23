@@ -89,4 +89,5 @@ def test_a_failed_answer_puts_the_queue_back_in_the_box(ctx, server):
     page.wait_for_function("!window.__rb.S.chatBusy")
     expect(page.locator("#chat-log .msg.user.queued")).to_have_count(0)
     expect(page.locator("#chat-input")).to_have_value("Queued behind it")
-    assert page.evaluate("window.__rb.S.chat.filter(m => m.role === 'user').length") == 1
+    asked = page.evaluate("window.__rb.S.chat.filter(m => m.role === 'user').map(m => m.content)")
+    assert asked[-1] == "This one fails" and "Queued behind it" not in asked  # (the thread before it is the last test's)
