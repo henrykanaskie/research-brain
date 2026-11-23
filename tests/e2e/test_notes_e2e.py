@@ -128,7 +128,7 @@ def test_paste_google_docs_and_an_image(ctx, server):
     page.locator("#panel .section[data-sec='Notes'] .seg button", has_text="Preview").click()
     img = page.locator("#panel .preview.md img")
     expect(img).to_have_count(1)
-    page.wait_for_function("document.querySelector('#panel .preview.md img').naturalWidth > 0")
+    page.wait_for_function("document.querySelector('#panel .preview.md img')?.naturalWidth > 0")
 
 
 def _png() -> bytes:
@@ -168,5 +168,5 @@ def test_import_dialog_notes_and_handwriting(ctx, server, tmp_path):
     expect(dlg.locator(".ni-tip").first).to_contain_text("Written out as text")
     dlg.locator(".ni-list button", has_text="Notebook page").click()
     expect(page.locator("#panel .scan-page img")).to_have_count(1)
-    page.wait_for_function("document.querySelector('#panel .scan-page img').naturalWidth > 0")
+    page.wait_for_function("document.querySelector('#panel .scan-page img')?.naturalWidth > 0")
     expect(page.locator("#panel .preview.md")).to_contain_text("nested point")
