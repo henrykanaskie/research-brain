@@ -649,6 +649,8 @@ kbd { font: 500 11px/16px var(--sans); border-radius: 2px; border-color: var(--r
 .reopen-tab { writing-mode: horizontal-tb; top: calc(var(--topbar-h) + 14px); right: 16px; border: 1px solid var(--rule);
   padding: 5px 10px; font: 12px var(--sans); font-stretch: var(--narrow); max-width: 260px; background: var(--ground); }
 .reopen-tab::before { content: "Reopen  "; color: var(--ink-3); white-space: pre; }
+/* with the chat open at the right edge, the tab sits just left of it (the chat would cover it) */
+body.chat-open .reopen-tab { right: calc(var(--chat-w) + 16px); }
 
 .float-tooltip-kap { border-radius: 0 !important; box-shadow: 0 10px 30px -18px color-mix(in srgb, var(--ink) 40%, transparent); }
 .modal-title, .explain-title, .chat-title { font-family: var(--display); font-weight: 500; font-size: 20px; font-variation-settings: "opsz" 24; }

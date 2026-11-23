@@ -6448,12 +6448,14 @@
       $('#chat-form') && $('#chat-form').addEventListener('submit', () => { if (on) stop(); });
     }
   }
-  $('#btn-chat-close').addEventListener('click', closeChat);  $('#btn-chat-close').addEventListener('click', closeChat);
-  // Click off the chat (the map, the note panel) and it closes. A drag (panning the map, selecting text that
-  // started in the chat) doesn't count, nor does the top bar (its menus and search work alongside the chat), nor
-  // the dialogs, menus and messages the chat itself opens.
+  $('#btn-chat-close').addEventListener('click', closeChat);
+  // Click off the chat onto the map and it closes. The other side windows next to it (the note panel, "Why are
+  // these connected?", the note's reopen tab) are not "off": each closes only with its own X or Esc, so closing
+  // or using one never closes the chat beside it. A drag (panning the map, selecting text that started in the
+  // chat) doesn't count, nor does the top bar (its menus and search work alongside the chat), nor the dialogs,
+  // menus and messages the chat itself opens.
   {
-    const KEEP = '#chat, #topbar, #btn-chat, #modal, .modal, [role="dialog"], [role="menu"], .menu, .node-menu, .toast, #toasts, .mm, .rbk-ov, .rbk-sheet, .fp-sheet';
+    const KEEP = '#chat, #panel, #explain, .reopen-tab, #topbar, #btn-chat, #modal, .modal, [role="dialog"], [role="menu"], .menu, .node-menu, .toast, #toasts, .mm, .rbk-ov, .rbk-sheet, .fp-sheet';
     let down = null;
     document.addEventListener('pointerdown', (e) => {
       down = $('#chat').hidden || e.button !== 0 || (e.target.closest && e.target.closest(KEEP)) ? null : { x: e.clientX, y: e.clientY };
