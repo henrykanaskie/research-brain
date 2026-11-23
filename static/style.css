@@ -1279,6 +1279,11 @@ html.win-inactive .win-caption button:not(:hover) { opacity: .45; }
 .md-visual-tools .btn { font-size: 12px; color: var(--ink-2); height: auto; min-height: 0; padding: 2px 6px; }
 .md-visual-code { margin: 4px 0 6px; font-size: 12px; max-height: 240px; overflow: auto; }
 .md-visual-err, .md-visual-wait { font-size: 13px; color: var(--ink-2); padding: 10px 0; }
+.msg.user.queued { opacity: .62; }
+.msg.user.queued .msg-body { border-left-style: dashed; }
+.chat-v2 .msg.user.queued .msg-body { border: 1px dashed var(--rule); background: transparent; }
+.msg-queued { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 0 0 4px; font-size: 12px; color: var(--ink-2); }
+.msg-queued .btn-sm { padding: 0 4px; font-size: 12px; }
 .msg-remembered { margin-top: 10px; font-size: 12.5px; color: var(--ink-2); }
 .msg-remembered .lbl { font-weight: 600; }
 .msg-remembered .btn { font-size: 12px; height: auto; min-height: 0; padding: 0 4px; }
@@ -1409,7 +1414,7 @@ html.win-inactive .win-caption button:not(:hover) { opacity: .45; }
 .chat-v2 .cmp-right .chat-mic, .chat-v2 .cmp-right .chat-voice { width: 32px; height: 32px; border-radius: 8px; }
 .chat-v2 .cmp-right .chat-mic:hover, .chat-v2 .cmp-right .chat-voice:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
 .chat-v2 .cmp-send { width: 34px !important; height: 34px !important; min-width: 0; padding: 0 !important; border-radius: 50% !important; display: inline-flex; align-items: center; justify-content: center; margin-left: 2px; }
-.chat-v2 .cmp-send.busy { opacity: .55; }
+.chat-v2 .cmp-send.busy { opacity: .75; cursor: pointer; }  /* still answering: Enter queues the next message */
 .chat-v2 .rs-mode { margin: 0 0 6px; }
 .chat-v2 .rs-mode:empty, .chat-v2 .rs-mode:not(:has(> :not([hidden]))) { display: none; }
 .chat-v2 .voice-bar { padding: 2px 0 10px; }

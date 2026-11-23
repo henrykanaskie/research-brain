@@ -176,6 +176,7 @@
     } finally {
       S.chatBusy = false;
       rb.renderChat();
+      if (rb.chatDone) rb.chatDone();  // send what was queued meanwhile (static/app.js)
     }
   }
 

@@ -77,6 +77,7 @@
     chatRelated: false,     // with chatPaper: also draw on the most similar papers
     chatThreads: {},        // scope key ('' = library, else paper id) -> conversation, so each paper keeps its own
     chatBusy: false,
+    chatQueue: [],  // what you typed while the AI was answering: sent in turn, once it finishes (chatDone)
     quoteIdx: new Map(),    // fragment id -> quote (for search)
     crawled: new Set(),     // parent ids whose fragments we've indexed
     noteMeta: new Map(),    // id -> {has_pdf, type, title} cache for parents
@@ -6077,6 +6078,12 @@
             h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Memory', onclick: () => { const mm = window.__rbMemory; if (mm && mm.open) mm.open(); } })) : null)));
       }
     });
+    S.chatQueue.forEach((q, i) => kids.push(h('div', { class: 'msg user queued' },
+      h('div', { class: 'msg-queued' }, h('span', { class: 'lbl', text: i ? `Queued (${i + 1})` : `Queued: sends when ${ai()} finishes` }),
+        h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Edit', title: 'Take it back into the box to change it',
+          onclick: () => { const [x] = S.chatQueue.splice(i, 1); const ta = $('#chat-input'); ta.value = ta.value.trim() ? `${x}\n${ta.value}` : x; ta.dispatchEvent(new Event('input')); ta.focus(); renderChat(); } }),
+        h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Remove', title: 'Don’t send this', onclick: () => { S.chatQueue.splice(i, 1); renderChat(); } })),
+      h('div', { class: 'msg-body md', html: renderMD(q) }))));
     const keepTop = chatLog.scrollTop;
     chatLog.replaceChildren(...kids);
     drawVisuals(chatLog);
@@ -6087,6 +6094,7 @@
     applyClaude($('#chat'));
     const send = $('#btn-chat-send');
     send.classList.toggle('busy', S.chatBusy);
+    send.title = S.chatBusy ? `Queue it: sends when ${ai()} finishes (Enter)` : 'Ask (Enter)';
     applyClaude($('#chat'));
   }
 
@@ -6197,6 +6205,7 @@
       if (e.status === 409 && S.chatGeneral) {  // your own writing + web search: confirm once (Settings keep it)
         S.chat.splice(S.chat.indexOf(userMsg), 2);
         S.chatBusy = false;
+        unqueueChat();
         renderChat();
         const ok = await confirmDialog('Send your own notes along with web search?',
           'Published papers go along as they are. Your own writing (notes, open questions, highlights, your summaries) would share this session with web search, and a web page the agent reads could try to get it to send that text somewhere. Private items never go. You can change this later in Settings › Library settings › AI and privacy.',
@@ -6219,7 +6228,29 @@
       persistChat();
       renderChat();
       if (S.voiceHook) S.voiceHook.done(pending);  // voice mode (static/voice.js): speak the rest, then listen
+      chatDone();
     }
+  }
+  /** An answer has finished (here or in static/research.js): send the next queued message. If the answer
+   *  failed or was cut off, nothing more goes out on its own: the queue goes back into the box to look at. */
+  function chatDone() {
+    if (!S.chatQueue.length) return;
+    const last = S.chat[S.chat.length - 1];
+    if (last && (last.error || last.cut)) { unqueueChat(); renderChat(); return; }
+    setTimeout(() => {
+      if (S.chatBusy || !S.chatQueue.length) return;
+      if (!S.claudeOK) { unqueueChat(); renderChat(); claudeBlocked(); return; }
+      sendChat(S.chatQueue.shift());
+    }, 0);
+  }
+  /** Queued messages back into the chat box, unsent. */
+  function unqueueChat() {
+    if (!S.chatQueue.length) return;
+    const ta = $('#chat-input');
+    ta.value = [...S.chatQueue, ta.value].filter((x) => x.trim()).join('\n\n');
+    S.chatQueue = [];
+    ta.dispatchEvent(new Event('input'));
+    toast('Not sent: your queued messages are back in the box.', 'info');
   }
   function retryChat(i) {
     const m = S.chat[i];
@@ -6232,11 +6263,16 @@
   $('#chat-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const ta = $('#chat-input');
-    if (S.chatBusy) { toast(`${ai()} is still answering the last question.`, 'info'); return; }
     if (!ta.value.trim()) return;
     if (!S.claudeOK) { claudeBlocked(); return; }
     const q = ta.value; ta.value = ''; ta.style.height = '';
     $('#chat-preview').innerHTML = '';
+    if (S.chatBusy) {  // still answering: queue it, sent once the answer finishes (chatDone)
+      S.chatQueue.push(q.trim());
+      chatFollow = true;
+      renderChat();
+      return;
+    }
     sendChat(q);
   });
   // LaTeX helper first, so its autocomplete gets Enter before "send" does
@@ -7181,7 +7217,7 @@
     h, api, toast, toastErr, latex, mdEl, ago, fmtDate, truncate, kick, closeMenus, flushSave, reloadCur, nodeRadius, applyClaude, loadStatus,
     setNodeFilter(fn) { S.nodeFilter = typeof fn === 'function' ? fn : null; kick(400); },
     setHidden(set) { S.hidden = set && set.size ? set : null; S.focusCache = null; configureLinkForce(); kick(400); },
-    chooseSection, intoSection, renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose, errText,
+    chooseSection, intoSection, renderChat, partialMD, streamRenderer, chatPassages, apiStream, openChat, sendChat, chatDone, chatAboutPaper, chatAboutTopics, chatGeneral, setChatScope, nodeType, working, claudeBlocked, confirmDialog, saveNow, unsaved, askBeforeClose, errText,
     rerenderCritique() { const s = S.cur && $('#summary-sec', pbody); if (s && s.__refresh) s.__refresh(); },
     // static/topics.js: run fn(note, panelBody) after every panel render; queueSave patches the open note
     onPanelRender(fn) { (S.panelHooks || (S.panelHooks = [])).push(fn); if (S.cur && !panel.hidden) fn(S.cur, pbody); },
