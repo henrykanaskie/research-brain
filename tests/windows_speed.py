@@ -77,7 +77,7 @@ def main() -> int:
     @check("a library of 1,500 opens")
     def _():
         # its window can be asked what its page is doing (see the idle check)
-        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = "--disable-features=ElasticOverscroll --remote-debugging-port=9333"
+        os.environ["RB_WV2_DEBUG_PORT"] = "9333"
         # its own data folder, written before the first start (which turns it into the readable folders)
         W.DATA, W.DOCS = W.HOME / "big" / "research_brain", W.HOME / "big" / "Documents" / "research brain"
         write_library(W.DATA / "profiles" / "default", 1500, 150)
