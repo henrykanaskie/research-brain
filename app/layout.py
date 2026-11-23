@@ -40,6 +40,10 @@ _ID_RE = re.compile(r"^id:[ \t]*['\"]?([a-z0-9][a-z0-9-]*)['\"]?[ \t]*$", re.M)
 _BAD = re.compile(r"[\x00-\x1f\x7f/\\:*?\"<>|#^\[\]]")
 _RESERVED = re.compile(r"^(con|prn|aux|nul|com\d|lpt\d)$", re.I)
 NAME_MAX = 90
+# A note's whole path stays under Windows' 260 characters (with room for the save's ".<name>.tmp" and a " 12" that keeps
+# two names apart), on every computer: a library in OneDrive or Dropbox is opened on Windows too. Past it Windows can't
+# open the file unless long paths are switched on, which they aren't on a new PC: research brain then didn't start.
+PATH_MAX = 245
 
 
 def safe_name(text: str, max_len: int = NAME_MAX) -> str:
@@ -331,6 +335,9 @@ class Layout:
         else:
             folder = top
         name = note_name(note)
+        room = PATH_MAX - len(str(folder)) - len(".md") - 1
+        if len(name) > room:
+            name = safe_name(name, max(room, 16))
         cand, i = folder / f"{name}.md", 2
         while cand.exists() and not (current is not None and _same(cand, current)):
             cand, i = folder / f"{name} {i}.md", i + 1

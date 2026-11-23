@@ -202,6 +202,9 @@ jobs:
           { echo "UV_TOOL_DIR=C:\\Users\\Łukasz 研究\\AppData\\Roaming\\uv\\tools"
             echo "UV_TOOL_BIN_DIR=C:\\Users\\Łukasz 研究\\.local\\bin"
             echo "APPDATA=C:\\Users\\Łukasz 研究\\AppData\\Roaming"; } >> "$GITHUB_ENV"
+      - name: Long paths off, as on a new Windows 11 PC (GitHub's machines have them on)
+        shell: powershell
+        run: Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 0
       - name: Install uv (what most people have it installed with)
         run: python -m pip install uv
       - name: Install with Windows PowerShell 5.1, as the .cmd does
@@ -253,6 +256,9 @@ jobs:
           { echo "UV_TOOL_DIR=C:\\Users\\Łukasz 研究\\AppData\\Roaming\\uv\\tools"
             echo "UV_TOOL_BIN_DIR=C:\\Users\\Łukasz 研究\\.local\\bin"
             echo "APPDATA=C:\\Users\\Łukasz 研究\\AppData\\Roaming"; } >> "$GITHUB_ENV"
+      - name: Long paths off, as on a new Windows 11 PC (GitHub's machines have them on)
+        shell: powershell
+        run: Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 0
       - name: Install this version (its installer gets uv itself)
         shell: powershell
         run: |

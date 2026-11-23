@@ -202,7 +202,8 @@ def _m2_readable_layout(vault: Path) -> None:
                     "parent": str(meta.get("parent") or ""), "quote": str(meta.get("quote") or "")}
             target = done or lay.target(note)
             target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_name(f".{target.name}.tmp")
+            from . import fsio
+            tmp = fsio.long(target.with_name(f".{target.name}.tmp"))
             tmp.write_text(text, encoding="utf-8", newline="")
             os.replace(tmp, target)
             if target.read_text(encoding="utf-8") != text:

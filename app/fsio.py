@@ -17,7 +17,7 @@ WINDOWS = sys.platform == "win32"
 def replace(src, dst, attempts: int = 20, wait: float = 0.1) -> None:
     for i in range(attempts):
         try:
-            os.replace(src, dst)
+            os.replace(long(src), long(dst))
             return
         except PermissionError:
             if not WINDOWS or i == attempts - 1:
@@ -32,12 +32,32 @@ def read_text(path, attempts: int = 20, wait: float = 0.1, encoding: str = "utf-
     from pathlib import Path
     for i in range(attempts):
         try:
-            return Path(path).read_text(encoding=encoding)
+            return long(path).read_text(encoding=encoding)
         except PermissionError:
             if not WINDOWS or i == attempts - 1:
                 raise
             time.sleep(wait)
     raise AssertionError("unreachable")
+
+
+def long(path, always: bool = False):
+    """The path as Windows opens it however long it is. Past about 260 characters a path can be opened only with the
+    "\\\\?\\" prefix, unless the computer has long paths switched on (Windows 11 has them off unless someone changed it).
+    always: prefix it even when short (a folder to walk, whose files may be deeper). Elsewhere: the path as it is."""
+    from pathlib import Path
+    s = str(path)
+    if not WINDOWS or s.startswith("\\\\?\\") or (len(s) < 240 and not always):
+        return Path(path)
+    s = os.path.abspath(s)
+    return Path("\\\\?\\UNC\\" + s[2:] if s.startswith("\\\\") else "\\\\?\\" + s)
+
+
+def plain(path) -> str:
+    """A path as people read it (without long()'s prefix)."""
+    s = str(path)
+    if s.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + s[8:]
+    return s[4:] if s.startswith("\\\\?\\") else s
 
 
 def remove_tree(path, attempts: int = 30, wait: float = 0.1) -> None:

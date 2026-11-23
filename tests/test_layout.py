@@ -51,6 +51,31 @@ def test_each_kind_has_its_folder_and_a_readable_file(store):
     assert len(long) <= 90 and not long.endswith(" ")
 
 
+def test_a_note_s_whole_path_stays_under_windows_limit(tmp_path, monkeypatch):
+    """A library deep in OneDrive with long titles: every note's path stays under Windows' 260 characters (with room
+    for the save's temporary name), or a Windows PC without long paths couldn't write it and research brain didn't
+    start. Names are shortened only as much as needed."""
+    monkeypatch.setenv("RB_DATA_DIR", str(tmp_path / "data"))
+    from app.layout import PATH_MAX
+    from app.store import Store
+    import tempfile
+    base = Path(tempfile.mkdtemp(dir="/tmp" if os.path.isdir("/tmp") and os.name != "nt" else None))  # a short start
+    root = base / "OneDrive - A University With A Long Name"
+    root = root / ("Graduate school documents " * 9)[:max(1, 100 - len(str(root)))].strip()  # 100 characters: deeper than C:\\Users\\name\\OneDrive - University\\Documents
+    s = Store(root / "lib")
+    title = "Network dataset attention network study of gradient representations in very deep neural networks"
+    p = s.create({"type": "paper", "title": title, "year": 2002})
+    f = s.create({"type": "fragment", "title": "Fragment 1 " + "network gradient dataset representation " * 4,
+                  "parent": p["id"], "quote": "neural dataset", "page": 1})
+    short = s.create({"type": "note", "title": "Short"})
+    for n in (p, f, short):
+        path = s.note_path(n["id"])
+        assert len(str(path)) <= PATH_MAX and path.exists(), (len(str(path)), path)
+    assert s.note_path(short["id"]).name == "Short.md" and s.note_path(f["id"]).name.startswith("Fragment 1 network")
+    import shutil
+    shutil.rmtree(base, ignore_errors=True)
+
+
 def test_renaming_moves_the_file_and_the_highlights_follow(store):
     """Renaming moves the file (and the paper's highlights folder) and keeps ids and links; a case-only rename
     is one file; your own subfolders are kept on a rename; deleting the last highlight tidies its folder."""

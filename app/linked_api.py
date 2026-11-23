@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from . import diskspace, linked, topics as topics_mod
+from . import diskspace, fsio, linked, topics as topics_mod
 
 CHECK_EVERY = 600   # seconds between checks of every folder while the app runs
 HOLD_LIMIT = 500 << 20  # PDFs downloaded to read that couldn't be sent back online: pause past this much
@@ -273,7 +273,7 @@ def _run(job: dict) -> None:
                 break
             try:
                 diskspace.ensure_room(Path(store.text_dir), 2 << 20, "the text of this PDF")
-                nid, how, _held = ctx.import_one(root / x["rel"], fid, x["rel"], x["size"])
+                nid, how, _held = ctx.import_one(fsio.long(root / x["rel"]), fid, x["rel"], x["size"])  # past 260 characters too
                 topic = linked.topic_for(folder, x["rel"])
                 if topic:
                     ctx.file_in_topic(nid, topic)

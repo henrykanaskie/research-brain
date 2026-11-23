@@ -457,8 +457,8 @@ class Store:
             self.note_path(note["id"])  # validates the id
             current = self.layout.current(note["id"])  # no disk walk for a brand-new note
             path = self.layout.target(note, current)  # its type's folder, named after its title
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(f".{path.name}.tmp")  # hidden, so watchers and Obsidian ignore it
+            fsio.long(path.parent).mkdir(parents=True, exist_ok=True)
+            tmp = fsio.long(path.with_name(f".{path.name}.tmp"))  # hidden, so watchers and Obsidian ignore it
             try:
                 tmp.write_text(self._dump(note), encoding="utf-8", newline="\n")
                 fsio.replace(tmp, path)

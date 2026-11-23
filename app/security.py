@@ -181,7 +181,7 @@ def _static_dir() -> Path:
 def inline_script_hashes(static: Path | None = None) -> list[str]:
     """sha256 sources for every inline <script> in the app's HTML pages (recomputed when a page changes)."""
     static = static or _static_dir()
-    files = sorted(static.glob("*.html"))
+    files = sorted(p for p in static.glob("*.html") if not p.name.startswith("."))
     key = tuple((str(p), p.stat().st_mtime_ns) for p in files if p.exists())
     if _csp_cache.get("key") == key:
         return _csp_cache["hashes"]
@@ -189,7 +189,7 @@ def inline_script_hashes(static: Path | None = None) -> list[str]:
     for p in files:
         try:
             src = p.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         for m in _INLINE_SCRIPT_RE.finditer(src):
             if m.group(0).lower().startswith('<script type="application/json"'):

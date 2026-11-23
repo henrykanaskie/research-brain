@@ -138,7 +138,8 @@ def extract_inprocess(path: Path, max_pages: int = 80, info: dict | None = None)
     meta_title = ""
     try:
         import pypdfium2 as pdfium
-        pdf = pdfium.PdfDocument(str(path))
+        # a path past 260 characters (app/fsio.long) is read here, which Python can do: PDFium can't open it
+        pdf = pdfium.PdfDocument(Path(path).read_bytes() if str(path).startswith("\\\\?\\") else str(path))
         try:
             meta_title = (pdf.get_metadata_dict() or {}).get("Title", "") or ""
         except Exception:

@@ -261,7 +261,8 @@ def remove_pdf(store, nid: str, mode: str) -> dict:
     """Before deleting note `nid`: keep its PDF (moved to Removed from library/) or send it to the Trash. A PDF in
     one of your own folders of papers (app/linked.py) is never moved or deleted, whichever was asked."""
     if getattr(store, "is_linked", None) and store.is_linked(nid):
-        return {"pdf": "left", "path": str(store.pdf_path(nid))}
+        from .fsio import plain
+        return {"pdf": "left", "path": plain(store.pdf_path(nid))}
     p = store.pdf_path(nid)
     if not p.is_file():
         return {"pdf": None}

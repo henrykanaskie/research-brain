@@ -37,6 +37,8 @@ import threading
 import uuid
 from pathlib import Path
 
+from . import fsio
+
 CONFIG = "linked.json"
 SKIP_DIRS = {"Removed from library", "$RECYCLE.BIN", "node_modules", "__MACOSX"}
 MAX_FILES = 20000
@@ -136,13 +138,13 @@ class Links:
         if not x:
             return None
         f = self.folder(x.get("f", ""))
-        return Path(f["path"]) / x["rel"] if f else None
+        return fsio.long(Path(f["path"]) / x["rel"]) if f else None
 
     def linked_ids(self) -> dict[str, Path]:
         """{paper id: its PDF's path} for every linked PDF (whether the file is there right now or not)."""
         d = self.data()
         roots = {f["id"]: Path(f["path"]) for f in d["folders"]}
-        return {nid: roots[x["f"]] / x["rel"] for nid, x in d["files"].items() if x.get("f") in roots}
+        return {nid: fsio.long(roots[x["f"]] / x["rel"]) for nid, x in d["files"].items() if x.get("f") in roots}
 
     def by_place(self) -> dict[tuple[str, str], str]:
         return {(x["f"], x["rel"]): nid for nid, x in self.data()["files"].items()}
@@ -185,7 +187,7 @@ def _norm(p) -> str:
 def scan(root: Path) -> list[dict]:
     """Every PDF under `root` (any depth): [{rel, dir, size, mtime}]. Only lists the folders (no file is opened, so
     nothing online-only is downloaded). Hidden files and folders, and Removed from library, are skipped."""
-    root = Path(root)
+    root = fsio.long(root, always=True)  # its files can be more than 260 characters deep
     out: list[dict] = []
     for d, dirs, files in os.walk(root, followlinks=False):
         dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x not in SKIP_DIRS)

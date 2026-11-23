@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import re
+from pathlib import Path
 
 HIGHLIGHT = "ffd84d"
 ANCHOR = 48   # characters of the start and end used when the whole quote isn't found
@@ -78,7 +79,7 @@ def annotate(pdf_path, fragments: list[dict], title: str = "") -> tuple[bytes, l
     from pypdf.annotations import FreeText, Highlight
     from pypdf.generic import ArrayObject, FloatObject, NameObject, TextStringObject
 
-    doc = pdfium.PdfDocument(str(pdf_path))
+    doc = pdfium.PdfDocument(Path(pdf_path).read_bytes() if str(pdf_path).startswith("\\\\?\\") else str(pdf_path))
     writer = PdfWriter(clone_from=PdfReader(str(pdf_path)))
     missed = []
     texts: dict[int, tuple] = {}
