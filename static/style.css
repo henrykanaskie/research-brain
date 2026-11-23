@@ -1147,7 +1147,7 @@ body.chat-scoped .rs-mode { display: none; }
 /* Links: near the top of the panel, a box to link anything by title (app.js linkPicker) */
 .links-sec .link-input { width: 100%; margin: 2px 0 6px; }
 /* right-click a dot (app.js nodeMenu), and the "click the dot to link to" bar */
-.node-menu { position: fixed; top: 0; left: 0; z-index: 60; width: 280px; }
+.node-menu { position: fixed; top: 0; left: 0; z-index: 80; width: 280px; }  /* above every sheet and dialog: a menu opened from one (Find papers, Add to library) was behind it */
 .link-mode { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 55; display: flex; align-items: center; gap: 12px;
   background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px 6px 12px; font-size: 13px; color: var(--ink);
   box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--ink) 22%, transparent); }
