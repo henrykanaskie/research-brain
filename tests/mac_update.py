@@ -114,7 +114,7 @@ def processes() -> list[tuple[int, str, str]]:
 
 
 def window_pids() -> list[int]:
-    return [p for p, _, c in processes() if c.endswith("research-brain open") or "driver.py" in c]
+    return [p for p, _, c in processes() if c.endswith(("research-brain open", "research_brain.cli open")) or "driver.py" in c]
 
 
 def window() -> int:

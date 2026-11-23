@@ -1006,6 +1006,12 @@ def test_hover_card_pops_out_and_dots_make_room(ctx, server):
         .filter(n => {{ const x = n.x + (n.__dx || 0), y = n.y + (n.__dy || 0); return x > x0 && x < x0 + w && y > y0 && y < y0 + h; }}).length;
     }}""")
     assert under == 0
+    # a moved dot that slides under the pointer doesn't take over (its card moved others there, and so on for ever)
+    kept = page.evaluate(f"""() => {{ const rb = window.__rb, on = rb.fg.onNodeHover(), main = rb.S.nodes.get('{main}');
+      const moved = [...rb.S.nodes.values()].find(n => n.__dx || n.__dy) || Object.assign([...rb.S.nodes.values()].find(n => n !== main), {{ __dx: 9 }});
+      if (!rb.S.shifted.length) rb.S.shifted = [moved];
+      const out = []; for (const n of [moved, null]) {{ on(n, main); out.push(rb.S.hover); }} on(main, null); return out; }}""")
+    assert kept == [main, main]
     # leaving the dot closes it quickly, even when the pointer passes over where the card is
     x0, y0, w, h = page.evaluate(f"() => window.__rb.cards.find(c => c.id === '{main}').box")
     mid = page.evaluate(f"() => window.__rb.fg.graph2ScreenCoords({x0 + w * 0.5}, {y0 + h * 0.6})")

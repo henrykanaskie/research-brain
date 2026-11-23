@@ -2623,9 +2623,9 @@
       .linkHoverPrecision(6)
       // no tooltip on a trace: hovering highlights it and shows the pointer; a click explains the link
       .linkLabel(() => '')
-      .onNodeHover((n) => { S.hover = n ? n.id : null; litHover(n); S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : ''; kick(260); })  // its connections light up (and fade back) over ~150 ms
+      .onNodeHover((n) => { S.hoverRaw = n || null; hoverNow(); })  // its connections light up (and fade back) over ~150 ms
       .onLinkHover((l) => { const at = pointerAt && lineAt(pointerAt[0], pointerAt[1]); setHoverLink(S.hover ? null : at || l || null); })
-      .onNodeClick((n, e) => { if (regionTagClick(e)) return; if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; if (S.focusCluster != null && n.cluster >= 0 && n.cluster !== S.focusCluster) focusRegion(n.cluster, false); openNote(n.id, { center: true }); })
+      .onNodeClick((n, e) => { if (regionTagClick(e)) return; { const c = (S.shifted || []).length && S.hover && S.nodes.get(S.hover); if (onItsPlace(c)) n = c; } if (S.linkFrom && finishLinkMode(n)) return; if (S.nodeClickHook && S.nodeClickHook(n, e)) return; if (S.focusCluster != null && n.cluster >= 0 && n.cluster !== S.focusCluster) focusRegion(n.cluster, false); openNote(n.id, { center: true }); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
       .onNodeDrag((n) => { S.dragging = true; S.dragNode = n; motion.tween = null; dragNeighbours(n); runMotion(); })
@@ -3343,6 +3343,7 @@
       if (nx || ny) shifted.push(m);
     }
     S.shifted = shifted;
+    if ((S.hoverRaw ? S.hoverRaw.id : null) !== (S.hover ?? null)) hoverNow();  // the dots are back in their places
     // the card is a box other titles stay out of
 
     applyShift();
@@ -3798,6 +3799,29 @@
     if (n) { setHoverLink(null); if (n.type !== 'fragment') takeLit(n.id, null, () => S.hover === n.id); }
     else { clearTimeout(hold.take); releaseLit(); }
   }
+  /** Is the pointer on a dot's own place (not where a card has moved it)? What counts as on it is what you can click. */
+  function onItsPlace(n) {
+    if (!n || !pointerAt || !fg || S.overMap === false || !Number.isFinite(n.x) || nodeHidden(n.id)) return false;
+    const k = S.k || 1, r = graphEl.getBoundingClientRect(), p = fg.screen2GraphCoords(pointerAt[0] - r.left, pointerAt[1] - r.top);
+    const x = n.x - (shiftOn ? n.__dx || 0 : 0) - (floatOn ? n.__flx || 0 : 0), y = n.y - (shiftOn ? n.__dy || 0 : 0) - (floatOn ? n.__fly || 0 : 0);
+    return Math.hypot(p.x - x, p.y - y) <= Math.max(n.__outer || drawnRadius(n, k), 3 / k) + 6 / k;
+  }
+  /** What the pointer is on. While a card has dots moved aside, the dot it belongs to keeps it as long as the pointer is
+   *  on that dot, and a moved dot can't take it: one sliding under a pointer that isn't moving opened its own card, which
+   *  moved others under the pointer, and so on without end (cards hopping about by themselves, and the map redrawn for as
+   *  long as the pointer lay there). */
+  function hoverNow() {
+    let n = S.hoverRaw || null;
+    if ((S.shifted || []).length) {
+      const cur = S.hover && S.nodes.get(S.hover);
+      if (onItsPlace(cur)) n = cur;
+      else if (n && (n.__dx || n.__dy)) n = null;
+    }
+    const id = n ? n.id : null;
+    if (id === (S.hover ?? null)) return;
+    S.hover = id; litHover(n); S.focusCache = null; graphEl.style.cursor = n ? 'pointer' : '';
+    kick(260);  // its connections light up (and fade back) over ~150 ms
+  }
   /** The lines brought out right now, with their shapes. */
   function litLines() {
     const out = [];
@@ -3863,6 +3887,7 @@
   graphEl.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'touch') return;
     pointerAt = [e.clientX, e.clientY]; S.overMap = true;
+    hoverNow();
     if (holding()) releaseLit();
     else if (S.hover && S.nodes.has(S.hover)) litHover(S.nodes.get(S.hover));
     if (!S.hover && !S.dragging && !labelHit(e)) setHoverLink(lineAt(e.clientX, e.clientY)); else if (S.hover) setHoverLink(null);
