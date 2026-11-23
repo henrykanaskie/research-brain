@@ -42,7 +42,10 @@ def timed(fn, n=5):
 def usage() -> tuple[float, float, dict]:
     """(CPU seconds so far, MB in memory, CPU seconds by program) of research brain's Python and WebView2 processes."""
     r = subprocess.run(["powershell", "-NoProfile", "-Command",
-                        "Get-Process python*,pythonw*,msedgewebview2 -ErrorAction SilentlyContinue | Select Id,Name,CPU,WorkingSet64 | ConvertTo-Json -Compress"],
+                        # WebView2 only where it's research brain's (its data folder on the command line): Windows' own first-run
+                        # screen is WebView2 too, and on GitHub's Arm machines it was over everything, busy, and counted here
+                        "$own = @(Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | ? { $_.CommandLine -match 'research_brain' } | % ProcessId); "
+                        "Get-Process python*,pythonw*,msedgewebview2 -ErrorAction SilentlyContinue | ? { $_.Name -notlike 'msedgewebview2' -or $own -contains $_.Id } | Select Id,Name,CPU,WorkingSet64 | ConvertTo-Json -Compress"],
                        capture_output=True)
     got = json.loads(r.stdout.decode("utf-8", "replace") or "[]")
     got = got if isinstance(got, list) else [got]
