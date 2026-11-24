@@ -328,7 +328,7 @@ def test_subsections_group_papers_inside_their_region_and_live_only_in_the_app(s
     assert s["members"] == kr[:3] + [ha[0]]
     assert c.post("/api/subsections", json={"name": "  ", "ids": kr}).status_code == 400
     after = {p.relative_to(srv.store.root) for p in __import__("pathlib").Path(srv.store.root).rglob("*") if p.is_file()}
-    assert {str(p) for p in after - docs} <= {"state/subsections.json", "state/subsections.json.tmp"}
+    assert {p.as_posix() for p in after - docs} <= {"state/subsections.json", "state/subsections.json.tmp"}
     g = c.get("/api/graph").json()
     node = {n["id"]: n for n in g["nodes"]}
     (info,) = g["subsections"]
