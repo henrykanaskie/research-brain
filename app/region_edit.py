@@ -16,6 +16,15 @@ A change (regions are named as the chat sees them; a name that isn't a region ye
     {"op": "rename", "region": "Old name", "to": "New name"}
     {"op": "main",   "ids": [...], "region": "Region"}                      drawn there when in several
 Regions are never deleted from the chat (Remove takes papers out; an empty region can be deleted in Regions).
+
+Subsections (app/subsections.py: named groups of papers inside a region, kept only in the app):
+    {"op": "subsections", "region": "Region", "subsections": [{"name": "Sub", "ids": [...]}, ...]}
+                                         the region's subsections become these (its old ones go; [] takes them away)
+    {"op": "subadd",    "ids": [...], "to": "Sub", "region": "Region"}   a new name makes one; region picks among
+    {"op": "subremove", "ids": [...], "from": "Sub", "region": "Region"}  subsections of the same name
+    {"op": "subrename", "subsection": "Old", "to": "New", "region": "Region"}
+    {"op": "subdelete", "subsection": "Sub", "region": "Region"}
+Any region on the map can have subsections, also one the map found by similarity that isn't kept yet.
 """
 from __future__ import annotations
 
@@ -29,9 +38,11 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from . import subsections as SUB
 from . import topics as T
 
-OPS = ("move", "add", "remove", "rename", "main")
+OPS = ("move", "add", "remove", "rename", "main", "subsections", "subadd", "subremove", "subrename", "subdelete")
+SUB_OPS = OPS[5:]
 MAX_CHANGES = 40
 MAX_IDS = 400
 
@@ -44,10 +55,19 @@ INSTRUCTION = (
     "{\"op\":\"move\",\"ids\":[...],\"to\":\"Region\",\"from\":\"Region\"} (from: the region it leaves; omit it to take "
     "it out of all its regions), {\"op\":\"add\",\"ids\":[...],\"to\":\"Region\"} (also in that region), "
     "{\"op\":\"remove\",\"ids\":[...],\"from\":\"Region\"}, {\"op\":\"rename\",\"region\":\"Old\",\"to\":\"New\"}, "
-    "{\"op\":\"main\",\"ids\":[...],\"region\":\"Region\"}. Use region names exactly as REGIONS lists them (a new name "
-    "makes a new region) and note ids exactly as listed; never invent ids. Nothing changes until the student clicks "
+    "{\"op\":\"main\",\"ids\":[...],\"region\":\"Region\"}. "
+    "SUBSECTIONS are named groups of papers inside one region (shown when the student focuses that region). To give a "
+    "region subsections, or restructure them: {\"op\":\"subsections\",\"region\":\"Region\",\"subsections\":"
+    "[{\"name\":\"Sub\",\"ids\":[...]}, ...]} (replaces that region's subsections; use 2 to 7 subsections of the "
+    "region's own papers, each with a short specific name, and leave papers that fit none out). Smaller edits: "
+    "{\"op\":\"subadd\",\"ids\":[...],\"to\":\"Sub\",\"region\":\"Region\"} (a new name makes one), "
+    "{\"op\":\"subremove\",\"ids\":[...],\"from\":\"Sub\",\"region\":\"Region\"}, "
+    "{\"op\":\"subrename\",\"subsection\":\"Old\",\"to\":\"New\",\"region\":\"Region\"}, "
+    "{\"op\":\"subdelete\",\"subsection\":\"Sub\",\"region\":\"Region\"}. Moving papers between regions "
+    "(move, add, remove, main) works on regions marked kept; subsections work on every region. "
+    "Use region names exactly as REGIONS lists them (a new name makes a new region) and note ids exactly as listed; never invent ids. Nothing changes until the student clicks "
     "Apply, so don't say it's done. Never output this block when they didn't ask for a change.")
-ASKS_RE = re.compile(r"\b(regions?|sections?|groups?|move|moving|put|sort|re-?organi[sz]e|rename|regroup|categori[sz]e|"
+ASKS_RE = re.compile(r"\b(regions?|sections?|sub-?sections?|groups?|move|moving|put|sort|re-?organi[sz]e|rename|regroup|categori[sz]e|"
                      r"file (?:it|them|these)|main region)\b", re.I)
 
 
@@ -56,38 +76,70 @@ def wants_regions(question: str) -> bool:
     return bool(ASKS_RE.search(question or ""))
 
 
-def context(store, by_id: dict, question: str, room: int = 24000) -> str:
-    """REGIONS for the chat: each region with its papers ([[id]] title), then papers in no region. by_id is what
-    the AI may see (private notes left out). Papers whose titles share words with the question come first when the
-    library is too big to list whole."""
-    tops = [t for t in T.list_topics(store, {})]
+# the regions on the map, as app/server.py finds them: [{name, kept, members, subs: [{id, name, members}]}]
+_MAP: list = [None]
+
+
+def map_regions() -> list[dict]:
+    try:
+        return list(_MAP[0]() or []) if _MAP[0] else []
+    except Exception:
+        return []
+
+
+def context(store, by_id: dict, question: str, room: int = 24000, regions: list[dict] | None = None) -> str:
+    """REGIONS for the chat: each region with its papers ([[id]] title), grouped by its subsections, then papers in no
+    region. by_id is what the AI may see (private notes left out). Papers whose titles share words with the question
+    come first when the library is too big to list whole."""
+    regions = map_regions() if regions is None else regions
     words = {w for w in re.findall(r"[a-z0-9]{4,}", (question or "").lower())}
     score = lambda nid: -len(words & set(re.findall(r"[a-z0-9]{4,}", (by_id[nid].get("title") or "").lower())))
-    lines, used, seen = ["REGIONS (the student's regions on the map, with their papers):"], 0, set()
-    for t in tops:
+    lines, seen = ["REGIONS (the student's regions on the map, with their papers):"], set()
+    used = [0]
+
+    def rows(ids) -> bool:
+        for m in sorted(ids, key=score):
+            seen.add(m)
+            row = f"- [[{m}]] {(by_id[m].get('title') or m)[:110]}"
+            if used[0] + len(row) > room:
+                lines.append("- (and more not listed)")
+                return False
+            lines.append(row)
+            used[0] += len(row)
+        return True
+    shown = set()
+    for r in regions:
+        mem = [m for m in r.get("members", []) if m in by_id]
+        if not mem:
+            continue
+        shown.add(str(r.get("name") or "").casefold())
+        kept = "kept" if r.get("kept") else "found by the map, not kept"
+        lines.append(f"\n## {r['name']} ({len(mem)}, {kept})")
+        inside = set()
+        for sub in r.get("subs", []):
+            sm = [m for m in sub.get("members", []) if m in by_id]
+            if not sm:
+                continue
+            lines.append(f"### subsection: {sub['name']} ({len(sm)})")
+            inside.update(sm)
+            rows(sm)
+        rest = [m for m in mem if m not in inside]
+        if inside and rest:
+            lines.append("### (in no subsection)")
+        rows(rest)
+    for t in T.list_topics(store, {}):  # kept regions the map doesn't draw as their own (too few papers, or merged)
+        if t["name"].casefold() in shown:
+            continue
         try:
             mem = [m for m in T.get_topic(store, t["slug"])["members"] if m in by_id]
         except (KeyError, T.TopicError):
             continue
-        lines.append(f"\n## {t['name']} ({len(mem)})")
-        for m in sorted(mem, key=score):
-            seen.add(m)
-            row = f"- [[{m}]] {(by_id[m].get('title') or m)[:110]}"
-            if used + len(row) > room:
-                lines.append(f"- (and more not listed)")
-                break
-            lines.append(row)
-            used += len(row)
-    loose = sorted((i for i, n in by_id.items() if i not in seen and n.get("type") in ("paper", "note", "question")), key=score)
+        lines.append(f"\n## {t['name']} ({len(mem)}, kept)")
+        rows(mem)
+    loose = [i for i, n in by_id.items() if i not in seen and n.get("type") in ("paper", "note", "question")]
     if loose:
         lines.append("\n## (in no region)")
-        for m in loose:
-            row = f"- [[{m}]] {(by_id[m].get('title') or m)[:110]}"
-            if used + len(row) > room:
-                lines.append("- (and more not listed)")
-                break
-            lines.append(row)
-            used += len(row)
+        rows(loose)
     return "\n".join(lines)
 
 
@@ -123,11 +175,98 @@ def _name(x) -> str:
     return " ".join(str(x or "").split())[:120]
 
 
-def check(store, changes: list[dict]) -> list[dict]:
+def _papers(store, ids: list[str]) -> list[dict]:
+    return [{"id": i, "title": store.get(i).get("title") or i} for i in ids]
+
+
+def _region_named(regions: list[dict], name: str) -> dict | None:
+    k = name.casefold()
+    return next((r for r in regions if str(r.get("name") or "").casefold() == k), None)
+
+
+def _sub_named(subs: list[dict], regions: list[dict], name: str, region: str = "") -> dict | None:
+    """The subsection called `name`: the one in `region` when that's given and has one, else the first."""
+    k = name.casefold()
+    same = [x for x in subs if x["name"].casefold() == k]
+    if region and same:
+        reg = _region_named(regions, region)
+        mine = {x["id"] for x in (reg or {}).get("subs", [])}
+        inside = [x for x in same if x["id"] in mine]
+        if inside:
+            return inside[0]
+    return same[0] if same else None
+
+
+def _check_sub(store, c: dict, r: dict, regions: list[dict], subs: list[dict]) -> None:
+    op, region = r["op"], _name(c.get("region"))
+    if region:
+        r["region"] = region
+    if op == "subsections":
+        reg = _region_named(regions, region)
+        if not region:
+            r["problem"] = "no region named"
+            return
+        if not reg:
+            r["problem"] = f"there is no region called “{region}” on the map"
+            return
+        r["replaces"] = [x["name"] for x in reg.get("subs", [])]
+        r["replace_ids"] = [x["id"] for x in reg.get("subs", [])]
+        made, bad_all = [], []
+        for x in list(c.get("subsections") or [])[:40]:
+            x = x if isinstance(x, dict) else {}
+            nm = _name(x.get("name"))[:SUB.MAX_NAME]
+            ids, bad = _ids(store, x.get("ids"))
+            bad_all += bad
+            if nm and ids:
+                made.append({"name": nm, "ids": ids, "papers": _papers(store, ids)})
+        r["subsections"] = made
+        r["ids"] = [i for x in made for i in x["ids"]]
+        if c.get("subsections") and not made:
+            r["problem"] = "none of those subsections has a name and papers in your library"
+        elif not made and not r["replaces"]:
+            r["problem"] = "that region has no subsections to take away"
+        if bad_all and not r["problem"]:
+            r["skipped"] = bad_all
+        return
+    if op in ("subadd", "subremove"):
+        ids, bad = _ids(store, c.get("ids"))
+        r["ids"], r["papers"] = ids, _papers(store, ids)
+        nm = _name(c.get("to") if op == "subadd" else c.get("from"))[:SUB.MAX_NAME]
+        r["to" if op == "subadd" else "from"] = nm
+        found = _sub_named(subs, regions, nm, region) if nm else None
+        if found:
+            r["sid"] = found["id"]
+        if not ids:
+            r["problem"] = "none of those papers are in your library" if bad else "no papers named"
+        elif not nm:
+            r["problem"] = "no subsection named"
+        elif op == "subadd":
+            r["new"] = not found
+        elif not found:
+            r["problem"] = f"there is no subsection called “{nm}”"
+        if bad and not r["problem"]:
+            r["skipped"] = bad
+        return
+    nm = _name(c.get("subsection") or c.get("from"))[:SUB.MAX_NAME]
+    r["subsection"] = nm
+    found = _sub_named(subs, regions, nm, region) if nm else None
+    if found:
+        r["sid"] = found["id"]
+    if not found:
+        r["problem"] = f"there is no subsection called “{nm}”" if nm else "no subsection named"
+    elif op == "subrename":
+        r["to"] = _name(c.get("to"))[:SUB.MAX_NAME]
+        if not r["to"]:
+            r["problem"] = "no new name"
+
+
+def check(store, changes: list[dict], regions: list[dict] | None = None) -> list[dict]:
     """Each change, resolved: {op, ids, papers: [{id, title}], to, from, region, new (makes a region), problem}."""
     if not isinstance(changes, list) or not changes:
         raise HTTPException(400, "There are no changes to make.")
     tops = _topics(store)
+    regions = map_regions() if regions is None else regions
+    subs = SUB.load(store)
     out = []
     for c in changes[:MAX_CHANGES]:
         c = c if isinstance(c, dict) else {}
@@ -135,6 +274,10 @@ def check(store, changes: list[dict]) -> list[dict]:
         r = {"op": op, "ids": [], "papers": [], "problem": ""}
         if op not in OPS:
             r["problem"] = f"unknown change “{op}”"
+            out.append(r)
+            continue
+        if op in SUB_OPS:
+            _check_sub(store, c, r, regions, subs)
             out.append(r)
             continue
         if op == "rename":
@@ -183,6 +326,7 @@ def _snapshot(store, mains: dict[str, str | None]) -> str:
     for f in T.topics_dir(store).glob("*.md"):
         shutil.copy2(f, dest / f.name)
     (dest / "main-regions.json").write_text(json.dumps(mains), encoding="utf-8")
+    (dest / SUB.FILE).write_text(json.dumps(SUB.load(store), ensure_ascii=False), encoding="utf-8")
     return token
 
 
@@ -203,6 +347,37 @@ def _set_main(store, nid: str, slug: str | None) -> None:
             store.save(n, touch=False)
 
 
+def _apply_sub(store, r: dict, made: dict[str, str]) -> None:
+    """One subsection change. made: name (casefolded) -> id of the subsections this Apply made, so a later change can
+    add to one made by an earlier one."""
+    op = r["op"]
+    with SUB._lock:
+        items = SUB.load(store)
+        by_id = {x["id"]: x for x in items}
+        if op == "subsections":
+            items = [x for x in items if x["id"] not in set(r.get("replace_ids", []))]
+            for x in r["subsections"]:
+                nx = {"id": SUB.new_id(), "name": x["name"], "members": list(x["ids"]), "at": dt.datetime.now().timestamp()}
+                items.append(nx)
+                made[x["name"].casefold()] = nx["id"]
+        elif op == "subadd":
+            sid = r.get("sid") if r.get("sid") in by_id else made.get(r["to"].casefold())
+            if sid in by_id:
+                by_id[sid]["members"] = list(dict.fromkeys(by_id[sid]["members"] + r["ids"]))
+            else:
+                nx = {"id": SUB.new_id(), "name": r["to"], "members": list(r["ids"]), "at": dt.datetime.now().timestamp()}
+                items.append(nx)
+                made[r["to"].casefold()] = nx["id"]
+        elif op == "subremove" and r.get("sid") in by_id:
+            gone = set(r["ids"])
+            by_id[r["sid"]]["members"] = [m for m in by_id[r["sid"]]["members"] if m not in gone]
+        elif op == "subrename" and r.get("sid") in by_id:
+            by_id[r["sid"]]["name"] = r["to"]
+        elif op == "subdelete":
+            items = [x for x in items if x["id"] != r.get("sid")]
+        SUB.save(store, items)
+
+
 def apply(store, changes: list[dict]) -> dict:
     rows = check(store, changes)
     todo = [r for r in rows if not r["problem"]]
@@ -211,8 +386,12 @@ def apply(store, changes: list[dict]) -> dict:
     touched = {i for r in todo for i in r.get("ids", [])}
     with T._lock:
         token = _snapshot(store, {i: _main_of(store, i) for i in touched})
-        done = []
+        done, made = [], {}
         for r in todo:
+            if r["op"] in SUB_OPS:
+                _apply_sub(store, r, made)
+                done.append(r)
+                continue
             tops = _topics(store)
 
             def slug_for(name: str) -> str:
@@ -270,6 +449,13 @@ def undo(store, token: str) -> dict:
             mains = json.loads((src / "main-regions.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             mains = {}
+        try:  # (put aside before subsections existed: left as they are)
+            subs = json.loads((src / SUB.FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            subs = None
+        if isinstance(subs, list):
+            with SUB._lock:
+                SUB.save(store, subs)
         for nid, slug in mains.items():
             try:
                 _set_main(store, nid, slug)
@@ -278,7 +464,10 @@ def undo(store, token: str) -> dict:
     return {"ok": True}
 
 
-def install(app, *, store, publish=None):
+def install(app, *, store, publish=None, regions=None):
+    """regions: () -> the map's regions [{name, kept, members, subs: [{id, name, members}]}] (app/server.py)."""
+    _MAP[0] = regions
+
     def changed():
         if publish:
             publish({"type": "topics-changed"})

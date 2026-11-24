@@ -303,3 +303,96 @@ def test_region_changes_from_the_chat_preview_apply_and_undo(server):
     assert "## Cross sections" in ctx and f"[[{a}]] Krypton cross sections" in ctx
     hidden = {k: v for k, v in by_id.items() if k != a}  # a private paper: not listed
     assert f"[[{a}]]" not in region_edit.context(srv.store, hidden, "move krypton")
+
+
+# ---------------------------------------------------------------- subsections (app/subsections.py)
+def _krypton_and_hall(c):
+    mk = lambda t, a: c.post("/api/notes", json={"type": "paper", "title": t, "abstract": a}).json()["id"]
+    kr = [mk(f"Collisional radiative model for krypton plasma {i}", "collisional radiative model krypton plasma emission")
+          for i in range(8)]
+    ha = [mk(f"Hall thruster breathing mode oscillation {i}", "hall thruster breathing mode discharge oscillation")
+          for i in range(4)]
+    c.post("/api/topics", json={"name": "Krypton models", "members": kr})
+    c.post("/api/topics", json={"name": "Hall thrusters", "members": ha})
+    return kr, ha
+
+
+def test_subsections_group_papers_inside_their_region_and_live_only_in_the_app(server):
+    """A subsection is a name and a set of papers in <library>/state, never a file in your documents. On the map it
+    belongs to the region holding most of its papers, and its papers there are one sub-group; a paper of it in another
+    region isn't drawn in it. Renaming and deleting show on the map at once."""
+    srv, c = server
+    kr, ha = _krypton_and_hall(c)
+    docs = {p.relative_to(srv.store.root) for p in __import__("pathlib").Path(srv.store.root).rglob("*") if p.is_file()}
+    s = c.post("/api/subsections", json={"name": "Line ratios", "ids": kr[:3] + [ha[0], "no-such-paper"]}).json()
+    assert s["members"] == kr[:3] + [ha[0]]
+    assert c.post("/api/subsections", json={"name": "  ", "ids": kr}).status_code == 400
+    after = {p.relative_to(srv.store.root) for p in __import__("pathlib").Path(srv.store.root).rglob("*") if p.is_file()}
+    assert {str(p) for p in after - docs} <= {"state/subsections.json", "state/subsections.json.tmp"}
+    g = c.get("/api/graph").json()
+    node = {n["id"]: n for n in g["nodes"]}
+    (info,) = g["subsections"]
+    assert info["name"] == "Line ratios" and info["id"] == s["id"] and info["size"] == 3
+    assert info["region"] == node[kr[0]]["cluster"] >= 0
+    assert {node[i]["sub"] for i in kr[:3]} == {info["sub"]}
+    assert node[ha[0]]["sub"] != info["sub"] and all(node[i]["sub"] != info["sub"] for i in kr[3:])
+    # a paper in two subsections of one region is drawn in the smaller
+    small = c.post("/api/subsections", json={"name": "Metastables", "ids": kr[:2]}).json()
+    g = c.get("/api/graph").json()
+    node = {n["id"]: n for n in g["nodes"]}
+    sub = {x["id"]: x["sub"] for x in g["subsections"]}
+    assert node[kr[0]]["sub"] == node[kr[1]]["sub"] == sub[small["id"]] and node[kr[2]]["sub"] == sub[s["id"]]
+    c.patch(f"/api/subsections/{s['id']}", json={"name": "Line-ratio diagnostics"})
+    assert {x["name"] for x in c.get("/api/graph").json()["subsections"]} == {"Line-ratio diagnostics", "Metastables"}
+    c.post(f"/api/subsections/{small['id']}/remove", json={"ids": kr[:2]})
+    c.post(f"/api/subsections/{s['id']}/notes", json={"ids": [kr[5]]})
+    assert [x["name"] for x in c.get("/api/graph").json()["subsections"]] == ["Line-ratio diagnostics"]
+    assert c.delete(f"/api/subsections/{small['id']}").json()["ok"]
+    assert c.delete(f"/api/subsections/{small['id']}").status_code == 404
+    assert [x["size"] for x in c.get("/api/graph").json()["subsections"]] == [4]
+
+
+def test_the_chat_structures_a_region_into_subsections_and_undo_puts_them_back(server):
+    from app import region_edit
+    srv, c = server
+    kr, ha = _krypton_and_hall(c)
+    old = c.post("/api/subsections", json={"name": "Old split", "ids": kr[:4]}).json()
+    by_id = {n["id"]: n for n in srv.store.all()}
+    ctx = region_edit.context(srv.store, by_id, "organize Krypton models into subsections")
+    assert "## Krypton models (8, kept)" in ctx and "### subsection: Old split (4)" in ctx and "### (in no subsection)" in ctx
+    assert region_edit.wants_regions("Organize the region “Krypton models” into subsections.")
+    assert region_edit.wants_regions("split this into subsections")
+    changes = [
+        {"op": "subsections", "region": "Krypton models",
+         "subsections": [{"name": "Models", "ids": kr[:5]}, {"name": "Measurements", "ids": kr[5:] + ["nope"]},
+                         {"name": "", "ids": kr[:1]}]},
+        {"op": "subadd", "ids": [kr[0]], "to": "Benchmarks", "region": "Krypton models"},
+        {"op": "subadd", "ids": [kr[1]], "to": "Benchmarks"},       # the one the change before makes
+        {"op": "subrename", "subsection": "Measurements", "to": "Spectroscopy"},   # can't: not made yet
+        {"op": "subsections", "region": "No such region", "subsections": []},
+    ]
+    prev = c.post("/api/regions/changes/preview", json={"changes": changes}).json()["changes"]
+    assert [bool(r["problem"]) for r in prev] == [False, False, False, True, True]
+    assert prev[0]["replaces"] == ["Old split"] and [x["name"] for x in prev[0]["subsections"]] == ["Models", "Measurements"]
+    assert prev[0]["skipped"] == ["nope"] and prev[1]["new"] is True
+    r = c.post("/api/regions/changes/apply", json={"changes": changes}).json()
+    subs = {x["name"]: x for x in c.get("/api/subsections").json()}
+    assert set(subs) == {"Models", "Measurements", "Benchmarks"}
+    assert subs["Measurements"]["members"] == kr[5:] and subs["Benchmarks"]["members"] == [kr[0], kr[1]]
+    r2 = c.post("/api/regions/changes/apply", json={"changes": [
+        {"op": "subrename", "subsection": "Measurements", "to": "Spectroscopy", "region": "Krypton models"},
+        {"op": "subremove", "ids": [kr[0]], "from": "Benchmarks"},
+        {"op": "subdelete", "subsection": "Models"}]}).json()
+    subs = {x["name"]: x for x in c.get("/api/subsections").json()}
+    assert set(subs) == {"Spectroscopy", "Benchmarks"} and subs["Benchmarks"]["members"] == [kr[1]]
+    c.post("/api/regions/changes/undo", json={"token": r2["token"]})
+    assert {x["name"] for x in c.get("/api/subsections").json()} == {"Models", "Measurements", "Benchmarks"}
+    c.post("/api/regions/changes/undo", json={"token": r["token"]})
+    assert [(x["id"], x["members"]) for x in c.get("/api/subsections").json()] == [(old["id"], kr[:4])]
+    # regions found by the map (not kept) can have subsections too
+    c.delete(f"/api/topics/{next(t['slug'] for t in c.get('/api/topics').json() if t['name'] == 'Hall thrusters')}")
+    g = c.get("/api/graph").json()
+    hall = next(x for x in g["clusters"] if not x.get("topic") and any(n["cluster"] == x["id"] for n in g["nodes"] if n["id"] in ha))
+    p = c.post("/api/regions/changes/preview", json={"changes": [
+        {"op": "subsections", "region": hall["label"], "subsections": [{"name": "Breathing", "ids": ha[:2]}]}]}).json()
+    assert not p["changes"][0]["problem"]

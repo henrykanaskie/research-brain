@@ -21,6 +21,7 @@
   .re-card .re-papers { color: var(--ink-2); margin-top: 2px; }
   .re-card .re-bad { color: var(--red); }
   .re-card .re-new { color: var(--ink-2); font-size: 12px; }
+  .re-card .re-sub { color: var(--ink); font-style: italic; font-family: var(--display); }
   .re-card .re-acts { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
   .re-card .re-done { color: var(--ink-2); font-size: 12.5px; }
   `;
@@ -53,9 +54,25 @@
     else if (c.op === 'add') head = `Also put ${what} in ${q(c.to)}`;
     else if (c.op === 'remove') head = `Take ${what} out of ${q(c.from)}`;
     else if (c.op === 'main') head = `Draw ${what} in ${q(c.region)} (its main region)`;
+    else if (c.op === 'subsections') {
+      const subs = c.subsections || [];
+      head = subs.length ? `Subsections for ${q(c.region)}: ${subs.length}` : `Take away the subsections of ${q(c.region)}`;
+      if ((c.replaces || []).length && subs.length) head += ` (in place of ${c.replaces.map(q).join(', ')})`;
+    }
+    else if (c.op === 'subadd') head = `Put ${what} in the subsection ${q(c.to)}`;
+    else if (c.op === 'subremove') head = `Take ${what} out of the subsection ${q(c.from)}`;
+    else if (c.op === 'subrename') head = `Rename the subsection ${q(c.subsection)} to ${q(c.to)}`;
+    else if (c.op === 'subdelete') head = `Take away the subsection ${q(c.subsection)} (its papers stay)`;
     else head = c.op;
     const kids = [h('div', {}, h('span', { class: 're-op', text: head }),
-      c.new ? h('span', { class: 're-new', text: '  a new region' }) : null)];
+      c.new ? h('span', { class: 're-new', text: c.op === 'subadd' ? '  a new subsection' : '  a new region' }) : null)];
+    if (c.op === 'subsections') {
+      for (const x of c.subsections || []) {
+        const t = x.papers.slice(0, 6).map((p) => rb.truncate(window.RBTitle.text(p.title), 50)).join(' · ');
+        kids.push(h('div', { class: 're-papers' }, h('span', { class: 're-sub', text: `${x.name} (${x.papers.length})` }),
+          ` ${t}${x.papers.length > 6 ? ` · and ${x.papers.length - 6} more` : ''}`));
+      }
+    }
     if (n > 1) kids.push(h('div', { class: 're-papers', text: c.papers.slice(0, 8).map((p) => rb.truncate(window.RBTitle.text(p.title), 60)).join(' · ') + (n > 8 ? ` · and ${n - 8} more` : '') }));
     if (c.problem) kids.push(h('div', { class: 're-bad', text: `Can't: ${c.problem}` }));
     return h('li', {}, ...kids);

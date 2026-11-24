@@ -39,6 +39,7 @@ from .meta import one_look
 from .pdftext import extract, guess_title, why_unreadable
 from . import placing
 from . import region_edit
+from . import subsections as subsections_mod
 from . import duplicates
 from . import details as details_mod
 from .store import FrontmatterError, Store, normalize_selector, now_iso
@@ -774,7 +775,7 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
     names = _cluster_names([[by_id[i] for i in g] for g in ordered])
     near = _region_affinity(ordered, adj)
     clusters = [{"id": cid, "label": names[cid], "size": len(g), "near": near.get(cid, [])} for cid, g in enumerate(ordered)]
-    idx["_sub_of"] = _subclusters(ordered, adj, by_id)
+    idx["_sub_of"], idx["_sub_named"] = _subclusters(ordered, adj, by_id, subsections_mod.load(store))
     return cluster_of, clusters
 
 
@@ -866,13 +867,37 @@ def _question_ties(idx: dict, thr: float) -> dict[str, list[tuple[str, float]]]:
     return out
 
 
-def _subclusters(ordered: list[list[str]], adj: dict, by_id: dict) -> dict[str, int]:
+def _subclusters(ordered: list[list[str]], adj: dict, by_id: dict,
+                 named: list[dict] | None = None) -> tuple[dict[str, int], list[dict]]:
     """Second level of the hierarchy: inside each region, group notes by their two strongest
-    within-region ties. The graph lays regions out, then sub-groups inside them — the same
-    organising rule at two scales, so structure reads at every zoom level."""
+    within-region ties. The graph lays regions out, then sub-groups inside them: the same
+    organising rule at two scales, so structure reads at every zoom level.
+    Subsections you (or your AI) made (app/subsections.py) come first: their papers are one sub-group each
+    (sub id cid*1000 + 500 + k), and the region's other papers are grouped automatically as before.
+    Returns (sub_of, the named sub-groups [{sub, id, name, region, size}])."""
     sub_of: dict[str, int] = {i: -1 for i in by_id}
+    info: list[dict] = []
+    homed = subsections_mod.homes(ordered, named or [])
     for cid, mem in enumerate(ordered):
+        taken: dict[str, tuple[int, int]] = {}  # paper -> (its subsection's size, sub id): the smaller one wins
+        for k, (s, inside) in enumerate(homed.get(cid, [])[:400]):
+            sid = cid * 1000 + 500 + k
+            for m in inside:
+                if m not in taken or len(inside) < taken[m][0]:
+                    taken[m] = (len(inside), sid)
+        sizes: dict[int, int] = {}
+        for m, (_, sid) in taken.items():
+            sub_of[m] = sid
+            sizes[sid] = sizes.get(sid, 0) + 1
+        for k, (s, inside) in enumerate(homed.get(cid, [])[:400]):
+            sid = cid * 1000 + 500 + k
+            if sizes.get(sid):
+                info.append({"sub": sid, "id": s["id"], "name": s["name"], "region": cid, "size": sizes[sid]})
+        mem = [m for m in mem if m not in taken]
+        rest = cid * 1000 + 499  # with subsections, the region's other papers are a group of their own
         if len(mem) < 6:
+            for m in mem if taken else []:
+                sub_of[m] = rest
             continue
         ms = set(mem)
         sadj: dict[str, dict[str, float]] = {i: {} for i in mem}
@@ -899,14 +924,19 @@ def _subclusters(ordered: list[list[str]], adj: dict, by_id: dict) -> dict[str, 
         for i in mem:
             groups.setdefault(lab[i], []).append(i)
         if len(groups) < 2:
+            for m in mem if taken else []:
+                sub_of[m] = rest
             continue  # the region is one tight group already
         for k, g in enumerate(sorted((g for g in groups.values() if len(g) >= 2), key=len, reverse=True)):
             for i in g:
                 sub_of[i] = cid * 1000 + k
+        for m in mem if taken else []:
+            if sub_of[m] < 0:
+                sub_of[m] = rest
     for i, n in by_id.items():
         if n["type"] == "fragment" and n["parent"] in sub_of:
             sub_of[i] = sub_of[n["parent"]]
-    return sub_of
+    return sub_of, info
 
 
 def _cluster_names(groups: list[list[dict]]) -> list[str]:
@@ -1252,7 +1282,8 @@ def _graph_data() -> dict:
     # regions are the expensive part (label propagation + TF-IDF naming); they depend only on the index,
     # so compute them once per index signature
     # (and on the topics: a paper added to a topic joins that topic's region)
-    csig = (idx.get("sig"), regions_mod.signature(store), questions_mod.REV[0], connect_api.REV[0])  # + evidence, AI
+    csig = (idx.get("sig"), regions_mod.signature(store), subsections_mod.signature(store),  # + subsections,
+            questions_mod.REV[0], connect_api.REV[0])  # evidence, AI
     if idx.get("_clusters_sig") != csig or "_clusters_out" not in idx:
         idx["_clusters_out"] = _clusters(idx, links)
         idx["_clusters_sig"] = csig
@@ -1285,6 +1316,7 @@ def _graph_data() -> dict:
         if nd["type"] == "paper":
             nd["cards"] = card_counts.get(nd["id"], 0)
     return {"nodes": nodes, "links": links, "similar": similar, "clusters": clusters, "embedder": embedder.kind,
+            "subsections": idx.get("_sub_named", []),
             "question_links": q_links, "card_links": [ln for ln in card_links
                                                       if ln["a_paper"] in by_id and ln["b_paper"] in by_id]}
 
@@ -1368,7 +1400,7 @@ def api_graph():
     # opens (engagement.json) and the privacy settings aren't in the index signature
     from . import cards_api as _cards_api
     key = (idx.get("sig"), embedder.kind, _eng_rev[0], privacy.version(), questions_mod.REV[0],  # + evidence
-           _cards_api.signature(), regions_mod.signature(store),  # idea cards; region and topic names
+           _cards_api.signature(), regions_mod.signature(store), subsections_mod.signature(store),  # cards; names
            connect_api.REV[0])  # AI connections
     cached = idx.get("_graph_bytes")
     if not cached or cached[0] != key:
@@ -5440,7 +5472,80 @@ details_mod.install(app, store=store, ask=lambda i, c, purpose, sources: _ask(i,
 duplicates.install(app, store=store)
 
 # ---------------------------------------------------------------- region changes the chat proposes (app/region_edit.py)
-region_edit.install(app, store=store)
+def _map_regions() -> list[dict]:
+    """The regions on the map for the chat's region changes: [{name, kept, members, subs: [{id, name, members}]}]."""
+    g = _graph_data()
+    mem: dict[int, list[str]] = {}
+    in_sub: dict[int, list[str]] = {}
+    for n in g["nodes"]:
+        if n["type"] == "fragment":
+            continue
+        if n["cluster"] >= 0:
+            mem.setdefault(n["cluster"], []).append(n["id"])
+        if n.get("sub", -1) >= 0:
+            in_sub.setdefault(n["sub"], []).append(n["id"])
+    subs: dict[int, list[dict]] = {}
+    for x in g.get("subsections", []):
+        subs.setdefault(x["region"], []).append({"id": x["id"], "name": x["name"], "members": in_sub.get(x["sub"], [])})
+    return [{"name": c["label"], "kept": bool(c.get("topic")), "members": mem.get(c["id"], []),
+             "subs": subs.get(c["id"], [])} for c in g["clusters"] if c.get("label")]
+
+
+region_edit.install(app, store=store, regions=_map_regions)
+
+
+# ---------------------------------------------------------------- subsections (app/subsections.py), by hand
+class SubsectionIn(BaseModel):
+    name: str = ""
+    ids: list[str] = []
+
+
+@app.get("/api/subsections")
+def api_subsections():
+    return subsections_mod.load(store)
+
+
+@app.post("/api/subsections")
+def api_subsection_create(body: SubsectionIn):
+    try:
+        return subsections_mod.create(store, body.name, body.ids)
+    except subsections_mod.SubsectionError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.patch("/api/subsections/{sid}")
+def api_subsection_rename(sid: str, body: SubsectionIn):
+    try:
+        return subsections_mod.rename(store, sid, body.name)
+    except KeyError:
+        raise HTTPException(404, "That subsection no longer exists")
+    except subsections_mod.SubsectionError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/subsections/{sid}")
+def api_subsection_delete(sid: str):
+    try:
+        subsections_mod.delete(store, sid)
+    except KeyError:
+        raise HTTPException(404, "That subsection no longer exists")
+    return {"ok": True}
+
+
+@app.post("/api/subsections/{sid}/notes")
+def api_subsection_add(sid: str, body: SubsectionIn):
+    try:
+        return subsections_mod.add(store, sid, body.ids)
+    except KeyError:
+        raise HTTPException(404, "That subsection no longer exists")
+
+
+@app.post("/api/subsections/{sid}/remove")
+def api_subsection_remove(sid: str, body: SubsectionIn):
+    try:
+        return subsections_mod.remove(store, sid, body.ids)
+    except KeyError:
+        raise HTTPException(404, "That subsection no longer exists")
 
 # ---------------------------------------------------------------- citing: styles, keys, .bib/RIS exports (app/cite_api.py)
 from . import cite_api  # noqa: E402

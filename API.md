@@ -429,10 +429,19 @@ and a body of `- [[note-id]]` lines (the ordered members). Dismissals and snooze
 - `POST /api/regions/changes/preview` body `{"changes": [...]}` → `{changes}`: each change resolved (papers by title,
   whether it makes a new region) or the reason it can't be done. Changes the chat proposes in a ```` ```rb-regions ````
   block (app/region_edit.py): `move` (`ids`, `to`, optional `from`), `add`, `remove` (`from`), `rename` (`region`,
-  `to`), `main` (`ids`, `region`). Regions by name; a new name makes one.
-- `POST /api/regions/changes/apply` body `{"changes": [...]}` → `{token, done, skipped}`. Every region file and each
-  touched main region is put aside first.
+  `to`), `main` (`ids`, `region`). Regions by name; a new name makes one. Subsections: `subsections` (`region`,
+  `subsections: [{name, ids}]`, replaces that region's), `subadd` (`ids`, `to`, optional `region`; a new name makes
+  one), `subremove` (`ids`, `from`), `subrename` (`subsection`, `to`), `subdelete` (`subsection`). Any region on the
+  map can have subsections, also one found by similarity.
+- `POST /api/regions/changes/apply` body `{"changes": [...]}` → `{token, done, skipped}`. Every region file, each
+  touched main region and the subsections are put aside first.
 - `POST /api/regions/changes/undo` body `{"token": "..."}` → `{ok}`.
+- `GET /api/subsections` → `[{"id","name","members","at"}]`: named groups of papers inside regions, kept only in
+  `<library>/state/subsections.json` (app/subsections.py). `POST /api/subsections` body `{"name","ids"}` makes one;
+  `PATCH /api/subsections/{id}` body `{"name"}` renames it; `DELETE /api/subsections/{id}`; `POST
+  /api/subsections/{id}/notes` and `/remove` body `{"ids"}` add and take out papers. On the map one belongs to the
+  region holding most of its papers: `/api/graph` lists them as `subsections: [{sub, id, name, region, size}]`, and a
+  node's `sub` is that subsection's `sub` when it's drawn in it (a paper in two of one region: the smaller).
 - `GET /api/topics/suggest` → `[{"region","name","label","size","members"}]`: graph regions not already covered by a
   topic (Jaccard overlap < 0.6), with the region label as the suggested name. Create one with `POST /api/topics`.
 

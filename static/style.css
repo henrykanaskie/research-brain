@@ -791,6 +791,7 @@ html .chat-head .chat-title { font-size: 18px; margin-right: 4px; }
 /* the legend never runs under the Fit button or the open sheets */
 .legend { overflow: hidden; flex-wrap: nowrap; }
 .legend > div { flex: none; }
+.legend > .lg-off { display: none; }
 body.panel-open .legend { max-width: calc(100vw - var(--panel-w) - 112px); }
 body.chat-open .legend { max-width: calc(100vw - var(--chat-w) - 112px); }
 body.panel-open.chat-open .legend { max-width: calc(100vw - var(--panel-w) - var(--chat-w) - 112px); }
@@ -1102,6 +1103,12 @@ html .tp-add:focus { border-style: solid; border-color: var(--ink-2); background
 .rf-item:hover, .rf-item:focus-visible { background: var(--ground); outline: none; }
 .rf-item-name { font: 15px var(--display); flex: 1; }
 .rf-item-n { font: 12px var(--sans); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.rf-sub { align-items: center; cursor: default; }
+.rf-sub .rf-input { flex: 1; font: 15px var(--display); }
+.rf-sub-pick { border: 0; background: none; padding: 0; text-align: left; color: var(--ink); cursor: pointer; }
+.rf-sub-pick:hover, .rf-sub-pick[aria-pressed="true"] { text-decoration: underline; text-decoration-color: var(--red); text-underline-offset: 3px; }
+.rf-empty { font: 13px var(--sans); color: var(--ink-2); padding: 4px 8px 8px; line-height: 1.45; }
+.rf-acts { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 8px 4px; border-top: 1px solid var(--rule); margin-top: 4px; }
 @media (max-width: 900px) {
   .region-focus { top: 10px; max-width: calc(100vw - 32px); }
   .region-focus .btn { min-height: 36px; }

@@ -783,6 +783,10 @@
     if (S.nodeFilter && !S.nodeFilter(n)) return DIM; // graph view filter (static/views.js)
     if (S.search) return S.matches.has(n.id) ? 1 : DIM;
     if (S.focusCluster != null && n.cluster !== S.focusCluster && S.selected !== n.id) return DIM;
+    { // a subsection pointed at or picked (in a focused region): its papers lead, the region's others step back
+      const sub = S.hoverSub ?? S.focusSub;
+      if (sub != null && S.focusCluster != null && n.sub !== sub && S.selected !== n.id) return DIM;
+    }
     const f = focusSet();
     if (!f || f.has(n.id)) return 1;
     if (!S.lit || !hold.fade) return DIM;
@@ -1594,6 +1598,124 @@
     });
   }
 
+  // ---------- subsections (app/subsections.py) ----------
+  // Named groups of papers inside a region. Their papers sit together in the region all the time (as the automatic
+  // sub-groups do), but their names show only while that region is focused: the whole-map view looks as it always did.
+  const SUB_FONT = `italic 500 15px "Newsreader", Georgia, serif`, SUB_MAX_W = 210, SUB_GAP = 16;
+  const subFade = new Map();
+  function drawSubLabels(ctx, k) {
+    const subs = S.subsections || [];
+    S.subShown = [];  // the names drawn this frame (for the tests)
+    S.subBoxes = [];  // where they are, in screen pixels over the map: pointed at and clicked
+    if (!subs.length) return;
+    const named = new Map(subs.map((x) => [x.sub, x])), mem = new Map();
+    for (const n of S.nodes.values()) {
+      if (!named.has(n.sub) || n.x === undefined || n.type === 'fragment' || nodeHidden(n.id)) continue;
+      if (!mem.has(n.sub)) mem.set(n.sub, []);
+      mem.get(n.sub).push(n);
+    }
+    onScreenPx(ctx, (at) => {
+      for (const [sid, x] of named) {
+        const want = x.region === S.focusCluster && mem.has(sid) ? 1 : 0;
+        const a = easeTo(subFade.get(sid) ?? 0, want);
+        subFade.set(sid, a);
+        if (a !== want) kick(60);
+        if (a < 0.02 || !mem.has(sid)) continue;
+        const b = sectionSpan(mem.get(sid), null);
+        const [cx, top] = at(b.x, b.top);
+        ctx.font = SUB_FONT;
+        if ('fontStretch' in ctx) ctx.fontStretch = 'normal';
+        const [t] = wrapWords(ctx, regionName(x.name), SUB_MAX_W, 1);
+        const w = ctx.measureText(t).width;
+        ctx.font = NUM_FONT;
+        const num = String(mem.get(sid).length), wn = ctx.measureText(num).width;
+        const x0 = cx - (w + NUM_GAP + wn) / 2;
+        let y = top - SUB_GAP;
+        // over its papers, unless that's where the region's own name and its trace are: then under them (clear of the
+        // name under the lowest dot)
+        const reg = (S.regionLabels || []).find((r) => r.cid === x.region && r.box);
+        if (reg) {
+          const [bx0, by0] = at(reg.box[0], reg.box[1]), [bx1, by1] = at(reg.box[2], reg.box[3]);
+          if (x0 < bx1 && x0 + w + NUM_GAP + wn > bx0 && y - 15 < by1 + 4 && y + 4 > by0) y = at(b.x, b.bottom)[1] + 34;
+        }
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round';
+        const box = [x0 - 5, y - 15, x0 + w + NUM_GAP + wn + 5, y + 5];
+        const on = (S.hoverSub ?? S.focusSub) === sid, off = (S.hoverSub ?? S.focusSub) != null && !on;
+        // the map's colour behind it, so a paper's name under it never shows through
+        ctx.globalAlpha = a * 0.92; ctx.fillStyle = C.ground;
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(box[0], box[1], box[2] - box[0], box[3] - box[1], 3) : ctx.rect(box[0], box[1], box[2] - box[0], box[3] - box[1]); ctx.fill();
+        ctx.globalAlpha = a * (off ? 0.45 : 1);
+        ctx.font = SUB_FONT; ctx.fillStyle = C.ink; ctx.fillText(t, x0, y);
+        ctx.font = NUM_FONT; ctx.fillStyle = C.red; ctx.fillText(num, x0 + w + NUM_GAP, y - 6);
+        if (on) { ctx.fillStyle = C.red; ctx.fillRect(x0, y + 3, w, 1.2); }  // the region name's red rule, at its size
+        ctx.globalAlpha = 1;
+        if (a > 0.5) S.subBoxes.push({ sub: sid, box });
+        if (a > 0.5) S.subShown.push(x.name);
+
+      }
+    });
+  }
+  /** The focused region's subsections, in a sheet: rename or delete each, or ask your AI to organize the region. */
+  function regionSubsections(cid = S.focusCluster) {
+    const info = (S.clusters || []).find((c) => c.id === cid);
+    if (!info) return;
+    if (S.regionChooserClose) S.regionChooserClose();
+    const mine = (S.subsections || []).filter((x) => x.region === cid);
+    const name = regionName(info.label);
+    const rows = mine.map((x) => {
+      const nm = h('button', { type: 'button', class: 'rf-item-name rf-sub-pick', text: regionName(x.name), 'aria-pressed': String(S.focusSub === x.sub),
+        title: 'Show its papers (the region’s others step back); again to show all', onclick: () => { pickSub(x.sub); closeSheet(); } });
+      const ren = h('button', { type: 'button', class: 'btn btn-text btn-sm', text: 'Rename' });
+      const del = h('button', { type: 'button', class: 'btn btn-text btn-sm', text: 'Delete', title: 'Take this subsection away (its papers stay in the region)' });
+      const row = h('div', { class: 'rf-item rf-sub' }, nm, h('span', { class: 'rf-item-n', text: String(x.size) }), ren, del);
+      ren.onclick = () => {
+        const input = h('input', { type: 'text', class: 'rf-input', value: regionName(x.name), maxlength: 80, 'aria-label': 'Subsection name' });
+        nm.replaceWith(input); ren.hidden = true; del.hidden = true; input.focus(); input.select();
+        let over = false;
+        const done = async (save) => {
+          if (over) return;
+          over = true;
+          const v = input.value.trim();
+          if (save && v && v !== regionName(x.name)) {
+            try { await api('PATCH', `/api/subsections/${encodeURIComponent(x.id)}`, { name: v }); await refreshGraph(); }
+            catch (e) { toastErr(e, 'Could not rename the subsection'); }
+          }
+          closeSheet(); regionSubsections(cid);
+        };
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); done(true); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+        });
+        input.addEventListener('blur', () => done(true));
+      };
+      del.onclick = async () => {
+        try { await api('DELETE', `/api/subsections/${encodeURIComponent(x.id)}`); await refreshGraph(); }
+        catch (e) { toastErr(e, 'Could not delete the subsection'); }
+        closeSheet(); regionSubsections(cid);
+      };
+      return row;
+    });
+    const ask = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: mine.length ? 'Reorganize with AI' : 'Organize with AI',
+      title: 'Your AI proposes subsections for this region from its papers; nothing changes until you click Apply' });
+    ask.onclick = async () => {
+      closeSheet();
+      await chatGeneral();
+      sendChat(mine.length ? `Restructure the subsections of the region “${name}”.` : `Organize the region “${name}” into subsections.`);
+    };
+    const sheet = h('div', { class: 'rf-chooser' }, h('div', { class: 'rf-head', text: `Subsections of ${name}` }),
+      rows.length ? h('div', { class: 'rf-list' }, rows)
+        : h('div', { class: 'rf-empty', text: 'None yet. Your AI can split this region into subsections, or ask it in the chat.' }),
+      h('div', { class: 'rf-acts' }, ask));
+    const off = (e) => { if (!sheet.contains(e.target)) closeSheet(); };
+    const closeSheet = () => {
+      sheet.remove(); document.removeEventListener('pointerdown', off);
+      if (S.regionChooserClose === closeSheet) S.regionChooserClose = null;
+    };
+    S.regionChooserClose = closeSheet;
+    document.body.append(sheet);
+    setTimeout(() => { if (sheet.isConnected) document.addEventListener('pointerdown', off); }, 0);
+  }
+
   // ---------- where every name goes, decided once per layout ----------
   // Names used to find a free spot again on every frame, so they slid, changed sides, rewrapped and blinked while you
   // panned and zoomed. Now each one gets its place once, when the layout (or what's on the map) changes: a section's
@@ -1714,7 +1836,17 @@
       if (k >= minK) taken.push(best.b);
     }
   }
+  /** the subsection name under the pointer (only while its region is focused) */
+  function subHit(e) {
+    if (!e || S.focusCluster == null || !(S.subBoxes || []).length) return null;
+    const rect = graphEl.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
+    return S.subBoxes.find((b) => x >= b.box[0] && x <= b.box[2] && y >= b.box[1] && y <= b.box[3]) || null;
+  }
+  /** pick a subsection (its papers lead) or, picked already, let it go */
+  function pickSub(sub) { S.focusSub = S.focusSub === sub ? null : sub; kick(400); }
   function regionTagClick(e) {
+    const sh = subHit(e);
+    if (sh) { pickSub(sh.sub); return true; }
     const r = labelHit(e);
     if (!r) return false;
     if (S.focusCluster === r.cid) { unfocusRegion(); return true; }
@@ -1797,6 +1929,7 @@
   function unfocusRegion(refit = true) {
     if (S.focusCluster == null) return;
     S.focusCluster = null;
+    S.focusSub = null; S.hoverSub = null;
     const bar = $('#region-focus');
     if (bar) { const ed = $('.rf-edit', bar); if (ed) ed.remove(); $('.rf-name', bar).hidden = false; bar.querySelectorAll(':scope > .btn').forEach((b) => { b.hidden = false; }); bar.hidden = true; }
     if (refit && fg) smoothFit(T(700), 70);
@@ -1960,6 +2093,8 @@
     if (!c) return 'cid:' + cid;
     return c.topic && c.topic.slug ? 't:' + c.topic.slug : 'l:' + String(c.label || '').toLowerCase();
   }
+  /** a subsection's sub-group, or the rest of a region that has subsections (app/server.py _subclusters) */
+  const namedSub = (sub) => sub >= 0 && sub % 1000 >= 499;
   function regionForce() {
     // Two-level hierarchy, same rule at both scales: regions are laid out around the centre,
     // sub-groups are laid out around their region's anchor, and nodes settle around their sub-group.
@@ -1983,8 +2118,9 @@
           n.vx = n.vx * 0.7 + hx * k; n.vy = n.vy * 0.7 + hy * k;
           continue;
         }
-        const sat = satellites.get(n.id);
-        const hub = sat && nodeById.get(sat.hub);
+        let sat = satellites.get(n.id);
+        let hub = sat && nodeById.get(sat.hub);
+        if (hub && namedSub(n.sub) && hub.sub !== n.sub) { sat = null; hub = null; }  // its subsection holds it, not a link
         // a dot linked to a paper in another region moves over to that paper's region (and fans out around
         // it); its old region's rim no longer holds it back on the near side
         const ra = anchors.get(hub && hub.cluster >= 0 ? hub.cluster : n.cluster);
@@ -2118,7 +2254,10 @@
         const subs = [...subSizes.keys()].filter((s) => subOf.get(s) === cid).sort((a, b) => subSizes.get(b) - subSizes.get(a));
         if (subs.length < 2) continue;
         const c = anchors.get(cid);
-        const inner = golden(subs, 1.8 * Math.sqrt(sizes.get(cid)) + 2, c.x, c.y, cid * 1.3);
+        // a region with subsections (app/subsections.py) spreads them apart, so each one's papers sit together and
+        // its name (shown in focus) is plainly theirs; the automatic sub-groups stay close round the middle as before
+        const R = 1.8 * Math.sqrt(sizes.get(cid)) + 2;
+        const inner = golden(subs, subs.some(namedSub) ? Math.max(R, 0.5 * (c.r || 0)) : R, c.x, c.y, cid * 1.3);
         for (const [k, v] of inner) subAnchors.set(k, v);
       }
     }
@@ -2698,6 +2837,7 @@
         try {
           drawRegionLabels(ctx, k);
           drawLabels(ctx, k);
+          drawSubLabels(ctx, k);
           drawPulses(ctx, k);
           drawCards(ctx, k);
           drawLinkTag(ctx);
@@ -3680,6 +3820,7 @@
     }
     S.nodes = next;
     S.clusters = Array.isArray(g.clusters) ? g.clusters : [];
+    S.subsections = Array.isArray(g.subsections) ? g.subsections : [];
     const degs = [...next.values()].filter((n) => n.type !== 'fragment').map((n) => Number(n.degree) || 0).sort((a, b) => b - a);
     S.degreeCut = degs.length > 12 ? degs[Math.floor(degs.length * 0.12)] : 3;
     if (!S.firstGraph && S.nodes.size === 0 && S.selected) { /* library emptied */ }
@@ -6978,12 +7119,15 @@
     // the graph works out what's under the pointer only while it draws; it pauses when nothing moves, so
     // wake it briefly or it keeps the last dot you hovered (and a right-click on empty map opens that dot's menu)
     kick(120);
+    const sh = S.hover ? null : subHit(e);
+    if ((sh ? sh.sub : null) !== (S.hoverSub ?? null)) { S.hoverSub = sh ? sh.sub : null; kick(300); }
+    if (sh) { graphEl.style.cursor = 'pointer'; return; }
     const r = S.hover ? null : labelHit(e);
     const id = r ? r.cid : null;
     if (r && S.hoverLink) setHoverLink(null);
     if (id !== (S.hoverRegion ?? null)) { S.hoverRegion = id; if (id != null) takeLit(null, id, () => S.hoverRegion === id && !(pointerAt && holding() && lineAtLit(LINE_PX))); else { clearTimeout(hold.take); releaseLit(); } graphEl.style.cursor = r ? 'pointer' : (S.hover ? 'pointer' : ''); kick(50); }
   });
-  graphEl.addEventListener('pointerleave', () => { if (S.hoverRegion != null) { S.hoverRegion = null; clearTimeout(hold.take); releaseLit(); kick(50); } });
+  graphEl.addEventListener('pointerleave', () => { if (S.hoverSub != null) { S.hoverSub = null; kick(300); } if (S.hoverRegion != null) { S.hoverRegion = null; clearTimeout(hold.take); releaseLit(); kick(50); } });
   // Drag a section: press on its cloud or its name tag (not on a paper) and the whole section comes with you,
   // its papers keeping their places in it; drop it and it stays there (only that section moves). The map's own
   // panning is off for that press, so the press can't drag the whole map; a plain click still works as before.
@@ -7028,6 +7172,7 @@
   }
   $('#rf-show-all') && $('#rf-show-all').addEventListener('click', () => unfocusRegion());
   $('#rf-rename') && $('#rf-rename').addEventListener('click', () => renameRegion());
+  $('#rf-subs') && $('#rf-subs').addEventListener('click', () => regionSubsections());
   $('#btn-regions') && $('#btn-regions').addEventListener('click', (e) => { e.stopPropagation(); chooseRegion(); });
 
   // search
@@ -7059,15 +7204,23 @@
     });
   }
   $('#lines-mode').value = S.lines;
-  { // the legend stops where the buttons on the right begin, and its count goes first when there isn't room
+  { // the legend stops where the buttons on the right begin. Without room the count goes first, then whole entries
+    // from the end (never a word cut in half). It's worked out again whenever a side window opens or closes: worked
+    // out while the chat or a panel was open, it stayed that narrow after it closed and showed only "Paper, un".
     const lg = $('#legend'), tools = document.querySelector('.graph-tools'), count = $('#legend-count');
     const fit = () => {
       if (!lg || !tools || !lg.offsetParent) return;
       const room = tools.getBoundingClientRect().left - lg.getBoundingClientRect().left - 16;
       lg.style.maxWidth = `${Math.max(0, room)}px`;
-      if (count) { count.hidden = false; count.hidden = lg.scrollWidth > lg.clientWidth + 1; }
+      const items = [...lg.children];
+      for (const el of items) el.classList.remove('lg-off');
+      const order = [count, ...items.filter((el) => el !== count).reverse()].filter(Boolean);
+      for (const el of order) { if (lg.scrollWidth <= lg.clientWidth + 1) break; el.classList.add('lg-off'); }
     };
+    const soon = () => { fit(); requestAnimationFrame(fit); setTimeout(fit, 350); };  // (after the sheets slide)
     if (window.ResizeObserver && lg && tools) { const ro = new ResizeObserver(fit); ro.observe(tools); ro.observe(document.body); }
+    if (window.MutationObserver) new MutationObserver(soon).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    if (tools) tools.addEventListener('transitionend', fit);
     addEventListener('resize', fit);
     S.fitLegend = fit;
   }
@@ -7402,7 +7555,7 @@
     registerRenderer(type, r) { (S.renderers || (S.renderers = {}))[type] = r; if (S.cur && S.cur.type === type && !panel.hidden) renderPanel(); },
     titleField, section, renderTags, renderBacklinks, renderLinked, renderDanger, renderMD, autosize, renderPanel,
     // static/shortcuts.js (keyboard commands, palette actions, tour)
-    openMenu, addById, openChat, closeChat, closeExplain, newNote, runCritique, updateSearch, setShowSim, setLines, linkDrawn, linkNotes, offerCreate,
+    openMenu, addById, openChat, closeChat, closeExplain, focusRegion, unfocusRegion, newNote, runCritique, updateSearch, setShowSim, setLines, linkDrawn, linkNotes, offerCreate,
     pickPdf: () => $('#pdf-input').click(),
     upload, task,
     zoomFit: () => fg && smoothFit(T(700), 70), mapLabel,

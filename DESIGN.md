@@ -123,6 +123,10 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
   with the map, and where they'd reach over other regions' papers the papers recede (an atlas). A click zooms to the
   region; with one focused the other names stay, quieter, and a click goes straight there.
 - A region is a topic (the word in the files and the API): one thing, one name, "Region" everywhere people read.
+- Subsections: named groups of papers inside a region, kept only in the app (state/subsections.json, never files). Their
+  names show only while their region is focused: italic Newsreader 15px with the red count, on the ground colour, near
+  their papers. The whole-map view looks as it always did. Pointing at a name (or picking it in the focus bar's
+  Subsections) keeps its papers lit and steps the region's others back; a red rule under the name, as on a region's.
 - Names hold still. Every name gets its place once per layout (planLabels): a section's above its papers, a paper's on the
   side of its dot the fewest resting traces cross. Panning changes nothing; zooming only fades a name in or out, at one
   zoom of its own. Names are drawn in screen pixels at one size, and stay put while their dots float (under a pixel).
