@@ -1548,9 +1548,12 @@
         t.a = easeTo(t.a ?? want, want); t.solid = solid;
         if (t.a !== want || t.solid !== (t.shown ? 1 : 0)) kick(60);
         if (t.a < 0.02) continue;
-        const [cx, top] = at(r.x, r.top), y0 = top - TITLE_GAP - t.h, x0 = cx - t.w / 2;
+        // focused with its subsections' names showing: it rises over them, so the top row's names stay over their papers
+        const lift = r.cid === focused ? SUB_LIFT * subLift(r.cid) : 0;
+        const [cx, top0] = at(r.x, r.top), top = top0 - lift, y0 = top - TITLE_GAP - t.h, x0 = cx - t.w / 2;
         if (x0 > W || x0 + t.w < 0 || y0 > H || top < 0) continue;  // off screen
-        r.box = [r.x - (t.w / 2 + 4) * px, r.top - (TITLE_GAP + t.h + 2) * px, r.x + (t.w / 2 + 4) * px, r.top - (RING_AT - RING_R - 2) * px];
+        const rTop = r.top - lift * px;
+        r.box = [r.x - (t.w / 2 + 4) * px, rTop - (TITLE_GAP + t.h + 2) * px, r.x + (t.w / 2 + 4) * px, rTop - (RING_AT - RING_R - 2) * px];
         const hotTo = r.cid === focused ? 1 : isHot ? litLevel() : 0;
         t.hot = easeTo(t.hot || 0, hotTo);
         if (t.hot !== hotTo) kick(60);
@@ -1601,10 +1604,20 @@
   // ---------- subsections (app/subsections.py) ----------
   // Named groups of papers inside a region. Their papers sit together in the region all the time (as the automatic
   // sub-groups do), but their names show only while that region is focused: the whole-map view looks as it always did.
-  const SUB_FONT = `italic 500 15px "Newsreader", Georgia, serif`, SUB_MAX_W = 210, SUB_GAP = 16;
+  const SUB_FONT = `italic 500 15px "Newsreader", Georgia, serif`, SUB_MAX_W = 210, SUB_GAP = 16, SUB_LIFT = 34;
   const subFade = new Map();
-  function drawSubLabels(ctx, k) {
+  /** How far a region's subsection names have faded in (0 to 1): its own name rises over them by as much. */
+  const subLift = (cid) => Math.max(0, ...subEntries().filter((x) => x.region === cid).map((x) => subFade.get(x.sub) || 0));
+  /** The named subsections, and for each region that has some, its papers in none of them ("Not in a subsection"). */
+  function subEntries() {
     const subs = S.subsections || [];
+    if (!subs.length) return subs;
+    const regions = new Set(subs.map((x) => x.region)), rest = new Set();
+    for (const n of S.nodes.values()) if (n.sub >= 0 && n.sub % 1000 === 499 && regions.has(n.cluster)) rest.add(n.cluster);
+    return subs.concat([...rest].map((cid) => ({ sub: cid * 1000 + 499, region: cid, name: 'Not in a subsection', rest: true })));
+  }
+  function drawSubLabels(ctx, k) {
+    const subs = subEntries();
     S.subShown = [];  // the names drawn this frame (for the tests)
     S.subBoxes = [];  // where they are, in screen pixels over the map: pointed at and clicked
     if (!subs.length) return;
@@ -1645,12 +1658,12 @@
         ctx.globalAlpha = a * 0.92; ctx.fillStyle = C.ground;
         ctx.beginPath(); ctx.roundRect ? ctx.roundRect(box[0], box[1], box[2] - box[0], box[3] - box[1], 3) : ctx.rect(box[0], box[1], box[2] - box[0], box[3] - box[1]); ctx.fill();
         ctx.globalAlpha = a * (off ? 0.45 : 1);
-        ctx.font = SUB_FONT; ctx.fillStyle = C.ink; ctx.fillText(t, x0, y);
+        ctx.font = SUB_FONT; ctx.fillStyle = x.rest ? C.ink2 : C.ink; ctx.fillText(t, x0, y);
         ctx.font = NUM_FONT; ctx.fillStyle = C.red; ctx.fillText(num, x0 + w + NUM_GAP, y - 6);
         if (on) { ctx.fillStyle = C.red; ctx.fillRect(x0, y + 3, w, 1.2); }  // the region name's red rule, at its size
         ctx.globalAlpha = 1;
         if (a > 0.5) S.subBoxes.push({ sub: sid, box });
-        if (a > 0.5) S.subShown.push(x.name);
+        if (a > 0.5 && !x.rest) S.subShown.push(x.name);
 
       }
     });
@@ -1957,8 +1970,35 @@
     S.focusCluster = cid;
     const bar = $('#region-focus');
     if (bar) { $('.rf-name', bar).textContent = regionName(info.label); bar.hidden = false; }
-    if (fit) smoothFit(T(700), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid);
+    const to = regroup(cid);  // its subsections, if it has some, open out into columns under their names
+    if (fit) smoothFit(T(700), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid, to && ((n) => to.get(n) || restingAt(n)));
     kick(800);
+  }
+  /** A region with subsections changes arrangement as it's focused or left (columns, or round clusters): its papers
+   *  (and their highlights) glide to their new spots. Nothing else moves. Returns where they go, or null. */
+  function regroup(cid, ms = 900) {
+    const rf = fg && fg.d3Force('regions');
+    if (!rf || !rf.slotAt || cid == null) return null;
+    const nodes = fg.graphData().nodes, from = new Map(), to = new Map();
+    for (const n of nodes) {
+      if (n.cluster !== cid || n.type === 'fragment' || n === S.dragNode || !Number.isFinite(n.x)) continue;
+      const p = rf.slotAt(n);
+      if (p) { from.set(n, [n.x, n.y]); to.set(n, p); }
+    }
+    if (!to.size) return null;
+    const byId = new Map([...to.keys()].map((n) => [n.id, n]));
+    for (const f of nodes) {
+      const p = f.type === 'fragment' && byId.get(f.parent);
+      if (!p || !Number.isFinite(f.x)) continue;
+      const a = from.get(p), b = to.get(p);
+      from.set(f, [f.x, f.y]); to.set(f, [f.x + b[0] - a[0], f.y + b[1] - a[1]]);
+    }
+    for (const [n, p] of to) { n.x = p[0]; n.y = p[1]; }
+    plan.gen++; planLabels();  // the papers' names take their places for where the dots are going
+    for (const [n, p] of from) { n.x = p[0]; n.y = p[1]; }
+    motion.tween = { from, to, t0: performance.now(), ms: Math.max(1, T(ms)) };
+    runMotion();
+    return to;
   }
   /** Rename the focused region, in place in its bar. It's the same name in the Regions
    *  drawer (a topic file, in the data): there is only one. */
@@ -2007,11 +2047,13 @@
   }
   function unfocusRegion(refit = true) {
     if (S.focusCluster == null) return;
+    const was = S.focusCluster;
     S.focusCluster = null;
     S.focusSub = null; S.hoverSub = null;
     const bar = $('#region-focus');
     if (bar) { const ed = $('.rf-edit', bar); if (ed) ed.remove(); $('.rf-name', bar).hidden = false; bar.querySelectorAll(':scope > .btn').forEach((b) => { b.hidden = false; }); bar.hidden = true; }
-    if (refit && fg) smoothFit(T(700), 70);
+    const to = regroup(was);  // its subsections close back into round clusters
+    if (refit && fg) smoothFit(T(700), 70, null, to && ((n) => to.get(n) || restingAt(n)));
     kick(800);
   }
   function chooseRegion() {
@@ -2178,7 +2220,7 @@
     // Two-level hierarchy, same rule at both scales: regions are laid out around the centre,
     // sub-groups are laid out around their region's anchor, and nodes settle around their sub-group.
     let nodes = [];
-    let anchors = new Map(), subAnchors = new Map();
+    let anchors = new Map(), subAnchors = new Map(), slots = new Map();
     function force(alpha) {
       for (const n of nodes) {
         // safety net: a position that went bad (NaN, Infinity) is put back near its region instead of
@@ -2190,6 +2232,14 @@
           if (n.fx !== undefined && !Number.isFinite(n.fx)) { n.fx = undefined; n.fy = undefined; }
         }
         if (n.type === 'fragment' || n.fx !== undefined) continue;
+        if (n.__slot) {
+          // a paper of a region with subsections: on its own spot in its subsection's block, worked out from who is
+          // in it (never from where the dots happen to be), so the same subsections always look the same
+          // (in columns while the region is focused, where the names show; a small round cluster otherwise, so the
+          // whole map keeps its look)
+          const sl = slots.get(n.id), a = sl && anchors.get(sl.cid);
+          if (a) { const q = S.focusCluster === sl.cid ? sl.col : sl.blob; n.x = a.x + q[0]; n.y = a.y + q[1]; n.vx = 0; n.vy = 0; continue; }
+        }
         if (n.__home) {
           // a dot you placed: a firm spring to where you left it (not scaled down as the layout cools, so it
           // always comes back), and extra damping so it sways a little instead of bouncing around
@@ -2288,6 +2338,11 @@
         if (n.cluster >= 0) sizes.set(n.cluster, (sizes.get(n.cluster) || 0) + 1);
         if (n.sub >= 0) { subSizes.set(n.sub, (subSizes.get(n.sub) || 0) + 1); subOf.set(n.sub, n.cluster); }
       }
+      const blocks = subsectionBlocks(top);
+      for (const [cid, b] of blocks) {  // room for the blocks: a region with subsections is as big as they need
+        const r = Math.hypot(b.w / 2, b.h / 2) + 12;
+        sizes.set(cid, Math.max(sizes.get(cid) || 1, ((r - 8) / 7.6) ** 2));
+      }
       const ids = [...sizes.keys()].sort((a, b) => sizes.get(b) - sizes.get(a));
       // Where regions sit comes from the region layout alone (sizes and how related they are), never from where
       // dots happen to be: it gives the same balanced arrangement around the middle every time, so a dot you
@@ -2329,16 +2384,72 @@
       outerR = 30;
       for (const a of anchors.values()) outerR = Math.max(outerR, Math.hypot(a.x, a.y) + a.r + 18);
       subAnchors = new Map();
+      slots = new Map();
+      for (const n of nodes) delete n.__slot;
       for (const cid of ids) {
+        const c = anchors.get(cid), b = blocks.get(cid);
+        if (b) {  // subsections: each paper on its spot in its block, the block's middle its sub-group's anchor
+          for (const [id, p] of b.at) slots.set(id, { cid, col: p, blob: b.blob.get(id) });
+          for (const [k, m] of b.mid) subAnchors.set(k, { x: c.x + m[0], y: c.y + m[1] });
+          continue;
+        }
         const subs = [...subSizes.keys()].filter((s) => subOf.get(s) === cid).sort((a, b) => subSizes.get(b) - subSizes.get(a));
         if (subs.length < 2) continue;
-        const c = anchors.get(cid);
-        // a region with subsections (app/subsections.py) spreads them apart, so each one's papers sit together and
-        // its name (shown in focus) is plainly theirs; the automatic sub-groups stay close round the middle as before
-        const R = 1.8 * Math.sqrt(sizes.get(cid)) + 2;
-        const inner = golden(subs, subs.some(namedSub) ? Math.max(R, 0.5 * (c.r || 0)) : R, c.x, c.y, cid * 1.3);
+        // the automatic sub-groups stay close round the middle
+        const inner = golden(subs, 1.8 * Math.sqrt(sizes.get(cid)) + 2, c.x, c.y, cid * 1.3);
         for (const [k, v] of inner) subAnchors.set(k, v);
       }
+      for (const n of nodes) if (slots.has(n.id) && n.type !== 'fragment') n.__slot = true;
+    }
+    /** Regions with subsections (app/subsections.py), laid out to be read: each subsection a block of short columns
+     *  under its name, its papers oldest first (down a column, then the next), the blocks in the order the
+     *  subsections were made and then the papers in none, packed in rows round the region's middle. Only who is in
+     *  what decides it, so it comes out the same every time and never drifts. cid -> {w, h, at: id -> [dx, dy] from
+     *  the region's middle, mid: sub -> [dx, dy]}. */
+    function subsectionBlocks(top) {
+      const ROW = 6.5, COLW = 27, MAXR = 7, GAPX = 14, TITLE = 11;
+      const regions = new Set(top.filter((n) => n.cluster >= 0 && namedSub(n.sub)).map((n) => n.cluster));
+      const out = new Map();
+      for (const cid of regions) {
+        const made = (S.subsections || []).filter((x) => x.region === cid).map((x) => x.sub);
+        const groups = new Map();
+        for (const n of top) if (n.cluster === cid) (groups.get(n.sub) || groups.set(n.sub, []).get(n.sub)).push(n);
+        const rank = (k) => (made.includes(k) ? made.indexOf(k) : 1e5 + (k % 1000 === 499 ? 1e4 : k));
+        const year = (n) => Number(n.year) || 9999;
+        const blocks = [...groups.keys()].sort((a, b) => rank(a) - rank(b)).map((k) => {
+          const ms = groups.get(k).sort((p, q) => year(p) - year(q) || String(tt(p.title) || p.id).localeCompare(String(tt(q.title) || q.id)));
+          const cols = Math.ceil(ms.length / MAXR), rows = Math.ceil(ms.length / cols);
+          return { k, ms, cols, rows, w: (cols - 1) * COLW, h: (rows - 1) * ROW };
+        });
+        // rows of blocks about as wide as they are tall altogether (with room for each block's name above it and
+        // its papers' names beside it)
+        const area = blocks.reduce((t, b) => t + (b.w + COLW + GAPX) * (b.h + TITLE + ROW), 0);
+        const width = Math.max(...blocks.map((b) => b.w + COLW), Math.sqrt(area) * 1.15);
+        const shelves = [];
+        for (const b of blocks) {
+          let sh = shelves[shelves.length - 1];
+          if (!sh || (sh.items.length && sh.w + b.w + COLW > width)) { sh = { items: [], w: 0, h: 0 }; shelves.push(sh); }
+          b.x = sh.w; sh.items.push(b); sh.w += b.w + COLW + GAPX; sh.h = Math.max(sh.h, b.h);
+        }
+        let y = 0;
+        for (const sh of shelves) { sh.y = y; y += sh.h + TITLE + ROW; sh.w -= COLW + GAPX; }
+        const H = y - TITLE - ROW, W = Math.max(...shelves.map((sh) => sh.w));
+        const at = new Map(), mid = new Map(), blob = new Map();
+        for (const sh of shelves) {
+          const x0 = -sh.w / 2 - COLW / 4;  // each row centred (the papers' names reach to the right of the dots)
+          for (const b of sh.items) {
+            const bx = x0 + b.x, by = sh.y - H / 2 + TITLE / 3, m = [bx + b.w / 2, by + b.h / 2];
+            b.ms.forEach((n, i) => {
+              at.set(n.id, [bx + Math.floor(i / b.rows) * COLW, by + (i % b.rows) * ROW]);
+              const t = i * 2.39996 + b.k * 0.9, rr = b.ms.length === 1 ? 0 : 5.5 * Math.sqrt(i + 0.5);
+              blob.set(n.id, [m[0] + Math.cos(t) * rr, m[1] + Math.sin(t) * rr * 0.92]);
+            });
+            mid.set(b.k, m);
+          }
+        }
+        out.set(cid, { w: W + COLW, h: H + TITLE + ROW, at, mid, blob });
+      }
+      return out;
     }
     force.relayout = layoutAnchors;
     /** Drag a whole section: its middle, its sub-groups and every dot in it (placed ones keep their place in it). */
@@ -2355,6 +2466,14 @@
       }
     };
     force.regionAt = (cid) => anchors.get(cid) || null;
+    /** Where a paper of a region with subsections sits now: its column spot while that region is focused, its spot
+     *  in its subsection's cluster otherwise (null for any other dot). */
+    force.slotAt = (n) => {
+      const sl = slots.get(n.id), a = sl && anchors.get(sl.cid);
+      if (!a) return null;
+      const q = S.focusCluster === sl.cid ? sl.col : sl.blob;
+      return [a.x + q[0], a.y + q[1]];
+    };
     /** After a layout: each section's papers spread over their whole section, from a sunflower of evenly spaced
      *  spots that fills the section's disc (a section grows only as it gets more papers), loosened so it doesn't
      *  read as a grid: each paper leans toward where the layout put it and is offset a little on its own. Which paper takes
@@ -2366,7 +2485,7 @@
       for (const n of nodes) {
         if (n.type === 'fragment' || n.cluster == null || n.cluster < 0 || !Number.isFinite(n.x)) continue;
         if (!anchors.has(n.cluster)) continue;
-        (by.get(n.cluster) || by.set(n.cluster, { free: [], held: [] }).get(n.cluster))[n.__home || n.fx !== undefined ? 'held' : 'free'].push(n);
+        (by.get(n.cluster) || by.set(n.cluster, { free: [], held: [] }).get(n.cluster))[n.__home || n.__slot || n.fx !== undefined ? 'held' : 'free'].push(n);
       }
       for (const [cid, { free, held }] of by) {
         if (!free.length) continue;
@@ -2455,7 +2574,7 @@
     };
     /** After a layout: every dot inside its own section and out of the others (dots you placed stay put). */
     force.contain = () => {
-      const free = (n) => n.type !== 'fragment' && !n.__home && n.fx === undefined && Number.isFinite(n.x);
+      const free = (n) => n.type !== 'fragment' && !n.__home && !n.__slot && n.fx === undefined && Number.isFinite(n.x);
       const dots = nodes.filter((n) => n.type !== 'fragment' && Number.isFinite(n.x));
       for (let it = 0; it < 8; it++) {
         // dots in the same space never sit on each other: push overlapping pairs apart (a dot you placed stays)
@@ -2476,7 +2595,7 @@
           }
         }
         for (const n of nodes) {
-          if (n.type === 'fragment' || n.__home || n.fx !== undefined || !Number.isFinite(n.x)) continue;
+          if (n.type === 'fragment' || n.__home || n.__slot || n.fx !== undefined || !Number.isFinite(n.x)) continue;
           const own = anchors.get(n.cluster), r = nodeRadius(n);
           if (own) {
             const dx = n.x - own.x, dy = n.y - own.y, d = Math.hypot(dx, dy), lim = Math.max(1, own.r - r - 1);
@@ -2707,7 +2826,7 @@
     };
     const near = (g, x, y, c) => !(x < g.minx - c || x > g.maxx + c || y < g.miny - c || y > g.maxy + c)
       && nearest(g.P, x, y)[0] < c * c;
-    const placed = (n) => !!n.__home || n.fx !== undefined;
+    const placed = (n) => !!n.__home || !!n.__slot || n.fx !== undefined;
 
     // Near the end of each layout, plan once where every dot still sitting on a line should go (settle, below),
     // then ease each one there over the last seconds (an exponential glide, so it slows as it arrives).
@@ -2716,7 +2835,7 @@
       for (const n of nodes) {
         if (!n.__clearTo) continue;
         const dx = n.__clearTo[0] - n.x, dy = n.__clearTo[1] - n.y;
-        if (Math.hypot(dx, dy) < 0.02 || n.__home || n.fx !== undefined) { delete n.__clearTo; continue; }
+        if (Math.hypot(dx, dy) < 0.02 || n.__home || n.__slot || n.fx !== undefined) { delete n.__clearTo; continue; }
         // blended into the dot's own motion, so it curves smoothly toward the spot instead of changing course at once
         n.vx = n.vx * 0.75 + dx * 0.03; n.vy = n.vy * 0.75 + dy * 0.03;
       }
@@ -4304,7 +4423,9 @@
       const info = (S.clusters || []).find((x) => x.id === cid);
       if (!info || !info.label || mem.length < 2 || (filter && !mem.every(filter))) continue;
       const b = sectionSpan(mem, rf && rf.regionAt ? rf.regionAt(cid) : null, posOf), t = titleText(info.label, mem.length);
-      out.push({ x: b.x, top: b.top, w: t.w, h: t.h });
+      // framing one region with subsections: its name stands higher, over its subsections' names (drawRegionLabels)
+      const lift = filter && (S.subsections || []).some((x) => x.region === cid) ? SUB_LIFT + 12 : 0;
+      out.push({ x: b.x, top: b.top, w: t.w, h: t.h + lift });
     }
     return out;
   }

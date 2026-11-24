@@ -127,6 +127,11 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
   names show only while their region is focused: italic Newsreader 15px with the red count, on the ground colour, near
   their papers. The whole-map view looks as it always did. Pointing at a name (or picking it in the focus bar's
   Subsections) keeps its papers lit and steps the region's others back; a red rule under the name, as on a region's.
+  Their papers aren't left to the physics: focused, each subsection is a block of short columns (7 at most) under its
+  name, oldest paper first, the blocks in the order the subsections were made and "Not in a subsection" last, packed in
+  rows; the region's own name rises over them. Left, the same papers close into a small round cluster each, so the
+  whole map keeps its look. Only who is in what decides the spots, so a refresh never moves them and dragging one
+  doesn't stick; focusing or leaving glides only that region's papers.
 - Names hold still. Every name gets its place once per layout (planLabels): a section's above its papers, a paper's on the
   side of its dot the fewest resting traces cross. Panning changes nothing; zooming only fades a name in or out, at one
   zoom of its own. Names are drawn in screen pixels at one size, and stay put while their dots float (under a pixel).

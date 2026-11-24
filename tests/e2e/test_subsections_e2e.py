@@ -209,3 +209,35 @@ def test_you_make_subsections_by_hand_in_the_sheet_and_from_a_papers_menu(ctx, s
     expect(page.locator(".rf-chooser .rf-sub", has_text="Benchmarks")).to_be_visible()
     assert {x["name"]: x["members"] for x in api(server, "GET", "/api/subsections")}["Benchmarks"] == [kr[7]]
     assert not page.errors
+
+
+def test_a_region_with_subsections_is_laid_out_in_order_and_holds_still(ctx, server):
+    """Focused, each subsection is a block of columns under its name, oldest paper first; left, its papers close
+    into a round cluster in the same place. The spots come from who is in what alone: a refresh moves nothing."""
+    clear_vault(server)
+    kr = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Krypton collisional radiative model {i}",
+                                             "year": 2000 + (7 - i), "abstract": "collisional radiative model krypton"})["id"]
+          for i in range(8)]
+    api(server, "POST", "/api/topics", {"name": "Argon line models", "members": kr})
+    api(server, "POST", "/api/subsections", {"name": "Metastable levels", "ids": kr[:5]})
+    api(server, "POST", "/api/subsections", {"name": "Line ratios", "ids": kr[5:7]})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 8 && (window.__rb.S.subsections || []).length === 2")
+    page.wait_for_timeout(3500)
+    pos = "(ids) => ids.map((i) => { const n = window.__rb.S.nodes.get(i); return [Math.round(n.x * 10) / 10, Math.round(n.y * 10) / 10]; })"
+    loose = page.evaluate(pos, kr)
+    cid = page.evaluate(f"window.__rb.S.nodes.get('{kr[0]}').cluster")
+    page.evaluate(f"window.__rb.focusRegion({cid})")
+    page.wait_for_timeout(2000)
+    cols = page.evaluate(pos, kr)
+    meta = cols[:5]
+    assert len({x for x, _ in meta}) == 1, meta  # five papers: one column
+    assert [y for _, y in meta] == sorted([y for _, y in meta], reverse=True), meta  # oldest (kr[4], 2003) at the top
+    gap = lambda a, b: min(abs(p[1] - q[1]) + abs(p[0] - q[0]) for p in a for q in b)  # noqa: E731
+    assert gap(meta, cols[5:7]) > 10 and gap(meta + cols[5:7], cols[7:]) > 10  # each block apart (the rest too)
+    page.evaluate("window.__rb.refreshGraph()")
+    page.wait_for_timeout(2500)
+    assert page.evaluate(pos, kr) == cols  # a refresh moves nothing
+    page.evaluate("window.__rb.unfocusRegion()")
+    page.wait_for_timeout(2000)
+    assert page.evaluate(pos, kr) == loose  # back as they were
