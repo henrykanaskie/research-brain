@@ -240,8 +240,9 @@
 
   rb.onPanelRender((n, body) => {
     if (!n || n.type === 'fragment') return;
-    const title = $('.title-input', body);
-    if (!title) return;
+    const input = $('.title-input', body);
+    if (!input) return;
+    const title = input.closest('.title-wrap') || input;  // the title (typeset when it has math, app.js titleField)
     if (n.type === 'question') { title.after(topicRow(n)); return; } // a question has no reading status (static/questions.js)
     title.before(statusRow(n));
     title.after(becauseField(n), topicRow(n));
@@ -355,8 +356,8 @@
     if (it.authors && it.authors.length) meta.push(h('span', { text: it.authors.slice(0, 2).join(', ') + (it.authors.length > 2 ? ' et al.' : '') }));
     if (showTopic && it.topic) meta.push(h('span', { text: it.topic.name }));
     const el = h('div', { class: 'q-item' + (isRec ? ' rec' : ''), dataset: { key: it.key || it.id || it.s2_id } },
-      isRec ? h('div', { class: 'q-title', text: it.title, title: it.abstract ? truncate(it.abstract, 400) : '' })
-        : h('button', { class: 'q-title', text: it.title, onclick: () => rb.openNote(it.id, { center: true }) }),
+      isRec ? h('div', { class: 'q-title', html: window.RBTitle.html(it.title), title: it.abstract ? truncate(it.abstract, 400) : '' })
+        : h('button', { class: 'q-title', html: window.RBTitle.html(it.title), onclick: () => rb.openNote(it.id, { center: true }) }),
       meta.length ? h('div', { class: 'q-meta' }, meta) : null,
       it.reason ? h('div', { class: 'q-reason', text: it.reason }) : null);
     const acts = h('div', { class: 'q-acts' });
@@ -370,7 +371,7 @@
         act('Accept', 'Add it to your library as to read, in this region', async () => {
           const n = await api('POST', `/api/topics/${enc(slug)}/queue/accept`, { s2_id: it.s2_id });
           (T.sets.get(slug) || T.sets.set(slug, new Set()).get(slug)).add(n.id);
-          toast(`Added “${truncate(n.title, 60)}” to read`);
+          toast(`Added “${truncate(window.RBTitle.text(n.title), 60)}” to read`);
           await rb.refreshGraph();
           reload();
         }, 'btn btn-sm'),

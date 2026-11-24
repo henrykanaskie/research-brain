@@ -225,6 +225,8 @@ research brain fills in the authors, year and journal, and looks for a free lega
 - A critique checks your summary against the paper.
 - Drag a dot where you want it; linked dots come along.
 - A region keeps a *Next to read* list for you.
+- The same paper added twice (a preprint and its journal version) is spotted by title and authors: its panel offers
+  **Merge into this one**.
 - Right-click a dot to **Move to region** (it leaves the one it's in), take it out of one, or, for a paper in several,
   choose its **main region**, the one it's drawn in.
 - Ask the chat to change your regions ("move the krypton papers into Cross sections") and it shows the changes with

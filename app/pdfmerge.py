@@ -154,7 +154,10 @@ def _paper(nid: str) -> dict:
 
 
 # ---------------------------------------------------------------- the merge
-def merge(a_id: str, b_id: str) -> dict:
+def merge(a_id: str, b_id: str, duplicate: bool = False) -> dict:
+    """Paper b folded into paper a. Without `duplicate`: a has no PDF and takes b's. With it (the same paper twice,
+    app/duplicates.py): a keeps its own PDF if it has one, and b's is set aside (a stored one goes to Removed from
+    library/, one in your folders stays where it is and isn't followed any more), else a takes b's."""
     store = ctx.store
     if a_id == b_id:
         raise HTTPException(400, "That's the same paper")
@@ -164,28 +167,40 @@ def merge(a_id: str, b_id: str) -> dict:
             if n.get("_yaml_error"):
                 raise HTTPException(409, f"“{n['title']}” has a file that can't be read right now; fix it first")
         a_pdf, b_pdf = store.pdf_path(a_id), store.pdf_path(b_id)
-        if store.is_linked(a_id) or a_pdf.is_file():
-            raise HTTPException(409, f"“{a['title']}” already has a PDF. Remove it first, or keep both papers.")
+        a_has = store.is_linked(a_id) or a_pdf.is_file()
         b_linked = store.links.data()["files"].get(b_id) if store.is_linked(b_id) else None
-        if not b_linked and not b_pdf.is_file():
+        b_has = bool(b_linked) or b_pdf.is_file()
+        if a_has and not duplicate:
+            raise HTTPException(409, f"“{a['title']}” already has a PDF. Remove it first, or keep both papers.")
+        if not b_has and not duplicate:
             raise HTTPException(400, f"“{b['title']}” has no PDF to give")
         before = _safe(ctx.wiki, None)  # [[wikilinks]] as they resolve now (b still there)
 
-        # the text first (a copy), then the PDF
-        bt, at = store.text_path(b_id), store.text_path(a_id)
-        if bt.is_file():
-            part = at.with_name(f".{at.name}.part")
-            try:
-                shutil.copyfile(bt, part)
-                fsio.replace(part, at)
-            except BaseException:
-                part.unlink(missing_ok=True)
-                raise
-        if b_linked:  # your own file: stays where it is, now a's (b's entry is dropped just before b is removed)
-            store.links.link(a_id, b_linked["f"], b_linked["rel"], b_linked.get("size", 0))
-        else:
-            os.replace(b_pdf, a_pdf)  # same folder: a rename, nothing copied
-        _move_hash(store, b_id, a_id)
+        set_aside = None
+        if a_has and b_has:  # the same paper twice, each with a PDF: a's stays, b's is put aside
+            if b_linked:
+                store.links.unlink(b_id, ignore=True)  # left in your folder, not added back as a paper
+                set_aside = {"pdf": "left", "rel": b_linked["rel"]}
+            else:
+                from . import papers as _papers
+                set_aside = _papers.remove_pdf(store, b_id, "keep")
+            b_linked = None
+        elif b_has:
+            # the text first (a copy), then the PDF
+            bt, at = store.text_path(b_id), store.text_path(a_id)
+            if bt.is_file():
+                part = at.with_name(f".{at.name}.part")
+                try:
+                    shutil.copyfile(bt, part)
+                    fsio.replace(part, at)
+                except BaseException:
+                    part.unlink(missing_ok=True)
+                    raise
+            if b_linked:  # your own file: stays where it is, now a's (b's entry is dropped just before b is removed)
+                store.links.link(a_id, b_linked["f"], b_linked["rel"], b_linked.get("size", 0))
+            else:
+                os.replace(b_pdf, a_pdf)  # same folder: a rename, nothing copied
+            _move_hash(store, b_id, a_id)
 
         # a's fields: its own, blanks filled from b
         a = store.get(a_id)
@@ -203,7 +218,8 @@ def merge(a_id: str, b_id: str) -> dict:
         if (b.get("_extra") or {}).get("private") is True:  # b was private: so is the paper it becomes
             extra["private"] = True
         a["_extra"] = extra
-        a["source"] = "pdf"
+        if b_has or a_has:
+            a["source"] = "pdf"
         a["links"] = list(dict.fromkeys([*a.get("links", []), *(x for x in b.get("links", []) if x not in (a_id, b_id))]))
         a["cites"] = list(dict.fromkeys([*(a.get("cites") or []), *(x for x in b.get("cites") or [] if x not in (a_id, b_id))]))
         store.save(a)
@@ -245,7 +261,7 @@ def merge(a_id: str, b_id: str) -> dict:
         store.delete(b_id)
         _safe(lambda: _trash_cards(b_id), None)
     out = ctx.with_extras(store.get(a_id))
-    out["merged"] = {"from": b_id, "title": b["title"], **moved}
+    out["merged"] = {"from": b_id, "title": b["title"], **moved, **({"set_aside": set_aside} if set_aside else {})}
     return out
 
 

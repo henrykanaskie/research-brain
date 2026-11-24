@@ -298,6 +298,12 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 }
 .title-input:hover { background: var(--ground); }
 .title-input:focus { border-color: var(--rule); background: var(--sheet); box-shadow: none; }
+.title-input[hidden], .title-view[hidden] { display: none; }
+/* a title with math, typeset (app.js titleField); click to edit its LaTeX */
+.title-view { width: 100%; font: 600 27px/1.15 var(--serif); color: var(--ink); letter-spacing: -.012em; border: 1px solid transparent;
+  border-radius: var(--r); padding: 2px 6px; margin: 0 -7px; cursor: text; overflow-wrap: anywhere; }
+.title-view:hover { background: var(--ground); }
+.title-view .katex { font-size: .92em; }
 .meta { color: var(--ink-2); margin: 12px 0 0; font-size: 13px; line-height: 1.5; display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 2px; }
 .meta .authors { color: var(--ink); flex-basis: 100%; }
 .meta .venue { font-style: italic; }
@@ -628,7 +634,7 @@ kbd { font: 500 11px/16px var(--sans); border-radius: 2px; border-color: var(--r
 .panel-head { padding: 14px 18px 0 36px; }
 .panel-body { padding: 4px 36px 64px; }
 .kind { font-size: 12px; letter-spacing: .01em; }
-.title-input { font: 500 31px/1.08 var(--display); letter-spacing: -.018em; font-variation-settings: "opsz" 48; padding: 2px 6px; }
+.title-input, .title-view { font: 500 31px/1.08 var(--display); letter-spacing: -.018em; font-variation-settings: "opsz" 48; padding: 2px 6px; }
 .meta { font-size: 13px; }
 .meta .authors { font: 15px/1.4 var(--serif); }
 .sec-title { font-weight: 600; font-size: 12.5px; color: var(--ink); letter-spacing: .01em; }
@@ -961,7 +967,7 @@ html .ls-card .modal-actions { position: sticky; bottom: -16px; background: var(
   .m-grab { display: block; position: absolute; top: 7px; left: 50%; width: 38px; height: 4px; margin-left: -19px; border-radius: 2px; background: var(--rule); }
   html #btn-panel-close { width: 44px; height: 44px; flex: none; }
   html .panel-body { padding: 4px max(20px, env(safe-area-inset-right)) calc(56px + var(--safe-b)) max(20px, env(safe-area-inset-left)); overscroll-behavior: contain; }
-  html .title-input { font-size: 28px; line-height: 1.1; }
+  html .title-input, html .title-view { font-size: 28px; line-height: 1.1; }
   html .actions .btn, html .actions a.btn { height: 40px; }
   html .st-row .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
   html .st-row .seg::-webkit-scrollbar { display: none; }
@@ -1453,3 +1459,12 @@ html.win-inactive .win-caption button:not(:hover) { opacity: .45; }
 .ai-sum .ai-sum-body h3 { font-size: 14px; margin: 12px 0 4px; }
 .ai-sum .machine { margin-top: 6px; }
 .ai-sum .actions { margin-top: 10px; }
+
+/* the same paper twice (app/duplicates.py): on the paper's panel, with Merge */
+.dup-box { margin: 10px 0 4px; padding: 9px 12px; border: 1px solid var(--rule); border-left: 2px solid var(--red); border-radius: var(--r);
+  background: var(--sheet); font: 13px/1.45 var(--sans); }
+.dup-box .linklike { all: unset; cursor: pointer; font: italic 13.5px var(--serif); color: var(--ink); text-decoration: underline;
+  text-decoration-color: var(--rule); text-underline-offset: 2px; }
+.dup-box .linklike:hover { text-decoration-color: var(--ink-2); }
+.dup-where { color: var(--ink-2); }
+.dup-acts { display: flex; gap: 8px; margin-top: 8px; }

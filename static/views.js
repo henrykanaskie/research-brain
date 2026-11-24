@@ -301,7 +301,7 @@
     const others = keep.size - 1;
     pill.replaceChildren(
       h('span', { text: 'Around' }),
-      h('span', { class: 'p-title', title: n.title, text: rb.truncate(n.title || id, 48) }),
+      h('span', { class: 'p-title', title: n.title, text: rb.truncate(window.RBTitle.text(n.title) || id, 48) }),
       h('span', { class: 'tnum', text: `${others} within 2 links` }),
       h('button', { class: 'btn btn-sm', title: 'Close the focus and show the whole graph (Esc)', text: 'Close', onclick: unfocus }));
     pill.hidden = false;

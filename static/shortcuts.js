@@ -73,7 +73,7 @@
       else if ((n.tags || []).some((a) => String(a).toLowerCase().includes(q))) s = 30;
       if (s < 0) continue;
       const parent = n.type === 'fragment' && S.nodes.get(n.parent);
-      const sub = n.type === 'fragment' ? `Fragment${parent ? ' in ' + rb.truncate(parent.title, 50) : ''}` : [n.type === 'paper' ? 'Paper' : 'Note', n.year, n.source === 'linked' && !n.has_pdf ? 'linked article' : ''].filter(Boolean).join(', ');
+      const sub = n.type === 'fragment' ? `Fragment${parent ? ' in ' + rb.truncate(window.RBTitle.text(parent.title), 50) : ''}` : [n.type === 'paper' ? 'Paper' : 'Note', n.year, n.source === 'linked' && !n.has_pdf ? 'linked article' : ''].filter(Boolean).join(', ');
       out.push({ id: n.id, title: n.title || n.id, sub, s, frag: n.type === 'fragment' ? 1 : 0 });
     }
     out.sort((a, b) => b.s - a.s || a.frag - b.frag || a.title.localeCompare(b.title));
@@ -84,10 +84,10 @@
     if (!cur) return;
     const ex = new Set([cur.id, ...(cur.links || [])]);
     CMD.pick({
-      title: `Link “${rb.truncate(cur.title || cur.id, 48)}” to…`, placeholder: 'Search notes and papers by title, author or tag',
+      title: `Link “${rb.truncate(window.RBTitle.text(cur.title) || cur.id, 48)}” to…`, placeholder: 'Search notes and papers by title, author or tag',
       hint: 'to link', empty: 'No other notes match.',
       items: (q) => noteItems(q, { exclude: ex }),
-      onPick: (it) => { rb.linkNotes(cur.id, it.id); rb.toast(`Linked to “${rb.truncate(it.title, 50)}”`, 'ok'); },
+      onPick: (it) => { rb.linkNotes(cur.id, it.id); rb.toast(`Linked to “${rb.truncate(window.RBTitle.text(it.title), 50)}”`, 'ok'); },
     });
   }
   function openPicker() {
@@ -186,7 +186,7 @@
   reg({ id: 'note.tags', title: 'Add a tag', group: 'Note', keys: '#', description: 'Puts the cursor in the tags field.', aliases: ['tag', 'label', 'category'],
     when: () => panelOpen() && !!$('#panel-body .tags-box input'), run: () => { const i = $('#panel-body .tags-box input'); i.focus(); i.scrollIntoView({ block: 'center', behavior: 'smooth' }); } });
   reg({ id: 'note.title', title: 'Rename', group: 'Note', keys: 'R', description: 'Puts the cursor in the title.', aliases: ['title', 'rename'],
-    when: () => panelOpen() && !!$('#panel-body .title-input'), run: () => { const t = $('#panel-body .title-input'); t.focus(); t.select(); } });
+    when: () => panelOpen() && !!$('#panel-body .title-input'), run: () => { const t = $('#panel-body .title-input'); t.hidden = false; t.focus(); t.select(); } });
   reg({ id: 'note.toggleEdit', title: 'Switch between edit and preview', group: 'Note', keys: 'Mod+E', allowInInput: true,
     description: `For the notes body. ${MOD}↵ in the editor also shows the preview.`, aliases: ['preview', 'render', 'markdown', 'edit mode'],
     when: () => panelOpen() && !!bodySection(), run: toggleEdit });

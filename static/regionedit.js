@@ -46,7 +46,7 @@
   const q = (s) => `“${s}”`;
   function line(c) {
     const n = (c.papers || []).length;
-    const what = n === 1 ? q(rb.truncate(c.papers[0].title, 70)) : `${n} papers`;
+    const what = n === 1 ? q(rb.truncate(window.RBTitle.text(c.papers[0].title), 70)) : `${n} papers`;
     let head;
     if (c.op === 'rename') head = `Rename ${q(c.region)} to ${q(c.to)}`;
     else if (c.op === 'move') head = `Move ${what} to ${q(c.to)}` + (c.from ? ` (out of ${q(c.from)})` : ' (out of its other regions)');
@@ -56,7 +56,7 @@
     else head = c.op;
     const kids = [h('div', {}, h('span', { class: 're-op', text: head }),
       c.new ? h('span', { class: 're-new', text: '  a new region' }) : null)];
-    if (n > 1) kids.push(h('div', { class: 're-papers', text: c.papers.slice(0, 8).map((p) => rb.truncate(p.title, 60)).join(' · ') + (n > 8 ? ` · and ${n - 8} more` : '') }));
+    if (n > 1) kids.push(h('div', { class: 're-papers', text: c.papers.slice(0, 8).map((p) => rb.truncate(window.RBTitle.text(p.title), 60)).join(' · ') + (n > 8 ? ` · and ${n - 8} more` : '') }));
     if (c.problem) kids.push(h('div', { class: 're-bad', text: `Can't: ${c.problem}` }));
     return h('li', {}, ...kids);
   }

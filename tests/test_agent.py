@@ -347,6 +347,52 @@ def test_agent_tools_need_the_token_and_no_origin(srv):
     assert r.status_code == 403
 
 
+def test_research_tools_never_reach_outside_the_library(srv):
+    """The AI's Research tools only see the library: files beside it, above it or in its own state folders, a
+    private note, and paths or URLs passed as note ids never come back, whatever the arguments. (The AI programs
+    themselves get no file, shell or web tools and run in an empty private folder: test_agent_cli_adapters.py.)"""
+    vault = Path(srv["vault"])
+    secret = "SECRET-OUTSIDE-7731"
+    (vault.parent / "outside.txt").write_text(f"{secret} BESIDE-THE-LIBRARY", encoding="utf-8")
+    (vault.parent / "outside.md").write_text(f"---\ntype: paper\ntitle: {secret}\n---\n{secret}", encoding="utf-8")
+    (vault / "state").mkdir(exist_ok=True)
+    (vault / "state" / "api-keys.json").write_text(json.dumps({"key": secret}), encoding="utf-8")
+    home_secret = Path.home() / ".rb-test-outside-secret.txt"
+    home_secret.write_text(f"{secret} BESIDE-THE-LIBRARY", encoding="utf-8")
+    priv = requests.post(srv["base"] + "/api/notes", json={"type": "note", "title": "Diary SECRET-PRIVATE-4412",
+                                                           "body": "SECRET-PRIVATE-4412 PRIVATE-BODY-5520 my own thoughts", "private": True}).json()
+    hdr = {"X-RB-Agent-Token": "dev-token-for-tests"}
+    hostile = ["../outside", "../outside.md", "../../outside.txt", str(vault.parent / "outside.txt"), str(home_secret),
+               "file:///etc/passwd", "/etc/passwd", "..%2Foutside", "~/.rb-test-outside-secret.txt", "state/api-keys",
+               "../state/api-keys.json", "C:\\Windows\\win.ini", priv["id"], f"[[{priv['id']}]]", "", "*", "%"]
+    calls = [("recent", {"n": 25}), ("memory_map", {}), ("list_topics", {}),
+             ("search", {"queries": [secret, "SECRET-PRIVATE-4412", "outside", "passwd"]}),
+             ("search_notes", {"query": secret}), ("search_notes", {"query": "SECRET-PRIVATE"}), ("search_notes", {"query": ""}),
+             ("memory_search", {"query": secret}), ("cards_search", {"query": secret}),
+             ("topic_papers", {"topic": "../../outside"})]
+    for h in hostile:
+        calls += [("read_note", {"id": h}), ("read_pages", {"id": h, "start": 1, "end": 3}), ("citations", {"id": h}),
+                  ("similar", {"id": h}), ("read_pages", {"id": srv["kr"], "start": -5, "end": 10**9})]
+    try:
+        for name, args in calls:
+            r = requests.post(srv["base"] + f"/api/agent/tools/{name}", json={"args": args}, headers=hdr, timeout=30)
+            assert r.status_code in (200, 404), (name, args, r.status_code)
+            text = r.json().get("text", "") if r.status_code == 200 else r.text
+            for v in [x for a in args.values() for x in (a if isinstance(a, list) else [a])]:
+                if isinstance(v, str) and v:
+                    text = text.replace(v, "<asked>")  # the tool repeating what it was asked isn't a leak
+            assert secret not in text, (name, args, text[:300])
+            assert "SECRET-PRIVATE-4412" not in text, (name, args, text[:300])
+            assert priv["id"] not in text or "No note with id" in text, (name, args, text[:300])
+            assert "BESIDE-THE-LIBRARY" not in text and "PRIVATE-BODY-5520" not in text, (name, args, text[:300])  # never asked for
+            assert "root:" not in text and "[fonts]" not in text, (name, args)  # /etc/passwd, win.ini
+        # and the library itself is still readable: the checks above aren't passing because nothing works
+        r = requests.post(srv["base"] + "/api/agent/tools/read_pages", json={"args": {"id": srv["kr"], "start": 5}}, headers=hdr).json()
+        assert "4.2 eV" in r["text"]
+    finally:
+        home_secret.unlink(missing_ok=True)
+
+
 class Bridge:
     """app/agent_mcp.py over real stdio, as the claude CLI runs it."""
 

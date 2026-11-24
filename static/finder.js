@@ -144,7 +144,7 @@
       h('option', { value: 'auto', text: 'For an open question: matched automatically' }),
       h('option', { value: '', text: 'Not for any question' }));
     api('GET', '/api/questions').then((r) => {
-      for (const q of (r.questions || []).filter((x) => x.question_status === 'open')) qsel.append(h('option', { value: q.id, text: 'For: ' + truncate(q.title, 90) }));
+      for (const q of (r.questions || []).filter((x) => x.question_status === 'open')) qsel.append(h('option', { value: q.id, text: 'For: ' + truncate(window.RBTitle.text(q.title), 90) }));
       qsel.value = F.draft.question || 'auto';
     }).catch(() => {});
     const keep = () => { F.draft = { topic: topic.value, detail: detail.value, since: since.value, question: qsel.value }; };
@@ -203,7 +203,7 @@
       onclick: async () => { try { await api('DELETE', `/api/finder/searches/${enc(s.id)}`); refresh(); } catch (e) { toastErr(e, 'Could not remove it'); } } });
     const again = s.status === 'error' ? h('button', { class: 'btn btn-text', type: 'button', text: 'Try again',
       onclick: async () => { try { const r = await api('POST', '/api/finder/search', { topic: s.topic, detail: s.detail || '', since: s.since || 'any', question: s.question ? s.question.id : '' }); if (r && r.search) F.watching.add(r.search.id); await api('DELETE', `/api/finder/searches/${enc(s.id)}`); refresh(); } catch (e) { toastErr(e, 'Could not start the search'); } } }) : null;
-    const forq = s.question ? h('span', { class: 'fp-forq', title: 'Papers you add from this search are linked to this open question', text: 'for ' + truncate(s.question.title, 60) }) : null;
+    const forq = s.question ? h('span', { class: 'fp-forq', title: 'Papers you add from this search are linked to this open question', text: 'for ' + truncate(window.RBTitle.text(s.question.title), 60) }) : null;
     const kids = [h('div', { class: 'fp-search-h' }, h('span', { class: 'fp-topic', text: s.topic }), forq, meta, h('span', { class: 'sp' }), again, s.running ? null : forget)];
     if (s.status === 'done' && !items.length) kids.push(h('div', { class: 'fp-empty', text: s.note ? `Nothing new to propose. ${s.note}` : 'Nothing new to propose for this topic. Try other words or a wider date range.' }));
     kids.push(...items.map((it) => paperRow(it)));
@@ -275,7 +275,7 @@
           try { free = (await api('POST', `/api/finder/items/${enc(it.id)}/added`, { note_id: note.id })).free_copy; } catch { /* the paper is added either way */ }
         }
         if (section && rb.intoSection) { try { await rb.intoSection(note, section); } catch { /* added either way */ } }
-        toast(`Added “${truncate(note.title || it.title, 60)}”${section ? ` to ${section.label}` : ''}${qid ? `, linked to your question` : ''}.${free ? ' The free copy’s note is in it, and its PDF is downloading.' : ''}`, 'ok', { action: { label: 'Open', fn: () => { CMD && CMD.close(false); rb.openNote(note.id, { center: true }); } } });
+        toast(`Added “${truncate(window.RBTitle.text(note.title) || it.title, 60)}”${section ? ` to ${section.label}` : ''}${qid ? `, linked to your question` : ''}.${free ? ' The free copy’s note is in it, and its PDF is downloading.' : ''}`, 'ok', { action: { label: 'Open', fn: () => { CMD && CMD.close(false); rb.openNote(note.id, { center: true }); } } });
         if (rb.refreshGraph) rb.refreshGraph();
         await refresh();
       } catch (e) { b.disabled = false; b.textContent = 'Add to library'; toastErr(e, 'Could not add it'); }

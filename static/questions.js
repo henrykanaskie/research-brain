@@ -228,11 +228,12 @@
   }
 
   function renderQuestion(n) {
-    const title = rb.titleField(n);
+    const titleBox = rb.titleField(n);  // the title, typeset when it has math (app.js titleField)
+    const title = titleBox.querySelector('textarea');
     title.classList.add('oq-title');
     title.placeholder = 'Your question';
     title.setAttribute('aria-label', 'Question');
-    const out = [statusRow(n), title, detailField(n), rb.renderLinked(n), answerSection(n), evidenceSection(n), aiSection(n),
+    const out = [statusRow(n), titleBox, detailField(n), rb.renderLinked(n), answerSection(n), evidenceSection(n), aiSection(n),
       rb.section('Tags', null, rb.renderTags(n)), rb.renderBacklinks(n)];
     const danger = rb.renderDanger(n);
     const del = $('.btn-danger', danger);
@@ -325,7 +326,7 @@
       if (src.exists) rb.openNote(src.id, { center: true });
     };
     if (src.external && src.exists) it = { ...it, href: '' }; // added to the library: open the note instead
-    const paperOf = src.paper ? h('span', { class: 'oq-kind', text: `in ${truncate(src.paper.title, 60)}` })
+    const paperOf = src.paper ? h('span', { class: 'oq-kind', text: `in ${truncate(window.RBTitle.text(src.paper.title), 60)}` })
       : src.external ? h('span', { class: 'oq-kind', text: [(src.authors || [])[0] ? `${src.authors[0]}${(src.authors || []).length > 1 ? ' et al.' : ''}` : '', src.year, src.venue].filter(Boolean).join(' · ') }) : null;
     const ext = src.external ? externalActs(qid, it, src) : null;
     const where = it.where
@@ -346,7 +347,7 @@
       'aria-label': `${KIND[it.kind] || 'Evidence'} from ${src.title || ''}` },
       h('div', { class: 'oq-src' },
         it.new ? h('span', { class: 'oq-new', title: 'New since you last looked' }) : null,
-        h('button', { class: 'oq-open', type: 'button', tabindex: -1, text: truncate(src.title || it.title || '(deleted)', 110), onclick: openSrc, title: src.exists ? 'Open the source' : 'The source was deleted' }),
+        h('button', { class: 'oq-open', type: 'button', tabindex: -1, text: truncate(window.RBTitle.text(src.title) || it.title || '(deleted)', 110), onclick: openSrc, title: src.exists ? 'Open the source' : 'The source was deleted' }),
         where, paperOf,
         h('span', { class: 'oq-kind', text: KIND[it.kind] || it.kind }),
         h('span', { class: 'oq-score', title: 'How closely it matches your question (local similarity)', text: (Number(it.score) || 0).toFixed(2) })),
@@ -375,7 +376,7 @@
         try {
           const q = src.doi || (src.arxiv ? 'arXiv:' + src.arxiv : it.title);
           const note = await api('POST', '/api/import/lookup', { query: q, link_to: qid });
-          toast(`Added “${truncate(note.title || it.title, 60)}”.`, 'ok', { action: { label: 'Open', fn: () => rb.openNote(note.id, { center: true }) } });
+          toast(`Added “${truncate(window.RBTitle.text(note.title) || it.title, 60)}”.`, 'ok', { action: { label: 'Open', fn: () => rb.openNote(note.id, { center: true }) } });
           loadEvidence(qid, { keepFocus: true });
         } catch (err) { add.disabled = false; add.textContent = 'Add to library'; toastErr(err, 'Could not add it'); }
       };

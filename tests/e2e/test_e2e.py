@@ -1911,3 +1911,38 @@ def test_sections_sit_close_their_papers_evenly_spaced_and_clean_up_tidies_the_m
     page.wait_for_function(still, polling=500, timeout=20000)
     check(pos())
     assert not page.errors
+
+
+def test_math_in_titles_reads_typeset_and_edits_as_latex(ctx, server):
+    """A title with LaTeX math shows it typeset in the panel (click it to edit the LaTeX) and as Unicode on the map
+    and in menus; the title itself keeps its LaTeX."""
+    clear_vault(server)
+    raw = r"Cross-field transport by $\vec E \times \vec B$ drift in Hall thrusters"
+    p = api(server, "POST", "/api/notes", {"type": "paper", "title": raw})
+    api(server, "POST", "/api/notes", {"type": "paper", "title": "Plain title about sheaths"})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 2")
+    assert page.evaluate("window.RBTitle.text(window.__rb.S.nodes.get(%r).title)" % p["id"]) == "Cross-field transport by E⃗ × B⃗ drift in Hall thrusters"
+    page.evaluate("(id) => window.__rb.openNote(id)", p["id"])
+    view = page.locator("#panel-body .title-view")
+    expect(view).to_be_visible()
+    expect(view.locator(".katex")).to_have_count(1)
+    expect(view).not_to_contain_text("\\vec")
+    expect(page.locator("#panel-body textarea.title-input")).to_be_hidden()
+    # click to edit: the LaTeX, as stored
+    view.click()
+    ta = page.locator("#panel-body textarea.title-input")
+    expect(ta).to_be_focused()
+    expect(ta).to_have_value(raw)
+    ta.fill(raw.replace("drift", "drifts"))
+    ta.blur()
+    expect(view).to_be_visible()
+    expect(view).to_contain_text("drifts")
+    page.wait_for_timeout(1200)
+    assert api(server, "GET", f"/api/notes/{p['id']}")["title"] == raw.replace("drift", "drifts")
+    # a plain title is just the text box, as before
+    plain = api(server, "GET", "/api/search?q=Plain%20title&limit=5")[0]["id"]
+    page.evaluate("(id) => window.__rb.openNote(id)", plain)
+    expect(page.locator("#panel-body textarea.title-input")).to_be_visible()
+    expect(page.locator("#panel-body .title-view")).to_be_hidden()
+    assert not page.errors

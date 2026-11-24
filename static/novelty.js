@@ -427,7 +427,7 @@
         if (section && rb.intoSection) { try { await rb.intoSection(note, section); } catch { /* added either way */ } }
         p.library_id = note.id;
         b.replaceWith(h('button', { class: 'btn', type: 'button', text: 'In your library', onclick: () => { CMD && CMD.close(false); rb.openNote(note.id, { center: true }); } }));
-        toast(`Added “${truncate(note.title || p.title, 60)}”${section ? ` to ${section.label}` : ''}.`, 'ok');
+        toast(`Added “${truncate(window.RBTitle.text(note.title) || p.title, 60)}”${section ? ` to ${section.label}` : ''}.`, 'ok');
         if (rb.refreshGraph) rb.refreshGraph();
       } catch (e) { b.disabled = false; b.textContent = 'Add to library'; toastErr(e, 'Could not add it'); }
     };
@@ -440,7 +440,7 @@
     if (!d.id || N.told.has(d.id)) return;
     N.told.add(d.id);
     if (N.startToast && N.startToast.remove) { N.startToast.remove(); N.startToast = null; }
-    const what = truncate(d.title || 'your idea', 50);
+    const what = truncate(window.RBTitle.text(d.title) || 'your idea', 50);
     const c = d.counts || {};
     const failed = d.status === 'error';
     const msg = failed ? `The novelty check of “${what}” didn’t finish: ${d.error || 'something went wrong'}`

@@ -259,7 +259,7 @@
     n.status = st; renderLibrary();
     try {
       await api('PUT', `/api/notes/${encodeURIComponent(n.id)}`, { status: st });
-      toast(`${label === 'Start reading' ? 'Moved to Reading' : label === 'Later' ? 'Parked for later' : 'Marked not relevant'}: “${rb.truncate(n.title, 50)}”`, 'ok', { ms: 2500 });
+      toast(`${label === 'Start reading' ? 'Moved to Reading' : label === 'Later' ? 'Parked for later' : 'Marked not relevant'}: “${rb.truncate(window.RBTitle.text(n.title), 50)}”`, 'ok', { ms: 2500 });
     } catch (e) { n.status = prev; renderLibrary(); toastErr(e, 'Could not change the status'); }
   }
 
@@ -364,7 +364,7 @@
           saved_because: shared && shared.text && !URL_RE.test(shared.text) ? shared.text.slice(0, 300) : '' });
       }
       if (note && !note.duplicate && !note.status) { try { await api('PUT', `/api/notes/${encodeURIComponent(note.id)}`, { status: 'to-read' }); } catch { /* keep going */ } }
-      toast(note.duplicate ? `Already in your library: “${rb.truncate(note.title, 60)}”` : `Saved to read: “${rb.truncate(note.title, 60)}”`, 'ok');
+      toast(note.duplicate ? `Already in your library: “${rb.truncate(window.RBTitle.text(note.title), 60)}”` : `Saved to read: “${rb.truncate(window.RBTitle.text(note.title), 60)}”`, 'ok');
       linkIn.value = ''; clearShared();
       await rb.refreshGraph();
       rb.openNote(note.id);

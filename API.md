@@ -410,6 +410,12 @@ and a body of `- [[note-id]]` lines (the ordered members). Dismissals and snooze
 - `DELETE /api/topics/{slug}` → `{"ok": true}` (file moved to `.trash`; papers untouched).
 - `POST /api/topics/{slug}/notes` body `{"ids": [id]}` → Topic. Fragments and unknown ids are a 400.
 - `DELETE /api/topics/{slug}/notes/{id}` → Topic.
+- `GET /api/notes/{id}/duplicates` → `{items: [{id, title, authors, year, venue, doi, arxiv, has_pdf}]}`: papers that
+  look like the same one (app/duplicates.py: title with math and punctuation set aside, authors in any order, year
+  within one), not those you said aren't.
+- `POST /api/notes/{id}/merge-duplicate` body `{"from": id}` → the paper, with `merged` (and `merged.set_aside` when
+  both had a PDF: this one's stays, the other goes to Removed from library/, or stays in your folder, unfollowed).
+- `POST /api/notes/{id}/not-duplicate` body `{"other": id}` → `{ok}`: never suggested again.
 - `GET /api/notes/{id}/regions` → `{id, topics: [{slug, name}], main_region}`: the regions (topics) a note is in.
 - `POST /api/notes/{id}/region` body `{"to": slug, "out_of": [slug]}` → `{id, topics, main_region}`. Moves it: into
   `to` (`""`: none), out of `out_of`. Still in other regions afterwards, `to` becomes its main region.

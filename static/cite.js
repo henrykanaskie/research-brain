@@ -327,7 +327,7 @@
     let acts = pbody.querySelector('.actions');
     if (!acts) {
       acts = el('div', { class: 'actions' });
-      const anchor = pbody.querySelector('.ids') || pbody.querySelector('.meta') || pbody.querySelector('textarea.title-input');
+      const anchor = pbody.querySelector('.ids') || pbody.querySelector('.meta') || (pbody.querySelector('.title-wrap') || pbody.querySelector('textarea.title-input'));
       if (anchor) anchor.after(acts); else pbody.prepend(acts);
     }
     acts.append(btn);

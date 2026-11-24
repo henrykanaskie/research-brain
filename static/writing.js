@@ -92,7 +92,7 @@
       let hits = [];
       try { hits = await api('GET', `/api/search?q=${enc(q)}&limit=8`); } catch { }
       const list = (Array.isArray(hits) ? hits : hits.results || []).filter((x) => x.id !== n.id && !(chosen || []).includes(x.id));
-      sugg.replaceChildren(...list.map((x) => h('button', { type: 'button', text: `${truncate(x.title || x.id, 80)}${x.private ? ' (private)' : ''}`,
+      sugg.replaceChildren(...list.map((x) => h('button', { type: 'button', text: `${truncate(window.RBTitle.text(x.title) || x.id, 80)}${x.private ? ' (private)' : ''}`,
         onclick: () => { (chosen || (chosen = [])).push(x.id); add.value = ''; sugg.hidden = true; refresh(); } })));
       sugg.hidden = !list.length;
     });

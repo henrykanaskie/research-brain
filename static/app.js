@@ -11,6 +11,9 @@
   // colours come from the DESIGN.md tokens in style.css (re-read on theme change)
   /** short name of the active AI agent for UI copy ("Claude", "Codex", "Your local model") */
   const ai = () => RB.aiName();
+  // a title as it reads, its LaTeX math as Unicode (static/textitle.js), for the map and other plain text; th() typesets it
+  const tt = (t) => (window.RBTitle ? window.RBTitle.text(t) : String(t ?? ''));
+  const th = (t) => (window.RBTitle ? window.RBTitle.html(t) : esc(String(t ?? '')));
   const AI = () => RB.AIName();  // to start a sentence with
   const C = { ground: '#EEEFEB', sheet: '#F7F7F4', ink: '#15181B', ink2: '#61676C', ink3: '#9A9EA0', rule: '#D5D7D1', red: '#BD3A2C', machine: '#4A6487', dot: 'rgba(21,24,27,.16)' };
   function readTokens() {
@@ -3063,9 +3066,9 @@
   function mapLabel(n) {
     const mode = S.labelMode || 'author';
     const first = n.type === 'paper' && Array.isArray(n.authors) && n.authors.length ? surname(n.authors[0]) : '';
-    if (mode === 'title' || !first) return truncate(n.title || n.id, 34);
+    if (mode === 'title' || !first) return truncate(tt(n.title) || n.id, 34);
     const ay = `${first}${n.year ? ', ' + n.year : ''}`;  // "Boeuf, 2018"
-    return mode === 'authorTitle' ? truncate(`${ay} · ${n.title || ''}`, 46) : ay;
+    return mode === 'authorTitle' ? truncate(`${ay} · ${tt(n.title)}`, 46) : ay;
   }
 
   /** Whether a trace runs through a box [x0, y0, x1, y1]. */
@@ -3115,7 +3118,7 @@
           ctx.font = 'italic 500 14px "Newsreader", Georgia, serif';
           if ('fontStretch' in ctx) ctx.fontStretch = 'normal';
           ctx.textAlign = 'center'; ctx.lineWidth = 5;
-          const title = truncate(n.title || n.id, 72), ty = y + o + 15;
+          const title = truncate(tt(n.title) || n.id, 72), ty = y + o + 15;
           glowText(ctx, title, x, ty, 14);
           ctx.strokeText(title, x, ty);
           ctx.fillStyle = C.ink; ctx.fillText(title, x, ty);
@@ -3243,7 +3246,7 @@
     const marks = markCount(n);
     const kick = [kind, n.year, marks ? `${marks} note${marks === 1 ? '' : 's'}` : ''].filter(Boolean).join('  ·  ').toUpperCase();
     ctx.font = CARD_FONT.title;
-    const lines = wrapLines(ctx, n.title || n.id, 264, 3);
+    const lines = wrapLines(ctx, tt(n.title) || n.id, 264, 3);
     const tw = Math.max(...lines.map((l) => ctx.measureText(l).width));
     ctx.font = CARD_FONT.by;
     const by = Array.isArray(n.authors) && n.authors.length ? fitLine(ctx, fmtAuthors(n.authors, 3), 264) : '';
@@ -4304,7 +4307,7 @@
     S.saveErr = null;
     renderPanel();
     if (center && userMovedAt < openedAt) centerOn(id);  // not if you've moved the graph since
-    if (focusTitle) { const t = $('.title-input', pbody); if (t) { t.focus(); t.select(); } }
+    if (focusTitle) { const t = $('.title-input', pbody); if (t) { t.hidden = false; t.focus(); t.select(); } }
   }
 
   async function reloadCur({ keepScroll = true } = {}) {
@@ -4329,7 +4332,7 @@
     setPanelOpen(false);
     S.selected = null; kick(300);
     if (cur) {
-      reopenTab = h('button', { class: 'reopen-tab', title: 'Reopen the note', text: truncate(cur.title || cur.id, 30), onclick: () => openNote(cur.id) });
+      reopenTab = h('button', { class: 'reopen-tab', title: 'Reopen the note', text: truncate(tt(cur.title) || cur.id, 30), onclick: () => openNote(cur.id) });
       document.body.appendChild(reopenTab);
     }
   }
@@ -4411,7 +4414,7 @@
       if ('title' in fields) n.title = fields.title;
       if ('tags' in fields) n.tags = fields.tags;
     }
-    if ('title' in fields && reopenTab) reopenTab.textContent = truncate(fields.title, 30);
+    if ('title' in fields && reopenTab) reopenTab.textContent = truncate(tt(fields.title), 30);
     setSaveInd('saving', 'Unsaved');
     clearTimeout(S.saveTimer);
     S.saveTimer = setTimeout(doSave, SAVE_DEBOUNCE);
@@ -4517,7 +4520,22 @@
     ta.addEventListener('input', () => { autosize(ta); queueSave({ title: ta.value }); });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ta.blur(); } });
     ta.addEventListener('blur', () => { if (!ta.value.trim()) { ta.value = n.title || 'Untitled'; queueSave({ title: ta.value }); autosize(ta); } });
-    return ta;
+    // a title with math in it ($\vec E \times \vec B$) reads typeset; click it to edit the LaTeX
+    const view = h('div', { class: 'title-view', role: 'button', tabindex: '0', title: 'Click to edit the title' });
+    const hasMath = (t) => window.RBTitle && window.RBTitle.text(t) !== String(t || '');
+    const show = () => {
+      const on = hasMath(ta.value) && document.activeElement !== ta;
+      if (on) view.innerHTML = th(ta.value);
+      view.hidden = !on; ta.hidden = on;
+      if (!on) autosize(ta);
+    };
+    const edit = () => { view.hidden = true; ta.hidden = false; autosize(ta); ta.focus(); };
+    view.addEventListener('click', edit);
+    view.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edit(); } });
+    ta.addEventListener('blur', show);
+    ta.addEventListener('focus', () => { view.hidden = true; ta.hidden = false; });
+    show();
+    return h('div', { class: 'title-wrap' }, ta, view);
   }
 
   function section(title, count, ...kids) {
@@ -4539,6 +4557,45 @@
     return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
+  /** The same paper twice (app/duplicates.py: title, authors in any order, year): a preprint and its journal
+   *  version, say. Merge folds the other one into this one (its highlights, notes, links and regions come along;
+   *  this one's PDF stays, the other's is put aside), or say they're not the same and it isn't asked again. */
+  function duplicateSlot(n) {
+    const slot = h('div', { class: 'dup-slot' });
+    api('GET', `/api/notes/${encodeURIComponent(n.id)}/duplicates`).then((r) => {
+      if (!slot.isConnected || !S.cur || S.cur.id !== n.id) return;
+      const items = (r && r.items) || [];
+      slot.replaceChildren(...items.map((o) => {
+        const where = [o.year, o.venue || (o.arxiv ? 'arXiv' : ''), (o.authors || []).length ? fmtAuthors(o.authors, 2) : ''].filter(Boolean).join(' · ');
+        const box = h('div', { class: 'dup-box' },
+          h('div', { class: 'dup-msg' }, 'Looks like the same paper as ',
+            h('button', { class: 'linklike', type: 'button', text: `“${truncate(tt(o.title), 90)}”`, onclick: () => openNote(o.id, { center: true }) }),
+            where ? h('span', { class: 'dup-where', text: ` (${where})` }) : null),
+          h('div', { class: 'dup-acts' },
+            h('button', { class: 'btn btn-sm', type: 'button', text: 'Merge into this one',
+              title: o.has_pdf && n.has_pdf ? 'One paper from the two: this one keeps its PDF, the other PDF is put aside. Highlights, notes, links and regions come along.'
+                : 'One paper from the two: highlights, notes, links and regions come along.',
+              onclick: async (e) => {
+                e.currentTarget.disabled = true;
+                try {
+                  await flushSave();
+                  const res = await api('POST', `/api/notes/${encodeURIComponent(n.id)}/merge-duplicate`, { from: o.id });
+                  const aside = res.merged && res.merged.set_aside;
+                  toast(`Merged. “${truncate(tt(o.title), 50)}” is part of this paper now${aside && aside.path ? '; its PDF is in Removed from library' : aside && aside.pdf === 'left' ? '; its PDF stays in your folder' : ''}.`, 'ok', { ms: 6000 });
+                  await refreshGraph();
+                  await reloadCur();
+                } catch (err) { toastErr(err, 'Could not merge them'); e.currentTarget.disabled = false; }
+              } }),
+            h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Not the same', onclick: async () => {
+              try { await api('POST', `/api/notes/${encodeURIComponent(n.id)}/not-duplicate`, { other: o.id }); box.remove(); }
+              catch (err) { toastErr(err, 'Could not save that'); }
+            } })));
+        return box;
+      }));
+    }).catch(() => {});
+    return slot;
+  }
+
   function renderNoteView(n) {
     const out = [];
     out.push(titleField(n));
@@ -4556,6 +4613,7 @@
     if (n.url && /^https?:/i.test(n.url)) ids.push(h('a', { href: n.url, target: '_blank', rel: 'noopener', title: n.url, text: 'Source page' }));
     if (n.s2_id) ids.push(h('a', { href: 'https://www.semanticscholar.org/paper/' + n.s2_id, target: '_blank', rel: 'noopener', text: 'Semantic Scholar' }));
     if (ids.length) out.push(h('div', { class: 'ids' }, ids));
+    if (n.type === 'paper') out.push(duplicateSlot(n));
 
     const acts = [];
     if (n.has_pdf) {
@@ -5101,7 +5159,7 @@
     if (n.parent && !S.noteMeta.has(n.parent)) {
       api('GET', `/api/notes/${encodeURIComponent(n.parent)}`).then((p) => {
         indexNote(p);
-        if (S.cur && S.cur.id === n.id) { drawViewLink(); const b = $('.crumb button', pbody); if (b) b.textContent = truncate(p.title, 70); }
+        if (S.cur && S.cur.id === n.id) { drawViewLink(); const b = $('.crumb button', pbody); if (b) b.textContent = truncate(tt(p.title), 70); }
       }).catch(() => {});
     } else drawViewLink();
 
@@ -5115,7 +5173,7 @@
   }
 
   // ---------- related / linked ----------
-  function nodeTitle(id) { const x = S.nodes.get(id) || (S.folded && S.folded.get(id)); return x ? x.title : (S.noteMeta.get(id) || {}).title || id; }
+  function nodeTitle(id) { const x = S.nodes.get(id) || (S.folded && S.folded.get(id)); return tt(x ? x.title : (S.noteMeta.get(id) || {}).title) || id; }  // as it reads (math as Unicode)
   function nodeType(id) { const x = S.nodes.get(id) || (S.folded && S.folded.get(id)); return x ? x.type : (S.noteMeta.get(id) || {}).type || 'note'; }
   const typeName = (t) => (t === 'paper' ? 'Paper' : t === 'fragment' ? 'Fragment' : 'Note');
 
@@ -5153,7 +5211,7 @@
   function renderBacklinks(n) {
     const bl = Array.isArray(n.backlinks) ? n.backlinks : [];
     const rows = h('div', { class: 'rows' });
-    if (!bl.length) rows.appendChild(h('div', { class: 'empty-list', text: `Nothing links here yet. Write [[${truncate(n.title || n.id, 40)}]] in another note to mention it.` }));
+    if (!bl.length) rows.appendChild(h('div', { class: 'empty-list', text: `Nothing links here yet. Write [[${truncate(tt(n.title) || n.id, 40)}]] in another note to mention it.` }));
     for (const b of bl) {
       const snip = h('div', { class: 'bl-snip md', html: renderMD(b.snippet || '', { inline: true }) });
       // the chip for this note itself is just a marker here
@@ -5320,7 +5378,7 @@
     const items = [];
     const cur = S.cur && S.cur.id !== n.id && n.type !== 'fragment' ? S.cur : null;
     const curLinked = cur && (cur.links || []).includes(n.id);
-    if (cur && !curLinked) items.push(menuItem(`Link to ${truncate(cur.title || cur.id, 40)}`, null, () => linkNotes(cur.id, n.id)));
+    if (cur && !curLinked) items.push(menuItem(`Link to ${truncate(tt(cur.title) || cur.id, 40)}`, null, () => linkNotes(cur.id, n.id)));
     if (n.type !== 'fragment') items.push(menuItem('Link to…', null, () => startLinkMode(n)));
     items.push(menuItem('Open', null, () => openNote(n.id, { center: true })));
     if (n.type === 'paper') {
@@ -5380,7 +5438,7 @@
       items.push(h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Unlink' }));
       for (const { kind, mine, other } of own.slice(0, 8)) items.push(menuItem(truncate(nodeTitle(other), 44), null, () => unlinkAny(kind, mine, other)));
     }
-    showMenu(truncate(n.title || n.id, 60), items, e);
+    showMenu(truncate(tt(n.title) || n.id, 60), items, e);
   }
   /** Put a dot in a map section: the region's topic takes it (a region without one gets a topic of its own,
    *  named like the region, holding its papers), and topics hold their papers together on the map. */
@@ -5397,7 +5455,7 @@
         await api('POST', `/api/topics/${encodeURIComponent(same.slug)}/notes`, { ids: [...members, n.id] });
         t = same;
       }
-      toast(`Put “${truncate(n.title || n.id, 40)}” in ${c.label}.`, 'ok');
+      toast(`Put “${truncate(tt(n.title) || n.id, 40)}” in ${c.label}.`, 'ok');
       afterTopicChange(n, t && t.slug);
     } catch (e) { toastErr(e, 'Could not put it there'); }
   }
@@ -5419,21 +5477,21 @@
     try {
       const to = t ? await regionSlug(t, n) : '';
       await api('POST', `/api/notes/${encodeURIComponent(n.id)}/region`, { to, out_of: outOf });
-      toast(t ? `Moved “${truncate(n.title || n.id, 40)}” to ${t.name}.` : `Took “${truncate(n.title || n.id, 40)}” out of that region.`, 'ok');
+      toast(t ? `Moved “${truncate(tt(n.title) || n.id, 40)}” to ${t.name}.` : `Took “${truncate(tt(n.title) || n.id, 40)}” out of that region.`, 'ok');
       afterTopicChange(n, to || outOf[0]);
     } catch (e) { toastErr(e, 'Could not move it'); }
   }
   async function setMainRegion(n, t) {
     try {
       await api('PUT', `/api/notes/${encodeURIComponent(n.id)}/main-region`, { slug: t.slug });
-      toast(`“${truncate(n.title || n.id, 40)}” is drawn in ${t.name} now.`, 'ok');
+      toast(`“${truncate(tt(n.title) || n.id, 40)}” is drawn in ${t.name} now.`, 'ok');
       afterTopicChange(n, t.slug);
     } catch (e) { toastErr(e, 'Could not change it'); }
   }
   async function addToTopic(n, slug, name) {
     try {
       await api('POST', `/api/topics/${encodeURIComponent(slug)}/notes`, { ids: [n.id] });
-      toast(`Added “${truncate(n.title || n.id, 40)}” to ${name}.`, 'ok');
+      toast(`Added “${truncate(tt(n.title) || n.id, 40)}” to ${name}.`, 'ok');
       afterTopicChange(n, slug);
     } catch (e) { toastErr(e, 'Could not add it to the region'); }
   }
@@ -5518,7 +5576,7 @@
     endLinkMode();
     S.linkFrom = n.id;
     linkModeEl = h('div', { class: 'link-mode', role: 'status' },
-      h('span', null, 'Click the dot to link to ', h('i', { text: truncate(n.title || n.id, 50) })),
+      h('span', null, 'Click the dot to link to ', h('i', { text: truncate(tt(n.title) || n.id, 50) })),
       h('button', { class: 'btn btn-text btn-sm', type: 'button', text: 'Cancel', onclick: endLinkMode }));
     document.body.appendChild(linkModeEl);
     graphEl.classList.add('linking');
@@ -5536,7 +5594,7 @@
     endLinkMode();
     // store it on the note open in the panel when that is one of the two, so the panel shows it at once
     if (S.cur && S.cur.id === n.id) linkNotes(n.id, from); else linkNotes(from, n.id);
-    toast(`Linked “${truncate(nodeTitle(from), 40)}” and “${truncate(n.title || n.id, 40)}”`, 'ok');
+    toast(`Linked “${truncate(nodeTitle(from), 40)}” and “${truncate(tt(n.title) || n.id, 40)}”`, 'ok');
     return true;
   }
 
@@ -5579,13 +5637,13 @@
       let q = '';
       if (n.type === 'paper' && n.has_pdf) {
         // a paper with a PDF: from research brain only, or the PDF from the computer too
-        const choice = await confirmDialog(`Delete “${truncate(n.title || n.id, 60)}”?`,
+        const choice = await confirmDialog(`Delete “${truncate(tt(n.title) || n.id, 60)}”?`,
           `The paper${frag} leaves your library (recoverable from the library's .trash). Its PDF can stay on your computer, in your papers folder under “Removed from library”, or go to your computer's Trash.`,
           'Delete the PDF too', 'Keep the PDF');
         if (!choice) return;
         q = choice === 'alt' ? '?pdf=keep' : '?pdf=trash';
       } else {
-        const ok = await confirmDialog(`Delete “${truncate(n.title || n.id, 60)}”?`,
+        const ok = await confirmDialog(`Delete “${truncate(tt(n.title) || n.id, 60)}”?`,
           `It${frag} will be moved to the library's .trash folder, so you can still recover ${nf ? 'them' : 'it'} from disk.`);
         if (!ok) return;
       }
@@ -5698,7 +5756,7 @@
             : await api('POST', '/api/import/lookup', { query: q, link_to: curId });
           c.in_library = note.id;
           if (note.duplicate) toast('Already in your library. Linked it to this note.', 'info');
-          else toast(`Added “${truncate(note.title, 60)}”`, 'ok', { action: { label: 'Open', fn: () => openNote(note.id, { center: true }) } });
+          else toast(`Added “${truncate(tt(note.title), 60)}”`, 'ok', { action: { label: 'Open', fn: () => openNote(note.id, { center: true }) } });
           await refreshGraph();
           if (S.cur && S.cur.id === curId) {
             if (!(S.cur.links || []).includes(note.id)) S.cur.links = [...(S.cur.links || []), note.id];
@@ -5947,7 +6005,7 @@
     const box = $('#cs-chips');
     if (!box) return;
     box.replaceChildren(...S.chatAttach.map((a, i) => h('span', { class: 'cs-chip', title: `${ATTACH_KIND[a.kind] || a.kind}: ${a.title}` },
-      h('span', { class: 'cs-chip-k', text: ATTACH_KIND[a.kind] || a.kind }), truncate(a.title, 38),
+      h('span', { class: 'cs-chip-k', text: ATTACH_KIND[a.kind] || a.kind }), truncate(tt(a.title), 38),
       h('button', { type: 'button', 'aria-label': `Remove ${a.title}`, text: '×', onclick: () => { S.chatAttach.splice(i, 1); saveAttach(); renderAttachChips(); renderChatScope(); } }))));
     const btn = $('#cs-attach');
     if (btn) btn.textContent = S.chatAttach.length ? 'Attach more…' : 'Attach…';
@@ -6168,8 +6226,8 @@
           h('div', { class: 'actions' }, h('button', { class: 'btn btn-sm needs-claude', type: 'button', text: 'Retry', onclick: () => retryChat(i) }))));
       } else {
         const src = (m.sources || []).length ? h('div', { class: 'sources' }, h('span', { class: 'lbl', text: 'Sources' }),
-          m.sources.map((s) => h('button', { type: 'button', class: 'src', title: s.title, onclick: () => openNote(s.id, { center: true }) },
-            h('span', { class: 'tdot ' + nodeType(s.id) }), h('span', { class: 't', text: s.title || s.id }),
+          m.sources.map((s) => h('button', { type: 'button', class: 'src', title: tt(s.title), onclick: () => openNote(s.id, { center: true }) },
+            h('span', { class: 'tdot ' + nodeType(s.id) }), h('span', { class: 't', html: th(s.title || s.id) }),
             s.score != null ? h('span', { class: 's', text: Number(s.score).toFixed(2) }) : null))) : null;
         const ICO_COPY = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg>';
         const ICO_OK = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg>';
@@ -6238,7 +6296,7 @@
       const excerpt = String(p.text || '').replace(/^(Abstract|Student's (summary|notes)|Quoted passage): /, '').replace(/\s+/g, ' ');
       const where = p.page ? `p. ${p.page}` : p.section ? `§${truncate(p.section, 14)}` : p.src === 'fragment' ? 'fragment' : p.src === 'text' ? 'text' : 'note';
       const attrs = { class: 'psg', title: `${p.title}${p.page ? `, page ${p.page}` : p.section ? `, ${p.section_title || '§' + p.section}` : ''}${p.linked ? ' (opens the article)' : ''}\n\n${truncate(excerpt, 400)}` };
-      const kids = [h('span', { class: 'pg', text: where }), h('span', { class: 'x' }, multi ? h('span', { class: 'pt', text: truncate(p.title || p.id, 32) }) : null, multi ? ' ' : null, excerpt)];
+      const kids = [h('span', { class: 'pg', text: where }), h('span', { class: 'x' }, multi ? h('span', { class: 'pt', text: truncate(tt(p.title) || p.id, 32) }) : null, multi ? ' ' : null, excerpt)];
       if (p.pdf && p.page) return h('a', { ...attrs, href: `/viewer/${encodeURIComponent(p.pdf)}#page=${p.page}`, target: '_blank', rel: 'noopener' }, ...kids);
       if (p.linked && httpUrl(p.url) && p.src === 'text') return h('a', { ...attrs, href: httpUrl(p.url), target: '_blank', rel: 'noopener noreferrer' }, ...kids);
       return h('button', { ...attrs, type: 'button', onclick: () => openNote(p.id, { center: true }) }, ...kids);
@@ -6648,8 +6706,9 @@
   }
 
   function addedToast(note) {
-    if (note.duplicate) toast(note.same_file ? `You already have this exact file: “${truncate(note.title, 60)}”. No second copy was made.` : `Already in your library: “${truncate(note.title, 60)}”`, 'info');
-    else toast(`Added “${truncate(note.title, 70)}”`, 'ok');
+    if (note.duplicate) toast(note.same_file ? `You already have this exact file: “${truncate(tt(note.title), 60)}”. No second copy was made.` : `Already in your library: “${truncate(tt(note.title), 60)}”`, 'info');
+    else if (note.possible_duplicate) toast(`Added “${truncate(tt(note.title), 60)}”. It looks like “${truncate(tt(note.possible_duplicate.title), 60)}”, which you already have: open it to merge the two.`, 'info', { ms: 8000 });
+    else toast(`Added “${truncate(tt(note.title), 70)}”`, 'ok');
     if (note.downloads_copy) offerTrashDownload(note.downloads_copy);
   }
 
@@ -6675,7 +6734,7 @@
   function openOrOffer(note, seq0) {
     // you opened something else meanwhile: don't take it away, offer this one
     if (openSeq !== seq0 && !panel.hidden) {
-      toast(`Ready: “${truncate(note.title, 60)}”`, 'ok', { action: { label: 'Open', fn: () => openNote(note.id, { center: true }) } });
+      toast(`Ready: “${truncate(tt(note.title), 60)}”`, 'ok', { action: { label: 'Open', fn: () => openNote(note.id, { center: true }) } });
     } else openNote(note.id, { center: true });
   }
 
@@ -6830,8 +6889,8 @@
       const section = chosenSection();
       const note = await api('POST', '/api/import/lookup', { query });
       if (input) input.value = '';
-      if (note.duplicate) { S.placeNext = null; toast(`Already in your library: “${truncate(note.title, 60)}”`, 'info'); }
-      else toast(`Added “${truncate(note.title, 70)}”`, 'ok');
+      if (note.duplicate) { S.placeNext = null; toast(`Already in your library: “${truncate(tt(note.title), 60)}”`, 'info'); }
+      else toast(`Added “${truncate(tt(note.title), 70)}”`, 'ok');
       await refreshGraph();
       if (section) await intoSection(note, section);
       openOrOffer(note, seq0);

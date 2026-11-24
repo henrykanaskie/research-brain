@@ -16,6 +16,7 @@
 <script defer src="/static/vendor/katex/contrib/auto-render.min.js"></script>
 <script defer src="/static/vendor/marked.min.js"></script>
 <script defer src="/static/latex-editor.js"></script>
+<script defer src="/static/textitle.js"></script>
 <script defer src="/static/visuals.js"></script>
 <script src="/static/commands.js"></script>
 <style>
@@ -438,10 +439,11 @@ async function init() {
     return;
   }
   S.note = note;
-  document.title = `${note.title || ID} (research brain)`;
-  $("#title").textContent = note.title || ID;
-  $("#title").title = note.title || "";
-  $("#pTitle").textContent = note.title || ID;
+  const T = window.RBTitle;  // math in the title: typeset here, Unicode in the tab and tooltip (static/textitle.js)
+  document.title = `${(T ? T.text(note.title) : note.title) || ID} (research brain)`;
+  $("#title").textContent = (T ? T.text(note.title) : note.title) || ID;
+  $("#title").title = T ? T.text(note.title || "") : note.title || "";
+  if (T && note.title) $("#pTitle").innerHTML = T.html(note.title); else $("#pTitle").textContent = note.title || ID;
   renderAsk();
   const by = [];
   if (note.authors && note.authors.length) by.push(note.authors.length > 3 ? `${note.authors.slice(0, 3).join(", ")} et al.` : note.authors.join(", "));
@@ -1322,7 +1324,7 @@ function renderAsk() {
   if (!ASK.thread.length) {
     const blocked = ASK.ok === false;
     askLog.innerHTML = `<div class="ask-empty">
-      <p>${blocked ? esc(ASK.why) : `Ask ${esc(ASK.ai)} anything about <i>${esc(S.note && S.note.title || "this paper")}</i>. It reads the paper and your shareable notes on it, and knows which page you're on.`}</p>
+      <p>${blocked ? esc(ASK.why) : `Ask ${esc(ASK.ai)} anything about <i>${esc(window.RBTitle && S.note ? window.RBTitle.text(S.note.title) : S.note && S.note.title || "this paper")}</i>. It reads the paper and your shareable notes on it, and knows which page you're on.`}</p>
       ${blocked ? "" : EXAMPLES.map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join("")}
       ${blocked ? "" : `<p class="why">Select a passage and choose <b>Ask</b> to ask about just that part. Papers you marked private are never sent.</p>`}
     </div>`;

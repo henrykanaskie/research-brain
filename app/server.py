@@ -39,6 +39,7 @@ from .meta import one_look
 from .pdftext import extract, guess_title, why_unreadable
 from . import placing
 from . import region_edit
+from . import duplicates
 from .store import FrontmatterError, Store, normalize_selector, now_iso
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -2090,7 +2091,11 @@ def _import_pdf_tmp(tmp: Path, filename: str, quick: bool = False) -> dict:
         return out
     note = _create_paper(meta)  # the resolver runs in the background (this endpoint is async: no waiting)
     _store_pdf(note["id"], tmp, text)
-    return _with_extras(store.get(note["id"]))
+    out = _with_extras(store.get(note["id"]))
+    same = duplicates.match(store, meta, exclude=note["id"])  # another version of a paper you have, with its own PDF
+    if same:
+        out["possible_duplicate"] = {"id": same["id"], "title": same.get("title") or same["id"]}
+    return out
 
 
 def _import_linked(path: Path, fid: str, rel: str, size: int) -> tuple[str, str, int]:
@@ -2285,6 +2290,9 @@ async def api_attach_pdf(nid: str, file: UploadFile = File(...)):
 
 def _import_meta(meta: dict, link_to: str | None = None, resolved: dict | None = None) -> dict:
     dup = store.find_duplicate(meta.get("doi", ""), meta.get("arxiv", ""), meta.get("s2_id", ""))
+    # the same paper by title, authors and year (a preprint you have, added again from its journal DOI): the one
+    # you have, not a second dot for it (app/duplicates.py)
+    dup = dup or duplicates.match(store, meta)
     if dup:
         _resolve_meta(dup["id"], meta)  # fills what the library entry lacks (it was added without a record)
         note = dup
@@ -5389,6 +5397,9 @@ finder_api.install(app, store=store, publish=event_bus.publish, match_question=_
 from . import novelty_api  # noqa: E402
 novelty_api.install(app, store=store, publish=event_bus.publish, agent=_ai_agent, embedder=embedder,
                     chunk_index=_chunk_index, ask=lambda i, c, purpose="novelty check", sources=None: _ask(i, c, purpose, sources))
+
+# ---------------------------------------------------------------- the same paper twice (app/duplicates.py)
+duplicates.install(app, store=store)
 
 # ---------------------------------------------------------------- region changes the chat proposes (app/region_edit.py)
 region_edit.install(app, store=store)
