@@ -20,6 +20,8 @@ os.environ.setdefault("RB_ACQUIRE", "0")
 # No background metadata lookups (app/metadata.py: Crossref, arXiv, ...) unless a test turns them on and
 # replaces the network (tests/test_metadata.py); also inherited by the test servers.
 os.environ.setdefault("RB_METADATA", "0")
+# No AI check of titles and authors after imports (app/details.py) unless a test calls it.
+os.environ.setdefault("RB_DETAILS_AUTO", "0")
 # Never read or write the real per-user data folder (settings.json, profiles, storage.log) from tests.
 os.environ.setdefault("RB_DATA_DIR", tempfile.mkdtemp(prefix="rb-test-data-"))
 os.environ.setdefault("RB_LEGACY_VAULT", os.path.join(os.environ["RB_DATA_DIR"], "no-legacy-vault"))

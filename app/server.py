@@ -5420,10 +5420,21 @@ novelty_api.install(app, store=store, publish=event_bus.publish, agent=_ai_agent
                     chunk_index=_chunk_index, ask=lambda i, c, purpose="novelty check", sources=None: _ask(i, c, purpose, sources))
 
 # ---------------------------------------------------------------- title and authors checked against page 1 (app/details.py)
+def _details_ai_ready() -> bool:
+    """An AI that is installed and not known to be signed out (detection is cached): background checks never wait
+    on one that isn't there."""
+    try:
+        b = agents.active()
+        d = agents.detection(b)
+        return bool(d.available) and d.signed_in is not False
+    except Exception:
+        return False
+
+
 details_mod.install(app, store=store, ask=lambda i, c, purpose, sources: _ask(i, c, purpose, sources=sources),
                     may_send=lambda n: privacy.allow_ai(n, _ai_agent()),
                     refresh=lambda nid: metadata.refresh(store, nid, force=True, keep_edits=True, title_search=False),
-                    publish=lambda ev: event_bus.publish(ev))
+                    publish=lambda ev: event_bus.publish(ev), ready=_details_ai_ready)
 
 # ---------------------------------------------------------------- the same paper twice (app/duplicates.py)
 duplicates.install(app, store=store)

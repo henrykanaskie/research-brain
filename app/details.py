@@ -122,6 +122,7 @@ class Ctx:
     ask = None          # (instruction, context, purpose, sources) -> text   (app/server.py _ask)
     may_send = None     # (note) -> bool: not private for the active agent
     refresh = None      # (nid) -> dict: the record looked up again by identifier (metadata.refresh, force)
+    ready = None        # () -> bool: an AI is set up and signed in (background checks wait for one, never start one)
     publish = None
 
 
@@ -189,7 +190,7 @@ def check_quietly(nid: str) -> None:
     private: nothing happens)."""
     try:
         n = ctx.store.get(nid)
-        if suspect(n):
+        if suspect(n) and (ctx.ready is None or ctx.ready()):  # an AI that's installed and signed in, or nothing
             check(nid)
     except Exception as e:  # never in the way of an import
         print(f"[research_brain] details check skipped for {nid}: {e!r}")
@@ -203,9 +204,17 @@ _cv = threading.Condition()
 _worker = None
 
 
+def auto() -> bool:
+    """Checks after imports are on (RB_DETAILS_AUTO=0 turns them off, as the tests do)."""
+    import os
+    return os.environ.get("RB_DETAILS_AUTO", "1") != "0"
+
+
 def later(nid: str, delay: float | None = None) -> None:
     global _worker
     import time
+    if not auto():
+        return
     with _cv:
         if any(q[1] == nid for q in _queue):
             return
@@ -240,8 +249,8 @@ def check_all() -> dict:
     return {"queued": len(todo)}
 
 
-def install(app, *, store, ask, may_send, refresh, publish=None):
-    ctx.store, ctx.ask, ctx.may_send, ctx.refresh, ctx.publish = store, ask, may_send, refresh, publish
+def install(app, *, store, ask, may_send, refresh, publish=None, ready=None):
+    ctx.store, ctx.ask, ctx.may_send, ctx.refresh, ctx.publish, ctx.ready = store, ask, may_send, refresh, publish, ready
 
     @app.post("/api/notes/{nid}/check-details")
     def api_check(nid: str):
