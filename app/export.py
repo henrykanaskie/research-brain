@@ -21,6 +21,7 @@ are left out (no page, no fragment, no title in a link) unless include_private=T
 """
 from __future__ import annotations
 
+from . import fsio
 import datetime as dt
 import html
 import json
@@ -407,7 +408,7 @@ def export_site(store, ids: list[str] | None = None, include_pdfs: bool = False,
         created = f"{when.day} {when:%B %Y}"
         frag_count = sum(len(v) for v in frags.values())
         (tmp / "index.html").write_text(_index_page(pages, frag_count, title, created), encoding="utf-8", newline="\n")
-        tmp.rename(out)
+        fsio.replace(tmp, out)  # retried: Windows refuses a moment while a scanner reads the files just written
     except Exception:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
