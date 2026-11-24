@@ -42,6 +42,7 @@ from . import region_edit
 from . import subsections as subsections_mod
 from . import duplicates
 from . import details as details_mod
+from . import paperlink
 from .store import FrontmatterError, Store, normalize_selector, now_iso
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,6 +62,7 @@ CLAUDE_CONTEXT_CHARS = int(os.environ.get("RB_CLAUDE_CONTEXT_CHARS", "180000"))
 security.harden_process(VAULT)  # umask 077, vault folder 0700 (app/security.py)
 _migrate.run(VAULT)  # schema version check + migrations, backup first (app/migrate.py)
 store = Store(VAULT)
+paperlink.use(store)
 from . import chats as chats_mod  # noqa: E402  (remembered conversations with the agent)
 from . import regions as regions_mod  # noqa: E402  (region names: yours, else the matching topic's)
 from . import privacy  # noqa: E402  (what may be sent to AI agents or exported; see app/privacy.py)
@@ -2363,25 +2365,54 @@ def _import_meta(meta: dict, link_to: str | None = None, resolved: dict | None =
     return out
 
 
-@app.post("/api/import/lookup", status_code=201)
-def api_import_lookup(body: LookupIn):
-    if not body.query.strip():
-        raise HTTPException(400, "Enter a DOI, arXiv id, URL or title")
-    err = None
+_LINK_RE = re.compile(r"(?i)^(https?://|www\.)\S+$")
+
+
+def _link_query(q: str) -> tuple[str, dict]:
+    """A link typed or dropped in: what to look the paper up by (its DOI or arXiv id, found from the link even
+    when the page is paywalled, app/paperlink.py), and what was found. (q, {}) when it isn't a link."""
+    if not _LINK_RE.match(q):
+        return q, {}
+    url = q if q.lower().startswith("http") else "https://" + q
     try:
-        meta = scholar.lookup(body.query)
+        found = paperlink.find(url)
+    except Exception as e:  # a lookup going wrong must not break adding a paper
+        print(f"[research_brain] reading the link {url[:80]!r} failed: {e!r}")
+        found = {}
+    return (paperlink.as_query(found) or url), found
+
+
+def _add_by_link_or_query(query: str, link_to: str | None = None) -> dict:
+    q, found = _link_query(query.strip())
+    link = bool(_LINK_RE.match(query.strip()))
+    err = None
+    meta = None
+    try:
+        if found.get("s2"):
+            meta = scholar.s2_paper(found["s2"])
+        elif not link or paperlink.as_query(found):  # a link that names no paper isn't searched as a title
+            meta = scholar.lookup(q)
     except scholar.ScholarError as e:
         meta, err = None, e
     resolved = None
     if not meta and metadata.enabled():  # Crossref / DataCite / arXiv / PubMed / Open Library / OSTI / NTRS
-        resolved = _resolve_query(body.query)
+        resolved = _resolve_query(q)
         if resolved:
             meta = {k: v for k, v in metadata.legacy_from_csl(resolved["csl"]).items() if v not in (None, "", [])}
     if not meta:
         if err:
             raise HTTPException(503, str(err))
+        if link and not found:
+            raise HTTPException(404, paperlink.blocked_message(query))
         raise HTTPException(404, "Couldn't find that paper. Try the DOI or arXiv id, or drop in the PDF.")
-    return _import_meta(meta, body.link_to, resolved=resolved)
+    return _import_meta(meta, link_to, resolved=resolved)
+
+
+@app.post("/api/import/lookup", status_code=201)
+def api_import_lookup(body: LookupIn):
+    if not body.query.strip():
+        raise HTTPException(400, "Enter a DOI, arXiv id, URL or title")
+    return _add_by_link_or_query(body.query, body.link_to)
 
 
 def _resolve_query(q: str) -> dict | None:
@@ -5323,6 +5354,14 @@ def api_import_url(body: ImportUrlIn):
             raise HTTPException(422, "OneDrive only gives this file to someone signed in. Drop it on research "
                                      "brain's own window (it signs you in to OneDrive once), or Download it in "
                                      "OneDrive and drop the PDF here.")
+        if e.status in (401, 402, 403, 415, 502) or paperlink.is_paper_link(url):
+            # a paper's page, not its PDF (often behind a paywall): add the paper it is; a free copy is looked for
+            try:
+                return _add_by_link_or_query(url)
+            except HTTPException as e2:
+                if e2.status_code != 404 or not paperlink.is_paper_link(url):
+                    raise HTTPException(e.status, str(e))
+                raise
         raise HTTPException(e.status, str(e))
     same = _same_file(tmp)
     if same:

@@ -36,7 +36,7 @@ import threading
 from pathlib import Path
 
 from . import fsio
-from . import agent_scout, budget, scout
+from . import agent_scout, budget, paperlink, scout
 
 MAX_PROPOSALS = 10
 MAX_SEARCHES = 50        # older finished searches (and their dismissed papers' rows) are trimmed beyond this
@@ -300,19 +300,52 @@ def ids_in(text: str) -> list[tuple[str, str]]:
     return out[:MAX_FROM_ANSWER]
 
 
-def from_answer(store, question: str, text: str, *, lookup=None, copies=None, wait: bool = False) -> dict | None:
-    """The papers a web-search answer names (by DOI or arXiv id), as On deck cards: a search of their own
+def _linked_ids(text: str, have: list[tuple[str, str]], resolve_link) -> list[tuple[str, str]]:
+    """The papers an answer links to on publishers' sites without a DOI in the link (ScienceDirect, AIP, Oxford,
+    ResearchGate, often paywalled), found from the link (app/paperlink.py): [(kind, id)] not already in `have`."""
+    from concurrent.futures import ThreadPoolExecutor
+    links = [u for u in paperlink.links_in(text) if not ids_in(u)][:MAX_FROM_ANSWER]
+    room = MAX_FROM_ANSWER - len(have)
+    if not links or room <= 0:
+        return []
+
+    def one(u):
+        try:
+            return resolve_link(u) or {}
+        except Exception as e:
+            print(f"[research_brain] finder: couldn't read the link {u[:80]}: {e!r}")
+            return {}
+    seen = {(k, v.lower()) for k, v in have}
+    out = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for f in ex.map(one, links):
+            for kind in ("doi", "arxiv"):
+                if f.get(kind) and (kind, f[kind].lower()) not in seen:
+                    seen.add((kind, f[kind].lower()))
+                    out.append((kind, f[kind]))
+                    break
+    return out[:room]
+
+
+def from_answer(store, question: str, text: str, *, lookup=None, copies=None, wait: bool = False,
+                resolve_link=None) -> dict | None:
+    """The papers a web-search answer names (by DOI or arXiv id, or a link to the paper on its publisher's site,
+    paywalled or not: app/paperlink.py), as On deck cards: a search of their own
     ("From a web search: ..."), so you can triage them like Find papers' results: Add to library, Open, PDF, a
     free copy, Dismiss. Papers already in your library come back marked so (not put on deck again); dismissed
     ones are left out. lookup(kind, id) -> paper row (default: OpenAlex). None when the answer names no paper."""
     ids = ids_in(text)
-    if not ids:
-        return None
     if lookup is None:
         from . import metadata
         if not metadata.enabled():
             return None
         lookup = lambda kind, val: scout.lookup_work(**{kind: val})  # noqa: E731
+    if resolve_link is None:
+        from . import metadata
+        resolve_link = paperlink.find if metadata.enabled() else (lambda u: {})
+    ids = ids + _linked_ids(text, ids, resolve_link)
+    if not ids:
+        return None
     from concurrent.futures import ThreadPoolExecutor
 
     def one(kv):

@@ -85,7 +85,12 @@ Every request first passes the checks in app/security.py (SECURITY.md has the re
   with `"duplicate": true` if same DOI/arXiv/s2_id already in library. With none of those matching, a paper
   without a PDF whose title is the PDF's (four words or more, one such paper, no clashing DOI) gets it
   (`"duplicate": true, "title_match": true`); folders of papers you follow do the same (app/pdfmerge.py).
-- `POST /api/import/lookup` body `{"query": "DOI | arXiv id | arxiv/doi URL | title"}` → Note (201)
+- `POST /api/import/lookup` body `{"query": "DOI | arXiv id | any link to the paper | title"}` → Note (201).
+  A link to a paper on its publisher's site, paywalled or not, is turned into its DOI first (app/paperlink.py):
+  a DOI or arXiv id in the link, an Elsevier PII through Crossref, volume / issue / page (AIP, Oxford) through
+  OpenAlex, the page's citation tags when the site lets apps read it, or the title the link spells out
+  (ResearchGate, Cambridge) matched on Crossref. A link nothing can be found from is a 404 saying so (IEEE Xplore
+  blocks apps: add it by DOI); it's never searched as a title. A free copy is then looked for as for any DOI.
   (metadata+abstract only, no PDF). 404 if Semantic Scholar finds nothing.
 - `POST /api/notes/{id}/pdf` multipart `file` → Note (attach PDF to an existing paper).
 - `GET /api/notes/{id}/pdf-matches?q=` → `{has_pdf, items: [{id, title, authors, year, venue, doi, score}]}`: the
@@ -534,7 +539,9 @@ Used by the Chrome extension's annotate mode (`extension/annotate.js`). No Claud
   "citation"}` where `citation` is a plain author-year string, e.g. `Vaswani, A., et al. (2017). Attention Is All You
   Need. NeurIPS. arXiv:1706.03762`. 400 without `url`.
 - `POST /api/import/url` body `{"url"}` → 201 Note + `"viewer": "/viewer/<id>"` (+ `"duplicate": true` when the paper
-  was already in the library, `"existing": true` when it already had a PDF and nothing was downloaded). The server
+  was already in the library, `"existing": true` when it already had a PDF and nothing was downloaded). A link to a
+  paper's page rather than its PDF (a publisher's, often paywalled) adds the paper it is, as `/api/import/lookup`
+  does with a link, and a free copy is looked for. The server
   downloads the PDF itself (`app/urlfetch.py`): http/https only, ports 80/443/8080/8443, no credentials in the URL,
   every hop's host must resolve only to public addresses (loopback, private, link-local, CGNAT, reserved and
   IPv4-mapped forms are refused with 403), at most 3 redirects (502 beyond), at most 100 MB (`RB_URL_IMPORT_MAX_MB`;
@@ -902,6 +909,10 @@ State: `vault/state/finder.json`.
 | DELETE | `/api/finder/searches/{id}` | | forgets the search and its papers still on deck; dismissed ones stay so they aren't proposed again |
 
 Adding a paper uses `POST /api/import/lookup` with its DOI, `arXiv:<id>` or title.
+
+A web-search answer's papers go On deck too (`from_answer`): those it names by DOI or arXiv id, and those it
+links on a publisher's site without one (ScienceDirect, AIP, Oxford, ResearchGate and other paywalled pages),
+found from the link by app/paperlink.py. A free copy is looked for for each, at once.
 
 ## ADDED: Novelty check (app/novelty.py, app/novelty_api.py)
 
