@@ -410,6 +410,10 @@ and a body of `- [[note-id]]` lines (the ordered members). Dismissals and snooze
 - `DELETE /api/topics/{slug}` → `{"ok": true}` (file moved to `.trash`; papers untouched).
 - `POST /api/topics/{slug}/notes` body `{"ids": [id]}` → Topic. Fragments and unknown ids are a 400.
 - `DELETE /api/topics/{slug}/notes/{id}` → Topic.
+- `POST /api/notes/{id}/check-details` → `{changed, reasons, fields, skipped?}`: a paper whose title or authors look
+  wrong is checked against its first page by the AI (app/details.py); only what is printed there is used. Also part
+  of `refresh-metadata` (as `details`).
+- `POST /api/papers/check-details` → `{queued}`: every paper that looks wrong, one at a time in the background.
 - `GET /api/notes/{id}/duplicates` → `{items: [{id, title, authors, year, venue, doi, arxiv, has_pdf}]}`: papers that
   look like the same one (app/duplicates.py: title with math and punctuation set aside, authors in any order, year
   within one), not those you said aren't.

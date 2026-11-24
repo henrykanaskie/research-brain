@@ -158,6 +158,14 @@
     aliases: ['import notes', 'obsidian', 'notion', 'docx', 'word', 'markdown', 'handwritten', 'scan', 'handwriting'], when: () => !!window.__rbNoteImport, run: () => window.__rbNoteImport.open() });
   reg({ id: 'library.zotero', title: 'Import from Zotero…', group: 'Library', description: 'Papers, notes and highlights from your local Zotero library.',
     aliases: ['zotero', 'migrate', 'bulk import'], when: () => !!$('#btn-zotero'), run: () => { rb.openMenu('#btn-add-menu', '#add-menu'); $('#btn-zotero').click(); } });
+  reg({ id: 'library.checkDetails', title: 'Check paper titles and authors', group: 'Library',
+    description: 'Papers whose title looks wrong (an affiliation, a name, cut off) or that have no authors: {AI} reads each one\u2019s first page and fixes them from what is printed there. Private papers are skipped.',
+    aliases: ['metadata', 'fix titles', 'authors', 'details'], run: async () => {
+      try {
+        const r = await rb.api('POST', '/api/papers/check-details');
+        rb.toast(r.queued ? `Checking ${r.queued} paper${r.queued === 1 ? '' : 's'} in the background; they update on the map as they're fixed.` : 'Every paper has a title and authors that look right.', 'info', { ms: 6000 });
+      } catch (e) { rb.toastErr(e, 'Could not check them'); }
+    } });
   reg({ id: 'library.ask', title: 'Ask your library', group: 'Library', keys: 'A', description: 'Ask {AI} a question across all your papers and notes.',
     aliases: ['chat', 'question', 'claude', 'query', 'rag'], run: () => { if ($('#chat').hidden) rb.openChat(); else $('#chat-input').focus(); } });
   reg({ id: 'library.review', title: 'Review', group: 'Library', keys: 'G then R', description: 'Recall your own summaries and fragment notes, then grade yourself.',

@@ -227,6 +227,9 @@ research brain fills in the authors, year and journal, and looks for a free lega
 - A region keeps a *Next to read* list for you.
 - The same paper added twice (a preprint and its journal version) is spotted by title and authors: its panel offers
   **Merge into this one**.
+- A paper whose title looks wrong (an affiliation, a name, cut off) or that has no authors is checked against its
+  first page by your AI, which fixes it from what is printed there. *Check paper titles and authors* (⌘K) checks the
+  whole library.
 - Right-click a dot to **Move to region** (it leaves the one it's in), take it out of one, or, for a paper in several,
   choose its **main region**, the one it's drawn in.
 - Ask the chat to change your regions ("move the krypton papers into Cross sections") and it shows the changes with

@@ -40,6 +40,7 @@ from .pdftext import extract, guess_title, why_unreadable
 from . import placing
 from . import region_edit
 from . import duplicates
+from . import details as details_mod
 from .store import FrontmatterError, Store, normalize_selector, now_iso
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1619,10 +1620,18 @@ def api_refresh_metadata(nid: str, body: RefreshMetaIn | None = None):
     if not metadata.enabled():
         raise HTTPException(503, "Metadata lookups are turned off (RB_METADATA=0)")
     res = metadata.refresh(store, nid, force=True, keep_edits=body.keep_edits, title_search=body.title_search)
+    checked = None
+    if n["type"] == "paper" and details_mod.suspect(store.get(nid)):  # still looks wrong: what page 1 says
+        try:
+            checked = details_mod.check(nid)
+        except HTTPException as e:  # no AI set up, or it failed: the lookup's result stands
+            checked = {"changed": False, "skipped": e.detail}
     if res.get("changed"):
         event_bus.publish({"type": "notes-changed", "ids": [nid], "reason": "metadata", "source": res.get("source", "")})
     out = _with_extras(store.get(nid))
     out["metadata"] = {k: res.get(k) for k in ("found", "source", "changed", "errors")}
+    if checked is not None:
+        out["details"] = checked
     return out
 
 
@@ -2043,6 +2052,9 @@ def api_import_bookmark(body: BookmarkIn):
     return out
 
 
+_PDF_ADD_LOCK = threading.Lock()
+
+
 def _import_pdf_tmp(tmp: Path, filename: str, quick: bool = False) -> dict:
     """The rest of a PDF import (read it, identify it, match or create the paper, store the file).
     quick: skip the Semantic Scholar lookups here (bulk imports: hundreds of files would hit its rate limit);
@@ -2075,22 +2087,28 @@ def _import_pdf_tmp(tmp: Path, filename: str, quick: bool = False) -> dict:
     meta.setdefault("doi", ids["doi"])
     if not meta.get("title"):
         meta["title"] = guess or "Untitled paper"
-    dup = store.find_duplicate(meta.get("doi", ""), meta.get("arxiv", ""), meta.get("s2_id", ""))
-    titled = None if dup else pdfmerge.matching_paper(store, [meta["title"], guess], meta)
-    if dup or titled:
-        dup = dup or titled
-        if not dup["has_pdf"]:
-            _store_pdf(dup["id"], tmp, text)
+    # one PDF at a time from here until its paper has the file: two imported together (a folder) once saw each
+    # other's paper for the moment it had no PDF yet, and a similar title made the second "the PDF of" the first
+    with _PDF_ADD_LOCK:
+        dup = store.find_duplicate(meta.get("doi", ""), meta.get("arxiv", ""), meta.get("s2_id", ""))
+        titled = None if dup else pdfmerge.matching_paper(store, [meta["title"], guess], meta)
+        if dup or titled:
+            dup = dup or titled
+            if not dup["has_pdf"]:
+                _store_pdf(dup["id"], tmp, text)
+            else:
+                shutil.rmtree(tmp.parent, ignore_errors=True)
         else:
-            shutil.rmtree(tmp.parent, ignore_errors=True)
+            note = _create_paper(meta)  # the resolver runs in the background (this endpoint is async: no waiting)
+            _store_pdf(note["id"], tmp, text)
+    if dup:
         _resolve_meta(dup["id"], meta)
         out = _with_extras(store.get(dup["id"]))
         out["duplicate"] = True
         if titled:
             out["title_match"] = True  # the paper with this title you had without its PDF has it now
         return out
-    note = _create_paper(meta)  # the resolver runs in the background (this endpoint is async: no waiting)
-    _store_pdf(note["id"], tmp, text)
+    details_mod.later(note["id"])  # its title and authors checked against page 1 if they look wrong (app/details.py)
     out = _with_extras(store.get(note["id"]))
     same = duplicates.match(store, meta, exclude=note["id"])  # another version of a paper you have, with its own PDF
     if same:
@@ -2126,24 +2144,27 @@ def _import_linked(path: Path, fid: str, rel: str, size: int) -> tuple[str, str,
         if owner:
             return owner, "duplicate", 0
         ids = _pdf_ids(text, info)
-        dup = store.find_duplicate(ids["doi"], ids["arxiv"], "")
-        if dup and dup["has_pdf"]:
-            return dup["id"], "duplicate", 0
         guessed = guess_title(text)
         guess = meta_title or guessed or Path(rel).stem.replace("_", " ")
-        if not dup:  # the paper with this title you had without its PDF (a confident match only)
-            dup = pdfmerge.matching_paper(store, [t for t in (meta_title, guessed) if t], ids)
-        if dup:
-            nid, how = dup["id"], "linked"
-        else:
-            nid, how = _create_paper({"title": guess, "doi": ids["doi"], "arxiv": ids["arxiv"]})["id"], "added"
-        store.links.link(nid, fid, rel, size)
+        with _PDF_ADD_LOCK:  # until its paper has the file (see _import_pdf_tmp)
+            dup = store.find_duplicate(ids["doi"], ids["arxiv"], "")
+            if dup and dup["has_pdf"]:
+                return dup["id"], "duplicate", 0
+            if not dup:  # the paper with this title you had without its PDF (a confident match only)
+                dup = pdfmerge.matching_paper(store, [t for t in (meta_title, guessed) if t], ids)
+            if dup:
+                nid, how = dup["id"], "linked"
+            else:
+                nid, how = _create_paper({"title": guess, "doi": ids["doi"], "arxiv": ids["arxiv"]})["id"], "added"
+            store.links.link(nid, fid, rel, size)
         n = store.get(nid)
         n["source"] = "pdf"
         store.write_text(nid, text, note=n)
         store.save(n)
         if dup:
             _resolve_meta(nid, ids)
+        else:
+            details_mod.later(nid)  # title and authors checked against page 1 if they look wrong (app/details.py)
         return nid, how, 0
     finally:
         if was_cloud and not diskspace.give_back(path):
@@ -5397,6 +5418,12 @@ finder_api.install(app, store=store, publish=event_bus.publish, match_question=_
 from . import novelty_api  # noqa: E402
 novelty_api.install(app, store=store, publish=event_bus.publish, agent=_ai_agent, embedder=embedder,
                     chunk_index=_chunk_index, ask=lambda i, c, purpose="novelty check", sources=None: _ask(i, c, purpose, sources))
+
+# ---------------------------------------------------------------- title and authors checked against page 1 (app/details.py)
+details_mod.install(app, store=store, ask=lambda i, c, purpose, sources: _ask(i, c, purpose, sources=sources),
+                    may_send=lambda n: privacy.allow_ai(n, _ai_agent()),
+                    refresh=lambda nid: metadata.refresh(store, nid, force=True, keep_edits=True, title_search=False),
+                    publish=lambda ev: event_bus.publish(ev))
 
 # ---------------------------------------------------------------- the same paper twice (app/duplicates.py)
 duplicates.install(app, store=store)
