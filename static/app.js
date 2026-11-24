@@ -1697,10 +1697,13 @@
     });
     const ask = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: mine.length ? 'Reorganize with AI' : 'Organize with AI',
       title: 'Your AI proposes subsections for this region from its papers; nothing changes until you click Apply' });
-    ask.onclick = async () => {
+    ask.onclick = () => {
       closeSheet();
-      await chatGeneral();
-      sendChat(mine.length ? `Restructure the subsections of the region “${name}”.` : `Organize the region “${name}” into subsections.`);
+      // the library chat (it gets your regions and their papers, and its proposal comes as a card with Apply), and a
+      // quick answer whatever mode the chat is in. The General chat once took this and had nothing to sort.
+      if (setChatScope(null) === false) return;
+      openChat(); renderChat();
+      sendChat(mine.length ? `Restructure the subsections of the region “${name}”.` : `Organize the region “${name}” into subsections.`, { mode: 'quick' });
     };
     const sheet = h('div', { class: 'rf-chooser' }, h('div', { class: 'rf-head', text: `Subsections of ${name}` }),
       rows.length ? h('div', { class: 'rf-list' }, rows)

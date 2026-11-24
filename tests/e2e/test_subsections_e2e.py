@@ -70,8 +70,22 @@ def test_subsection_names_show_only_in_their_focused_region_and_the_ai_proposes_
     assert api(server, "GET", "/api/subsections") == []
     page.wait_for_function("(window.__rb.S.subShown || []).length === 0")
 
+    # Organize with AI asks the library chat (which sees the region's papers), quick, even in Research mode
+    page.evaluate("localStorage.setItem('rb.chatMode', JSON.stringify('research'))")
+    page.reload()
+    page.wait_for_function("window.__rb && window.__rb.S.nodes.size >= 12")
+    page.evaluate(f"window.__rb.focusRegion({cid})")
+    page.click("#rf-subs")
+    with page.expect_request("**/api/chat/stream") as req:
+        page.locator(".rf-chooser").get_by_role("button", name="Organize with AI").click()
+    assert "Organize the region “Krypton models” into subsections." in req.value.post_data_json["question"]
+    expect(page.locator("#chat-log .msg.assistant").last).not_to_have_class("pending", timeout=20_000)
+    page.wait_for_function("!window.__rb.S.chatBusy")
+
     # the AI proposes subsections: a card, nothing changes until Apply
     page.evaluate("localStorage.setItem('rb.chatMode', JSON.stringify('quick'))")
+    page.reload()
+    page.wait_for_function("window.__rb && window.__rb.S.nodes.size >= 12")
     block = json.dumps({"changes": [{"op": "subsections", "region": "Krypton models", "subsections": [
         {"name": "Models", "ids": kr[:5]}, {"name": "Measurements", "ids": kr[5:]}]}]})
     page.keyboard.press("Escape")

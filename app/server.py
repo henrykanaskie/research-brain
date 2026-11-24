@@ -3860,7 +3860,8 @@ def api_general_stream(body: GeneralIn):
     note += _extras(body)
     context = _memory_block() + context
     if not body.web:
-        return StreamingResponse(_claude_sse(GENERAL_INSTRUCTION + note, context,
+        instruction, context = _with_regions(q, GENERAL_INSTRUCTION + note, context)  # asked to sort your regions
+        return StreamingResponse(_claude_sse(instruction, context,
                                              lambda text: _chat_out(text, {"web": False, **extra}), "general"),
                                  media_type="text/event-stream", headers=SSE_HEADERS)
     if not privacy.settings().get("web_search"):
@@ -4855,6 +4856,9 @@ def _research_sse(body: ResearchIn):
     try:
         yield live.sse("step", step("Searching your library: " + agent_mod._short(q, 70), "seed"))
         context, seed_hits = _research_seed(q, body.history, run)
+        if region_edit.wants_regions(q):  # asked to change your regions: it sees them, and may propose (a card)
+            regions = region_edit.context(store, _ai_visible(index()["by_id"]), q)
+            context = regions + "\n\n" + region_edit.INSTRUCTION.strip() + "\n\n" + context
         timing["seed_ms"] = agent_mod.now_ms(t0)
         steps[0].update(status="done", note=f"{len(seed_hits)} passages")
         yield live.sse("step", steps[0])

@@ -232,7 +232,9 @@
         s.cited ? h('span', { class: 's', text: 'cited' }) : null))) : null;
     return h('div', { class: 'msg assistant' }, h('div', { class: 'machine' },
       head(`${RB.AIName()}, researched`), trail(m),
-      h('div', { class: 'msg-body md', html: renderMD(m.content) }), src, rb.chatPassages(m)));
+      // region changes it proposes: a card with Apply (static/regionedit.js), not the JSON
+      h('div', { class: 'msg-body md', html: renderMD(window.__rbRegionEdit ? window.__rbRegionEdit.strip(m.content) : m.content) }),
+      window.__rbRegionEdit ? window.__rbRegionEdit.card(m) : null, src, rb.chatPassages(m)));
   }
   function retry(i) {
     const m = S.chat[i];

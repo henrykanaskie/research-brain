@@ -396,3 +396,28 @@ def test_the_chat_structures_a_region_into_subsections_and_undo_puts_them_back(s
     p = c.post("/api/regions/changes/preview", json={"changes": [
         {"op": "subsections", "region": hall["label"], "subsections": [{"name": "Breathing", "ids": ha[:2]}]}]}).json()
     assert not p["changes"][0]["problem"]
+
+
+def test_every_chat_asked_to_sort_a_region_gets_its_papers(server):
+    """Organize with AI once went to the General chat, which got only the question ("I can't see the contents of
+    the region"). The library chat, the General chat and Research all get the regions, their papers and their
+    subsections when asked to change them."""
+    from app import agents
+    from test_questions import Recorder
+    srv, c = server
+    kr, ha = _krypton_and_hall(c)
+    c.post("/api/subsections", json={"name": "Metastables", "ids": kr[:3]})
+    fb = Recorder(replies=["Here.", "Here.", '{"action":"answer","text":"Here."}'] + ["more"] * 10)
+    agents.register(fb)
+    agents.set_active(fb.id)
+    try:
+        q = "Organize the region “Krypton models” into subsections."
+        c.post("/api/chat/stream", json={"question": q, "history": []})
+        c.post("/api/general/stream", json={"question": q, "history": []})
+        c.post("/api/research/stream", json={"question": q})
+    finally:
+        agents.unregister(fb.id)
+    assert len(fb.prompts) >= 3
+    for p in fb.prompts[:3]:
+        assert "## Krypton models (8, kept)" in p and f"[[{kr[0]}]]" in p and "### subsection: Metastables (3)" in p
+        assert "rb-regions" in p
