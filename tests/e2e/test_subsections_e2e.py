@@ -241,3 +241,42 @@ def test_a_region_with_subsections_is_laid_out_in_order_and_holds_still(ctx, ser
     page.evaluate("window.__rb.unfocusRegion()")
     page.wait_for_timeout(2000)
     assert page.evaluate(pos, kr) == loose  # back as they were
+
+
+def _drag(page, nid, to_id):
+    """Drag dot nid onto dot to_id's spot (in screen pixels, through the real pointer)."""
+    xy = """(i) => { const rb = window.__rb, n = rb.S.nodes.get(i), p = rb.fg.graph2ScreenCoords(n.x, n.y);
+                     const r = document.querySelector('#graph canvas').getBoundingClientRect(); return [r.left + p.x, r.top + p.y]; }"""
+    a, b = page.evaluate(xy, nid), page.evaluate(xy, to_id)
+    page.mouse.move(*a)
+    page.mouse.down()
+    for k in range(1, 13):
+        page.mouse.move(a[0] + (b[0] + 6 - a[0]) * k / 12, a[1] + (b[1] + 6 - a[1]) * k / 12)
+        page.wait_for_timeout(30)
+    page.mouse.up()
+
+
+def test_drag_a_paper_into_a_subsection_or_another_region_and_it_belongs_there(ctx, server):
+    clear_vault(server)
+    xe = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Xenon collisional radiative model {i}",
+                                             "abstract": "collisional radiative model xenon emission"})["id"] for i in range(7)]
+    ha = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Hall thruster anomalous transport {i}",
+                                             "abstract": "hall thruster anomalous electron transport"})["id"] for i in range(4)]
+    api(server, "POST", "/api/topics", {"name": "Xenon models", "members": xe})
+    api(server, "POST", "/api/topics", {"name": "Hall transport", "members": ha})
+    s = api(server, "POST", "/api/subsections", {"name": "Excited states", "ids": xe[:3]})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 11 && (window.__rb.S.subsections || []).length === 1")
+    page.wait_for_timeout(3000)
+    cid = page.evaluate(f"window.__rb.S.nodes.get('{xe[0]}').cluster")
+    page.evaluate(f"window.__rb.focusRegion({cid})")
+    page.wait_for_timeout(2200)
+    _drag(page, xe[5], xe[1])  # from "Not in a subsection" onto the subsection's papers
+    page.wait_for_function(f"window.__rb.S.nodes.get('{xe[5]}').sub === window.__rb.S.nodes.get('{xe[0]}').sub", timeout=15000)
+    assert xe[5] in next(x for x in api(server, "GET", "/api/subsections") if x["id"] == s["id"])["members"]
+    page.evaluate("window.__rb.unfocusRegion()")
+    page.wait_for_timeout(2200)
+    _drag(page, ha[0], xe[4])  # a paper of the other region, into this one
+    page.wait_for_function(f"window.__rb.S.nodes.get('{ha[0]}').cluster === {cid}", timeout=15000)
+    topics = {t["name"]: t for t in api(server, "GET", "/api/topics")}
+    assert topics["Xenon models"]["count"] == 8 and topics["Hall transport"]["count"] == 3

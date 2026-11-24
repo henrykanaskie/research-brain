@@ -1531,7 +1531,7 @@
     if (!S.regionLabels) return;
     const focused = S.focusCluster;
     const hoverNode = (S.lit && S.nodes.get(S.lit)) || (S.hover && S.nodes.get(S.hover));
-    const hot = S.litRegion != null ? S.litRegion : hoverNode ? hoverNode.cluster : S.hoverRegion != null ? S.hoverRegion : null;
+    const hot = S.dropRegion != null ? S.dropRegion : S.litRegion != null ? S.litRegion : hoverNode ? hoverNode.cluster : S.hoverRegion != null ? S.hoverRegion : null;
     const sc = titleScale(k), W = graphEl.clientWidth / sc, H = graphEl.clientHeight / sc, px = sc / k;
     onScreenPx(ctx, (at0) => {
       const at = (x, y) => { const q = at0(x, y); return [q[0] / sc, q[1] / sc]; };
@@ -2466,6 +2466,26 @@
       }
     };
     force.regionAt = (cid) => anchors.get(cid) || null;
+    /** The region whose disc holds (x, y), the nearest one's if several (null over open map). */
+    force.regionAtPoint = (x, y) => {
+      let best = null, bd = Infinity;
+      for (const [cid, a] of anchors) {
+        const d = Math.hypot(x - a.x, y - a.y);
+        if (d <= a.r + 4 && d - a.r < bd) { bd = d - a.r; best = cid; }
+      }
+      return best;
+    };
+    /** The subsection (its sub id; cid*1000+499 for "Not in a subsection") of region cid whose papers are nearest
+     *  (x, y), when one is close enough to mean it; null otherwise or when the region has no subsections. */
+    force.subAtPoint = (cid, x, y, skip = null) => {
+      let best = null, bd = 16;
+      for (const n of nodes) {
+        if (n === skip || n.cluster !== cid || n.type === 'fragment' || !slots.has(n.id)) continue;
+        const p = force.slotAt(n), d = p ? Math.hypot(x - p[0], y - p[1]) : Infinity;
+        if (d < bd) { bd = d; best = n.sub; }
+      }
+      return best;
+    };
     /** Where a paper of a region with subsections sits now: its column spot while that region is focused, its spot
      *  in its subsection's cluster otherwise (null for any other dot). */
     force.slotAt = (n) => {
@@ -2990,8 +3010,8 @@
       .onNodeClick((n, e) => { if (regionTagClick(e)) return; { const c = (S.shifted || []).length && S.hover && S.nodes.get(S.hover); if (onItsPlace(c)) n = c; } nodeClicked(n, e); })
       .onNodeRightClick((n, e) => nodeMenu(n, e))
       // drop a dot where you want it and it stays there (and next time); drag it again any time
-      .onNodeDrag((n) => { S.dragging = true; S.dragNode = n; motion.tween = null; dragNeighbours(n); runMotion(); })
-      .onNodeDragEnd((n) => { S.dragging = false; S.dragNode = null; dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) pinNode(n, n.x, n.y); })
+      .onNodeDrag((n) => { S.dragging = true; S.dragNode = n; motion.tween = null; dragNeighbours(n); dropHint(n); runMotion(); })
+      .onNodeDragEnd((n) => { S.dragging = false; S.dragNode = null; dragLast = null; if (n && Number.isFinite(n.x) && Number.isFinite(n.y)) dropNode(n); })
       .onLinkRightClick((l, e) => linkMenu((e && lineAt(e.clientX, e.clientY)) || l, e))
       .onBackgroundClick((e) => {
         if (S.swallowClick && performance.now() - S.swallowClick < 400) return;  // the end of a section drag
@@ -4145,6 +4165,50 @@
     // nothing moves after you drop a dot: it, and the dots that trailed it, stay exactly where they are
     kick(60);
   }
+  /** Where a dragged dot would go if let go here: another region (its name lights up), or in its region with
+   *  subsections, another subsection (its papers light up). */
+  function dropTarget(n) {
+    const rf = fg && fg.d3Force('regions');
+    if (!rf || !rf.regionAtPoint || n.type === 'fragment' || !Number.isFinite(n.x)) return null;
+    const cid = rf.regionAtPoint(n.x, n.y);
+    if (cid == null || !(S.clusters || []).some((c) => c.id === cid && c.label)) return null;
+    const sub = rf.subAtPoint(cid, n.x, n.y, n);
+    if (cid !== n.cluster) return { cid, sub };
+    return sub != null && sub !== n.sub ? { cid, sub } : null;
+  }
+  function dropHint(n) {
+    const t = dropTarget(n);
+    const r = t && t.cid !== n.cluster ? t.cid : null, sub = t && t.sub != null && S.focusCluster === t.cid ? t.sub : null;
+    if (r !== S.dropRegion || sub !== S.dropSub) { S.dropRegion = r; S.dropSub = sub; S.hoverSub = sub; kick(200); }
+  }
+  /** A dot let go: over another region it moves there (and into the subsection it was dropped on, if that region
+   *  has some); in its own region, on another subsection, it changes subsection. Anywhere else it stays where you put
+   *  it, as always. */
+  async function dropNode(n) {
+    const t = dropTarget(n);
+    S.dropRegion = null; S.dropSub = null; S.hoverSub = null;
+    if (!t) { pinNode(n, n.x, n.y); return; }
+    n.fx = undefined; n.fy = undefined; delete n.__tmpPin;
+    if (pins[n.id] || n.__userPin) { delete pins[n.id]; savePins(); n.__userPin = false; delete n.__home; delete n.__pinRel; }
+    const c = S.clusters.find((x) => x.id === t.cid);
+    const title = truncate(tt(n.title) || n.id, 40);
+    try {
+      if (t.cid !== n.cluster) {
+        const here = (S.clusters || []).find((x) => x.id === n.cluster);
+        const to = await regionSlug({ name: c.label, cluster: c, slug: c.topic && c.topic.slug }, n);
+        await api('POST', `/api/notes/${encodeURIComponent(n.id)}/region`, { to, out_of: here && here.topic ? [here.topic.slug] : [] });
+      }
+      const named = (S.subsections || []).find((x) => x.sub === t.sub);
+      const old = (S.subsections || []).find((x) => x.sub === n.sub && x.region === n.cluster);
+      if (t.sub != null && t.sub !== n.sub) {
+        if (old) await api('POST', `/api/subsections/${encodeURIComponent(old.id)}/remove`, { ids: [n.id] });
+        if (named) await api('POST', `/api/subsections/${encodeURIComponent(named.id)}/notes`, { ids: [n.id] });
+      }
+      const where = named ? `${named.name} in ${regionName(c.label)}` : regionName(c.label);
+      toast(`Put “${title}” in ${where}.`, 'ok');
+      afterTopicChange(n, c.topic && c.topic.slug);
+    } catch (e) { toastErr(e, 'Could not move it there'); refreshGraph(); }
+  }
   /** Re-place the region anchors (a region you mostly placed by hand is anchored where you put it). */
   function reanchor() {
     const rf = fg && fg.d3Force('regions');
@@ -4988,6 +5052,7 @@
         showAccess(n, a, badge);
       }
       if (n.doi || n.arxiv || n.s2_id) acts.push(h('button', { class: 'btn btn-text', title: 'Look for a free legal copy and attach it, so you can highlight and ask about it here', onclick: (e) => getPdf(n, e.currentTarget) }, 'Get the PDF'));
+      if (n.doi || httpUrl(n.url)) acts.push(libraryButton(n));
       const inp = h('input', { type: 'file', accept: 'application/pdf,.pdf', hidden: true });
       const btn = h('button', { class: view ? 'btn btn-text' : 'btn', title: 'Attach a PDF file to this paper', onclick: () => inp.click() }, 'Attach PDF');
       inp.addEventListener('change', () => { const f = inp.files[0]; inp.value = ''; if (f) attachPdf(n.id, f, btn); });
@@ -7114,6 +7179,29 @@
     } finally { t.done(); }
   }
 
+  /** "Through your library" (app/libraryget.py): the paper's page through your library's sign-in, in your browser;
+   *  meanwhile the app watches Downloads and attaches its PDF when it arrives. With no library link set yet, it
+   *  says where to add one. */
+  S.libraryProxy = '';
+  api('GET', '/api/settings').then((r) => { S.libraryProxy = (r && r.library_proxy) || ''; if (S.libraryProxy && S.cur && S.cur.type === 'paper') reloadCur(); }).catch(() => {});
+  window.addEventListener('rb:settings-changed', (e) => { S.libraryProxy = (e.detail && e.detail.library_proxy) || ''; if (S.cur && S.cur.type === 'paper') reloadCur(); });
+  function libraryButton(n) {
+    const tip = 'Open it with your library’s subscription (your browser, your account). Download its PDF there and it’s attached here';
+    if (!S.libraryProxy) {
+      return h('button', { class: 'btn btn-text', 'data-act': 'library', title: tip, onclick: () => {
+        toast('Add your library’s sign-in link first (Settings › Adding papers › Your library).', 'info',
+          { ms: 9000, action: { label: 'Settings', fn: () => window.__rbSettings && window.__rbSettings.open('library') } });
+      } }, 'Through your library');
+    }
+    const t = n.doi ? 'https://doi.org/' + n.doi : httpUrl(n.url);
+    const href = S.libraryProxy.includes('{url}') ? S.libraryProxy.replace('{url}', t) : S.libraryProxy + t;
+    return h('a', { class: 'btn btn-text', href, target: '_blank', rel: 'noopener noreferrer', 'data-act': 'library', title: tip, onclick: () => {
+      api('POST', `/api/notes/${encodeURIComponent(n.id)}/library-access`)
+        .then(() => toast('Opened through your library. Download the PDF there: it’s attached here when it lands in Downloads.', 'info', { ms: 9000 }))
+        .catch((e) => toastErr(e, 'Could not open it through your library'));
+    } }, 'Through your library');
+  }
+
   /** Where to read a paper you don't have the PDF of, in the browser (nothing is downloaded or stored):
    *  arXiv's PDF, else the open-access PDF Semantic Scholar knows, else the publisher's page via the DOI,
    *  else the saved link, else its Semantic Scholar page. */
@@ -7339,6 +7427,7 @@
     // the graph works out what's under the pointer only while it draws; it pauses when nothing moves, so
     // wake it briefly or it keeps the last dot you hovered (and a right-click on empty map opens that dot's menu)
     kick(120);
+    if (S.dragging) return;  // the dragged dot's drop target lights instead (dropHint)
     const sh = S.hover ? null : subHit(e);
     if ((sh ? sh.sub : null) !== (S.hoverSub ?? null)) { S.hoverSub = sh ? sh.sub : null; kick(300); }
     if (sh) { graphEl.style.cursor = 'pointer'; return; }

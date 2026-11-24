@@ -69,6 +69,9 @@
       let data = null;
       try { data = JSON.parse(e.data); } catch { return; }
       (data.ids || []).forEach((i) => pending.add(i));
+      if (data.reason === 'library-pdf' && window.__rb && window.__rb.toast) {  // app/libraryget.py found it in Downloads
+        window.__rb.toast(`Attached the PDF you downloaded (${data.file || 'from Downloads'}).`, 'ok');
+      }
       clearTimeout(refreshT);
       refreshT = setTimeout(flush, 150);
     });

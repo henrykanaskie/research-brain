@@ -69,13 +69,15 @@ def app_settings() -> dict:
     s = paths.load_settings()
     email = str(s.get("unpaywall_email") or os.environ.get("RB_UNPAYWALL_EMAIL", "")).strip()
     mode = s.get("save_mode") if s.get("save_mode") in SAVE_MODES else "link"
-    return {"unpaywall_email": email, "auto_open_access": bool(s.get("auto_open_access", True)), "save_mode": mode}
+    return {"unpaywall_email": email, "auto_open_access": bool(s.get("auto_open_access", True)), "save_mode": mode,
+            "library_proxy": str(s.get("library_proxy") or "")}
 
 
 class SettingsIn(BaseModel):
     unpaywall_email: str | None = None
     auto_open_access: bool | None = None
     save_mode: str | None = None
+    library_proxy: str | None = None  # your library's sign-in link (app/libraryget.py)
 
 
 @router.get("/api/settings")
@@ -97,6 +99,12 @@ def put_settings(body: SettingsIn):
         if body.save_mode not in SAVE_MODES:
             raise HTTPException(400, "save_mode must be \"link\" (link + text) or \"pdf\" (link + text + PDF)")
         upd["save_mode"] = body.save_mode
+    if body.library_proxy is not None:
+        from . import libraryget
+        try:
+            upd["library_proxy"] = libraryget.clean_proxy(body.library_proxy) or None
+        except libraryget.LibraryError as e:
+            raise HTTPException(400, str(e))
     if upd:
         paths.save_settings(upd)
     return app_settings()

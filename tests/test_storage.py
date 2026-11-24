@@ -235,10 +235,10 @@ def test_pinned_vault_cannot_switch_and_settings_and_ui_state(dirs, monkeypatch)
     c, _ = load_server(monkeypatch, vault=dirs / "v")
     assert c.get("/api/library").json()["pinned"]
     assert c.post("/api/profiles/switch", json={"name": "default"}).status_code == 409
-    assert c.get("/api/settings").json() == {"unpaywall_email": "", "auto_open_access": True, "save_mode": "link"}
+    assert c.get("/api/settings").json() == {"unpaywall_email": "", "auto_open_access": True, "save_mode": "link", "library_proxy": ""}
     assert c.put("/api/settings", json={"unpaywall_email": "not an email"}).status_code == 400
     s = c.put("/api/settings", json={"unpaywall_email": "me@uni.edu", "auto_open_access": False}).json()
-    assert s == {"unpaywall_email": "me@uni.edu", "auto_open_access": False, "save_mode": "link"}
+    assert s == {"unpaywall_email": "me@uni.edu", "auto_open_access": False, "save_mode": "link", "library_proxy": ""}
     assert c.put("/api/settings", json={"save_mode": "everything"}).status_code == 400
     assert c.put("/api/settings", json={"save_mode": "pdf"}).json()["save_mode"] == "pdf"
     assert c.get("/api/import/linked/prefs").json() == {"save_mode": "pdf"}

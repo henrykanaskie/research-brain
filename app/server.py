@@ -2343,6 +2343,56 @@ async def api_attach_pdf(nid: str, file: UploadFile = File(...)):
     return _with_extras(store.get(nid))
 
 
+# ---------------------------------------------------------------- a paywalled paper through your library (app/libraryget.py)
+from . import libraryget  # noqa: E402
+
+
+def _attach_downloaded(nid: str, path: Path) -> None:
+    """Its PDF turned up in Downloads: a copy is attached (the Downloads file stays)."""
+    tmpdir = Path(tempfile.mkdtemp(prefix="rb_libpdf_"))
+    tmp = tmpdir / "download.pdf"
+    try:
+        shutil.copy2(path, tmp)
+        text, _ = extract(tmp, info={})
+    except Exception as e:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        print(f"[research_brain] couldn't attach {path.name}: {e!r}")
+        return
+    if store.pdf_path(nid).exists():
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return
+    _store_pdf(nid, tmp, text)
+    event_bus.publish({"type": "notes-changed", "ids": [nid], "reason": "library-pdf", "file": path.name})
+
+
+def _read_head(path: Path) -> str:
+    from .pdftext import extract as _ex
+    text, _ = _ex(path, info={})
+    return text
+
+
+@app.post("/api/notes/{nid}/library-access")
+def api_library_access(nid: str):
+    n = _get(nid)
+    if n["type"] != "paper":
+        raise HTTPException(400, "Only papers can be opened through your library")
+    proxy = storage_api.app_settings().get("library_proxy") or ""
+    if not proxy:
+        raise HTTPException(409, "Add your library's sign-in link in Settings › Open-access PDFs first")
+    url = libraryget.link(proxy, n)
+    if not url:
+        raise HTTPException(400, "This paper has no DOI or link to open")
+    if not store.pdf_path(nid).exists():
+        libraryget.watch(nid, n, _attach_downloaded, _read_head)
+    return {"url": url, "watching": True, "minutes": libraryget.WATCH_MINUTES}
+
+
+@app.get("/api/notes/{nid}/library-access")
+def api_library_access_status(nid: str):
+    _get(nid)
+    return libraryget.status(nid)
+
+
 def _import_meta(meta: dict, link_to: str | None = None, resolved: dict | None = None) -> dict:
     dup = store.find_duplicate(meta.get("doi", ""), meta.get("arxiv", ""), meta.get("s2_id", ""))
     # the same paper by title, authors and year (a preprint you have, added again from its journal DOI): the one

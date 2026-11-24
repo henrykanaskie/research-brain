@@ -241,6 +241,21 @@
       el('p', { class: 'ls-p', text: 'Unpaywall asks for a contact email with each lookup. It is sent only to Unpaywall. For paywalled papers, use “Save PDF to research_brain” in the browser extension while signed in to the publisher.' }),
       el('div', { class: 'ls-row' }, email, saveOA));
 
+    // Your library: its sign-in link, for "Through your library" on a paywalled paper (app/libraryget.py)
+    const proxy = el('input', { type: 'url', value: set.library_proxy || '', placeholder: 'https://yourlibrary.idm.oclc.org/login?url=', spellcheck: 'false', 'aria-label': 'Your library’s sign-in link' });
+    const saveProxy = el('button', { class: 'btn', type: 'button', text: 'Save' });
+    saveProxy.addEventListener('click', async () => {
+      try {
+        const r = await api('/api/settings', json('PUT', { library_proxy: proxy.value.trim() }));
+        window.dispatchEvent(new CustomEvent('rb:settings-changed', { detail: r }));
+        say(proxy.value.trim() ? 'Saved. Papers without a PDF have “Through your library”.' : 'Saved. No library link.');
+      } catch (e) { say(e.message, true); }
+    });
+    const libSecAccess = el('section', { class: 'ls-sec', id: 'ls-library-access' },
+      el('div', { class: 'ls-h', text: 'Your library' }),
+      el('p', { class: 'ls-p', text: 'Your university library’s sign-in link (its proxy prefix: on the library’s website, often under “off-campus access”; for example https://oregonstate.idm.oclc.org/login?url= at Oregon State). A paper without a PDF then has “Through your library”: it opens the paper with your library account, and when you download its PDF there, research brain finds it in your Downloads folder and attaches it.' }),
+      el('div', { class: 'ls-row' }, proxy, saveProxy));
+
     // Paper lookup: optional free keys for Semantic Scholar and OpenAlex (app/apikeys.py)
     const keySec = el('section', { class: 'ls-sec', id: 'ls-lookup' },
       el('div', { class: 'ls-h', text: 'Paper lookup' }),
@@ -313,14 +328,14 @@
     // Tabs keep each kind of setting together; the search box looks through all of them at once.
     const TABS = [
       { id: 'library', name: 'Library', secs: [papSec, docSec, profSec, ioSec, advSec] },
-      { id: 'papers', name: 'Adding papers', secs: [keySec, modeSec, oaSec] },
+      { id: 'papers', name: 'Adding papers', secs: [keySec, modeSec, oaSec, libSecAccess] },
       { id: 'ai', name: 'AI and privacy', secs: [agentSec, privSec, qSec] },
       { id: 'citations', name: 'Citations', secs: [citeSec] },
       { id: 'devices', name: 'Devices', secs: [pairSec] },
       { id: 'about', name: 'About', secs: [aboutSec] },
     ].map((t) => ({ ...t, secs: t.secs.filter(Boolean) })).filter((t) => t.secs.length);
-    const FOCUS_TAB = { about: 'about', profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', citations: 'citations' };
-    const FOCUS_SEC = { about: aboutSec, profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, citations: citeSec };
+    const FOCUS_TAB = { about: 'about', profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', library: 'papers', citations: 'citations' };
+    const FOCUS_SEC = { about: aboutSec, profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, library: libSecAccess, citations: citeSec };
     let cur = FOCUS_TAB[focus] || (() => { try { return localStorage.getItem('rb.settings-tab'); } catch { return null; } })();
     if (!TABS.some((t) => t.id === cur)) cur = TABS[0].id;
     const tabBtns = TABS.map((t) => el('button', { type: 'button', class: 'ls-tab', role: 'tab', 'data-tab': t.id,

@@ -914,6 +914,16 @@ A web-search answer's papers go On deck too (`from_answer`): those it names by D
 links on a publisher's site without one (ScienceDirect, AIP, Oxford, ResearchGate and other paywalled pages),
 found from the link by app/paperlink.py. A free copy is looked for for each, at once.
 
+## ADDED: Through your library (app/libraryget.py)
+
+`library_proxy` in `GET/PUT /api/settings`: your library's sign-in link (https, ending in `url=` or holding
+`{url}`; 400 otherwise; "" removes it).
+
+| Method | Path | Returns |
+|---|---|---|
+| POST | `/api/notes/{id}/library-access` | `{url, watching, minutes}`: the paper's DOI (else its link) through your library's sign-in, for the browser to open; 409 with no library link set. While no PDF is attached, Downloads (`RB_DOWNLOADS` overrides) is watched for 10 minutes: the first new PDF with the paper's DOI or whole title on its first pages is copied in and attached (`notes-changed` with `reason: "library-pdf"`); others are left alone |
+| GET | `/api/notes/{id}/library-access` | `{watching, attached}` |
+
 ## ADDED: Novelty check (app/novelty.py, app/novelty_api.py)
 
 How many papers already did something like an idea, and how close they came. In the app it is a mode of
