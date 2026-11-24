@@ -1107,6 +1107,19 @@ html .tp-add:focus { border-style: solid; border-color: var(--ink-2); background
 .rf-sub .rf-input { flex: 1; font: 15px var(--display); }
 .rf-sub-pick { border: 0; background: none; padding: 0; text-align: left; color: var(--ink); cursor: pointer; }
 .rf-sub-pick:hover, .rf-sub-pick[aria-pressed="true"] { text-decoration: underline; text-decoration-color: var(--red); text-underline-offset: 3px; }
+/* under the region bar while a region is focused, not over it */
+body:has(#region-focus:not([hidden])) .rf-chooser { top: 118px; max-height: calc(100vh - 140px); }
+.rf-editor { display: flex; flex-direction: column; max-height: calc(100vh - 140px); }
+.rf-edit-top { padding: 0 8px 8px; display: flex; }
+.rf-edit-top .rf-input, .rf-filter { flex: 1; width: 100%; font: 15px var(--display); }
+.rf-filter { font: 13px var(--sans); }
+.rf-picks { overflow-y: auto; min-height: 0; flex: 1; }
+.rf-pick { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; cursor: pointer; font: 13.5px var(--display); }
+.rf-pick:hover { background: var(--ground); }
+.rf-pick[hidden] { display: none; }
+.rf-pick input { flex: none; transform: translateY(1px); accent-color: var(--ink); }
+.rf-pick-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-pick-n { font: 12px var(--sans); color: var(--ink-3); margin-right: auto; align-self: center; }
 .rf-empty { font: 13px var(--sans); color: var(--ink-2); padding: 4px 8px 8px; line-height: 1.45; }
 .rf-acts { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 8px 4px; border-top: 1px solid var(--rule); margin-top: 4px; }
 @media (max-width: 900px) {

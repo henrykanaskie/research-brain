@@ -132,3 +132,80 @@ def test_the_legend_fits_again_after_the_chat_closes(ctx, server):
         return [...lg.children].filter(el => el.offsetParent && el.getBoundingClientRect().right > r.right + 1).length; }""")
     assert cut == 0
     assert not page.errors
+
+
+def test_you_make_subsections_by_hand_in_the_sheet_and_from_a_papers_menu(ctx, server):
+    """New subsection: a name and the region's papers ticked; Papers changes which are in it; right-click a paper to
+    put it in one, take it out, or start a new one with it."""
+    clear_vault(server)
+    kr = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"Krypton collisional radiative model {i}",
+                                             "abstract": "collisional radiative model krypton emission"})["id"] for i in range(8)]
+    api(server, "POST", "/api/topics", {"name": "Krypton spectra", "members": kr})
+    page = open_app(ctx, server)
+    page.wait_for_function("window.__rb.S.nodes.size >= 8")
+    page.wait_for_timeout(1500)
+    cid = page.evaluate(f"window.__rb.S.nodes.get('{kr[0]}').cluster")
+    page.evaluate(f"window.__rb.focusRegion({cid})")
+    page.click("#rf-subs")
+    page.locator(".rf-chooser").get_by_role("button", name="New subsection").click()
+    ed = page.locator(".rf-editor")
+    expect(ed).to_contain_text("New subsection of Krypton spectra")
+    expect(ed.locator(".rf-pick")).to_have_count(8)
+    ed.locator(".rf-sub-name").fill("Metastables")
+    for t in ("model 0", "model 1", "model 2"):
+        ed.locator(".rf-pick", has_text=t).locator("input").check()
+    expect(ed).to_contain_text("3 papers")
+    ed.locator(".rf-filter").fill("model 7")
+    expect(ed.locator(".rf-pick:visible")).to_have_count(1)
+    ed.locator(".rf-filter").fill("")
+    ed.get_by_role("button", name="Make subsection").click()
+    expect(page.locator(".rf-chooser .rf-sub")).to_contain_text("Metastables")
+    (s,) = api(server, "GET", "/api/subsections")
+    assert s["name"] == "Metastables" and sorted(s["members"]) == sorted(kr[:3])
+    page.wait_for_function("(window.__rb.S.subShown || []).includes('Metastables')")
+
+    # Papers: one out, one in
+    page.locator(".rf-chooser .rf-sub").get_by_role("button", name="Papers").click()
+    ed = page.locator(".rf-editor")
+    ed.locator(".rf-pick", has_text="model 0").locator("input").uncheck()
+    ed.locator(".rf-pick", has_text="model 5").locator("input").check()
+    ed.get_by_role("button", name="Save").click()
+    expect(page.locator(".rf-chooser .rf-sub")).to_be_visible()
+    (s,) = api(server, "GET", "/api/subsections")
+    assert sorted(s["members"]) == sorted([kr[1], kr[2], kr[5]])
+    page.keyboard.press("Escape")
+
+    def right_click(i):
+        for _ in range(40):  # the layout settles after a change: wait until the dot stays put
+            a = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y]; }", i)
+            page.wait_for_timeout(250)
+            b = page.evaluate("(id) => { const n = window.__rb.S.nodes.get(id); return [n.x, n.y]; }", i)
+            if abs(a[0] - b[0]) + abs(a[1] - b[1]) < 0.05:
+                break
+        sx, sy = page.evaluate("(id) => { const fg = window.__rb.fg, n = window.__rb.S.nodes.get(id); const q = fg.graph2ScreenCoords(n.x, n.y); return [q.x, q.y]; }", i)
+        box = page.locator("#graph").bounding_box()
+        page.mouse.move(box["x"] + sx - 30, box["y"] + sy - 20)
+        page.mouse.move(box["x"] + sx, box["y"] + sy, steps=6)
+        page.wait_for_timeout(200)
+        page.mouse.click(box["x"] + sx, box["y"] + sy, button="right")
+        menu = page.locator(".node-menu")
+        expect(menu.locator(".menu-subs .menu-label")).to_be_visible()
+        return menu
+
+    menu = right_click(kr[6])
+    menu.locator(".menu-subs .menu-item", has_text="Put in Metastables").click()
+    page.wait_for_timeout(500)
+    assert kr[6] in api(server, "GET", "/api/subsections")[0]["members"]
+    menu = right_click(kr[6])
+    menu.locator(".menu-subs .menu-item", has_text="Take out of Metastables").click()
+    page.wait_for_timeout(500)
+    assert kr[6] not in api(server, "GET", "/api/subsections")[0]["members"]
+    menu = right_click(kr[7])
+    menu.locator(".menu-subs .menu-item", has_text="New subsection").click()
+    ed = page.locator(".rf-editor")
+    expect(ed.locator(".rf-pick input:checked")).to_have_count(1)
+    ed.locator(".rf-sub-name").fill("Benchmarks")
+    page.keyboard.press("Enter")
+    expect(page.locator(".rf-chooser .rf-sub", has_text="Benchmarks")).to_be_visible()
+    assert {x["name"]: x["members"] for x in api(server, "GET", "/api/subsections")}["Benchmarks"] == [kr[7]]
+    assert not page.errors

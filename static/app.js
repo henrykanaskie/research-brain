@@ -1667,10 +1667,12 @@
         title: 'Show its papers (the region’s others step back); again to show all', onclick: () => { pickSub(x.sub); closeSheet(); } });
       const ren = h('button', { type: 'button', class: 'btn btn-text btn-sm', text: 'Rename' });
       const del = h('button', { type: 'button', class: 'btn btn-text btn-sm', text: 'Delete', title: 'Take this subsection away (its papers stay in the region)' });
-      const row = h('div', { class: 'rf-item rf-sub' }, nm, h('span', { class: 'rf-item-n', text: String(x.size) }), ren, del);
+      const pap = h('button', { type: 'button', class: 'btn btn-text btn-sm', text: 'Papers', title: 'Choose which of the region’s papers are in it',
+        onclick: () => { closeSheet(); editSubsection(cid, x); } });
+      const row = h('div', { class: 'rf-item rf-sub' }, nm, h('span', { class: 'rf-item-n', text: String(x.size) }), pap, ren, del);
       ren.onclick = () => {
         const input = h('input', { type: 'text', class: 'rf-input', value: regionName(x.name), maxlength: 80, 'aria-label': 'Subsection name' });
-        nm.replaceWith(input); ren.hidden = true; del.hidden = true; input.focus(); input.select();
+        nm.replaceWith(input); ren.hidden = true; del.hidden = true; pap.hidden = true; input.focus(); input.select();
         let over = false;
         const done = async (save) => {
           if (over) return;
@@ -1707,8 +1709,9 @@
     };
     const sheet = h('div', { class: 'rf-chooser' }, h('div', { class: 'rf-head', text: `Subsections of ${name}` }),
       rows.length ? h('div', { class: 'rf-list' }, rows)
-        : h('div', { class: 'rf-empty', text: 'None yet. Your AI can split this region into subsections, or ask it in the chat.' }),
-      h('div', { class: 'rf-acts' }, ask));
+        : h('div', { class: 'rf-empty', text: 'None yet. Make one and choose its papers, or let your AI split the region.' }),
+      h('div', { class: 'rf-acts' }, h('button', { type: 'button', class: 'btn btn-sm', text: 'New subsection',
+        onclick: () => { closeSheet(); editSubsection(cid, null); } }), ask));
     const off = (e) => { if (!sheet.contains(e.target)) closeSheet(); };
     const closeSheet = () => {
       sheet.remove(); document.removeEventListener('pointerdown', off);
@@ -1717,6 +1720,79 @@
     S.regionChooserClose = closeSheet;
     document.body.append(sheet);
     setTimeout(() => { if (sheet.isConnected) document.addEventListener('pointerdown', off); }, 0);
+  }
+
+  /** Make a subsection (x null) or change one by hand: its name and which of the region's papers are in it, ticked.
+   *  `tick`: papers ticked to start with (a new subsection from a paper's right-click menu). */
+  async function editSubsection(cid, x, tick = []) {
+    const info = (S.clusters || []).find((c) => c.id === cid);
+    if (!info) return;
+    if (S.regionChooserClose) S.regionChooserClose();
+    let members = new Set(tick);
+    if (x) {
+      try { const all = await api('GET', '/api/subsections'); const me = (all || []).find((y) => y.id === x.id); members = new Set(me ? me.members : []); }
+      catch (e) { toastErr(e, 'Could not load the subsection'); return; }
+    }
+    const papers = [...S.nodes.values()].filter((n) => n.cluster === cid && n.type !== 'fragment')
+      .map((n) => ({ id: n.id, title: tt(n.title) || n.id, year: n.year || '' }))
+      .sort((a, b) => (members.has(b.id) - members.has(a.id)) || a.title.localeCompare(b.title));
+    const input = h('input', { type: 'text', class: 'rf-input rf-sub-name', maxlength: 80, value: x ? regionName(x.name) : '',
+      placeholder: 'Subsection name', 'aria-label': 'Subsection name' });
+    const boxes = new Map();
+    const rows = papers.map((p) => {
+      const cb = h('input', { type: 'checkbox' });
+      cb.checked = members.has(p.id);
+      boxes.set(p.id, cb);
+      return h('label', { class: 'rf-pick', title: p.title }, cb, h('span', { class: 'rf-pick-t', text: p.title }),
+        p.year ? h('span', { class: 'rf-item-n', text: String(p.year) }) : null);
+    });
+    const filter = papers.length > 6 ? h('input', { type: 'search', class: 'rf-filter', placeholder: 'Find a paper', 'aria-label': 'Find a paper' }) : null;
+    if (filter) filter.addEventListener('input', () => {
+      const q = filter.value.trim().toLowerCase();
+      rows.forEach((r, i) => { r.hidden = !!q && !papers[i].title.toLowerCase().includes(q); });
+    });
+    const count = h('span', { class: 'rf-pick-n' });
+    const recount = () => { const k = [...boxes.values()].filter((b) => b.checked).length; count.textContent = `${k} paper${k === 1 ? '' : 's'}`; };
+    for (const b of boxes.values()) b.addEventListener('change', recount);
+    recount();
+    const save = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: x ? 'Save' : 'Make subsection' });
+    const cancel = h('button', { type: 'button', class: 'btn btn-text btn-sm', text: 'Cancel', onclick: () => { closeSheet(); regionSubsections(cid); } });
+    save.onclick = async () => {
+      const name = input.value.trim();
+      const chosen = papers.filter((p) => boxes.get(p.id).checked).map((p) => p.id);
+      if (!name) { input.focus(); toast('Give the subsection a name.', 'info'); return; }
+      if (!chosen.length) { toast('Tick the papers that are in it.', 'info'); return; }
+      save.disabled = true;
+      try {
+        if (!x) await api('POST', '/api/subsections', { name, ids: chosen });
+        else {
+          const sid = encodeURIComponent(x.id), now = new Set(chosen);
+          if (name !== regionName(x.name)) await api('PATCH', `/api/subsections/${sid}`, { name });
+          const add = chosen.filter((i) => !members.has(i)), drop = [...members].filter((i) => !now.has(i) && boxes.has(i));
+          if (add.length) await api('POST', `/api/subsections/${sid}/notes`, { ids: add });
+          if (drop.length) await api('POST', `/api/subsections/${sid}/remove`, { ids: drop });
+        }
+        await refreshGraph();
+        closeSheet();
+        if (S.focusCluster !== cid) focusRegion(cid);
+        regionSubsections(cid);
+      } catch (e) { save.disabled = false; toastErr(e, 'Could not save the subsection'); }
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save.onclick(); } });
+    const sheet = h('div', { class: 'rf-chooser rf-editor' },
+      h('div', { class: 'rf-head', text: x ? `Subsection of ${regionName(info.label)}` : `New subsection of ${regionName(info.label)}` }),
+      h('div', { class: 'rf-edit-top' }, input), filter ? h('div', { class: 'rf-edit-top' }, filter) : null,
+      h('div', { class: 'rf-list rf-picks' }, rows),
+      h('div', { class: 'rf-acts' }, count, cancel, save));
+    const off = (e) => { if (!sheet.contains(e.target)) closeSheet(); };
+    const closeSheet = () => {
+      sheet.remove(); document.removeEventListener('pointerdown', off);
+      if (S.regionChooserClose === closeSheet) S.regionChooserClose = null;
+    };
+    S.regionChooserClose = closeSheet;
+    document.body.append(sheet);
+    setTimeout(() => { if (sheet.isConnected) document.addEventListener('pointerdown', off); }, 0);
+    input.focus();
   }
 
   // ---------- where every name goes, decided once per layout ----------
@@ -5573,6 +5649,26 @@
         }
         slot.append(...kids);
         // the menu grew: keep it inside the window
+        if (nodeMenuEl) { const r = nodeMenuEl.getBoundingClientRect(); if (r.bottom > innerHeight - 8) nodeMenuEl.style.top = Math.max(8, innerHeight - r.height - 8) + 'px'; }
+      }).catch(() => {});
+    }
+    // subsections of its region (app/subsections.py): put it in one, make a new one with it, or take it out
+    if (n.type !== 'fragment' && n.cluster >= 0) {
+      const slot = h('div', { class: 'menu-subs' });
+      items.push(slot);
+      api('GET', '/api/subsections').then((all) => {
+        if (!slot.isConnected) return;
+        const here = new Set((S.subsections || []).filter((x) => x.region === n.cluster).map((x) => x.id));
+        const subs = (all || []).filter((x) => here.has(x.id)).sort((a, b) => a.name.localeCompare(b.name));
+        const ins = subs.filter((x) => x.members.includes(n.id)), outs = subs.filter((x) => !x.members.includes(n.id));
+        const after = async (p) => { try { await p; await refreshGraph(); } catch (err) { toastErr(err, 'Could not change the subsection'); } };
+        const kids = [h('div', { class: 'menu-sep' }), h('div', { class: 'menu-label', text: 'Subsection' })];
+        for (const x of outs.slice(0, 16)) kids.push(menuItem(`Put in ${truncate(x.name, 36)}`, null,
+          () => after(api('POST', `/api/subsections/${encodeURIComponent(x.id)}/notes`, { ids: [n.id] }))));
+        for (const x of ins) kids.push(menuItem(`Take out of ${truncate(x.name, 32)}`, null,
+          () => after(api('POST', `/api/subsections/${encodeURIComponent(x.id)}/remove`, { ids: [n.id] }))));
+        kids.push(menuItem('New subsection…', 'with this paper; tick the others', () => editSubsection(n.cluster, null, [n.id])));
+        slot.append(...kids);
         if (nodeMenuEl) { const r = nodeMenuEl.getBoundingClientRect(); if (r.bottom > innerHeight - 8) nodeMenuEl.style.top = Math.max(8, innerHeight - r.height - 8) + 'px'; }
       }).catch(() => {});
     }
