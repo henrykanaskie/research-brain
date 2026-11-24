@@ -1,15 +1,27 @@
 """A paper's title and authors, checked against its first page by the AI when they look wrong.
 
 A paper added from a PDF without a DOI gets the title the app guesses from its first page, and sometimes that's an
-affiliation ("*Plasma Propulsion Laboratory, Imperial College..."), an author ("Kazuma Emoto1"), a word like
-"Manuscript", or a title cut off mid-phrase ("... Hall Thruster with"); and its authors can be missing. When the
-lookup by identifier finds nothing better, the AI reads page 1 and says what's printed there: title, authors, year,
-DOI. Only what is really on the page is used (each title word and each author's surname must be in the text, a DOI
-must be there as written), so it can't invent details. Then:
+affiliation ("*Plasma Propulsion Laboratory, Imperial College..."), an author ("Kazuma Emoto1", "A Crowe and J W
+McConkey"), a word like "Manuscript", a publisher's code ("PII: S0010-4655(00)00231-9"), a cover sheet ("REPORT
+DOCUMENTATION PAGE", "Download details:"), or a title cut off mid-phrase ("... Hall Thruster with"); and its authors
+can be missing. In order, cheapest first:
+  1. the PDF's own document info (/Author, /Title): used when each author's surname (and the title's words) are on
+     the paper's first pages. No AI needed;
+  2. a DOI that found nothing and looks misprinted (a journal's ISSN without its hyphen, "10.1088/00223727/42/..."):
+     looked up again as it should read;
+  3. the AI reads the first pages (PAGES of them, so a cover sheet doesn't hide the paper) and says what's printed
+     there: title, authors, year, DOI. Only what is really on the pages is used (each title word and each author's
+     surname must be in the text, a DOI must be there as written), so it can't invent details. Then:
   - a DOI it found: the paper's record is looked up by it (Crossref...), which settles title, authors and the rest;
   - otherwise a suspicious title is replaced, and missing authors and year are filled in.
-Titles and authors you typed yourself are never changed (a title only changes when it looks broken), and private
-papers are never sent.
+A title the AI finds that continues the one the paper has (it was cut off) replaces it too. Titles and authors you
+typed yourself are never changed (a title only changes when it looks broken or cut short), and private papers are
+never sent.
+
+Papers are checked after an import, and every paper in the library that looks wrong is checked once a little after
+the app starts (papers added before these checks existed too). What was checked is kept in state/details-checked.json
+by each paper's title and authors, so a paper is asked about again only when they change, or when the AI it needed
+wasn't there.
 
     suspect(note) -> [reasons]          what looks wrong ([] = nothing)
     check(nid) -> {changed, fields, reasons, skipped}
@@ -25,11 +37,15 @@ import unicodedata
 
 from fastapi import HTTPException
 
-PAGE_CHARS = 5000
+PAGE_CHARS = 9000
+PAGES = 3
 GENERIC = re.compile(r"^\W*(accepted )?(manuscript|article|paper|preprint|untitled( paper)?|draft|document|title|"
                      r"supplementary (material|information)|author manuscript|full paper|research article|letter)\W*$", re.I)
 AFFILIATION = re.compile(r"(^\s*[*†‡§\d]\s*\w)|\b(laborator(y|ies)|department|dept\.|universit[yéeàä]\w*|institut\w*|"
                          r"facult\w*|school of|college|centre|center for|corresponding author|e-?mail)\b|@", re.I)
+JUNK = re.compile(r"^\W*(pii|doi)\s*[:.]|report documentation page|form approved|^\W*download details|^\W*presented at\b|"
+                  r"^\W*(this|the) (article|paper) (is|was|has)\b|^\W*(see|view) (discussions|this article)|"
+                  r"^\W*(journal|proceedings|transactions) of [\w ]+,? (vol|volume)\b|[:;,]\s*$", re.I)
 DANGLING = re.compile(r"\b(with|and|of|the|for|in|on|by|to|a|an|from|using|via|at|into|toward|towards|under|between)\s*$", re.I)
 
 INSTRUCTION = (
@@ -59,6 +75,10 @@ def suspect(n: dict) -> list[str]:
         why.append("no authors")
     if not t or GENERIC.match(t):
         why.append("no real title")
+    elif JUNK.search(t):
+        why.append("the title isn't the paper's title")
+    elif _names_only(t):
+        why.append("the title looks like a name")
     elif AFFILIATION.search(t):
         why.append("the title looks like an affiliation")
     elif DANGLING.search(t):
@@ -67,11 +87,21 @@ def suspect(n: dict) -> list[str]:
         tw = _words(t)
         surnames = {_words(a)[-1] for a in authors if _words(a)}
         short = len(t.split()) <= 4
-        if short and (re.search(r"[A-Za-z][\d*†‡]+(\s|,|$)", t) or (surnames and set(tw) & surnames)):
+        # a name with its affiliation mark ("Emoto1", "Simulik*"), not a formula ("in N2", "CO2 lasers")
+        if short and (re.search(r"\b[A-Z][a-z]+[\d*†‡]+(\s|,|$)", t) or (surnames and set(tw) & surnames)):
             why.append("the title looks like a name")  # "Kazuma Emoto1", "V. M. Simulik1", an author's own name
         elif len(tw) < 3:
             why.append("the title is very short")
     return why
+
+
+def _names_only(t: str) -> bool:
+    """"A Crowe and J W McConkey", "Smith, J. and Lee, K.": names and initials, nothing else."""
+    toks = [x for x in re.split(r"[\s,;]+", t) if x and x.lower() not in ("and", "&", "et", "al", "al.")]
+    if not 2 <= len(toks) <= 10 or not re.search(r"\b(and|&)\b|,", t, re.I):
+        return False
+    initials = sum(bool(re.fullmatch(r"[A-Z]\.?(-[A-Z]\.?)?", x)) for x in toks)
+    return initials >= 2 and all(re.fullmatch(r"[A-Z][\w'.-]*", x) for x in toks)
 
 
 def _parse(text: str) -> dict:
@@ -130,47 +160,74 @@ ctx = Ctx()
 
 
 def _first_page(nid: str) -> str:
+    """The text of the paper's first PAGES pages (a cover sheet or a publisher's download page can come first)."""
     try:
         text = ctx.store.text_path(nid).read_text(encoding="utf-8", errors="replace")
     except (OSError, KeyError):
         return ""
-    page = text.split("[[page 2]]")[0]
-    return page.replace("[[page 1]]", "").strip()[:PAGE_CHARS]
+    page = text.split(f"[[page {PAGES + 1}]]")[0]
+    return re.sub(r"\[\[page \d+\]\]", "", page).strip()[:PAGE_CHARS]
 
 
-def check(nid: str) -> dict:
+def split_authors(raw: str) -> list[str]:
+    """A PDF's /Author: "A. Smith; B. Lee", "A. Smith, B. Lee and C. Wu", "Smith, A." (one person)."""
+    raw = " ".join(str(raw or "").split())
+    if not raw:
+        return []
+    if ";" in raw:
+        parts = raw.split(";")
+    else:
+        parts = re.split(r",\s*|\s+and\s+|\s*&\s*", raw)
+        # "Smith, A." / "Smith, A. B.": a surname then initials is one person, not two
+        if len(parts) == 2 and re.fullmatch(r"([A-Z]\.?\s*)+", parts[1].strip()):
+            parts = [f"{parts[1].strip()} {parts[0].strip()}"]
+    out = []
+    for a in parts:
+        a = re.sub(r"[\d*†‡§]+", "", a).strip(" ,.;")
+        if a and len(a) <= 80 and re.search(r"[A-Za-z]{2}", a) and a not in out:
+            out.append(a)
+    return out[:40]
+
+
+def from_pdf(nid: str, page: str) -> dict:
+    """Title and authors from the PDF's own document info, kept only when they're on the paper's first pages."""
+    try:
+        path = ctx.store.pdf_path(nid)
+        if not path.exists():
+            return {}
+        from .pdftext import pdf_info
+        info = pdf_info(path)
+    except Exception:
+        return {}
+    title = re.sub(r"^\s*microsoft (word|powerpoint) - ", "", str(info.get("title") or ""), flags=re.I)
+    if re.search(r"\.(pdf|docx?|tex|dvi|ps)\s*$", title, re.I):
+        title = ""
+    return on_page({"title": title, "authors": split_authors(info.get("author") or "")}, page)
+
+
+def misprinted_doi(doi: str) -> str:
+    """A DOI as it should read when a journal's ISSN lost its hyphen ("10.1088/00223727/42/28/185203" ->
+    "10.1088/0022-3727/42/28/185203"); "" when it doesn't look like that."""
+    m = re.fullmatch(r"(10\.\d{4,9}/)(\d{4})(\d{3}[\dXx])(/\S+)", str(doi or "").strip())
+    return f"{m.group(1)}{m.group(2)}-{m.group(3)}{m.group(4)}" if m else ""
+
+
+def _found(r) -> bool:
+    return bool(r.get("found")) if isinstance(r, dict) else bool(r)
+
+
+def _apply(nid: str, found: dict, fields: dict) -> None:
+    """Fill in what the paper is missing (or has wrong) from what was found; adds to fields."""
     store = ctx.store
-    n = store.get(nid)
-    reasons = suspect(n)
-    if not reasons:
-        return {"changed": False, "reasons": [], "fields": {}}
-    if not ctx.may_send(n):
-        return {"changed": False, "reasons": reasons, "fields": {}, "skipped": "private"}
-    page = _first_page(nid)
-    if len(page) < 40:
-        return {"changed": False, "reasons": reasons, "fields": {}, "skipped": "no text"}
-    found = on_page(_parse(ctx.ask(INSTRUCTION, "PAGE 1:\n\n" + page, "paper details", [nid])), page)
-    fields: dict = {}
-    if found.get("doi") or found.get("arxiv"):  # an identifier: the paper's own record settles it
-        with store.lock:
-            m = store.get(nid)
-            for k in ("doi", "arxiv"):
-                if found.get(k) and not m.get(k) and store.find_duplicate(found[k] if k == "doi" else "", found[k] if k == "arxiv" else "", "") is None:
-                    m[k] = found[k]
-                    fields[k] = found[k]
-            if fields:
-                store.save(m, touch=False)
-        if fields and ctx.refresh:
-            try:
-                ctx.refresh(nid)
-            except Exception as e:  # offline: what the page says still goes in below
-                print(f"[research_brain] details: lookup by {fields} failed: {e!r}")
     with store.lock:
         m = store.get(nid)
         left = suspect(m)
         upd = {}
-        if found.get("title") and any("title" in r for r in left):
-            upd["title"] = found["title"]
+        t = " ".join(str(m.get("title") or "").split())
+        nt = found.get("title") or ""
+        if nt and nt != t and (any("title" in r for r in left)
+                               or (len(nt) > len(t) + 3 and _fold(nt).startswith(_fold(t).rstrip(" .:")))):
+            upd["title"] = nt  # broken, or cut short ("Fast Optical Emission Spectroscopy for Studying")
         if found.get("authors") and not [a for a in (m.get("authors") or []) if str(a).strip()]:
             upd["authors"] = found["authors"]
         if found.get("year") and not m.get("year"):
@@ -180,20 +237,140 @@ def check(nid: str) -> dict:
                 m[k] = v
             store.save(m)
             fields.update(upd)
+
+
+def check(nid: str, use_ai: bool = True) -> dict:
+    """Check one paper's title and authors (see the top of this file). use_ai=False: only the PDF's own details and
+    the DOI; `ai` in the result says whether the AI was asked."""
+    store = ctx.store
+    n = store.get(nid)
+    reasons = suspect(n)
+    if not reasons:
+        return {"changed": False, "reasons": [], "fields": {}}
+    fields: dict = {}
+    page = _first_page(nid)
+    # 1. the PDF's own document info
+    if page:
+        _apply(nid, from_pdf(nid, page), fields)
+    # 2. a misprinted DOI, looked up again as it should read
+    m = store.get(nid)
+    fixed = misprinted_doi(m.get("doi") or "")
+    if suspect(m) and fixed and ctx.refresh:
+        try:
+            if not _found(ctx.refresh(nid)):
+                with store.lock:
+                    m = store.get(nid)
+                    old, m["doi"] = m.get("doi"), fixed
+                    store.save(m, touch=False)
+                if _found(ctx.refresh(nid)):
+                    fields["doi"] = fixed
+                else:
+                    with store.lock:
+                        m = store.get(nid)
+                        m["doi"] = old
+                        store.save(m, touch=False)
+        except Exception as e:  # offline: the AI may still read the pages
+            print(f"[research_brain] details: lookup of {fixed} failed: {e!r}")
+    # 3. the AI reads the first pages
+    asked = False
+    if suspect(store.get(nid)) and use_ai:
+        n = store.get(nid)
+        if not ctx.may_send(n):
+            return _done(nid, reasons, fields, skipped="private")
+        if len(page) < 40:
+            return _done(nid, reasons, fields, skipped="no text")
+        asked = True
+        found = on_page(_parse(ctx.ask(INSTRUCTION, "PAGES 1-3:\n\n" + page, "paper details", [nid])), page)
+        ids: dict = {}
+        if found.get("doi") or found.get("arxiv"):  # an identifier: the paper's own record settles it
+            with store.lock:
+                m = store.get(nid)
+                for k in ("doi", "arxiv"):
+                    if found.get(k) and (not m.get(k) or (k == "doi" and suspect(m))) and m.get(k) != found[k] \
+                            and store.find_duplicate(found[k] if k == "doi" else "", found[k] if k == "arxiv" else "", "") is None:
+                        m[k] = found[k]
+                        ids[k] = found[k]
+                if ids:
+                    store.save(m, touch=False)
+            if ids and ctx.refresh:
+                try:
+                    ctx.refresh(nid)
+                except Exception as e:  # offline: what the page says still goes in below
+                    print(f"[research_brain] details: lookup by {ids} failed: {e!r}")
+            fields.update(ids)
+        _apply(nid, found, fields)
+    return _done(nid, reasons, fields, ai=asked)
+
+
+def _done(nid: str, reasons: list, fields: dict, **extra) -> dict:
     if fields and ctx.publish:
         ctx.publish({"type": "notes-changed", "ids": [nid], "reason": "details"})
-    return {"changed": bool(fields), "reasons": reasons, "fields": fields}
+    return {"changed": bool(fields), "reasons": reasons, "fields": fields, **extra}
+
+
+CHECKED = "details-checked.json"
+_mem_lock = threading.Lock()
+
+
+def _sig(n: dict) -> str:
+    import hashlib
+    key = json.dumps([n.get("title") or "", n.get("authors") or [], n.get("doi") or ""], ensure_ascii=False)
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+
+
+def _checked_path():
+    from pathlib import Path
+    d = Path(ctx.store.root) / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / CHECKED
+
+
+def _checked() -> dict:
+    try:
+        d = json.loads(_checked_path().read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _remember(nid: str) -> None:
+    from . import fsio
+    with _mem_lock:
+        d = _checked()
+        try:
+            d[nid] = _sig(ctx.store.get(nid))
+        except KeyError:
+            d.pop(nid, None)
+        p = _checked_path()
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(d), encoding="utf-8")
+        fsio.replace(tmp, p)
 
 
 def check_quietly(nid: str) -> None:
-    """After an import, in the background: a paper whose details look wrong is checked (no AI set up, offline,
-    private: nothing happens)."""
+    """In the background (after an import, or the check of the whole library after the app starts): a paper whose
+    details look wrong is checked. The PDF's own details and the DOI always; the AI only when one is set up and
+    signed in (never started for this), and never for a private paper. A paper is remembered as checked unless it
+    still needed an AI that wasn't there."""
     try:
         n = ctx.store.get(nid)
-        if suspect(n) and (ctx.ready is None or ctx.ready()):  # an AI that's installed and signed in, or nothing
-            check(nid)
+        if not suspect(n):
+            return
+        ai_ok = ctx.ready is None or ctx.ready()
+        r = check(nid, use_ai=ai_ok)
+        if ai_ok or not suspect(ctx.store.get(nid)) or r.get("skipped"):
+            _remember(nid)
     except Exception as e:  # never in the way of an import
         print(f"[research_brain] details check skipped for {nid}: {e!r}")
+
+
+def check_library(delay: float = 0) -> dict:
+    """Every paper that looks wrong and hasn't been checked as it is now, queued (one at a time)."""
+    seen = _checked()
+    todo = [n["id"] for n in ctx.store.all() if suspect(n) and seen.get(n["id"]) != _sig(n)]
+    for nid in todo:
+        later(nid, delay=delay)
+    return {"queued": len(todo)}
 
 
 # one paper at a time, in the background: a folder of 200 PDFs doesn't start 200 AI calls at once. A paper waits
@@ -249,8 +426,20 @@ def check_all() -> dict:
     return {"queued": len(todo)}
 
 
+STARTUP_DELAY = 90.0  # after the app starts: the window, the index and the lookups go first
+
+
 def install(app, *, store, ask, may_send, refresh, publish=None, ready=None):
     ctx.store, ctx.ask, ctx.may_send, ctx.refresh, ctx.publish, ctx.ready = store, ask, may_send, refresh, publish, ready
+    if auto():  # the papers already in the library, once each (state/details-checked.json)
+        def _start():
+            try:
+                print(f"[research_brain] details: {check_library(delay=0)['queued']} papers to check")
+            except Exception as e:
+                print(f"[research_brain] details: library check didn't start: {e!r}")
+        t = threading.Timer(STARTUP_DELAY, _start)
+        t.daemon = True
+        t.start()
 
     @app.post("/api/notes/{nid}/check-details")
     def api_check(nid: str):

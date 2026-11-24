@@ -126,7 +126,7 @@ def why_unreadable(path: Path, error: BaseException | str = "") -> str:
 
 def pdf_info(path: Path) -> dict:
     """Identifiers the PDF declares about itself: XMP (prism:doi, pdfx:doi, crossmark:DOI, dc:identifier) and
-    the document info dictionary (/doi, /Subject). Only small strings come back."""
+    the document info dictionary (/doi, /Subject, /Author, /Title). Only small strings come back."""
     out: dict = {}
     try:
         from pypdf import PdfReader
@@ -138,6 +138,10 @@ def pdf_info(path: Path) -> dict:
                 out["info_doi"] = str(v)[:300]
             elif kk == "subject" and v:
                 out["subject"] = str(v)[:1000]
+            elif kk == "author" and v:  # the authors as the PDF declares them (app/details.py checks them on the page)
+                out["author"] = str(v)[:500]
+            elif kk == "title" and v:
+                out["title"] = str(v)[:500]
         root = reader.trailer.get("/Root")
         xmp = root.get_object().get("/Metadata") if root is not None else None
         raw = xmp.get_object().get_data()[:400_000].decode("utf-8", "replace") if xmp is not None else ""
