@@ -1,6 +1,6 @@
 """research_brain: a local knowledge graph for papers and notes."""
 
-__version__ = "2.0.13"
+__version__ = "2.1.0"
 
 
 def _safe_output() -> None:
