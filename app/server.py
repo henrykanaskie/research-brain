@@ -763,6 +763,7 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
             continue
         if any(t["slug"] == main and i in t["members"] for t in tops_of):
             label[i] = home_of[main]
+    _no_strays(label, tops_of, by_id, subsections_mod.load(store))
     groups: dict[int, list[str]] = {}
     for i in tops:
         groups.setdefault(label[i], []).append(i)
@@ -779,6 +780,45 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
     clusters = [{"id": cid, "label": names[cid], "size": len(g), "near": near.get(cid, [])} for cid, g in enumerate(ordered)]
     idx["_sub_of"], idx["_sub_named"] = _subclusters(ordered, adj, by_id, subsections_mod.load(store))
     return cluster_of, clusters
+
+
+def _no_strays(label: dict[str, int], tops_of: list[dict], by_id: dict, subs: list[dict]) -> None:
+    """Where topics overlap the bigger one decides, so a smaller topic can end up with almost none of its papers at
+    its own home: a paper you dropped into it (in no other topic) was then the only one there, a region of one,
+    drawn off on its own. Each topic is drawn where most of its papers are, and a paper alone at its label joins
+    its topic there (its main region first). A paper you put in a subsection is drawn in that subsection's region,
+    never outside it. Changes `label` in place."""
+    from collections import Counter
+    size = Counter(label.values())
+    drawn: dict[str, int] = {}
+    for t in tops_of:
+        votes = Counter(label[m] for m in t["members"] if m in label and size[label[m]] >= 2)
+        if votes:
+            drawn[t["slug"]] = max(sorted(votes), key=lambda k: (votes[k], size[k]))
+    for i in sorted(label):
+        if size[label[i]] >= 2:
+            continue
+        n = by_id.get(i) or {}
+        extra = n.get("_extra") if isinstance(n.get("_extra"), dict) else {}
+        mine = [t["slug"] for t in tops_of if i in t["members"] and t["slug"] in drawn]
+        if not mine:
+            continue
+        to = drawn[extra.get("main_region")] if extra.get("main_region") in mine else \
+            max((drawn[s] for s in mine), key=lambda k: (size[k], -k))
+        size[label[i]] -= 1
+        label[i] = to
+        size[to] += 1
+    for s in subs:
+        mem = [m for m in s.get("members") or [] if m in label]
+        votes = Counter(label[m] for m in mem)
+        if len(mem) < 2 or not votes:
+            continue
+        home = max(sorted(votes), key=lambda k: (votes[k], size[k]))
+        for m in mem:
+            if label[m] != home:
+                size[label[m]] -= 1
+                label[m] = home
+                size[home] += 1
 
 
 def _centred_neighbours(idx: dict, tops: list[str]):

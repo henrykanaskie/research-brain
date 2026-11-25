@@ -264,9 +264,14 @@ def test_drag_a_paper_into_a_subsection_or_another_region_and_it_belongs_there(c
                                              "abstract": "hall thruster anomalous electron transport"})["id"] for i in range(4)]
     api(server, "POST", "/api/topics", {"name": "Xenon models", "members": xe})
     api(server, "POST", "/api/topics", {"name": "Hall transport", "members": ha})
+    for name, words in (("Tokamak edges", "tokamak divertor detachment edge"), ("Dusty plasmas", "dusty plasma grain charging"),
+                        ("Laser diagnostics", "laser induced fluorescence diagnostics"), ("Sheaths", "plasma sheath wall probe")):
+        ids = [api(server, "POST", "/api/notes", {"type": "paper", "title": f"{words} study {i}", "abstract": words})["id"]
+               for i in range(3)]
+        api(server, "POST", "/api/topics", {"name": name, "members": ids})
     s = api(server, "POST", "/api/subsections", {"name": "Excited states", "ids": xe[:3]})
     page = open_app(ctx, server)
-    page.wait_for_function("window.__rb.S.nodes.size >= 11 && (window.__rb.S.subsections || []).length === 1")
+    page.wait_for_function("window.__rb.S.nodes.size >= 23 && (window.__rb.S.subsections || []).length === 1")
     page.wait_for_timeout(3000)
     cid = page.evaluate(f"window.__rb.S.nodes.get('{xe[0]}').cluster")
     page.evaluate(f"window.__rb.focusRegion({cid})")
@@ -276,7 +281,15 @@ def test_drag_a_paper_into_a_subsection_or_another_region_and_it_belongs_there(c
     assert xe[5] in next(x for x in api(server, "GET", "/api/subsections") if x["id"] == s["id"])["members"]
     page.evaluate("window.__rb.unfocusRegion()")
     page.wait_for_timeout(2200)
+    at = "(() => { const f = window.__rb.fg.d3Force('regions'); return Object.fromEntries(window.__rb.S.clusters.map((c) => [c.label, [f.regionAt(c.id).x, f.regionAt(c.id).y]])); })()"
+    before = page.evaluate(at)
     _drag(page, ha[0], xe[4])  # a paper of the other region, into this one
     page.wait_for_function(f"window.__rb.S.nodes.get('{ha[0]}').cluster === {cid}", timeout=15000)
+    page.wait_for_timeout(1500)
+    # the regions stay where they were: only the paper moves (they used to be laid out afresh, reshuffling the map)
+    after = page.evaluate(at)
+    assert len(before) == 6 and set(after) == set(before)
+    for k, (x0, y0) in before.items():
+        assert abs(after[k][0] - x0) + abs(after[k][1] - y0) < 12, (k, before, after)
     topics = {t["name"]: t for t in api(server, "GET", "/api/topics")}
     assert topics["Xenon models"]["count"] == 8 and topics["Hall transport"]["count"] == 3

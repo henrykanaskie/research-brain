@@ -80,6 +80,31 @@ def test_moving_a_paper_to_another_region_moves_it_and_a_main_region_decides_bet
     assert r["topics"] == [] and r["main_region"] is None
 
 
+def test_a_paper_is_never_drawn_alone_and_a_subsection_stays_in_its_region(server):
+    """Where topics overlap the bigger one decides. A small topic whose other papers are all in a bigger one too was
+    left with one paper at its own home: a paper dropped into it on the map was a region of one, drawn off on its own,
+    and its subsection lost it. It's drawn where its topic's papers are; and a paper in a subsection is drawn in that
+    subsection's region even when its topics would put it elsewhere."""
+    srv, c = server
+    def mk(title, abstract):
+        return c.post("/api/notes", json={"type": "paper", "title": title, "abstract": abstract}).json()["id"]
+    big = [mk(f"Electron impact excitation of argon {i}", "electron impact excitation cross section argon") for i in range(6)]
+    loner = mk("Tomato gardening in clay soil", "soil compost watering tomato garden")
+    other = [mk(f"Hall thruster breathing mode {i}", "hall thruster breathing mode discharge oscillation") for i in range(4)]
+    c.post("/api/topics", json={"name": "Cross sections", "members": big})
+    c.post("/api/topics", json={"name": "Hall thrusters", "members": other})
+    c.post("/api/topics", json={"name": "Excitation", "members": big[:3]})
+    ex = {t["name"]: t["slug"] for t in c.get("/api/topics").json()}["Excitation"]
+    c.post(f"/api/notes/{loner}/region", json={"to": ex, "out_of": []})  # dropped into the small one
+    cl = {n["id"]: n["cluster"] for n in c.get("/api/graph").json()["nodes"]}
+    assert cl[loner] == cl[big[0]] >= 0, cl
+    s = c.post("/api/subsections", json={"name": "Odd ones", "ids": [other[0], other[1], big[5]]}).json()
+    g = c.get("/api/graph").json()
+    nodes = {n["id"]: n for n in g["nodes"]}
+    named = next(x for x in g["subsections"] if x["id"] == s["id"])
+    assert nodes[big[5]]["cluster"] == nodes[other[0]]["cluster"] and nodes[big[5]]["sub"] == named["sub"]
+
+
 def test_papers_matching_an_open_question_group_with_it(server):
     """Papers on an open question's subject share its region even when they barely match each other."""
     srv, c = server
@@ -319,8 +344,8 @@ def _krypton_and_hall(c):
 
 def test_subsections_group_papers_inside_their_region_and_live_only_in_the_app(server):
     """A subsection is a name and a set of papers in <library>/state, never a file in your documents. On the map it
-    belongs to the region holding most of its papers, and its papers there are one sub-group; a paper of it in another
-    region isn't drawn in it. Renaming and deleting show on the map at once."""
+    belongs to the region holding most of its papers, and its papers are one sub-group there: a paper of it from another
+    region is drawn in it too (you put it there). Renaming and deleting show on the map at once."""
     srv, c = server
     kr, ha = _krypton_and_hall(c)
     docs = {p.relative_to(srv.store.root) for p in __import__("pathlib").Path(srv.store.root).rglob("*") if p.is_file()}
@@ -332,10 +357,10 @@ def test_subsections_group_papers_inside_their_region_and_live_only_in_the_app(s
     g = c.get("/api/graph").json()
     node = {n["id"]: n for n in g["nodes"]}
     (info,) = g["subsections"]
-    assert info["name"] == "Line ratios" and info["id"] == s["id"] and info["size"] == 3
+    assert info["name"] == "Line ratios" and info["id"] == s["id"] and info["size"] == 4
     assert info["region"] == node[kr[0]]["cluster"] >= 0
-    assert {node[i]["sub"] for i in kr[:3]} == {info["sub"]}
-    assert node[ha[0]]["sub"] != info["sub"] and all(node[i]["sub"] != info["sub"] for i in kr[3:])
+    assert {node[i]["sub"] for i in kr[:3] + [ha[0]]} == {info["sub"]}
+    assert all(node[i]["sub"] != info["sub"] for i in kr[3:])
     # a paper in two subsections of one region is drawn in the smaller
     small = c.post("/api/subsections", json={"name": "Metastables", "ids": kr[:2]}).json()
     g = c.get("/api/graph").json()
@@ -349,7 +374,7 @@ def test_subsections_group_papers_inside_their_region_and_live_only_in_the_app(s
     assert [x["name"] for x in c.get("/api/graph").json()["subsections"]] == ["Line-ratio diagnostics"]
     assert c.delete(f"/api/subsections/{small['id']}").json()["ok"]
     assert c.delete(f"/api/subsections/{small['id']}").status_code == 404
-    assert [x["size"] for x in c.get("/api/graph").json()["subsections"]] == [4]
+    assert [x["size"] for x in c.get("/api/graph").json()["subsections"]] == [5]
 
 
 def test_the_chat_structures_a_region_into_subsections_and_undo_puts_them_back(server):

@@ -135,6 +135,9 @@ A computer brain: a circuit board grown like nervous tissue. No curves anywhere 
 - Drag a paper into another region (its name lights up while you hold it there) and let go: it moves there, and into
   the subsection whose papers you dropped it on. Inside a focused region, drop it on another subsection's papers to
   move it there, or on "Not in a subsection" to take it out. Anywhere else a dropped dot stays where you put it.
+  The other regions hold still while it does (a change that keeps the same regions keeps where each one sits; Clean up
+  arranges them afresh). A paper you put somewhere is always drawn there: never alone outside every region (where
+  regions overlap, a small one is drawn where most of its papers are), and a paper in a subsection always in its region.
 - Names hold still. Every name gets its place once per layout (planLabels): a section's above its papers, a paper's on the
   side of its dot the fewest resting traces cross. Panning changes nothing; zooming only fades a name in or out, at one
   zoom of its own. Names are drawn in screen pixels at one size, and stay put while their dots float (under a pixel).

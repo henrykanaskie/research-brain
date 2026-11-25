@@ -2209,6 +2209,10 @@
   // where you dragged each section, kept by its topic (or its name), since a section's number changes as the
   // library changes
   let regionPos = LS.get('regionPos', {}) || {};
+  // where each region was last laid out (by regionKey): a change that keeps the same regions (a paper dropped into
+  // another one, a subsection made) leaves every region where it was instead of reshuffling the map. Clean up asks
+  // for a fresh arrangement.
+  let lastRegionLayout = null, freshRegionLayout = false;
   function regionKey(cid) {
     const c = (S.clusters || []).find((x) => x.id === cid);
     if (!c) return 'cid:' + cid;
@@ -2347,8 +2351,16 @@
       // Where regions sit comes from the region layout alone (sizes and how related they are), never from where
       // dots happen to be: it gives the same balanced arrangement around the middle every time, so a dot you
       // placed, or a layout that went lopsided once, can't drag the map into a chain that then sticks.
-      anchors = packRegions(ids, sizes, affinityLayout(ids, sizes));
-      if (anchors.size) {
+      const keys = ids.map(regionKey).sort().join('|');
+      const keep = !freshRegionLayout && lastRegionLayout && lastRegionLayout.keys === keys;
+      freshRegionLayout = false;
+      if (keep) {
+        anchors = new Map(ids.map((id) => {
+          const p = lastRegionLayout.at.get(regionKey(id));
+          return [id, { x: p[0], y: p[1], r: 7.6 * Math.sqrt(sizes.get(id)) + 8 }];
+        }));
+      } else anchors = packRegions(ids, sizes, affinityLayout(ids, sizes));
+      if (anchors.size && !keep) {
         // the map's centre of mass (each region weighted by its papers) sits at the middle, however many regions
         let cx = 0, cy = 0, w = 0;
         for (const [id, a] of anchors) { const k = sizes.get(id) || 1; cx += a.x * k; cy += a.y * k; w += k; }
@@ -2362,7 +2374,7 @@
         const pos = regionPos[regionKey(id)];
         if (pos) { a.x = pos[0]; a.y = pos[1]; a.mine = true; fixed.push(a); }
       }
-      compactRegions(anchors);
+      compactRegions(anchors, keep);
       if (fixed.length) {
         const placed = [...fixed];
         for (const id of ids) {
@@ -2378,6 +2390,7 @@
           placed.push(a);
         }
       }
+      lastRegionLayout = { keys, at: new Map(ids.map((id) => [regionKey(id), [anchors.get(id).x, anchors.get(id).y]])) };
       // a dot you placed keeps its spot within its region, wherever the region now sits
       for (const n of nodes) if (n.__pinRel) { const a = anchors.get(n.cluster) || looseAnchor(n); n.__home = [a.x + n.__pinRel[0], a.y + n.__pinRel[1]]; }
       layoutSatellites();
@@ -2701,7 +2714,7 @@
    *  units depends on that zoom, and the zoom on the packing: so pack, measure, and pack again. A few starting shapes
    *  are tried and the one that shows the most at once is kept. (For a screen of one fixed size, so the map doesn't
    *  rearrange with the window.) */
-  function compactRegions(anchors) {
+  function compactRegions(anchors, keep = false) {
     const all = [...anchors.entries()];
     const start = new Map(all.map(([id, a]) => [id, [a.x, a.y]]));
     const text = new Map();
@@ -2716,7 +2729,8 @@
       return Math.min(6, W / Math.max(1, x1 - x0), H / Math.max(1, y1 - y0));
     };
     let best = null;
-    for (const shape of all.length > 40 ? [[1.35, 0.8]] : [[1.35, 0.8], [1, 1], [1.8, 0.6], [2.4, 0.45]]) {
+    // keep: the regions are where they were last time; only make room where one grew
+    for (const shape of keep ? [null] : all.length > 40 ? [[1.35, 0.8]] : [[1.35, 0.8], [1, 1], [1.8, 0.6], [2.4, 0.45]]) {
       let k = 2;
       for (let it = 0; it < 4; it++) {
         for (const [id, a] of all) {
@@ -2735,36 +2749,39 @@
     }
     if (best) all.forEach(([, a], i) => { [a.x, a.y, a.head, a.half] = best.at[i]; });
   }
+  /** push overlapping section boxes apart (a section you dragged stays put) */
+  function clearBoxes(all, passes) {
+    for (let p = 0; p < passes; p++) {
+      let moved = false;
+      for (let i = 0; i < all.length; i++) {
+        const a = all[i];
+        for (let j = i + 1; j < all.length; j++) {
+          const b = all[j];
+          if (a.mine && b.mine) continue;
+          const A = sectionBox(a), B = sectionBox(b);
+          const dx = B.cx - A.cx, dy = B.cy - A.cy;
+          const ox = A.hw + B.hw + GAP_X - Math.abs(dx), oy = A.hh + B.hh + GAP_Y - Math.abs(dy);
+          if (ox <= 0.01 || oy <= 0.01) continue;
+          // apart along the axis that needs the shorter move for the boxes' shape (a wide box would otherwise
+          // always be pushed up or down, and the sections would stack into one tall column)
+          const wa = a.mine ? 0 : b.mine ? 1 : 0.5;
+          let mx = 0, my = 0;
+          if (ox / (A.hw + B.hw) < oy / (A.hh + B.hh)) mx = (dx === 0 ? 1 : Math.sign(dx)) * ox; else my = (dy === 0 ? 1 : Math.sign(dy)) * oy;
+          a.x -= mx * wa; a.y -= my * wa;
+          b.x += mx * (1 - wa); b.y += my * (1 - wa);
+          moved = true;
+        }
+      }
+      if (!moved) return;
+    }
+  }
   function packBoxes(anchors, shape) {
     const all = [...anchors.values()];
     if (all.length < 2) return;
     const free = all.filter((a) => !a.mine);
     if (!free.length) return;
-    const clear = (passes) => {
-      for (let p = 0; p < passes; p++) {
-        let moved = false;
-        for (let i = 0; i < all.length; i++) {
-          const a = all[i];
-          for (let j = i + 1; j < all.length; j++) {
-            const b = all[j];
-            if (a.mine && b.mine) continue;
-            const A = sectionBox(a), B = sectionBox(b);
-            const dx = B.cx - A.cx, dy = B.cy - A.cy;
-            const ox = A.hw + B.hw + GAP_X - Math.abs(dx), oy = A.hh + B.hh + GAP_Y - Math.abs(dy);
-            if (ox <= 0.01 || oy <= 0.01) continue;
-            // apart along the axis that needs the shorter move for the boxes' shape (a wide box would otherwise
-            // always be pushed up or down, and the sections would stack into one tall column)
-            const wa = a.mine ? 0 : b.mine ? 1 : 0.5;
-            let mx = 0, my = 0;
-            if (ox / (A.hw + B.hw) < oy / (A.hh + B.hh)) mx = (dx === 0 ? 1 : Math.sign(dx)) * ox; else my = (dy === 0 ? 1 : Math.sign(dy)) * oy;
-            a.x -= mx * wa; a.y -= my * wa;
-            b.x += mx * (1 - wa); b.y += my * (1 - wa);
-            moved = true;
-          }
-        }
-        if (!moved) return;
-      }
-    };
+    if (!shape) { clearBoxes(all, 80); return; }
+    const clear = (passes) => clearBoxes(all, passes);
     // the shape of a screen: spread the arrangement sideways and flatten it before packing
     for (const a of free) { a.x *= shape[0]; a.y *= shape[1]; }
     clear(80);  // first make room, from where the related-regions layout put them
@@ -4235,6 +4252,7 @@
     pins = {}; savePins();
     regionPos = {}; LS.set('regionPos', regionPos);
     for (const n of S.nodes.values()) if (n.__userPin) { n.__userPin = false; delete n.__home; delete n.__pinRel; }
+    freshRegionLayout = true;
     relayout({ alpha: 1, ms: 1100, fit: true });
     toast('Tidied the map', 'ok', { ms: 8000, action: { label: 'Undo', fn: () => {
       pins = before.pins; savePins();
