@@ -446,3 +446,40 @@ def test_every_chat_asked_to_sort_a_region_gets_its_papers(server):
     for p in fb.prompts[:3]:
         assert "## Krypton models (8, kept)" in p and f"[[{kr[0]}]]" in p and "### subsection: Metastables (3)" in p
         assert "rb-regions" in p
+
+
+def test_a_paper_moved_into_any_region_is_drawn_in_the_region_named_so(server):
+    """Like a real library: one big topic sharing papers with most of the others. Moving a paper between every pair of
+    regions (what dropping it on the map does) draws it in the group the map names after the region it went to. It
+    used to land at that region's own home, left nearly empty by the big one, and make a new region there with any
+    other paper sent the same way."""
+    srv, c = server
+    words = {"Krypton": "krypton collisional radiative emission", "Argon": "argon excitation cross section beam",
+             "Hall": "hall thruster breathing oscillation", "Nitrogen": "nitrogen molecule dissociation attachment",
+             "Iodine": "iodine gridded ion thruster"}
+    ids = {k: [c.post("/api/notes", json={"type": "paper", "title": f"{w} study {i}", "abstract": w}).json()["id"]
+               for i in range(5)] for k, w in words.items()}
+    c.post("/api/topics", json={"name": "Long talk", "members": ids["Krypton"][:3] + ids["Argon"][:2] + ids["Nitrogen"][:2]
+                                + ids["Hall"][:2] + [c.post("/api/notes", json={"type": "paper", "title": f"Talk {i}"}).json()["id"]
+                                                     for i in range(4)]})
+    for k in words:
+        c.post("/api/topics", json={"name": k, "members": ids[k]})
+
+    def regions():
+        g = c.get("/api/graph").json()
+        topic = {cl["id"]: (cl.get("topic") or {}).get("slug") for cl in g["clusters"]}
+        return {n["id"]: topic.get(n["cluster"]) for n in g["nodes"]}, {v for v in topic.values() if v}
+    where, shown = regions()
+    moved = 0
+    for a, b in [(a, b) for _ in range(3) for a in sorted(shown) for b in sorted(shown)]:
+        if True:
+            if a == b:
+                continue
+            p = next((i for i, t in sorted(where.items(), reverse=bool(moved % 2)) if t == a), None)
+            if not p or b not in set(where.values()):
+                continue
+            c.post(f"/api/notes/{p}/region", json={"to": b, "out_of": [a]})
+            where, now = regions()
+            assert where[p] == b, (p, a, b, where[p], now)
+            moved += 1
+    assert moved >= 12, shown

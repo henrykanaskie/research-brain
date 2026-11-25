@@ -851,6 +851,8 @@ def test_right_click_moves_a_paper_to_another_region_and_chooses_its_main_one(ct
     cl = lambda i: page.evaluate("(id) => window.__rb.S.nodes.get(id).cluster", i)
 
     def right_click(i):
+        page.wait_for_timeout(1500)  # a dot that just moved glides there, and the map finds what's under the pointer from
+        # a picture of the dots redrawn every 0.8 s
         sx, sy = page.evaluate("(id) => { const fg = window.__rb.fg, n = window.__rb.S.nodes.get(id); const q = fg.graph2ScreenCoords(n.x, n.y); return [q.x, q.y]; }", i)
         box = page.locator("#graph").bounding_box()
         page.mouse.move(box["x"] + sx - 30, box["y"] + sy - 20)

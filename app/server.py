@@ -754,8 +754,10 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
             for m in t["members"]:
                 if m in label:
                     label[m] = homes[ti]
-    # a paper in several regions that you gave a main one (`main_region`, the right-click menu) is drawn there
-    home_of = {t["slug"]: homes[ti] for ti, t in enumerate(tops_of) if ti in homes}
+    # a paper in several regions that you gave a main one (`main_region`, the right-click menu, or dropped there on
+    # the map) is drawn there: where that region is drawn, most of its papers (its own home can be left nearly empty
+    # by bigger regions sharing its papers, and a paper sent there made a new region of its own with any other)
+    home_of = _drawn(label, tops_of)
     for i in label:
         n = by_id.get(i) or {}
         main = (n.get("_extra") or {}).get("main_region") if isinstance(n.get("_extra"), dict) else None
@@ -763,6 +765,9 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
             continue
         if any(t["slug"] == main and i in t["members"] for t in tops_of):
             label[i] = home_of[main]
+    for _ in range(4):  # moving papers changes the groups, and so which group is named after which region
+        if not _follow_names(label, tops_of, by_id):
+            break
     _no_strays(label, tops_of, by_id, subsections_mod.load(store))
     groups: dict[int, list[str]] = {}
     for i in tops:
@@ -782,6 +787,72 @@ def _clusters(idx: dict, links: list[dict]) -> tuple[dict[str, int], list[dict]]
     return cluster_of, clusters
 
 
+def _drawn(label: dict[str, int], tops_of: list[dict]) -> dict[str, int]:
+    """Each topic -> where it's drawn: the label most of its papers have (a group of one doesn't count)."""
+    from collections import Counter
+    size = Counter(label.values())
+    drawn: dict[str, int] = {}
+    for t in tops_of:
+        votes = Counter(label[m] for m in t["members"] if m in label and size[label[m]] >= 2)
+        if votes:
+            drawn[t["slug"]] = max(sorted(votes), key=lambda k: (votes[k], size[k]))
+    return drawn
+
+
+def _follow_names(label: dict[str, int], tops_of: list[dict], by_id: dict) -> bool:
+    """A paper is drawn in the group the map names after its region. The map names each group after the topic whose
+    papers match it best (app/regions.py apply), which isn't always the topic's own home where topics overlap, so a
+    paper dropped into the region you see (its main one, or its only one) could be drawn in another, or make a new
+    region with another such paper. Same matching here: a paper in a matched group of none of its regions moves to
+    its main region's group, else the biggest of its regions' groups. Changes `label` in place; whether any moved."""
+    from collections import Counter
+    size = Counter(label.values())
+    groups: dict[int, set] = {}
+    for i, k in label.items():
+        if size[k] >= 2:
+            groups.setdefault(k, set()).add(i)
+    match = regions_mod._best(groups, [t["members"] for t in tops_of])  # group -> topic index
+    group_of = {tops_of[ti]["slug"]: g for g, ti in match.items()}
+    moved = False
+    def main_of(i):  # the region a paper was put in for sure: its main one, else its only one
+        n = by_id.get(i) or {}
+        extra = n.get("_extra") if isinstance(n.get("_extra"), dict) else {}
+        ins = [t["slug"] for t in tops_of if i in t["members"]]
+        return extra.get("main_region") if extra.get("main_region") in ins else ins[0] if len(ins) == 1 else None
+    sure = {i: main_of(i) for i in label}
+    # a region the map names after no group (its papers scattered): its sure papers gather where most of them are
+    # (in a group no other region is named after, or a new one: never inside another region)
+    gather: dict[str, int] = {}
+    named = set(group_of.values())
+    fresh = max(label.values(), default=0) + 1
+    for slug in sorted({v for v in sure.values() if v and v not in group_of}):
+        votes = Counter(label[i] for i, v in sure.items() if v == slug and label[i] not in named)
+        if votes:
+            gather[slug] = max(sorted(votes), key=lambda k: (votes[k], size[k]))
+        else:
+            gather[slug], fresh = fresh, fresh + 1
+        named.add(gather[slug])
+    for i in sorted(label):
+        mine = [t["slug"] for t in tops_of if i in t["members"] and t["slug"] in group_of]
+        main = sure[i]
+        if main in gather:
+            to = gather[main]
+        elif not mine:
+            continue
+        elif main in mine:
+            to = group_of[main]
+        elif label[i] in {group_of[s] for s in mine}:
+            continue
+        else:
+            to = max((group_of[s] for s in mine), key=lambda g: (size[g], -g))
+        if to != label[i]:
+            size[label[i]] -= 1
+            label[i] = to
+            size[to] += 1
+            moved = True
+    return moved
+
+
 def _no_strays(label: dict[str, int], tops_of: list[dict], by_id: dict, subs: list[dict]) -> None:
     """Where topics overlap the bigger one decides, so a smaller topic can end up with almost none of its papers at
     its own home: a paper you dropped into it (in no other topic) was then the only one there, a region of one,
@@ -790,11 +861,7 @@ def _no_strays(label: dict[str, int], tops_of: list[dict], by_id: dict, subs: li
     never outside it. Changes `label` in place."""
     from collections import Counter
     size = Counter(label.values())
-    drawn: dict[str, int] = {}
-    for t in tops_of:
-        votes = Counter(label[m] for m in t["members"] if m in label and size[label[m]] >= 2)
-        if votes:
-            drawn[t["slug"]] = max(sorted(votes), key=lambda k: (votes[k], size[k]))
+    drawn = _drawn(label, tops_of)
     for i in sorted(label):
         if size[label[i]] >= 2:
             continue
@@ -4601,6 +4668,15 @@ def api_note_move_region(nid: str, body: RegionMoveIn):
         _topic_call(topics_mod.add_notes, store, to, [nid])
     for slug in dict.fromkeys(x for x in body.out_of if x and x != to):
         _topic_call(topics_mod.remove_note, store, slug, nid)
+    if to:  # out of the subsections it had where it was: a paper in a subsection is drawn in that one's region
+        try:
+            here = set(topics_mod.get_topic(store, to)["members"])
+        except KeyError:
+            here = set()
+        for s in subsections_mod.load(store):
+            others = [m for m in s["members"] if m != nid]
+            if nid in s["members"] and sum(m in here for m in others) * 2 <= len(others):
+                subsections_mod.remove(store, s["id"], [nid])
     left = topics_mod.topics_for(store, nid)
     main = (_get(nid).get("_extra") or {}).get("main_region")
     if to and len(left) > 1:
