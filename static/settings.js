@@ -329,7 +329,7 @@
     const tourBtn = (text, run, primary) => el('button', { class: primary ? 'btn btn-primary' : 'btn', type: 'button', text, onclick: () => { close(); run(); } });
     const tutSec = T ? el('section', { class: 'ls-sec', id: 'ls-tutorials' },
       el('div', { class: 'ls-h', text: 'Tutorials' }),
-      el('p', { class: 'ls-p', text: 'Show me the basics: six short tips on the main parts of the app. Get me up to speed: the full tour, through regions and subsections, Reorganize, Find papers, open questions, review, citing, privacy and the rest. Esc leaves either one at any step.' }),
+      el('p', { class: 'ls-p', text: 'Both start with your own papers: import the ones you have or find new ones online. Show me the basics then gives a few short tips on the main parts of the app. Get me up to speed goes through everything on your own library: regions and subsections, Reorganize, Find papers, Ask, open questions, review, citing, privacy and the rest. Esc leaves either one at any step.' }),
       el('div', { class: 'ls-row' }, tourBtn('Show me the basics', () => T.start(0, 'quick')), tourBtn('Get me up to speed', () => T.start(0, 'deep'), true),
         window.__rb.openGuide ? tourBtn('Open the guide', () => window.__rb.openGuide()) : null)) : null;
 

@@ -502,10 +502,12 @@ def test_click_off_the_chat_closes_it(ctx, server):
     assert not page.errors
 
 
-def test_tutorials_chooser_in_depth_tour_and_settings_entries(ctx, server):
-    """The welcome card offers the basics or the full tour; the full tour walks every step with its chapter and
-    a progress bar, Back and Done, and leaves no error behind; the Settings menu's Tutorials and Library
-    settings › Tutorials start both tours again; the palette finds Help: get me up to speed."""
+def test_tutorials_start_with_your_own_papers_and_follow_what_you_do(ctx, server):
+    """The welcome card offers the basics or the full tour. Both start with the user's own papers: the first step
+    offers ways to bring them in and waits (Next reads Skip) until a paper arrives. The full tour then follows what
+    the user does on that library: opening a paper, focusing a region, opening its subsections. Esc in the panel
+    or a focused region closes that, not the tour. A step that can't be done yet says why. Every card fits on
+    screen. The Settings menu, Library settings › Tutorials and the palette start the tours again."""
     clear_vault(server)
     api(server, "POST", "/api/notes", {"type": "note", "title": "A note"})
     page = open_app(ctx, server)
@@ -515,6 +517,7 @@ def test_tutorials_chooser_in_depth_tour_and_settings_entries(ctx, server):
     page.evaluate("window.__rb.tour.choose({ first: true })")
     card = page.locator(".rb-choose")
     expect(card).to_contain_text("Welcome to research brain")
+    expect(card).to_contain_text("your own papers")
     expect(card.locator(".c-opt")).to_have_count(2)
     shot(page, "tour-chooser")
     card.locator("button", has_text="Not now").click()
@@ -527,35 +530,101 @@ def test_tutorials_chooser_in_depth_tour_and_settings_entries(ctx, server):
     expect(page.locator("#view-menu")).to_be_hidden()
     page.locator(".rb-choose .c-opt[data-tour='deep']").click()
     coach = page.locator(".rb-coach")
-    n = page.evaluate("document.querySelectorAll('.rb-coach').length")
-    assert n == 1
+    expect(coach).to_have_count(1)
     total = int(coach.locator(".c-step").inner_text().split(" of ")[1])
     assert total >= 15
-    expect(coach.locator(".c-ch")).to_have_text("Bringing papers in")
-    seen_chapters = set()
-    for i in range(total):
-        expect(coach.locator(".c-step")).to_have_text(f"{i + 1} of {total}")
-        seen_chapters.add(coach.locator(".c-ch").inner_text())
-        box = coach.bounding_box()
-        vp = page.viewport_size
+
+    def nxt(label="Next"):
+        coach.locator(".c-act button", has_text=label).click()
+
+    def go_to(title):
+        for _ in range(total):
+            if coach.locator(".c-title").inner_text() == title:
+                return
+            nxt("Skip" if coach.get_attribute("data-task") in ("waiting", "blocked") else "Next")
+        raise AssertionError(f"no step {title!r}")
+
+    def fits():
+        box, vp = coach.bounding_box(), page.viewport_size
         assert box["x"] >= 0 and box["y"] >= 0 and box["x"] + box["width"] <= vp["width"] and box["y"] + box["height"] <= vp["height"]
-        if i == 7:
-            assert "Subsections" in coach.inner_text()
-            shot(page, "tour-deep-subsections")
-            coach.locator("button", has_text="Back").click()
-            expect(coach.locator(".c-step")).to_have_text(f"{i} of {total}")
-            coach.locator("button", has_text="Next").click()
-        coach.locator("button", has_text="Done" if i == total - 1 else "Next").click()
+
+    # 1. bring in your papers: waits, with ways to do it, until a paper arrives
+    expect(coach.locator(".c-title")).to_have_text("Bring in your papers")
+    expect(coach).to_have_attribute("data-task", "waiting")
+    expect(coach.locator(".c-act button", has_text="Skip")).to_be_visible()
+    for label in ("Import PDFs", "Add folders of papers", "Find papers online"):
+        expect(coach.locator(".c-acts button", has_text=label)).to_be_visible()
+    shot(page, "tour-deep-add-papers")
+    ps = [api(server, "POST", "/api/notes", {"type": "paper", "title": t, "abstract": a})["id"] for t, a in (
+        ("Attention is all you need", "Transformers for translation."), ("Deep residual learning", "Residual networks for images."))]
+    api(server, "POST", "/api/topics", {"name": "Deep learning", "members": ps})  # as a linked folder would
+    page.evaluate("window.__rb.refreshGraph()")
+    expect(coach).to_have_attribute("data-task", "done")
+    expect(coach.locator(".c-status")).to_contain_text("You have 2 papers")
+    expect(coach.locator(".c-acts")).to_have_count(0)
+    fits()
+    nxt()
+
+    # open a paper: "Open one for me", then Esc closes the panel and leaves the tour
+    go_to("Open a paper")
+    expect(coach).to_have_attribute("data-task", "waiting")
+    coach.locator(".c-acts button", has_text="Open one for me").click()
+    expect(coach).to_have_attribute("data-task", "done")
+    expect(page.locator("#panel")).to_be_visible()
+    fits()
+    page.locator("#panel .ptitle, #panel h1, #panel").first.click(position={"x": 5, "y": 5})
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Escape")
+    expect(page.locator("#panel")).to_be_hidden()
+    expect(coach).to_have_count(1)
+    expect(coach).to_have_attribute("data-task", "waiting")  # it follows what's on screen
+
+    # focus a region, then its subsections
+    go_to("Focus a region")
+    coach.locator(".c-acts button", has_text="Focus the biggest for me").click()
+    expect(coach).to_have_attribute("data-task", "done")
+    assert page.evaluate("window.__rb.S.focusCluster") is not None
+    fits()
+    nxt()
+    expect(coach.locator(".c-title")).to_have_text("Subsections")
+    expect(coach).to_have_attribute("data-task", "waiting")
+    coach.locator(".c-acts button", has_text="Open Subsections").click()
+    expect(page.locator(".rf-chooser .rf-head")).to_contain_text("Subsections of")
+    expect(coach).to_have_attribute("data-task", "done")
+    shot(page, "tour-deep-subsections")
+    page.keyboard.press("Escape")  # the sheet
+    expect(page.locator(".rf-chooser")).to_have_count(0)
+    page.keyboard.press("Escape")  # the focused region
+    expect(page.locator("#region-focus")).to_be_hidden()
+    expect(coach).to_have_count(1)
+
+    # Ask without an AI agent says why it can't be done yet
+    go_to("Ask your library")
+    if not page.evaluate("window.__rb.S.claudeOK"):
+        expect(coach).to_have_attribute("data-task", "blocked")
+        expect(coach.locator(".c-status")).to_contain_text("AI agent")
+
+    # to the end; Back works; the chapters are all there
+    chapters = set()
+    for i in range(int(coach.locator(".c-step").inner_text().split(" of ")[0]), total + 1):
+        chapters.add(coach.locator(".c-ch").inner_text())
+        fits()
+        if i == total:
+            nxt("Done")
+        else:
+            nxt("Skip" if coach.get_attribute("data-task") in ("waiting", "blocked") else "Next")
     expect(coach).to_have_count(0)
-    assert {"Organizing", "Asking", "Reading"} <= seen_chapters
+    assert {"Asking", "Writing", "Getting around"} <= chapters
     assert page.evaluate("localStorage.getItem('rb.tour.deepDone')") == "true"
 
-    # Library settings › Tutorials starts the basics; Esc leaves it
+    # Library settings › Tutorials starts the basics, which start with the papers too; Esc leaves it
     page.evaluate("window.__rbSettings.open('tutorials')")
     sec = page.locator("#ls-tutorials")
     expect(sec).to_be_visible()
     sec.locator("button", has_text="Show me the basics").click()
     expect(coach.locator(".c-step")).to_have_text("1 of 6")
+    expect(coach.locator(".c-title")).to_have_text("Bring in your papers")
+    expect(coach).to_have_attribute("data-task", "done")
     expect(coach.locator(".c-ch")).to_have_count(0)
     page.keyboard.press("Escape")
     expect(coach).to_have_count(0)
@@ -565,7 +634,7 @@ def test_tutorials_chooser_in_depth_tour_and_settings_entries(ctx, server):
     page.keyboard.type("up to speed")
     expect(page.locator(".rbk-item.on")).to_have_attribute("data-cmd", "help.deepTour")
     page.keyboard.press("Enter")
-    expect(coach.locator(".c-ch")).to_have_text("Bringing papers in")
+    expect(coach.locator(".c-ch")).to_have_text("Your papers")
     page.keyboard.press("Escape")
     expect(coach).to_have_count(0)
     assert page.errors == []

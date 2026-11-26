@@ -352,35 +352,95 @@
     });
   }
 
-  // ====================================================================== first-run tour (coach marks)
+  // ====================================================================== tours (coach marks)
+  // Both tours start with the user's own papers: they import the ones they have or find new ones online, and the
+  // steps after that work on that library. A step with a `task` waits for the user to do it (its Next reads Skip
+  // until then; `needs` says when it can't be done yet), `actions` are buttons that start it for them.
+  // Nothing in a tour changes the library by itself: actions only open things the user then confirms.
+  const papers = () => [...S.nodes.values()].filter((n) => n.type === 'paper');
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const cmd = (id) => () => CMD.run(id);
+  const regions = () => S.clusters || [];
+  const biggest = () => regions().slice().sort((x, y) => (y.size || 0) - (x.size || 0))[0];
+  const regionLabel = () => { const r = regions().find((c) => c.id === S.focusCluster); return r ? `“${r.label}”` : 'that region'; };
+  const short = (t) => { t = String(t || 'it'); return t.length > 60 ? t.slice(0, 59) + '…' : t; };
+  const userMsgs = () => (S.chat || []).filter((m) => m.role === 'user').length;
+  const needPapers = () => (papers().length ? null : 'This needs a paper: add one in the first step, or skip this one.');
+  const needRegions = () => needPapers() || (regions().length ? null : 'Regions appear once you have a few papers. Add some more, or skip this one.');
+  function openAPaper() {
+    const ps = papers(); if (!ps.length) return;
+    const p = ps.find((n) => n.status !== 'read') || ps[0];
+    rb.openNote(p.id, { center: true });
+  }
+  function openSubs() {
+    if (S.focusCluster == null) { const r = biggest(); if (!r) return; rb.focusRegion(r.id); }
+    setTimeout(() => { const b = $('#rf-subs'); if (b) b.click(); }, 120);
+  }
+  function askExample() {
+    rb.openChat();
+    const ta = $('#chat-input'); if (!ta) return;
+    if (!ta.value.trim()) { ta.value = 'What do my papers disagree about?'; ta.dispatchEvent(new Event('input')); }
+    ta.focus();
+  }
+  const ADD_ACTIONS = [
+    { label: 'Import PDFs', run: () => rb.pickPdf(), primary: true },
+    { label: 'Add folders of papers', run: cmd('import.linkFolder') },
+    { label: 'Find papers online', run: cmd('papers.find') },
+    { label: 'Add by DOI or title', run: cmd('library.addById') },
+    { label: 'Import from Zotero', run: cmd('library.zotero') },
+  ];
+  const addStep = (ch) => ({ ch, sel: '#btn-add-menu', title: 'Bring in your papers',
+    text: 'This tour uses your own library, so start with your papers: import PDFs you already have, add the folders you keep them in (they stay where they are, and each folder becomes a region), or find new ones online. Ten or more makes regions worth exploring.',
+    actions: ADD_ACTIONS, keys: ['library.addById', 'papers.find'],
+    task: { check: () => papers().length > 0,
+      wait: 'Waiting for your first paper. Find papers searches in the background: when it’s done, click Add on the ones you want.',
+      done: () => `You have ${plural(papers().length, 'paper')}. Add more any time from Add.` } });
+
   const TOUR = [
-    { sel: '#btn-add-menu', title: 'Add papers and notes', text: 'Add a paper by DOI, arXiv id or title, import a PDF, or write a note. You can also drop a PDF anywhere, or drag one in from OneDrive on the web (the first time, research brain asks you to sign in to OneDrive). Already keep PDFs in folders (OneDrive too)? Add folders of papers links them where they are, and each folder becomes a region.', keys: ['library.addById', 'import.linkFolder'] },
+    addStep(),
     { sel: '.search', title: 'Search', text: 'Matching nodes light up on the graph. Enter opens the first match.', keys: ['nav.search'] },
     { sel: '#legend', fallback: '#graph', title: 'Reading the graph', text: 'Dots are papers, rings are notes, red points are fragments. Size grows slightly with what you write and link. Red lines are your links; dashed lines are similar text.', keys: ['graph.fit'] },
-    { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a node to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes. Drag a dot to place it; linked dots follow.', keys: ['note.summary', 'note.critique'] },
+    { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a dot to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes.', keys: ['note.summary', 'note.critique'],
+      actions: [{ label: 'Open one for me', run: openAPaper }],
+      task: { needs: needPapers, check: () => curIs('paper'), wait: 'Click a dot on the map to open it.', done: () => `Opened ${short(S.cur.title)}.` } },
     { sel: '#btn-chat', title: 'Ask', text: 'Ask about your whole library, about the papers in some regions, or anything at all (General, where you can attach things and, if you allow it, search the web). Conversations are kept.', keys: ['library.ask', 'chat.general'] },
-    { sel: '#btn-view-menu', title: 'Settings and shortcuts', text: 'The gear holds Library settings (tabs and a search box), graph options and appearance. Press ? for every shortcut; find any action by name in the command palette.', keys: ['general.shortcuts', 'general.palette'] },
+    { sel: '#btn-view-menu', title: 'Settings and tutorials', text: 'The gear holds Library settings, graph options and appearance, and Tutorials, where the full tour waits whenever you want it. Press ? for every shortcut; find any action by name in the command palette.', keys: ['general.shortcuts', 'general.palette'] },
   ];
-  // "Get me up to speed": every part worth knowing, in chapters. Each step points at something that's always
-  // on screen (or falls back to the map), so the tour never opens menus or changes anything in the library.
+
   const DEEP = [
-    { ch: 'Bringing papers in', sel: '#btn-add-menu', title: 'Add a paper', text: 'Add by DOI, arXiv id or title, import a PDF, or drop one anywhere on the window. Right-click an empty spot on the map to add something right there. Its details come from Crossref, arXiv and Semantic Scholar; when none has an abstract, it’s read from the PDF itself.', keys: ['library.addById', 'library.importPdf'] },
-    { ch: 'Bringing papers in', sel: '#btn-add-menu', title: 'Folders, Zotero, bookmarks and notes', text: 'Add folders of papers links folders where they are (OneDrive too): nothing is moved or copied, each folder becomes a region, and PDFs you add there later come in by themselves. The same menu imports from Zotero (with highlights), browser bookmarks, and notes from Obsidian, Notion, Word or handwritten pages.', keys: ['import.linkFolder', 'library.zotero', 'library.importNotes'] },
-    { ch: 'Bringing papers in', sel: '#btn-finder', fallback: '#btn-add-menu', title: 'Find papers', text: 'Describe a topic and {AI} searches OpenAlex and arXiv in the background. What it proposes lands On deck, with a reason for each paper and whether it’s free to read. Nothing reaches your library until you click Add, and you’re told when a search finishes.', keys: ['papers.find'] },
-    { ch: 'Bringing papers in', sel: '#graph', title: 'Where a new paper lands', text: 'A paper that clearly belongs in a region is put there, with Undo or Move in the message. One that could go in a few is asked about: pick a region, any other, or leave it. In Add you can also choose the region up front.', keys: [] },
+    addStep('Your papers'),
+    { ch: 'Your papers', sel: '#btn-finder', fallback: '#btn-add-menu', title: 'Find papers online', text: 'Describe a topic and {AI} searches OpenAlex and arXiv in the background. What it proposes lands On deck, with a reason for each paper and whether it’s free to read. Nothing reaches your library until you click Add, and you’re told when a search finishes.', keys: ['papers.find'],
+      actions: [{ label: 'Open Find papers', run: cmd('papers.find') }] },
+    { ch: 'Your papers', sel: '#graph', title: 'Where a new paper lands', text: 'A paper that clearly belongs in a region is put there, with Undo or Move in the message. One that could go in a few is asked about: pick a region, any other, or leave it. In Add you can also choose the region up front.', keys: [] },
     { ch: 'The map', sel: '#legend', fallback: '#graph', title: 'Reading the map', text: 'Filled dots are papers, rings are notes, small red dots are fragments. A paper you haven’t read has a yellow glow at its centre. Red lines are links you made, dashed lines are similar text, and you can click a line to ask {AI} why two notes connect.', keys: ['graph.similar', 'graph.citations'] },
+    { ch: 'The map', sel: '#graph', title: 'Open a paper', text: 'Click any dot on the map to open it in the side panel.', keys: [],
+      actions: [{ label: 'Open one for me', run: openAPaper }],
+      task: { needs: needPapers, check: () => curIs('paper'), wait: 'Click a dot on the map to open it.', done: () => `Opened ${short(S.cur.title)}.` } },
+    { ch: 'Reading', sel: '#panel:not([hidden])', fallback: '#graph', title: 'Your summary', text: 'In the panel, write two sentences in your own words about what the paper shows, then ask {AI} to critique it against the paper. Type [[ to link another note, $…$ for math, “- ” for an outline. It saves by itself.', keys: ['note.summary', 'note.critique', 'note.link'] },
+    { ch: 'Reading', sel: '#panel:not([hidden])', fallback: '#graph', title: 'Fragments, highlights and ideas', text: 'Open the PDF from the panel and highlight a passage: it becomes a fragment with your note on it, a red dot on the map. Under it, Ideas lists the paper’s claims, equations and measured values, each with its quote; confirm the ones you trust and they’re linked to the same idea in other papers.', keys: ['note.viewer', 'note.fragment', 'ideas.view'] },
     { ch: 'The map', sel: '#btn-cleanup', fallback: '#graph', title: 'Move dots, then Clean up', text: 'Drag a dot where you want it and it keeps that spot. Drop it on another region and it moves there. Clean up puts dragged dots and moved regions back into the tidy layout; double-click a dot to see only its neighbourhood.', keys: ['graph.cleanUp', 'graph.focus'] },
-    { ch: 'Organizing', sel: '#btn-topics', fallback: '#graph', title: 'Regions', text: 'Papers are grouped into regions, named on the map. Click a name to zoom in on it, then Rename. To file a paper, drag its dot into a region or right-click it › Put in region. Regions also keeps your reading queue: park a paper with a reason and it comes back.', keys: ['topics.toggle', 'graph.focusRegion', 'note.park'] },
-    { ch: 'Organizing', sel: '#btn-regions', fallback: '#graph', title: 'Subsections', text: 'Inside a region, subsections are named groups of its papers. Focus a region (click its name), then Subsections: add one, rename or delete it, or let {AI} propose them from the papers (nothing changes until you Apply). Or right-click a paper › New subsection… and tick the others.', keys: [] },
-    { ch: 'Organizing', sel: '#btn-reorganize', fallback: '#graph', title: 'Reorganize', text: 'Tick papers and {AI} regroups them by what they’re about, ignoring how they’re filed now, or into regions you name, as many as you ask for. You see and can rename the new regions before anything changes, and Undo puts everything back. A region’s Split up… does this for one region.', keys: ['topics.reorganize'] },
+    { ch: 'Organizing', sel: '#btn-regions', fallback: '#graph', title: 'Focus a region', text: 'Your papers are grouped into regions, named on the map. Click a region’s name to focus it: the map zooms in and the rest steps back. Rename is in the bar at the top. To file a paper elsewhere, drag its dot into another region or right-click it › Put in region.', keys: ['graph.focusRegion', 'graph.renameRegion'],
+      actions: [{ label: 'Focus the biggest for me', run: () => { const r = biggest(); if (r) rb.focusRegion(r.id); } }],
+      task: { needs: needRegions, check: () => S.focusCluster != null, wait: 'Click a region’s name on the map.', done: () => `Focused on ${regionLabel()}. Esc comes back out.` } },
+    { ch: 'Organizing', sel: '#rf-subs', fallback: '#btn-regions', title: 'Subsections', text: 'Inside a region, subsections are named groups of its papers. With a region focused, click Subsections at the top: add one and tick its papers, or let {AI} propose them (nothing changes until you Apply). Right-click a paper › New subsection… works too.', keys: [],
+      actions: [{ label: 'Open Subsections', run: openSubs }],
+      task: { needs: needRegions, begin: (t) => { t.sawSubs = false; },
+        check: (t) => { const head = $('.rf-chooser .rf-head'); if (head && /^Subsections of/.test(head.textContent)) t.sawSubs = true; return t.sawSubs || (S.subsections || []).some((x) => x.region === S.focusCluster); },
+        wait: 'Focus a region, then click Subsections at the top of the map.', done: () => 'That’s where they live. Make one now, or come back to it later.' } },
+    { ch: 'Organizing', sel: '#btn-reorganize', fallback: '#graph', title: 'Reorganize', text: 'Tick papers and {AI} regroups them by what they’re about, ignoring how they’re filed now, or into regions you name, as many as you ask for. You see and can rename the new regions before anything changes, and Undo puts everything back. A region’s Split up… (in Regions) does this for one region.', keys: ['topics.reorganize'],
+      actions: [{ label: 'Open Reorganize', run: cmd('topics.reorganize') }] },
     { ch: 'Organizing', sel: '#btn-chat', title: 'Ask the chat to move things', text: 'You can also just ask: “put the transformer papers in their own region.” The answer ends with a card listing each change, with Apply and Dismiss. Nothing moves until you Apply, and Undo puts it back.', keys: [] },
-    { ch: 'Reading', sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a dot to open it. Write a two-sentence summary in your own words, then ask {AI} to critique it against the paper. Type [[ to link a note, $…$ for math, “- ” for an outline. It saves by itself.', keys: ['note.summary', 'note.critique', 'note.link'] },
-    { ch: 'Reading', sel: '#panel:not([hidden])', fallback: '#graph', title: 'Fragments, highlights and ideas', text: 'Open the PDF viewer and highlight a passage: it becomes a fragment with your note on it, a red dot on the map. Under it, Ideas lists the paper’s claims, equations and measured values, each with its quote; confirm the ones you trust and they’re linked to the same idea in other papers.', keys: ['note.viewer', 'note.fragment', 'ideas.view'] },
-    { ch: 'Asking', sel: '#btn-chat', title: 'Ask: Library, Regions, General', text: 'Library answers from all your papers and notes and cites the pages it used; click a citation to open that passage. Regions reads every paper in the regions you pick. General asks anything, with only what you attach.', keys: ['library.ask', 'chat.aboutTopics', 'chat.general'] },
+    { ch: 'Asking', sel: '#btn-chat', title: 'Ask your library', text: 'Ask a question about your papers. The answer cites the pages it used; click a citation to open that passage. At the top of the chat, Regions reads every paper in the regions you pick, and General asks anything with only what you attach.', keys: ['library.ask', 'chat.aboutTopics', 'chat.general'],
+      actions: [{ label: 'Open Ask with an example', run: askExample }],
+      task: { needs: () => needPapers() || (S.claudeOK ? null : 'Ask needs an AI agent on this computer: pick one in Library settings › AI and privacy, or skip this one.'),
+        begin: (t) => { t.msgs = userMsgs(); }, check: (t) => !!S.chatBusy || userMsgs() > t.msgs,
+        wait: 'Type a question (or use the example) and click Ask.', done: () => 'Asked. The answer keeps writing while you go on.' } },
     { ch: 'Asking', sel: '#btn-chat', title: 'Research mode and Novelty check', text: 'Next to Quick, Research lets {AI} search your library itself: several searches, opening pages, following citations, shown as a trail. Novelty check takes an idea, shows you the searches first, then reports which published work overlaps and what none of it does.', keys: ['research.toggle', 'novelty.check'] },
-    { ch: 'Thinking it through', sel: '#btn-questions', fallback: '#btn-add-menu', title: 'Open questions', text: 'A question keeps collecting evidence as you add papers: passages and notes that support it, argue against it, or relate. The matching runs on this computer and never goes to an AI. Triage with S, A, R and D.', keys: ['question.new', 'questions.open'] },
+    { ch: 'Thinking it through', sel: '#btn-questions', fallback: '#btn-add-menu', title: 'Open questions', text: 'A question keeps collecting evidence as you add papers: passages and notes that support it, argue against it, or relate. The matching runs on this computer and never goes to an AI. Triage with S, A, R and D.', keys: ['question.new', 'questions.open'],
+      actions: [{ label: 'Write a question', run: cmd('question.new') }] },
     { ch: 'Thinking it through', sel: '#btn-review:not([hidden])', fallback: '#graph', title: 'Review', text: 'Your own summaries and fragment notes come back for recall, spaced out over time. Write what you remember, reveal, and grade yourself 1 to 4. The Review button appears once there’s something due.', keys: ['library.review'] },
-    { ch: 'Writing', sel: '#graph', title: 'Citing and writing', text: 'Cite any paper into Word, Google Docs or LaTeX from the Cite picker, or copy a region’s bibliography. A .bib file can update itself for your LaTeX project (Library settings › Citations). In a note, writing help drafts from only the sources you tick.', keys: ['cite.pick'] },
+    { ch: 'Writing', sel: '#graph', title: 'Citing and writing', text: 'Cite any paper into Word, Google Docs or LaTeX from the Cite picker, or copy a region’s bibliography. A .bib file can update itself for your LaTeX project (Library settings › Citations). In a note, writing help drafts from only the sources you tick.', keys: ['cite.pick'],
+      actions: [{ label: 'Cite a paper', run: cmd('cite.pick') }] },
     { ch: 'Your data', sel: '#btn-view-menu', title: 'Private by default', text: 'Your notes, questions and highlights stay on this computer: no AI reads them until you click the lock in a note’s header. Library settings › AI and privacy shows what was sent and lets you pick the AI tool on this computer.', keys: ['agent.choose'] },
     { ch: 'Your data', sel: '#btn-view-menu', title: 'Phone, browser and voice', text: 'Pair a phone from Library settings › Devices to add papers and read on the go. The Chrome extension saves papers and clips passages from any page. In Ask, the waveform button starts a spoken conversation.', keys: ['extension.clip'] },
     { ch: 'Getting around', sel: '#btn-view-menu', title: 'Commands, shortcuts and this tour', text: 'Find any action by name in the command palette; press ? for every shortcut. Both tours and the full guide stay here under Settings › Tutorials, whenever you want them again.', keys: ['general.palette', 'general.shortcuts', 'help.guide'] },
@@ -399,6 +459,11 @@
   .rb-coach .c-ch { font-size: 12px; color: var(--red); font-weight: 600; }
   .rb-coach .c-step .c-bar { display: block; height: 2px; margin-top: 4px; background: var(--rule); border-radius: 1px; overflow: hidden; }
   .rb-coach .c-step .c-bar > i { display: block; height: 100%; background: var(--ink-2); }
+  .rb-coach .c-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .rb-coach .c-status { margin-top: 10px; font-size: 12.5px; color: var(--ink-2); display: flex; gap: 6px; align-items: baseline; }
+  .rb-coach .c-status.ok { color: var(--ink); }
+  .rb-coach .c-status .mk { flex: none; width: 12px; text-align: center; }
+  .rb-coach .c-status.ok .mk { color: var(--red); }
   .rb-coach.rb-choose { width: 420px; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 22px 16px; }
   .rb-choose .c-title { font-size: 16px; margin-bottom: 6px; }
   .rb-choose .c-opts { display: grid; gap: 8px; margin-top: 14px; }
@@ -417,17 +482,21 @@
   `;
   const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
 
-  let tour = null; // {i, kind, card, ring}
+  let tour = null; // {i, kind, card, ring, shown, sig, + whatever a step's task keeps}
   let chooser = null; // the welcome card: basics or in depth
+  let poll = 0;
   function startTour(i = 0, kind = 'quick') {
     endTour(false);
     closeChooser(false);
     rb.closeMenus();
-    tour = { i, kind: TOURS[kind] ? kind : 'quick' };
+    tour = { i, kind: TOURS[kind] ? kind : 'quick', shown: -1 };
     showStep();
+    // a step with a task follows what the user does (a paper arriving, a region focused, a question asked)
+    poll = setInterval(() => { if (tour && TOURS[tour.kind][tour.i].task && stepState().sig !== tour.sig) showStep({ refresh: true }); }, 700);
   }
   function endTour(done = true) {
     if (!tour) return;
+    clearInterval(poll); poll = 0;
     if (tour.card) tour.card.remove();
     if (tour.ring) tour.ring.remove();
     if (done) { LS.set('tour.done', true); if (tour.kind === 'deep' && tour.i === DEEP.length - 1) LS.set('tour.deepDone', true); }
@@ -453,13 +522,15 @@
     };
     const opts = mk('div', 'c-opts');
     opts.append(
-      opt('quick', 'Show me the basics', `${TOUR.length} short tips on the main parts of the app. About a minute.`),
-      opt('deep', 'Get me up to speed', `${DEEP.length} steps through everything: regions, subsections, Reorganize, Find papers, questions, citing and more. About five minutes.`));
+      opt('quick', 'Show me the basics', `Add your first papers, then ${TOUR.length - 1} short tips on the main parts of the app. A few minutes.`),
+      opt('deep', 'Get me up to speed', `Add your papers, then ${DEEP.length - 1} steps through everything, tried on your own library: regions, subsections, Reorganize, Find papers, Ask, questions, citing and more.`));
     const later = mk('button', 'btn btn-text btn-sm', first ? 'Not now' : 'Close'); later.type = 'button'; later.onclick = () => closeChooser();
     const foot = mk('div', 'c-foot');
     foot.append(mk('span', null, 'Both stay in Settings › Tutorials.'), mk('span', 'sp'), later);
     card.append(mk('div', 'c-title', first ? 'Welcome to research brain' : 'Tutorials'),
-      mk('div', 'c-text', first ? 'Want a quick look around, or the full tour of what it can do?' : 'Pick a tour. You can leave either one at any step with Esc.'), opts, foot);
+      mk('div', 'c-text', first
+        ? 'Both tours start with your own papers: import the ones you have, or find new ones online. Then a quick look around, or the full tour of what it can do?'
+        : 'Both start with your own papers. You can leave either one at any step with Esc.'), opts, foot);
     document.body.appendChild(card);
     chooser = card;
     opts.firstChild.focus({ preventScroll: true });
@@ -468,25 +539,58 @@
     for (const sel of [s.sel, s.fallback]) { const n = sel && $(sel); if (n && n.offsetParent !== null && n.getBoundingClientRect().width) return n; }
     return null;
   }
-  function showStep() {
+  /** Where the current step's task stands: blocked (and why), waiting, or done (and what was done). */
+  function stepState() {
+    const t = TOURS[tour.kind][tour.i].task;
+    if (!t) return { sig: '' };
+    let needs = null, ok = false, msg = '';
+    try {
+      needs = t.needs ? t.needs(tour) : null;
+      ok = !needs && !!t.check(tour);
+      msg = needs || (ok ? t.done(tour) : t.wait);
+    } catch (e) { console.error(e); msg = t.wait; }
+    return { needs, ok, msg, sig: `${needs ? 'n' : ok ? 'y' : 'w'}|${msg}` };
+  }
+  function showStep({ refresh = false } = {}) {
     if (!tour) return;
-    const steps = TOURS[tour.kind], s = steps[tour.i], t = target(s);
+    const steps = TOURS[tour.kind], s = steps[tour.i];
+    const fresh = tour.shown !== tour.i;
+    if (fresh) { tour.shown = tour.i; if (s.task && s.task.begin) { try { s.task.begin(tour); } catch (e) { console.error(e); } } }
+    const t = target(s), st = stepState();
+    tour.sig = st.sig;
     if (tour.card) tour.card.remove();
     if (tour.ring) tour.ring.remove();
+    tour.ring = null;
     const mk = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; };
     const card = mk('div', 'rb-coach'); card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', s.title);
+    if (s.task) card.dataset.task = st.needs ? 'blocked' : st.ok ? 'done' : 'waiting';
     const keys = mk('div', 'c-keys');
-    for (const id of s.keys) {
+    for (const id of s.keys || []) {
       const c = CMD.get(id); if (!c || !c.seqs.length) continue;
       const w = mk('span', null); w.style.cssText = 'display:inline-flex;align-items:center;gap:6px;color:var(--ink-2);font-size:12px';
       const caps = CMD.capsEl(c.seqs.slice(0, 1)); caps.style.maxWidth = 'none';
       w.append(caps, c.title);
       keys.append(w);
     }
+    // buttons that start the step for the user (hidden while it can't be done yet, and once a task is done)
+    const acts = mk('div', 'c-acts');
+    if (!st.needs && !st.ok) for (const a of s.actions || []) {
+      const b = mk('button', a.primary ? 'btn btn-primary btn-sm' : 'btn btn-sm', a.label); b.type = 'button';
+      // after this click has finished (a menu it opens would otherwise see the click as outside it and close)
+      b.onclick = () => { setTimeout(() => { try { a.run(); } catch (e) { console.error(e); } }, 0); };
+      acts.append(b);
+    }
+    let status = null;
+    if (s.task) {
+      status = mk('div', 'c-status' + (st.ok ? ' ok' : ''));
+      status.setAttribute('role', 'status');
+      status.append(mk('span', 'mk', st.ok ? '✓' : st.needs ? '–' : '…'), mk('span', null, RB.aiText(st.msg)));
+    }
     const back = mk('button', 'btn btn-text btn-sm', 'Back'); back.type = 'button'; back.disabled = tour.i === 0; back.onclick = () => { tour.i--; showStep(); };
-    const skip = mk('button', 'btn btn-text btn-sm', 'Skip tour'); skip.type = 'button'; skip.onclick = () => endTour();
+    const skip = mk('button', 'btn btn-text btn-sm', 'End tour'); skip.type = 'button'; skip.onclick = () => endTour();
     const last = tour.i === steps.length - 1;
-    const next = mk('button', 'btn btn-primary btn-sm', last ? 'Done' : 'Next'); next.type = 'button';
+    const pending = !!s.task && !st.ok; // not done yet: Next skips it
+    const next = mk('button', pending ? 'btn btn-sm' : 'btn btn-primary btn-sm', last ? 'Done' : pending ? 'Skip' : 'Next'); next.type = 'button';
     next.onclick = () => { if (last) endTour(); else { tour.i++; showStep(); } };
     const act = mk('div', 'c-act'); act.append(skip, mk('span', 'sp'), back, next);
     const stepEl = mk('div', 'c-step', `${tour.i + 1} of ${steps.length}`);
@@ -495,20 +599,30 @@
       const bar = mk('span', 'c-bar'), fill = mk('i'); fill.style.width = `${((tour.i + 1) / steps.length) * 100}%`; bar.append(fill);
       stepEl.append(bar);
     }
-    card.append(stepEl, mk('div', 'c-title', s.title), mk('div', 'c-text', RB.aiText(s.text)), keys.children.length ? keys : '', act);
+    card.append(stepEl, mk('div', 'c-title', s.title), mk('div', 'c-text', RB.aiText(s.text)), acts.children.length ? acts : '', status || '', keys.children.length ? keys : '', act);
     document.body.appendChild(card);
     tour.card = card;
-    // place it next to the target, inside the viewport
     const W = window.innerWidth, Hh = window.innerHeight, cw = card.offsetWidth, ch = card.offsetHeight;
+    const ring = (r) => {
+      const n = mk('div', 'rb-coach-ring');
+      Object.assign(n.style, { left: r.left - 4 + 'px', top: r.top - 4 + 'px', width: r.width + 8 + 'px', height: r.height + 8 + 'px' });
+      document.body.appendChild(n); tour.ring = n;
+    };
     let x = (W - cw) / 2, y = (Hh - ch) / 2;
-    if (t) {
+    if (s.task) {
+      // the user works on the map, the panel or the chat now: keep out of their way, bottom left of the map
+      // (right of the Regions drawer when it's open), and ring what the step is about
+      const drawer = $('.td'); const dr = drawer && drawer.offsetParent !== null ? drawer.getBoundingClientRect() : null;
+      x = dr ? dr.right + 16 : 16;
+      const legend = $('#legend'); const lr = legend && legend.offsetParent !== null ? legend.getBoundingClientRect() : null;
+      y = (lr ? lr.top : Hh) - ch - 12;
+      if (t) { const r = t.getBoundingClientRect(); if (!(r.width > W * 0.5 && r.height > Hh * 0.5)) ring(r); }
+    } else if (t) {
       const r = t.getBoundingClientRect();
       const big = r.width > W * 0.5 && r.height > Hh * 0.5;
       if (big) { x = r.left + (r.width - cw) / 2; y = r.top + Math.min(120, r.height / 4); }
       else {
-        const ring = mk('div', 'rb-coach-ring');
-        Object.assign(ring.style, { left: r.left - 4 + 'px', top: r.top - 4 + 'px', width: r.width + 8 + 'px', height: r.height + 8 + 'px' });
-        document.body.appendChild(ring); tour.ring = ring;
+        ring(r);
         if (r.width > W * 0.25 && r.height > Hh * 0.4) { x = r.left - cw - 16 > 16 ? r.left - cw - 16 : r.left + 24; y = r.top + 40; } // tall panel: beside it
         else if (r.bottom + 12 + ch < Hh) { x = r.left + r.width / 2 - cw / 2; y = r.bottom + 12; }
         else { x = r.left + r.width / 2 - cw / 2; y = r.top - ch - 12; }
@@ -516,10 +630,14 @@
     }
     card.style.left = Math.max(16, Math.min(W - cw - 16, x)) + 'px';
     card.style.top = Math.max(16, Math.min(Hh - ch - 16, y)) + 'px';
-    next.focus({ preventScroll: true });
+    // a new step takes focus; a step redrawn because something changed never does (the user may be typing)
+    if (fresh && !refresh) next.focus({ preventScroll: true });
   }
-  CMD.layer({ id: 'tour', order: 95, isOpen: () => !!tour || !!chooser, close: () => { if (tour) endTour(); else closeChooser(); } });
-  window.addEventListener('resize', () => { if (tour) showStep(); });
+  // Esc: the welcome card first; a running tour only once nothing else is open (it's under the chat, the panel and
+  // a focused region, so Esc in them doesn't end the tour while the user tries things)
+  CMD.layer({ id: 'tour.choose', order: 95, isOpen: () => !!chooser, close: () => closeChooser() });
+  CMD.layer({ id: 'tour', order: 30, isOpen: () => !!tour, close: () => endTour() });
+  window.addEventListener('resize', () => { if (tour) showStep({ refresh: true }); });
   rb.tour = { start: startTour, end: endTour, choose: chooseTour, get step() { return tour ? tour.i : -1; }, get kind() { return tour ? tour.kind : null; } };
   rb.openGuide = openGuide;
   // Settings menu › Tutorials
