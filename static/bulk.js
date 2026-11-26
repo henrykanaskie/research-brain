@@ -547,7 +547,7 @@
       catch (e) { status.textContent = e.message; busy(false); return; }
       inputs.forEach(([inp]) => { inp.disabled = true; });
       rb.refreshGraph();
-      window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+      window.dispatchEvent(new CustomEvent('rb:topics-changed', { detail: { kind: 'reorganized' } }));
       const made = `Filed ${plural(r.moved, 'paper')} into ${plural(r.topics.length, 'region')}${r.deleted.length ? `; ${r.deleted.join(', ')} went to the trash` : ''}.`;
       status.textContent = made;
       go.hidden = true; back.hidden = true;

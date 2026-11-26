@@ -329,8 +329,8 @@
     const tourBtn = (text, run, primary) => el('button', { class: primary ? 'btn btn-primary' : 'btn', type: 'button', text, onclick: () => { close(); run(); } });
     const tutSec = T ? el('section', { class: 'ls-sec', id: 'ls-tutorials' },
       el('div', { class: 'ls-h', text: 'Tutorials' }),
-      el('p', { class: 'ls-p', text: 'Both start with your own papers: import the ones you have or find new ones online. Show me the basics then gives a few short tips on the main parts of the app. Get me up to speed goes through everything on your own library: regions and subsections, Reorganize, Find papers, Ask, open questions, review, citing, privacy and the rest. Esc leaves either one at any step.' }),
-      el('div', { class: 'ls-row' }, tourBtn('Show me the basics', () => T.start(0, 'quick')), tourBtn('Get me up to speed', () => T.start(0, 'deep'), true),
+      el('p', { class: 'ls-p', text: 'Both set up your own library, step by step, and each step is done when you’ve actually done it. Get me started: connect your AI, import your papers, sort them into regions, read one and write your summary, ask a question. Get me up to speed: the same start, then naming your regions, subsections, highlights, finding more papers, open questions, review and citing. Skip any step.' }),
+      el('div', { class: 'ls-row' }, tourBtn('Get me started', () => T.start(0, 'quick')), tourBtn('Get me up to speed', () => T.start(0, 'deep'), true),
         window.__rb.openGuide ? tourBtn('Open the guide', () => window.__rb.openGuide()) : null)) : null;
 
     const done = el('button', { class: 'btn btn-primary', type: 'button', text: 'Done', onclick: close });
@@ -344,8 +344,8 @@
       { id: 'help', name: 'Tutorials', secs: [tutSec] },
       { id: 'about', name: 'About', secs: [aboutSec] },
     ].map((t) => ({ ...t, secs: t.secs.filter(Boolean) })).filter((t) => t.secs.length);
-    const FOCUS_TAB = { tutorials: 'help', about: 'about', profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', library: 'papers', citations: 'citations' };
-    const FOCUS_SEC = { tutorials: tutSec, about: aboutSec, profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, library: libSecAccess, citations: citeSec };
+    const FOCUS_TAB = { tutorials: 'help', devices: 'devices', about: 'about', profiles: 'library', papers: 'library', agent: 'ai', privacy: 'ai', lookup: 'papers', library: 'papers', citations: 'citations' };
+    const FOCUS_SEC = { tutorials: tutSec, devices: pairSec, about: aboutSec, profiles: profSec, papers: papSec, agent: agentSec, privacy: privSec, lookup: keySec, library: libSecAccess, citations: citeSec };
     let cur = FOCUS_TAB[focus] || (() => { try { return localStorage.getItem('rb.settings-tab'); } catch { return null; } })();
     if (!TABS.some((t) => t.id === cur)) cur = TABS[0].id;
     const tabBtns = TABS.map((t) => el('button', { type: 'button', class: 'ls-tab', role: 'tab', 'data-tab': t.id,

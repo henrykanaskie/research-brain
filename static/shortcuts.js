@@ -258,9 +258,9 @@
   // Help
   reg({ id: 'help.guide', title: 'Help', group: 'General', description: 'A short guide to every feature, with its shortcut.',
     aliases: ['guide', 'manual', 'how to', 'docs', 'documentation', 'what is', 'explain'], run: () => openGuide() });
-  reg({ id: 'help.tour', title: 'Help: quick tour', group: 'General', description: 'Five short tips that point at the main parts of the app.',
-    aliases: ['tour', 'onboarding', 'intro', 'walkthrough', 'getting started', 'coach', 'basics'], run: () => startTour() });
-  reg({ id: 'help.deepTour', title: 'Help: get me up to speed', group: 'General', description: 'The full tour: regions, subsections, Reorganize, Find papers, questions, citing and the rest, one step at a time.',
+  reg({ id: 'help.tour', title: 'Help: get me started', group: 'General', description: 'Set up a working library: connect your AI, import your papers, sort them into regions, read one, ask a question.',
+    aliases: ['tour', 'onboarding', 'intro', 'walkthrough', 'getting started', 'get started', 'setup', 'coach', 'basics'], run: () => startTour() });
+  reg({ id: 'help.deepTour', title: 'Help: get me up to speed', group: 'General', description: 'The full setup on your own library: regions, subsections, highlights, finding papers, questions, review, citing.',
     aliases: ['tutorial', 'in depth', 'full tour', 'everything', 'advanced', 'up to speed', 'learn'], run: () => startTour(0, 'deep') });
   reg({ id: 'help.tutorials', title: 'Help: tutorials', group: 'General', description: 'Pick a tour: just the basics, or everything you can do.',
     aliases: ['tutorial', 'tour', 'welcome', 'onboarding', 'learn'], run: () => chooseTour() });
@@ -346,104 +346,143 @@
           }
         }
         body.append(el('p', { style: 'margin-top: 20px; font: 13px var(--sans); color: var(--ink-2)' },
-          'Press ? for every shortcut. ', el('a', { href: '#', text: 'Take the quick tour', onclick: (e) => { e.preventDefault(); CMD.close(false); startTour(); } }),
+          'Press ? for every shortcut. ', el('a', { href: '#', text: 'Get started', onclick: (e) => { e.preventDefault(); CMD.close(false); startTour(); } }),
           ', or ', el('a', { href: '#', text: 'get up to speed on everything', onclick: (e) => { e.preventDefault(); CMD.close(false); startTour(0, 'deep'); } }), '.'));
       },
     });
   }
 
   // ====================================================================== tours (coach marks)
-  // Both tours start with the user's own papers: they import the ones they have or find new ones online, and the
-  // steps after that work on that library. A step with a `task` waits for the user to do it (its Next reads Skip
-  // until then; `needs` says when it can't be done yet), `actions` are buttons that start it for them.
-  // Nothing in a tour changes the library by itself: actions only open things the user then confirms.
+  // Both tours are a setup path, in the order that gets a library going: connect an AI, import your papers, get
+  // them into regions, read one and write your summary, ask a question; the full tour then makes the library yours
+  // (regions, subsections, highlights, more papers, questions). Each `task` is real: it's done when the app says
+  // it happened (an app event, see `on` and static/app.js emit()), never by the tour itself. Until then its Next
+  // reads Skip, and `needs` says when it can't be done yet. `actions` open the thing to do; nothing in a tour
+  // changes the library by itself.
   const papers = () => [...S.nodes.values()].filter((n) => n.type === 'paper');
+  // the map's dots, plus what's folded into them (fragments and attached notes live in S.folded)
+  const count = (type) => { let n = 0; for (const m of [S.nodes, S.folded]) if (m) for (const x of m.values()) if (x && x.type === type) n++; return n; };
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
   const cmd = (id) => () => CMD.run(id);
   const regions = () => S.clusters || [];
   const biggest = () => regions().slice().sort((x, y) => (y.size || 0) - (x.size || 0))[0];
   const regionLabel = () => { const r = regions().find((c) => c.id === S.focusCluster); return r ? `“${r.label}”` : 'that region'; };
   const short = (t) => { t = String(t || 'it'); return t.length > 60 ? t.slice(0, 59) + '…' : t; };
-  const userMsgs = () => (S.chat || []).filter((m) => m.role === 'user').length;
-  const needPapers = () => (papers().length ? null : 'This needs a paper: add one in the first step, or skip this one.');
-  const needRegions = () => needPapers() || (regions().length ? null : 'Regions appear once you have a few papers. Add some more, or skip this one.');
+  const needPapers = () => (papers().length ? null : 'This needs your papers: import them in the first steps, or skip this one.');
+  const needAI = () => (S.claudeOK ? null : 'This needs an AI agent: connect one in the first step, or skip this one.');
+  const needRegions = () => needPapers() || (regions().length ? null : 'Your papers aren’t in regions yet: sort them in the regions step, or skip this one.');
+  const hasPdf = () => !!(S.cur && S.cur.has_pdf);
   function openAPaper() {
     const ps = papers(); if (!ps.length) return;
-    const p = ps.find((n) => n.status !== 'read') || ps[0];
+    const p = ps.find((n) => n.status === 'reading') || ps.find((n) => n.status !== 'read') || ps[0];
     rb.openNote(p.id, { center: true });
   }
+  function focusBiggest() { const r = biggest(); if (r) rb.focusRegion(r.id); }
   function openSubs() {
-    if (S.focusCluster == null) { const r = biggest(); if (!r) return; rb.focusRegion(r.id); }
+    if (S.focusCluster == null) focusBiggest();
     setTimeout(() => { const b = $('#rf-subs'); if (b) b.click(); }, 120);
   }
   function askExample() {
     rb.openChat();
     const ta = $('#chat-input'); if (!ta) return;
-    if (!ta.value.trim()) { ta.value = 'What do my papers disagree about?'; ta.dispatchEvent(new Event('input')); }
+    if (!ta.value.trim()) { ta.value = 'What are the main approaches in my papers, and where do they disagree?'; ta.dispatchEvent(new Event('input')); }
     ta.focus();
   }
-  const ADD_ACTIONS = [
-    { label: 'Import PDFs', run: () => rb.pickPdf(), primary: true },
-    { label: 'Add folders of papers', run: cmd('import.linkFolder') },
-    { label: 'Find papers online', run: cmd('papers.find') },
-    { label: 'Add by DOI or title', run: cmd('library.addById') },
-    { label: 'Import from Zotero', run: cmd('library.zotero') },
-  ];
-  const addStep = (ch) => ({ ch, sel: '#btn-add-menu', title: 'Bring in your papers',
-    text: 'This tour uses your own library, so start with your papers: import PDFs you already have, add the folders you keep them in (they stay where they are, and each folder becomes a region), or find new ones online. Ten or more makes regions worth exploring.',
-    actions: ADD_ACTIONS, keys: ['library.addById', 'papers.find'],
-    task: { check: () => papers().length > 0,
-      wait: 'Waiting for your first paper. Find papers searches in the background: when it’s done, click Add on the ones you want.',
-      done: () => `You have ${plural(papers().length, 'paper')}. Add more any time from Add.` } });
+  const settings = (tab) => () => { if (window.__rbSettings) window.__rbSettings.open(tab); };
+
+  // ---- the setup path, shared by both tours
+  const connectAI = (ch) => ({ ch, sel: '#status', title: 'Connect your AI',
+    text: 'research brain uses an AI tool you already have on this computer (Claude Code, Codex, Gemini, Copilot, or a local model with Ollama). No API key. It reads your papers to answer questions, find new ones and sort them into regions. Without one you can still import, read and organize.',
+    actions: [{ label: 'Choose your AI', run: cmd('agent.choose'), primary: true }], keys: [],
+    task: { on: ['status'], check: () => S.claudeOK,
+      wait: 'Not connected yet. Choose one, or install one and come back: this step notices when it’s ready.',
+      done: () => `Connected: ${S.agentName || 'your AI'}.` } });
+  const importPapers = (ch) => ({ ch, sel: '#btn-add-menu', title: 'Import your papers',
+    text: 'Start with where your papers are now. In folders, OneDrive too: Add folders of papers (they stay where they are, each folder becomes a region, and PDFs you add there later come in by themselves). In Zotero: Import from Zotero, with your highlights. A few PDFs: Import PDFs, or drop them on the window. Starting fresh: Find papers online.',
+    actions: [
+      { label: 'Add folders of papers', run: cmd('import.linkFolder'), primary: true },
+      { label: 'Import from Zotero', run: cmd('library.zotero') },
+      { label: 'Import PDFs', run: () => rb.pickPdf() },
+      { label: 'Find papers online', run: cmd('papers.find') },
+      { label: 'Add by DOI or title', run: cmd('library.addById') },
+    ], keys: ['library.addById', 'papers.find'],
+    task: { on: ['graph'], check: () => papers().length > 0,
+      wait: 'Waiting for your papers. A big import keeps going in the background (the gauge in the corner); a search with Find papers lands On deck, where you click Add on the ones you want.',
+      done: () => `${plural(papers().length, 'paper')} in your library. More keep arriving if an import is still running; you can go on.` } });
+  const intoRegions = (ch) => ({ ch, sel: '#graph', title: 'Get them into regions',
+    text: 'Regions are the areas of your map, and how you ask about one part of your library. Folders you added are regions already. Otherwise let {AI} sort the papers by what they’re about: you see the regions it proposes, and can rename them, before anything changes.',
+    actions: [{ label: 'Sort them into regions', run: cmd('topics.autoSort'), primary: true }, { label: 'Reorganize instead', run: cmd('topics.reorganize') }], keys: ['topics.autoSort'],
+    task: { on: ['graph', 'topics-changed'], needs: needPapers, check: () => regions().length > 0,
+      wait: 'No regions yet. Sorting needs your AI; without it, right-click a dot › Put in region to make one by hand.',
+      done: () => `${plural(regions().length, 'region')} on your map.` } });
+  const readOne = (ch) => ({ ch, sel: '#panel:not([hidden])', fallback: '#graph', title: 'Read your first paper',
+    text: 'Pick one you’re reading now and click its dot. In the panel, write your summary: two or three sentences in your own words about what it shows. Then ask {AI} to critique it against the paper. This summary is what Review brings back later, so it’s the habit to start with.',
+    actions: [{ label: 'Open one for me', run: openAPaper }], keys: ['note.summary', 'note.critique'],
+    task: { on: ['panel', 'saved'], needs: needPapers, begin: (t) => { t.wrote = false; },
+      event: (t, name, d) => { if (name === 'saved' && typeof d.fields.summary === 'string' && d.fields.summary.trim()) t.wrote = true; },
+      check: (t) => t.wrote,
+      wait: () => (curIs('paper') ? 'Write your summary in the panel. It saves by itself a moment after you stop typing.' : 'Open a paper: click its dot.'),
+      done: () => 'Summary saved. Ask for a critique whenever you like.' } });
+  const askLibrary = (ch) => ({ ch, sel: '#btn-chat', title: 'Ask your library',
+    text: 'Ask what you actually want to know about your papers. The answer cites the pages it used; click a citation to open that passage. At the top of the chat, Regions asks about just some regions, and General asks anything with only what you attach.',
+    actions: [{ label: 'Ask with an example', run: askExample, primary: true }], keys: ['library.ask', 'chat.aboutTopics'],
+    task: { on: ['asked'], needs: () => needPapers() || needAI(), begin: (t) => { t.asked = false; },
+      event: (t, name) => { if (name === 'asked') t.asked = true; }, check: (t) => t.asked,
+      wait: 'Type a question (or use the example) and click Ask.', done: () => 'Asked. The answer keeps writing while you go on.' } });
 
   const TOUR = [
-    addStep(),
-    { sel: '.search', title: 'Search', text: 'Matching nodes light up on the graph. Enter opens the first match.', keys: ['nav.search'] },
-    { sel: '#legend', fallback: '#graph', title: 'Reading the graph', text: 'Dots are papers, rings are notes, red points are fragments. Size grows slightly with what you write and link. Red lines are your links; dashed lines are similar text.', keys: ['graph.fit'] },
-    { sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a dot to open it. Write your summary, then ask for a critique. Save fragments, and type [[ to link notes.', keys: ['note.summary', 'note.critique'],
-      actions: [{ label: 'Open one for me', run: openAPaper }],
-      task: { needs: needPapers, check: () => curIs('paper'), wait: 'Click a dot on the map to open it.', done: () => `Opened ${short(S.cur.title)}.` } },
-    { sel: '#btn-chat', title: 'Ask', text: 'Ask about your whole library, about the papers in some regions, or anything at all (General, where you can attach things and, if you allow it, search the web). Conversations are kept.', keys: ['library.ask', 'chat.general'] },
-    { sel: '#btn-view-menu', title: 'Settings and tutorials', text: 'The gear holds Library settings, graph options and appearance, and Tutorials, where the full tour waits whenever you want it. Press ? for every shortcut; find any action by name in the command palette.', keys: ['general.shortcuts', 'general.palette'] },
+    connectAI(),
+    importPapers(),
+    intoRegions(),
+    readOne(),
+    askLibrary(),
+    { sel: '#btn-view-menu', title: 'Keep it going', text: 'From here: add papers as you find them (drop a PDF, Find papers, the Chrome extension), park what you’ll read later in Regions, and do Review when it shows a count. Get me up to speed, under Settings › Tutorials, sets up the rest: subsections, highlights, questions and citing.', keys: ['general.palette', 'general.shortcuts'] },
   ];
 
   const DEEP = [
-    addStep('Your papers'),
-    { ch: 'Your papers', sel: '#btn-finder', fallback: '#btn-add-menu', title: 'Find papers online', text: 'Describe a topic and {AI} searches OpenAlex and arXiv in the background. What it proposes lands On deck, with a reason for each paper and whether it’s free to read. Nothing reaches your library until you click Add, and you’re told when a search finishes.', keys: ['papers.find'],
-      actions: [{ label: 'Open Find papers', run: cmd('papers.find') }] },
-    { ch: 'Your papers', sel: '#graph', title: 'Where a new paper lands', text: 'A paper that clearly belongs in a region is put there, with Undo or Move in the message. One that could go in a few is asked about: pick a region, any other, or leave it. In Add you can also choose the region up front.', keys: [] },
-    { ch: 'The map', sel: '#legend', fallback: '#graph', title: 'Reading the map', text: 'Filled dots are papers, rings are notes, small red dots are fragments. A paper you haven’t read has a yellow glow at its centre. Red lines are links you made, dashed lines are similar text, and you can click a line to ask {AI} why two notes connect.', keys: ['graph.similar', 'graph.citations'] },
-    { ch: 'The map', sel: '#graph', title: 'Open a paper', text: 'Click any dot on the map to open it in the side panel.', keys: [],
-      actions: [{ label: 'Open one for me', run: openAPaper }],
-      task: { needs: needPapers, check: () => curIs('paper'), wait: 'Click a dot on the map to open it.', done: () => `Opened ${short(S.cur.title)}.` } },
-    { ch: 'Reading', sel: '#panel:not([hidden])', fallback: '#graph', title: 'Your summary', text: 'In the panel, write two sentences in your own words about what the paper shows, then ask {AI} to critique it against the paper. Type [[ to link another note, $…$ for math, “- ” for an outline. It saves by itself.', keys: ['note.summary', 'note.critique', 'note.link'] },
-    { ch: 'Reading', sel: '#panel:not([hidden])', fallback: '#graph', title: 'Fragments, highlights and ideas', text: 'Open the PDF from the panel and highlight a passage: it becomes a fragment with your note on it, a red dot on the map. Under it, Ideas lists the paper’s claims, equations and measured values, each with its quote; confirm the ones you trust and they’re linked to the same idea in other papers.', keys: ['note.viewer', 'note.fragment', 'ideas.view'] },
-    { ch: 'The map', sel: '#btn-cleanup', fallback: '#graph', title: 'Move dots, then Clean up', text: 'Drag a dot where you want it and it keeps that spot. Drop it on another region and it moves there. Clean up puts dragged dots and moved regions back into the tidy layout; double-click a dot to see only its neighbourhood.', keys: ['graph.cleanUp', 'graph.focus'] },
-    { ch: 'Organizing', sel: '#btn-regions', fallback: '#graph', title: 'Focus a region', text: 'Your papers are grouped into regions, named on the map. Click a region’s name to focus it: the map zooms in and the rest steps back. Rename is in the bar at the top. To file a paper elsewhere, drag its dot into another region or right-click it › Put in region.', keys: ['graph.focusRegion', 'graph.renameRegion'],
-      actions: [{ label: 'Focus the biggest for me', run: () => { const r = biggest(); if (r) rb.focusRegion(r.id); } }],
-      task: { needs: needRegions, check: () => S.focusCluster != null, wait: 'Click a region’s name on the map.', done: () => `Focused on ${regionLabel()}. Esc comes back out.` } },
-    { ch: 'Organizing', sel: '#rf-subs', fallback: '#btn-regions', title: 'Subsections', text: 'Inside a region, subsections are named groups of its papers. With a region focused, click Subsections at the top: add one and tick its papers, or let {AI} propose them (nothing changes until you Apply). Right-click a paper › New subsection… works too.', keys: [],
-      actions: [{ label: 'Open Subsections', run: openSubs }],
-      task: { needs: needRegions, begin: (t) => { t.sawSubs = false; },
-        check: (t) => { const head = $('.rf-chooser .rf-head'); if (head && /^Subsections of/.test(head.textContent)) t.sawSubs = true; return t.sawSubs || (S.subsections || []).some((x) => x.region === S.focusCluster); },
-        wait: 'Focus a region, then click Subsections at the top of the map.', done: () => 'That’s where they live. Make one now, or come back to it later.' } },
-    { ch: 'Organizing', sel: '#btn-reorganize', fallback: '#graph', title: 'Reorganize', text: 'Tick papers and {AI} regroups them by what they’re about, ignoring how they’re filed now, or into regions you name, as many as you ask for. You see and can rename the new regions before anything changes, and Undo puts everything back. A region’s Split up… (in Regions) does this for one region.', keys: ['topics.reorganize'],
-      actions: [{ label: 'Open Reorganize', run: cmd('topics.reorganize') }] },
-    { ch: 'Organizing', sel: '#btn-chat', title: 'Ask the chat to move things', text: 'You can also just ask: “put the transformer papers in their own region.” The answer ends with a card listing each change, with Apply and Dismiss. Nothing moves until you Apply, and Undo puts it back.', keys: [] },
-    { ch: 'Asking', sel: '#btn-chat', title: 'Ask your library', text: 'Ask a question about your papers. The answer cites the pages it used; click a citation to open that passage. At the top of the chat, Regions reads every paper in the regions you pick, and General asks anything with only what you attach.', keys: ['library.ask', 'chat.aboutTopics', 'chat.general'],
-      actions: [{ label: 'Open Ask with an example', run: askExample }],
-      task: { needs: () => needPapers() || (S.claudeOK ? null : 'Ask needs an AI agent on this computer: pick one in Library settings › AI and privacy, or skip this one.'),
-        begin: (t) => { t.msgs = userMsgs(); }, check: (t) => !!S.chatBusy || userMsgs() > t.msgs,
-        wait: 'Type a question (or use the example) and click Ask.', done: () => 'Asked. The answer keeps writing while you go on.' } },
-    { ch: 'Asking', sel: '#btn-chat', title: 'Research mode and Novelty check', text: 'Next to Quick, Research lets {AI} search your library itself: several searches, opening pages, following citations, shown as a trail. Novelty check takes an idea, shows you the searches first, then reports which published work overlaps and what none of it does.', keys: ['research.toggle', 'novelty.check'] },
-    { ch: 'Thinking it through', sel: '#btn-questions', fallback: '#btn-add-menu', title: 'Open questions', text: 'A question keeps collecting evidence as you add papers: passages and notes that support it, argue against it, or relate. The matching runs on this computer and never goes to an AI. Triage with S, A, R and D.', keys: ['question.new', 'questions.open'],
-      actions: [{ label: 'Write a question', run: cmd('question.new') }] },
-    { ch: 'Thinking it through', sel: '#btn-review:not([hidden])', fallback: '#graph', title: 'Review', text: 'Your own summaries and fragment notes come back for recall, spaced out over time. Write what you remember, reveal, and grade yourself 1 to 4. The Review button appears once there’s something due.', keys: ['library.review'] },
-    { ch: 'Writing', sel: '#graph', title: 'Citing and writing', text: 'Cite any paper into Word, Google Docs or LaTeX from the Cite picker, or copy a region’s bibliography. A .bib file can update itself for your LaTeX project (Library settings › Citations). In a note, writing help drafts from only the sources you tick.', keys: ['cite.pick'],
-      actions: [{ label: 'Cite a paper', run: cmd('cite.pick') }] },
-    { ch: 'Your data', sel: '#btn-view-menu', title: 'Private by default', text: 'Your notes, questions and highlights stay on this computer: no AI reads them until you click the lock in a note’s header. Library settings › AI and privacy shows what was sent and lets you pick the AI tool on this computer.', keys: ['agent.choose'] },
-    { ch: 'Your data', sel: '#btn-view-menu', title: 'Phone, browser and voice', text: 'Pair a phone from Library settings › Devices to add papers and read on the go. The Chrome extension saves papers and clips passages from any page. In Ask, the waveform button starts a spoken conversation.', keys: ['extension.clip'] },
-    { ch: 'Getting around', sel: '#btn-view-menu', title: 'Commands, shortcuts and this tour', text: 'Find any action by name in the command palette; press ? for every shortcut. Both tours and the full guide stay here under Settings › Tutorials, whenever you want them again.', keys: ['general.palette', 'general.shortcuts', 'help.guide'] },
+    connectAI('Set up'),
+    importPapers('Set up'),
+    { ch: 'Set up', sel: '#graph', title: 'Where new papers go', text: 'From now on, a paper you add that clearly belongs in a region is put there, with Undo or Move in the message. One that could go in a few is asked about. In Add you can also choose its region up front.', keys: [] },
+    intoRegions('Set up'),
+    { ch: 'Make it yours', sel: '#btn-regions', fallback: '#graph', title: 'Look at a region', text: 'Click a region’s name on the map to focus it: the map zooms in and everything else steps back. Esc comes back out.', keys: ['graph.focusRegion'],
+      actions: [{ label: 'Focus the biggest for me', run: focusBiggest, primary: true }],
+      task: { on: ['region-focus'], needs: needRegions, check: () => S.focusCluster != null, wait: 'Click a region’s name on the map.', done: () => `Focused on ${regionLabel()}.` } },
+    { ch: 'Make it yours', sel: '#region-focus:not([hidden])', fallback: '#btn-regions', title: 'Name it what you call it', text: 'Automatic names are a starting point. With a region focused, click Rename in the bar at the top and give it the name you’d use. To move a paper to another region, drag its dot there, or right-click it › Put in region.', keys: ['graph.renameRegion'],
+      actions: [{ label: 'Rename it', run: () => { if (S.focusCluster == null) focusBiggest(); setTimeout(() => CMD.run('graph.renameRegion'), 120); } }],
+      task: { on: ['region-renamed'], needs: needRegions, begin: (t) => { t.renamed = false; }, event: (t) => { t.renamed = true; }, check: (t) => t.renamed,
+        wait: 'Focus a region and click Rename. Skip if the names already fit.', done: () => 'Renamed.' } },
+    { ch: 'Make it yours', sel: '#rf-subs', fallback: '#btn-regions', title: 'Split a big region into subsections', text: 'Inside a region, subsections are named groups of its papers, shown when it’s focused. Click Subsections in the bar: New subsection and tick its papers, or let {AI} propose them (nothing changes until you Apply). Right-click a paper › New subsection… works too.', keys: [],
+      actions: [{ label: 'Open Subsections', run: openSubs, primary: true }],
+      task: { on: ['graph'], needs: needRegions, begin: (t) => { t.subs = (S.subsections || []).length; }, check: (t) => (S.subsections || []).length > t.subs,
+        wait: 'Waiting for a new subsection. Skip if your regions are small enough.', done: () => 'Subsection made. It shows whenever that region is focused.' } },
+    { ch: 'Make it yours', sel: '#btn-reorganize', fallback: '#graph', title: 'Reorganize, if the map feels wrong', text: 'If the regions don’t match how you think about the field, tick papers and {AI} regroups them by what they’re about, or into regions you name, as many as you ask for. You see the new regions first, and Undo puts everything back. A region’s Split up… (in Regions) does this for one region.', keys: ['topics.reorganize'],
+      actions: [{ label: 'Open Reorganize', run: cmd('topics.reorganize') }],
+      task: { on: ['topics-changed'], needs: () => needRegions() || needAI(), begin: (t) => { t.done = false; }, event: (t, name, d) => { if (d.kind === 'reorganized') t.done = true; }, check: (t) => t.done,
+        wait: 'Optional: skip if your regions already make sense.', done: () => 'Reorganized. Undo is in the dialog if you change your mind.' } },
+    readOne('Read'),
+    { ch: 'Read', sel: '#panel:not([hidden])', fallback: '#graph', title: 'Highlight what matters', text: 'Open the paper’s PDF from the panel and select a passage: Highlight saves it as a fragment, with your note on it, and it becomes a small red dot by the paper on the map. Ideas, under Fragments, lists the paper’s claims and measured values; confirm the ones you trust.', keys: ['note.viewer', 'note.fragment'],
+      actions: [{ label: 'Open the PDF', run: cmd('note.viewer'), primary: true }],
+      task: { on: ['graph', 'panel'], needs: needPapers, begin: (t) => { t.frags = count('fragment'); }, check: (t) => count('fragment') > t.frags,
+        wait: () => (curIs('paper') ? (hasPdf() ? 'Highlight a passage in the PDF; this step notices when you come back.' : 'This paper has no PDF: open one that does, or add a fragment in the panel.') : 'Open a paper first: click its dot.'),
+        done: () => 'Fragment saved.' } },
+    askLibrary('Ask'),
+    { ch: 'Ask', sel: '#btn-chat', title: 'Research mode and Novelty check', text: 'For harder questions, switch Quick to Research: {AI} searches your library itself, opening pages and following citations, shown as a trail. Novelty check takes an idea of yours, shows the searches first, then reports which published work overlaps and what none of it does.', keys: ['research.toggle', 'novelty.check'] },
+    { ch: 'Grow it', sel: '#btn-finder', fallback: '#btn-add-menu', title: 'Find what you’re missing', text: 'Describe a topic and {AI} searches OpenAlex and arXiv in the background. What it proposes lands On deck, each with a reason and whether it’s free to read; you’re told when it’s done. Add the ones you want: they go into their region like any other paper.', keys: ['papers.find'],
+      actions: [{ label: 'Open Find papers', run: cmd('papers.find'), primary: true }],
+      task: { on: ['graph'], needs: needAI, begin: (t) => { t.n = papers().length; }, check: (t) => papers().length > t.n,
+        wait: 'Waiting for a paper you add from On deck. The search can take a minute; you can skip ahead and come back.', done: () => 'Added. It’s on the map in its region.' } },
+    { ch: 'Grow it', sel: '#btn-questions', fallback: '#btn-add-menu', title: 'Write down an open question', text: 'What are you trying to find out? Write it as a question: it keeps collecting evidence from everything you add, passages that support it, argue against it, or relate. The matching runs on this computer, never through an AI. Triage with S, A, R and D.', keys: ['question.new', 'questions.open'],
+      actions: [{ label: 'Write a question', run: cmd('question.new'), primary: true }],
+      task: { on: ['graph'], begin: (t) => { t.n = count('question'); }, check: (t) => count('question') > t.n,
+        wait: 'Waiting for your question.', done: () => 'Question saved. New evidence shows as a count on Questions.' } },
+    { ch: 'Use it', sel: '#btn-review:not([hidden])', fallback: '#graph', title: 'Review', text: 'Your summaries and fragment notes come back for recall, spaced out over time. Write what you remember, reveal, and grade yourself 1 to 4. The Review button appears once something is due, starting with the summary you just wrote.', keys: ['library.review'] },
+    { ch: 'Use it', sel: '#graph', title: 'Cite while you write', text: 'Cite any paper into Word, Google Docs or LaTeX from the Cite picker, or copy a region’s bibliography. For LaTeX, Library settings › Citations keeps a .bib file in your project up to date.', keys: ['cite.pick'],
+      actions: [{ label: 'Cite a paper', run: cmd('cite.pick') }, { label: 'Set up a .bib file', run: settings('citations') }] },
+    { ch: 'Use it', sel: '#btn-view-menu', title: 'Capture from anywhere', text: 'Pair your phone (Library settings › Devices) to add papers, photos and quick notes on the go. The Chrome extension saves papers and clips passages from any page while research brain is open.', keys: ['extension.clip'],
+      actions: [{ label: 'Pair a phone', run: settings('devices') }] },
+    { ch: 'Use it', sel: '#btn-view-menu', title: 'Private by default', text: 'Your notes, questions and highlights stay on this computer: no AI reads them until you click the lock in a note’s header. Library settings › AI and privacy shows everything that was sent.', keys: [],
+      actions: [{ label: 'See privacy settings', run: settings('privacy') }] },
+    { ch: 'Use it', sel: '#btn-view-menu', title: 'You’re set up', text: 'The routine from here: add papers as you find them, write a summary for each one you read, ask when you’re stuck, and do Review when it shows a count. Find any action by name in the command palette, press ? for every shortcut, and Settings › Tutorials has both tours again.', keys: ['general.palette', 'general.shortcuts', 'help.guide'] },
   ];
   const TOURS = { quick: TOUR, deep: DEEP };
   const CSS = `
@@ -484,19 +523,26 @@
 
   let tour = null; // {i, kind, card, ring, shown, sig, + whatever a step's task keeps}
   let chooser = null; // the welcome card: basics or in depth
-  let poll = 0;
   function startTour(i = 0, kind = 'quick') {
     endTour(false);
     closeChooser(false);
     rb.closeMenus();
     tour = { i, kind: TOURS[kind] ? kind : 'quick', shown: -1 };
     showStep();
-    // a step with a task follows what the user does (a paper arriving, a region focused, a question asked)
-    poll = setInterval(() => { if (tour && TOURS[tour.kind][tour.i].task && stepState().sig !== tour.sig) showStep({ refresh: true }); }, 700);
+  }
+  // A step with a task follows the app's events (static/app.js emit(), plus rb:topics-changed): the ones it names,
+  // and the map and AI status, which its `needs` reads. Nothing is polled.
+  const APP_EVENTS = ['status', 'graph', 'panel', 'saved', 'region-focus', 'region-renamed', 'subsections-open', 'asked', 'topics-changed'];
+  for (const name of APP_EVENTS) window.addEventListener('rb:' + name, (e) => onAppEvent(name, (e && e.detail) || {}));
+  function onAppEvent(name, detail) {
+    if (!tour) return;
+    const t = TOURS[tour.kind][tour.i].task;
+    if (!t || !(['graph', 'status'].includes(name) || (t.on || []).includes(name))) return;
+    if (t.event && (t.on || []).includes(name)) { try { t.event(tour, name, detail); } catch (e) { console.error(e); } }
+    if (stepState().sig !== tour.sig) showStep({ refresh: true });
   }
   function endTour(done = true) {
     if (!tour) return;
-    clearInterval(poll); poll = 0;
     if (tour.card) tour.card.remove();
     if (tour.ring) tour.ring.remove();
     if (done) { LS.set('tour.done', true); if (tour.kind === 'deep' && tour.i === DEEP.length - 1) LS.set('tour.deepDone', true); }
@@ -522,15 +568,15 @@
     };
     const opts = mk('div', 'c-opts');
     opts.append(
-      opt('quick', 'Show me the basics', `Add your first papers, then ${TOUR.length - 1} short tips on the main parts of the app. A few minutes.`),
-      opt('deep', 'Get me up to speed', `Add your papers, then ${DEEP.length - 1} steps through everything, tried on your own library: regions, subsections, Reorganize, Find papers, Ask, questions, citing and more.`));
+      opt('quick', 'Get me started', `${TOUR.length} steps to a working library: connect your AI, import your papers, sort them into regions, read one, ask a question.`),
+      opt('deep', 'Get me up to speed', `The same start, then the rest of the setup on your own library: name your regions, subsections, highlights, finding more papers, open questions, review, citing. ${DEEP.length} steps; skip any.`));
     const later = mk('button', 'btn btn-text btn-sm', first ? 'Not now' : 'Close'); later.type = 'button'; later.onclick = () => closeChooser();
     const foot = mk('div', 'c-foot');
     foot.append(mk('span', null, 'Both stay in Settings › Tutorials.'), mk('span', 'sp'), later);
     card.append(mk('div', 'c-title', first ? 'Welcome to research brain' : 'Tutorials'),
       mk('div', 'c-text', first
-        ? 'Both tours start with your own papers: import the ones you have, or find new ones online. Then a quick look around, or the full tour of what it can do?'
-        : 'Both start with your own papers. You can leave either one at any step with Esc.'), opts, foot);
+        ? 'Let’s set up your library for real: your AI, your papers, your regions. Each step is done when you’ve actually done it, and you can skip any.'
+        : 'Both set up your own library, step by step. Skip any step; leave with End tour or Esc.'), opts, foot);
     document.body.appendChild(card);
     chooser = card;
     opts.firstChild.focus({ preventScroll: true });
@@ -547,8 +593,8 @@
     try {
       needs = t.needs ? t.needs(tour) : null;
       ok = !needs && !!t.check(tour);
-      msg = needs || (ok ? t.done(tour) : t.wait);
-    } catch (e) { console.error(e); msg = t.wait; }
+      msg = needs || (ok ? t.done(tour) : typeof t.wait === 'function' ? t.wait(tour) : t.wait);
+    } catch (e) { console.error(e); msg = typeof t.wait === 'string' ? t.wait : ''; }
     return { needs, ok, msg, sig: `${needs ? 'n' : ok ? 'y' : 'w'}|${msg}` };
   }
   function showStep({ refresh = false } = {}) {

@@ -87,6 +87,11 @@
     noteMeta: new Map(),    // id -> {has_pdf, type, title} cache for parents
     firstGraph: true,
   };
+  /** App events other scripts follow (the tours in static/shortcuts.js): window 'rb:<name>' with a detail.
+   *  status (the AI agent's state was read), graph (the map's data was loaded), panel (a note opened or the panel
+   *  closed), saved (a note's fields were saved), region-focus, region-renamed, subsections-open, asked (a question
+   *  went to the chat, in any mode). */
+  const emit = (name, detail = {}) => { try { window.dispatchEvent(new CustomEvent('rb:' + name, { detail })); } catch (e) { console.error(e); } };
 
   // ======================================================================
   // Small DOM helpers
@@ -703,6 +708,7 @@
       el.title = 'Cannot reach the research_brain server.\n' + e.message;
     }
     applyClaude();
+    emit('status', { ai: S.claudeOK });
   }
 
   /** Disable/enable every Claude-dependent control, keeping a hover tooltip explaining why. */
@@ -1733,6 +1739,7 @@
     S.regionChooserClose = closeSheet;
     document.body.append(sheet);
     setTimeout(() => { if (sheet.isConnected) document.addEventListener('pointerdown', off); }, 0);
+    emit('subsections-open', { region: cid });
   }
 
   /** Make a subsection (x null) or change one by hand: its name and which of the region's papers are in it, ticked.
@@ -1970,6 +1977,7 @@
     S.focusCluster = cid;
     const bar = $('#region-focus');
     if (bar) { $('.rf-name', bar).textContent = regionName(info.label); bar.hidden = false; }
+    emit('region-focus', { region: cid });
     const to = regroup(cid);  // its subsections, if it has some, open out into columns under their names
     if (fit) smoothFit(T(700), window.innerWidth < 700 ? 40 : 90, (n) => n.cluster === cid, to && ((n) => to.get(n) || restingAt(n)));
     kick(800);
@@ -2030,6 +2038,7 @@
         nameEl.textContent = regionName(now ? now.label : (body.name || ''));
         close();
         window.dispatchEvent(new CustomEvent('rb:topics-changed'));
+        emit('region-renamed', { region: cid });
       } catch (e) { save.disabled = false; toastErr(e, 'Could not rename the region'); }
     };
     save.onclick = () => {
@@ -2055,6 +2064,7 @@
     const to = regroup(was);  // its subsections close back into round clusters
     if (refit && fg) smoothFit(T(700), 70, null, to && ((n) => to.get(n) || restingAt(n)));
     kick(800);
+    emit('region-focus', { region: null });
   }
   function chooseRegion() {
     const regs = (S.regionLabels || []).filter((r) => r.label);
@@ -4068,6 +4078,7 @@
     crawlFragments();
     // new papers: static/placing.js puts each in its region, or asks which
     if (!S.firstGraph && added.some((n) => n.type === 'paper')) window.dispatchEvent(new CustomEvent('rb:papers-added'));
+    emit('graph', { added: added.map((n) => n.id) });
 
     if (!fg) return;
     if (structural) {
@@ -4729,6 +4740,7 @@
     S.patch = {};
     S.saveErr = null;
     renderPanel();
+    emit('panel', { id: note.id, type: note.type || 'note' });
     if (center && userMovedAt < openedAt) centerOn(id);  // not if you've moved the graph since
     if (focusTitle) { const t = $('.title-input', pbody); if (t) { t.hidden = false; t.focus(); t.select(); } }
   }
@@ -4754,6 +4766,7 @@
     const cur = S.cur;
     setPanelOpen(false);
     S.selected = null; kick(300);
+    emit('panel', { id: null });
     if (cur) {
       reopenTab = h('button', { class: 'reopen-tab', title: 'Reopen the note', text: truncate(tt(cur.title) || cur.id, 30), onclick: () => openNote(cur.id) });
       document.body.appendChild(reopenTab);
@@ -4863,6 +4876,7 @@
           if (!Object.keys(S.patch).length) setSaveInd('', 'Saved');
           const upd = $('#upd-stamp', pbody); if (upd && updated) upd.textContent = 'updated ' + fmtDate(updated.updated);
         }
+        emit('saved', { id, fields: patch });
         scheduleGraphRefresh();
       } catch (e) {
         // restore patch so nothing is lost; retry on next edit or click
@@ -6759,6 +6773,7 @@
     if (claudeBlocked()) return;
     question = question.trim();
     if (!question) return;
+    emit('asked', { voice: !!opts.voice });
     // Novelty mode: what you typed is an idea to check against the literature (static/novelty.js), in any scope
     if (!opts.voice && window.__rbNovelty && window.__rbNovelty.wants(opts)) return window.__rbNovelty.send(question);
     // Research mode searches the whole library; a chat about one paper always answers from that paper
