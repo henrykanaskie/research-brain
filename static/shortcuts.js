@@ -1,4 +1,4 @@
-/* research_brain — the app's keyboard commands, note history, first-run tour and in-app guide.
+/* research_brain — the app's keyboard commands, note history, the tours (first run: basics or in depth) and in-app guide.
  * Registers through RB.commands (static/commands.js, loaded first) and drives the app through
  * window.__rb (static/app.js). Loaded after every other app script so it can describe their
  * commands too (views.js focus, review.js keys, topics.js reading queue).
@@ -259,7 +259,11 @@
   reg({ id: 'help.guide', title: 'Help', group: 'General', description: 'A short guide to every feature, with its shortcut.',
     aliases: ['guide', 'manual', 'how to', 'docs', 'documentation', 'what is', 'explain'], run: () => openGuide() });
   reg({ id: 'help.tour', title: 'Help: quick tour', group: 'General', description: 'Five short tips that point at the main parts of the app.',
-    aliases: ['tour', 'onboarding', 'intro', 'walkthrough', 'getting started', 'coach'], run: () => startTour() });
+    aliases: ['tour', 'onboarding', 'intro', 'walkthrough', 'getting started', 'coach', 'basics'], run: () => startTour() });
+  reg({ id: 'help.deepTour', title: 'Help: get me up to speed', group: 'General', description: 'The full tour: regions, subsections, Reorganize, Find papers, questions, citing and the rest, one step at a time.',
+    aliases: ['tutorial', 'in depth', 'full tour', 'everything', 'advanced', 'up to speed', 'learn'], run: () => startTour(0, 'deep') });
+  reg({ id: 'help.tutorials', title: 'Help: tutorials', group: 'General', description: 'Pick a tour: just the basics, or everything you can do.',
+    aliases: ['tutorial', 'tour', 'welcome', 'onboarding', 'learn'], run: () => chooseTour() });
 
   // ====================================================================== tooltips with shortcuts
   const tips = [['#search-input', 'nav.search'], ['#btn-add-menu', 'library.addById', 'Add a paper, PDF or note'], ['#btn-chat', 'library.ask'],
@@ -342,7 +346,8 @@
           }
         }
         body.append(el('p', { style: 'margin-top: 20px; font: 13px var(--sans); color: var(--ink-2)' },
-          'Press ? for every shortcut. ', el('a', { href: '#', text: 'Take the quick tour', onclick: (e) => { e.preventDefault(); CMD.close(false); startTour(); } }), '.'));
+          'Press ? for every shortcut. ', el('a', { href: '#', text: 'Take the quick tour', onclick: (e) => { e.preventDefault(); CMD.close(false); startTour(); } }),
+          ', or ', el('a', { href: '#', text: 'get up to speed on everything', onclick: (e) => { e.preventDefault(); CMD.close(false); startTour(0, 'deep'); } }), '.'));
       },
     });
   }
@@ -356,6 +361,31 @@
     { sel: '#btn-chat', title: 'Ask', text: 'Ask about your whole library, about the papers in some regions, or anything at all (General, where you can attach things and, if you allow it, search the web). Conversations are kept.', keys: ['library.ask', 'chat.general'] },
     { sel: '#btn-view-menu', title: 'Settings and shortcuts', text: 'The gear holds Library settings (tabs and a search box), graph options and appearance. Press ? for every shortcut; find any action by name in the command palette.', keys: ['general.shortcuts', 'general.palette'] },
   ];
+  // "Get me up to speed": every part worth knowing, in chapters. Each step points at something that's always
+  // on screen (or falls back to the map), so the tour never opens menus or changes anything in the library.
+  const DEEP = [
+    { ch: 'Bringing papers in', sel: '#btn-add-menu', title: 'Add a paper', text: 'Add by DOI, arXiv id or title, import a PDF, or drop one anywhere on the window. Right-click an empty spot on the map to add something right there. Its details come from Crossref, arXiv and Semantic Scholar; when none has an abstract, it’s read from the PDF itself.', keys: ['library.addById', 'library.importPdf'] },
+    { ch: 'Bringing papers in', sel: '#btn-add-menu', title: 'Folders, Zotero, bookmarks and notes', text: 'Add folders of papers links folders where they are (OneDrive too): nothing is moved or copied, each folder becomes a region, and PDFs you add there later come in by themselves. The same menu imports from Zotero (with highlights), browser bookmarks, and notes from Obsidian, Notion, Word or handwritten pages.', keys: ['import.linkFolder', 'library.zotero', 'library.importNotes'] },
+    { ch: 'Bringing papers in', sel: '#btn-finder', fallback: '#btn-add-menu', title: 'Find papers', text: 'Describe a topic and {AI} searches OpenAlex and arXiv in the background. What it proposes lands On deck, with a reason for each paper and whether it’s free to read. Nothing reaches your library until you click Add, and you’re told when a search finishes.', keys: ['papers.find'] },
+    { ch: 'Bringing papers in', sel: '#graph', title: 'Where a new paper lands', text: 'A paper that clearly belongs in a region is put there, with Undo or Move in the message. One that could go in a few is asked about: pick a region, any other, or leave it. In Add you can also choose the region up front.', keys: [] },
+    { ch: 'The map', sel: '#legend', fallback: '#graph', title: 'Reading the map', text: 'Filled dots are papers, rings are notes, small red dots are fragments. A paper you haven’t read has a yellow glow at its centre. Red lines are links you made, dashed lines are similar text, and you can click a line to ask {AI} why two notes connect.', keys: ['graph.similar', 'graph.citations'] },
+    { ch: 'The map', sel: '#btn-cleanup', fallback: '#graph', title: 'Move dots, then Clean up', text: 'Drag a dot where you want it and it keeps that spot. Drop it on another region and it moves there. Clean up puts dragged dots and moved regions back into the tidy layout; double-click a dot to see only its neighbourhood.', keys: ['graph.cleanUp', 'graph.focus'] },
+    { ch: 'Organizing', sel: '#btn-topics', fallback: '#graph', title: 'Regions', text: 'Papers are grouped into regions, named on the map. Click a name to zoom in on it, then Rename. To file a paper, drag its dot into a region or right-click it › Put in region. Regions also keeps your reading queue: park a paper with a reason and it comes back.', keys: ['topics.toggle', 'graph.focusRegion', 'note.park'] },
+    { ch: 'Organizing', sel: '#btn-regions', fallback: '#graph', title: 'Subsections', text: 'Inside a region, subsections are named groups of its papers. Focus a region (click its name), then Subsections: add one, rename or delete it, or let {AI} propose them from the papers (nothing changes until you Apply). Or right-click a paper › New subsection… and tick the others.', keys: [] },
+    { ch: 'Organizing', sel: '#btn-reorganize', fallback: '#graph', title: 'Reorganize', text: 'Tick papers and {AI} regroups them by what they’re about, ignoring how they’re filed now, or into regions you name, as many as you ask for. You see and can rename the new regions before anything changes, and Undo puts everything back. A region’s Split up… does this for one region.', keys: ['topics.reorganize'] },
+    { ch: 'Organizing', sel: '#btn-chat', title: 'Ask the chat to move things', text: 'You can also just ask: “put the transformer papers in their own region.” The answer ends with a card listing each change, with Apply and Dismiss. Nothing moves until you Apply, and Undo puts it back.', keys: [] },
+    { ch: 'Reading', sel: '#panel:not([hidden])', fallback: '#graph', title: 'The side panel', text: 'Click a dot to open it. Write a two-sentence summary in your own words, then ask {AI} to critique it against the paper. Type [[ to link a note, $…$ for math, “- ” for an outline. It saves by itself.', keys: ['note.summary', 'note.critique', 'note.link'] },
+    { ch: 'Reading', sel: '#panel:not([hidden])', fallback: '#graph', title: 'Fragments, highlights and ideas', text: 'Open the PDF viewer and highlight a passage: it becomes a fragment with your note on it, a red dot on the map. Under it, Ideas lists the paper’s claims, equations and measured values, each with its quote; confirm the ones you trust and they’re linked to the same idea in other papers.', keys: ['note.viewer', 'note.fragment', 'ideas.view'] },
+    { ch: 'Asking', sel: '#btn-chat', title: 'Ask: Library, Regions, General', text: 'Library answers from all your papers and notes and cites the pages it used; click a citation to open that passage. Regions reads every paper in the regions you pick. General asks anything, with only what you attach.', keys: ['library.ask', 'chat.aboutTopics', 'chat.general'] },
+    { ch: 'Asking', sel: '#btn-chat', title: 'Research mode and Novelty check', text: 'Next to Quick, Research lets {AI} search your library itself: several searches, opening pages, following citations, shown as a trail. Novelty check takes an idea, shows you the searches first, then reports which published work overlaps and what none of it does.', keys: ['research.toggle', 'novelty.check'] },
+    { ch: 'Thinking it through', sel: '#btn-questions', fallback: '#btn-add-menu', title: 'Open questions', text: 'A question keeps collecting evidence as you add papers: passages and notes that support it, argue against it, or relate. The matching runs on this computer and never goes to an AI. Triage with S, A, R and D.', keys: ['question.new', 'questions.open'] },
+    { ch: 'Thinking it through', sel: '#btn-review:not([hidden])', fallback: '#graph', title: 'Review', text: 'Your own summaries and fragment notes come back for recall, spaced out over time. Write what you remember, reveal, and grade yourself 1 to 4. The Review button appears once there’s something due.', keys: ['library.review'] },
+    { ch: 'Writing', sel: '#graph', title: 'Citing and writing', text: 'Cite any paper into Word, Google Docs or LaTeX from the Cite picker, or copy a region’s bibliography. A .bib file can update itself for your LaTeX project (Library settings › Citations). In a note, writing help drafts from only the sources you tick.', keys: ['cite.pick'] },
+    { ch: 'Your data', sel: '#btn-view-menu', title: 'Private by default', text: 'Your notes, questions and highlights stay on this computer: no AI reads them until you click the lock in a note’s header. Library settings › AI and privacy shows what was sent and lets you pick the AI tool on this computer.', keys: ['agent.choose'] },
+    { ch: 'Your data', sel: '#btn-view-menu', title: 'Phone, browser and voice', text: 'Pair a phone from Library settings › Devices to add papers and read on the go. The Chrome extension saves papers and clips passages from any page. In Ask, the waveform button starts a spoken conversation.', keys: ['extension.clip'] },
+    { ch: 'Getting around', sel: '#btn-view-menu', title: 'Commands, shortcuts and this tour', text: 'Find any action by name in the command palette; press ? for every shortcut. Both tours and the full guide stay here under Settings › Tutorials, whenever you want them again.', keys: ['general.palette', 'general.shortcuts', 'help.guide'] },
+  ];
+  const TOURS = { quick: TOUR, deep: DEEP };
   const CSS = `
   .rb-coach { position: fixed; z-index: 67; width: 300px; max-width: calc(100vw - 32px); background: var(--sheet); color: var(--ink); border: 1px solid var(--rule);
     border-radius: 6px; padding: 14px 16px 12px; font: 13px/1.5 var(--sans); box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--ink) 22%, transparent); }
@@ -366,6 +396,19 @@
   .rb-coach .c-keys .rbk-keys { max-width: none; }
   .rb-coach .c-act { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
   .rb-coach .c-act .sp { flex: 1; }
+  .rb-coach .c-ch { font-size: 12px; color: var(--red); font-weight: 600; }
+  .rb-coach .c-step .c-bar { display: block; height: 2px; margin-top: 4px; background: var(--rule); border-radius: 1px; overflow: hidden; }
+  .rb-coach .c-step .c-bar > i { display: block; height: 100%; background: var(--ink-2); }
+  .rb-coach.rb-choose { width: 420px; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 22px 16px; }
+  .rb-choose .c-title { font-size: 16px; margin-bottom: 6px; }
+  .rb-choose .c-opts { display: grid; gap: 8px; margin-top: 14px; }
+  .rb-choose .c-opt { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 6px;
+    background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+  .rb-choose .c-opt:hover, .rb-choose .c-opt:focus-visible { border-color: var(--ink-2); outline: none; }
+  .rb-choose .c-opt b { display: block; font-weight: 600; }
+  .rb-choose .c-opt span { color: var(--ink-2); font-size: 12.5px; }
+  .rb-choose .c-foot { margin-top: 12px; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 8px; }
+  .rb-choose .c-foot .sp { flex: 1; }
   .rb-coach-ring { position: fixed; z-index: 66; pointer-events: none; border: 1px solid var(--ink-2); border-radius: 6px; }
   .empty-hint { margin-top: 28px; font-size: 12.5px; color: var(--ink-2); }
   .empty-hint kbd { margin: 0 2px; }
@@ -374,19 +417,52 @@
   `;
   const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
 
-  let tour = null; // {i, card, ring}
-  function startTour(i = 0) {
+  let tour = null; // {i, kind, card, ring}
+  let chooser = null; // the welcome card: basics or in depth
+  function startTour(i = 0, kind = 'quick') {
     endTour(false);
+    closeChooser(false);
     rb.closeMenus();
-    tour = { i };
+    tour = { i, kind: TOURS[kind] ? kind : 'quick' };
     showStep();
   }
   function endTour(done = true) {
     if (!tour) return;
     if (tour.card) tour.card.remove();
     if (tour.ring) tour.ring.remove();
+    if (done) { LS.set('tour.done', true); if (tour.kind === 'deep' && tour.i === DEEP.length - 1) LS.set('tour.deepDone', true); }
     tour = null;
+  }
+  function closeChooser(done = true) {
+    if (!chooser) return;
+    chooser.remove(); chooser = null;
     if (done) LS.set('tour.done', true);
+  }
+  /** The welcome card (first run, Settings › Tutorials, the command Help: tutorials): just the basics, or the full tour. */
+  function chooseTour({ first = false } = {}) {
+    endTour(false);
+    closeChooser(false);
+    rb.closeMenus();
+    const mk = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; };
+    const card = mk('div', 'rb-coach rb-choose'); card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', 'Tutorials');
+    const opt = (kind, name, hint) => {
+      const b = mk('button', 'c-opt'); b.type = 'button'; b.dataset.tour = kind;
+      b.append(mk('b', null, name), mk('span', null, hint));
+      b.onclick = () => startTour(0, kind);
+      return b;
+    };
+    const opts = mk('div', 'c-opts');
+    opts.append(
+      opt('quick', 'Show me the basics', `${TOUR.length} short tips on the main parts of the app. About a minute.`),
+      opt('deep', 'Get me up to speed', `${DEEP.length} steps through everything: regions, subsections, Reorganize, Find papers, questions, citing and more. About five minutes.`));
+    const later = mk('button', 'btn btn-text btn-sm', first ? 'Not now' : 'Close'); later.type = 'button'; later.onclick = () => closeChooser();
+    const foot = mk('div', 'c-foot');
+    foot.append(mk('span', null, 'Both stay in Settings › Tutorials.'), mk('span', 'sp'), later);
+    card.append(mk('div', 'c-title', first ? 'Welcome to research brain' : 'Tutorials'),
+      mk('div', 'c-text', first ? 'Want a quick look around, or the full tour of what it can do?' : 'Pick a tour. You can leave either one at any step with Esc.'), opts, foot);
+    document.body.appendChild(card);
+    chooser = card;
+    opts.firstChild.focus({ preventScroll: true });
   }
   function target(s) {
     for (const sel of [s.sel, s.fallback]) { const n = sel && $(sel); if (n && n.offsetParent !== null && n.getBoundingClientRect().width) return n; }
@@ -394,7 +470,7 @@
   }
   function showStep() {
     if (!tour) return;
-    const s = TOUR[tour.i], t = target(s);
+    const steps = TOURS[tour.kind], s = steps[tour.i], t = target(s);
     if (tour.card) tour.card.remove();
     if (tour.ring) tour.ring.remove();
     const mk = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; };
@@ -409,11 +485,17 @@
     }
     const back = mk('button', 'btn btn-text btn-sm', 'Back'); back.type = 'button'; back.disabled = tour.i === 0; back.onclick = () => { tour.i--; showStep(); };
     const skip = mk('button', 'btn btn-text btn-sm', 'Skip tour'); skip.type = 'button'; skip.onclick = () => endTour();
-    const last = tour.i === TOUR.length - 1;
+    const last = tour.i === steps.length - 1;
     const next = mk('button', 'btn btn-primary btn-sm', last ? 'Done' : 'Next'); next.type = 'button';
     next.onclick = () => { if (last) endTour(); else { tour.i++; showStep(); } };
     const act = mk('div', 'c-act'); act.append(skip, mk('span', 'sp'), back, next);
-    card.append(mk('div', 'c-step', `${tour.i + 1} of ${TOUR.length}`), mk('div', 'c-title', s.title), mk('div', 'c-text', RB.aiText(s.text)), keys.children.length ? keys : '', act);
+    const stepEl = mk('div', 'c-step', `${tour.i + 1} of ${steps.length}`);
+    if (s.ch) { // the in-depth tour: its chapter, and a bar for how far along you are
+      card.append(mk('div', 'c-ch', s.ch));
+      const bar = mk('span', 'c-bar'), fill = mk('i'); fill.style.width = `${((tour.i + 1) / steps.length) * 100}%`; bar.append(fill);
+      stepEl.append(bar);
+    }
+    card.append(stepEl, mk('div', 'c-title', s.title), mk('div', 'c-text', RB.aiText(s.text)), keys.children.length ? keys : '', act);
     document.body.appendChild(card);
     tour.card = card;
     // place it next to the target, inside the viewport
@@ -436,10 +518,13 @@
     card.style.top = Math.max(16, Math.min(Hh - ch - 16, y)) + 'px';
     next.focus({ preventScroll: true });
   }
-  CMD.layer({ id: 'tour', order: 95, isOpen: () => !!tour, close: () => endTour() });
+  CMD.layer({ id: 'tour', order: 95, isOpen: () => !!tour || !!chooser, close: () => { if (tour) endTour(); else closeChooser(); } });
   window.addEventListener('resize', () => { if (tour) showStep(); });
-  rb.tour = { start: startTour, end: endTour, get step() { return tour ? tour.i : -1; } };
+  rb.tour = { start: startTour, end: endTour, choose: chooseTour, get step() { return tour ? tour.i : -1; }, get kind() { return tour ? tour.kind : null; } };
   rb.openGuide = openGuide;
+  // Settings menu › Tutorials
+  const tutBtn = $('#btn-tutorials');
+  if (tutBtn) tutBtn.addEventListener('click', () => { rb.closeMenus(); chooseTour(); });
   // once, on first run (not under automation, so tests and scripted runs aren't covered by it)
-  if (!LS.get('tour.done', false) && !navigator.webdriver) setTimeout(() => { if (!document.querySelector('.rbk-ov:not([hidden]), .modal:not([hidden])')) startTour(); }, 1200);
+  if (!LS.get('tour.done', false) && !navigator.webdriver) setTimeout(() => { if (!document.querySelector('.rbk-ov:not([hidden]), .modal:not([hidden])')) chooseTour({ first: true }); }, 1200);
 })();

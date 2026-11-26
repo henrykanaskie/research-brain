@@ -500,3 +500,72 @@ def test_click_off_the_chat_closes_it(ctx, server):
     page.mouse.click(x, y)                         # a click on the map closes it
     expect(page.locator("#chat")).to_be_hidden()
     assert not page.errors
+
+
+def test_tutorials_chooser_in_depth_tour_and_settings_entries(ctx, server):
+    """The welcome card offers the basics or the full tour; the full tour walks every step with its chapter and
+    a progress bar, Back and Done, and leaves no error behind; the Settings menu's Tutorials and Library
+    settings › Tutorials start both tours again; the palette finds Help: get me up to speed."""
+    clear_vault(server)
+    api(server, "POST", "/api/notes", {"type": "note", "title": "A note"})
+    page = open_app(ctx, server)
+    page.evaluate("localStorage.removeItem('rb.tour.done'); localStorage.removeItem('rb.tour.deepDone')")
+
+    # first run: the chooser (started by hand here, since it's skipped under automation)
+    page.evaluate("window.__rb.tour.choose({ first: true })")
+    card = page.locator(".rb-choose")
+    expect(card).to_contain_text("Welcome to research brain")
+    expect(card.locator(".c-opt")).to_have_count(2)
+    shot(page, "tour-chooser")
+    card.locator("button", has_text="Not now").click()
+    expect(card).to_have_count(0)
+    assert page.evaluate("localStorage.getItem('rb.tour.done')") == "true"
+
+    # Settings menu › Tutorials › Get me up to speed
+    page.click("#btn-view-menu")
+    page.click("#btn-tutorials")
+    expect(page.locator("#view-menu")).to_be_hidden()
+    page.locator(".rb-choose .c-opt[data-tour='deep']").click()
+    coach = page.locator(".rb-coach")
+    n = page.evaluate("document.querySelectorAll('.rb-coach').length")
+    assert n == 1
+    total = int(coach.locator(".c-step").inner_text().split(" of ")[1])
+    assert total >= 15
+    expect(coach.locator(".c-ch")).to_have_text("Bringing papers in")
+    seen_chapters = set()
+    for i in range(total):
+        expect(coach.locator(".c-step")).to_have_text(f"{i + 1} of {total}")
+        seen_chapters.add(coach.locator(".c-ch").inner_text())
+        box = coach.bounding_box()
+        vp = page.viewport_size
+        assert box["x"] >= 0 and box["y"] >= 0 and box["x"] + box["width"] <= vp["width"] and box["y"] + box["height"] <= vp["height"]
+        if i == 7:
+            assert "Subsections" in coach.inner_text()
+            shot(page, "tour-deep-subsections")
+            coach.locator("button", has_text="Back").click()
+            expect(coach.locator(".c-step")).to_have_text(f"{i} of {total}")
+            coach.locator("button", has_text="Next").click()
+        coach.locator("button", has_text="Done" if i == total - 1 else "Next").click()
+    expect(coach).to_have_count(0)
+    assert {"Organizing", "Asking", "Reading"} <= seen_chapters
+    assert page.evaluate("localStorage.getItem('rb.tour.deepDone')") == "true"
+
+    # Library settings › Tutorials starts the basics; Esc leaves it
+    page.evaluate("window.__rbSettings.open('tutorials')")
+    sec = page.locator("#ls-tutorials")
+    expect(sec).to_be_visible()
+    sec.locator("button", has_text="Show me the basics").click()
+    expect(coach.locator(".c-step")).to_have_text("1 of 6")
+    expect(coach.locator(".c-ch")).to_have_count(0)
+    page.keyboard.press("Escape")
+    expect(coach).to_have_count(0)
+
+    # the palette
+    page.keyboard.press(f"{MOD}+k")
+    page.keyboard.type("up to speed")
+    expect(page.locator(".rbk-item.on")).to_have_attribute("data-cmd", "help.deepTour")
+    page.keyboard.press("Enter")
+    expect(coach.locator(".c-ch")).to_have_text("Bringing papers in")
+    page.keyboard.press("Escape")
+    expect(coach).to_have_count(0)
+    assert page.errors == []
